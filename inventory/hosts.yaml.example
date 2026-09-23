@@ -1,0 +1,102 @@
+# This file is documentation of the inventory schema shape only -- nothing
+# in this codebase parses it anymore. The real inventory lives in
+# inventory/bellhop.db (SQLite). See import-yaml-inventory for the one-time
+# migration path from a hand-edited copy of this file into that database.
+
+domain: example.com
+
+# Optional inventory-wide settings. Each is read by specific commands,
+# which fail with a named error rather than guessing when one is missing.
+# Set them with: bellhop set-config <key> <value> --apply, or from the
+# web UI's admin-only Settings page.
+#
+# Address of the NAS whose exports guests mount. Used by sync-inventory's
+# fstab scan (skipped when unset) and migrate-nfs-mount (unavailable when
+# unset).
+#   nfsServer: 10.0.0.5
+# Cluster-shared nfs-type storage migrate-guest stages backups through.
+#   backupStorage: nas-proxmox
+# LAN resolver a VPN-routed guest keeps using for internal names, and the
+# nameserver set-guest-vpn --vpn none restores. Required by set-guest-vpn.
+#   dnsServer: 10.0.0.53
+# Absolute path on the Caddy host for the generated status page. Unset
+# means the status page is never rendered at all.
+#   statusPagePath: /usr/share/caddy/index.html
+
+hosts:
+  - name: pve1
+    ssh_target: pve1.local
+    ssh_user: root
+    # Optional. Omit for the default port 22. Only needed if this host's
+    # sshd listens somewhere else.
+    #   ssh_port: 2222
+    # Optional. Overrides the default ~/.ssh/id_ed25519 -> id_ecdsa ->
+    # id_rsa lookup for this host only. A bare filename resolves against
+    # ~/.ssh/, so "pve_key" means "~/.ssh/pve_key"; a leading ~ is expanded;
+    # anything else is an ordinary path. Must exist -- a path that can't be
+    # read is a hard error, not a silent fallback to the default key.
+    #   ssh_identity_file: pve_key
+    midScheme:           # optional; used by create-lxc/create-vm/install-app --mid
+      vmidBase: 4000      # e.g. --mid 4 on this host -> vmid 4004
+      ipPrefix: "192.168.1."  # e.g. --mid 4 -> ip 192.168.1.4
+      gateway: "192.168.3.1"
+      # cidrSuffix: 24    # optional; defaults to 16
+    bridges:              # optional; fully refreshed by sync-inventory from Proxmox network config
+      - name: vmbr0        # alias mirrors this interface's "Comment" field in Proxmox itself
+        alias: LAN          # -- set the comment in Proxmox, not here; sync-inventory just reads it
+        active: true
+  - name: pve2
+    ssh_target: pve2.local
+    ssh_user: root
+    midScheme:
+      vmidBase: 5000
+      ipPrefix: "192.168.2."
+      gateway: "192.168.3.1"
+
+guests:
+  - name: media
+    type: lxc        # lxc | vm
+    vmid: 105
+    host: pve1        # must match a name under `hosts`
+    ip: 192.168.1.50   # required if this entry has subdomains (reverse_proxy target)
+    port: 8080
+    subdomains:          # optional; each gets its own reverse_proxy block
+      - media              # -> media.example.com
+      - movies              # -> movies.example.com
+    unprivileged: true  # optional; tracks the lxc's actual privileged/unprivileged status
+    app: plex           # optional; community-scripts slug, set once by install-app's apply -- drives the Dashboard's quick-open link
+  - name: windows-test
+    type: vm
+    vmid: 201
+    host: pve2
+  - name: proxy
+    type: lxc
+    vmid: 110
+    host: pve1
+    ip: 192.168.1.10
+    caddy: true          # this entry runs Caddy; sync-caddy.sh writes/reloads here
+
+# Only for a subdomain whose own backend serves HTTPS with a self-signed/
+# otherwise-untrusted cert (e.g. a NAS's web UI, Proxmox's own web UI) --
+# adds `transport http { tls_insecure_skip_verify }` so Caddy doesn't refuse
+# to connect to it. Every generated block gets Cloudflare DNS-01 TLS
+# regardless; this only affects the *backend* connection.
+#   insecureBackendTls: true
+
+# For an entry whose real Caddy config is hand-authored elsewhere (outside
+# sync-caddy's managed markers) -- e.g. the guest running Caddy itself, which
+# already has its own hand-written site block outside the managed section.
+# subdomains[] still drives the Dashboard's service link; sync-caddy just
+# skips generating a block for it.
+#   caddyManual: true
+
+# Reverse-proxy targets that aren't a Proxmox host or guest at all -- never
+# an SSH/exec target, only ever read by sync-caddy. Optional; omit entirely
+# if you have none.
+externalSites:
+  - name: nas
+    ip: 192.168.1.250
+    port: 5001
+    subdomains:
+      - nas
+    insecureBackendTls: true

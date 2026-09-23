@@ -1,0 +1,328 @@
+:root {
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e5e5e7;
+  --border: #d1d1d6;
+  --text-primary: #1d1d1f;
+  --text-secondary: #86868b;
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --selected-bg: rgba(0, 113, 227, 0.12);
+  --success: #34c759;
+  --warning: #ff9f0a;
+  --error: #ff3b30;
+}
+
+:root[data-theme='dark'] {
+  --bg-primary: #1d1d1f;
+  --bg-secondary: #2d2d2f;
+  --bg-tertiary: #3d3d3f;
+  --border: #424245;
+  --text-primary: #f5f5f7;
+  --text-secondary: #86868b;
+  --accent: #0a84ff;
+  --accent-hover: #409cff;
+  --selected-bg: rgba(10, 132, 255, 0.15);
+}
+
+.theme-toggle { display: flex; gap: 2px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.theme-toggle-option { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); color: var(--text-secondary); border: none; padding: 8px 4px; cursor: pointer; border-radius: 4px; }
+.theme-toggle-option.active { background: var(--accent); color: white; }
+.signed-in-as { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.85em; color: var(--text-secondary); }
+.signed-in-as a { display: block; margin-top: 4px; color: var(--accent); }
+.impersonate-banner { margin-top: 10px; padding: 10px; border-radius: 6px; background: var(--warning); color: #1d1d1f; font-size: 0.85em; }
+.impersonate-banner .button { margin-top: 8px; width: 100%; }
+.impersonate-picker { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.85em; }
+.impersonate-picker .field-input { margin: 4px 0; width: 100%; }
+.impersonate-picker .button { width: 100%; }
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-primary); color: var(--text-primary); }
+.app-shell { display: flex; height: 100vh; }
+.sidebar { width: 200px; border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; }
+.sidebar .brand { font-weight: 600; margin-bottom: 14px; }
+.sidebar a { display: block; padding: 6px 8px; border-radius: 6px; text-decoration: none; color: inherit; }
+.sidebar a.active { background: var(--selected-bg); font-weight: 600; }
+.nav-group-label { margin: 10px 0 4px; opacity: 0.6; text-transform: uppercase; font-size: 11px; }
+
+.hamburger-btn { display: none; }
+.sidebar-backdrop { display: none; }
+
+.content { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; min-height: 0; }
+.page-description { color: var(--text-secondary); font-size: 14px; margin: -4px 0 16px; max-width: 640px; }
+.page-description-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow: hidden;
+}
+.page-description-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: -12px 0 16px;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+.stats-row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
+.stat-tile { background: var(--bg-tertiary); border-radius: 8px; padding: 10px 14px; }
+.view-toggle { display: flex; gap: 2px; margin-left: auto; }
+.view-toggle-option { background: var(--bg-tertiary); color: var(--text-secondary); border: none; padding: 8px 14px; font-size: 12px; border-radius: 6px; cursor: pointer; }
+.view-toggle-option.active { background: var(--accent); color: white; }
+.data-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+.data-table th, .data-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.data-table tbody tr:hover { background: var(--bg-tertiary); }
+.field-input { width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); margin-bottom: 8px; background: var(--bg-secondary); color: var(--text-primary); }
+.form-field { margin-bottom: 10px; }
+.label { font-size: 12px; opacity: 0.7; margin-bottom: 4px; display: block; }
+.label-link { margin-left: 6px; color: var(--accent); text-decoration: none; }
+.label-link:hover { text-decoration: underline; }
+.label-link svg { vertical-align: -1px; margin-left: 2px; }
+.label-hint { margin-left: 6px; font-family: monospace; font-size: 11px; opacity: 0.8; }
+.external-link { display: inline-flex; align-items: center; margin-left: 6px; color: var(--accent); }
+.external-link:hover { color: var(--accent-hover); }
+.app-cell { display: inline-flex; align-items: center; }
+.name-cell { display: inline-flex; align-items: center; }
+.button { background: var(--accent); color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font: inherit; }
+.button:hover:not(:disabled) { background: var(--accent-hover); }
+.button:disabled { opacity: 0.6; cursor: default; }
+.button-danger { background: var(--error); }
+.button-danger:hover:not(:disabled) { background: var(--error); opacity: 0.85; }
+.actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+.actions-cell-end { justify-content: flex-end; width: 100%; }
+.checkbox-list { max-height: 180px; overflow-y: auto; }
+.checkbox-list input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
+.advanced-link { background: none; border: none; padding: 0; color: var(--accent); font-size: 13px; cursor: pointer; text-decoration: none; }
+.advanced-link:hover { text-decoration: underline; }
+.advanced-modal-fields { margin-bottom: 20px; }
+.form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.form-row-label { flex: 0 0 auto; width: 110px; font-size: 12px; opacity: 0.7; }
+.form-row-value { flex: 1; min-width: 0; }
+.form-row-value input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
+.button-icon { display: inline-flex; align-items: center; justify-content: center; padding: 8px; }
+.update-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.update-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.update-card-info { display: flex; flex-direction: column; gap: 4px; }
+.warning-banner { background: var(--error); color: white; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; overflow-wrap: anywhere; }
+.app-suggestions-wrap { position: relative; }
+.app-suggestions { position: absolute; z-index: 20; left: 0; right: 0; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 40vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); }
+.app-suggestions-group { padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.app-suggestions-group-dev { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
+.app-suggestion { padding: 8px 12px; font-size: 14px; color: var(--text-primary); cursor: pointer; }
+.app-suggestion:hover, .app-suggestion-active { background: var(--selected-bg); }
+.app-suggestions-more { padding: 6px 12px; font-size: 12px; color: var(--text-secondary); }
+.dev-app-warning { background: var(--warning); color: #1d1d1f; padding: 8px 12px; border-radius: 6px; margin-top: 6px; font-size: 13px; }
+/* Informational, not a warning (issue #160) -- an app with its own read prompts is ordinary, it just means the operator has to stay on the page. */
+.app-prompts-notice { margin-top: 6px; font-size: 13px; color: var(--text-secondary); }
+.app-prompts-notice-list { margin: 4px 0 0; padding-left: 20px; }
+.prompt-banner { background: var(--warning); color: #1d1d1f; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
+.prompt-banner-text { font-weight: 600; margin-bottom: 4px; }
+.prompt-banner-hint { font-size: 13px; opacity: 0.8; margin-bottom: 10px; }
+/* A stall escalation is a guess, not a detected prompt (issue #160) -- give it full contrast and weight rather than the softened tone a confirmed match gets. Dismiss keeps visual precedence via styling (muting Yes/No/Submit into ghost buttons below) rather than flex order -- row-reverse plus the action row's own flex-wrap pushed Yes/No fully off the right edge of the viewport at mobile widths. */
+.prompt-banner-hint-stall { opacity: 1; font-weight: 600; }
+.prompt-banner-actions-stall > .button:not(:last-child), .prompt-banner-actions-stall .prompt-banner-freetext .button { background: transparent; color: #1d1d1f; border: 1px solid rgba(0, 0, 0, 0.35); }
+.prompt-banner-actions-stall > .button:not(:last-child):hover:not(:disabled), .prompt-banner-actions-stall .prompt-banner-freetext .button:hover:not(:disabled) { background: rgba(0, 0, 0, 0.08); }
+.prompt-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.prompt-banner-freetext { display: flex; gap: 8px; flex: 1; min-width: 200px; }
+.prompt-banner-freetext input { flex: 1; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.2); font: inherit; }
+.preview-pane { background: var(--bg-tertiary); color: var(--text-primary); padding: 10px; border-radius: 6px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); }
+.job-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.job-log {
+  flex: 1;
+  min-height: 200px;
+  margin: 0;
+  background: #0c0c0e;
+  color: #d4d4d4;
+  border-color: #000;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.job-header-actions { display: flex; align-items: center; gap: 10px; }
+.job-title { font-weight: 600; }
+.job-subtitle { color: var(--text-secondary); font-size: 12px; }
+.job-status-badge { padding: 4px 10px; border-radius: 12px; color: white; font-weight: 600; font-size: 12px; }
+.check-status { margin-left: 6px; font-weight: 700; }
+.check-ok { color: var(--success); }
+.check-missing { color: var(--error); }
+.check-checking { color: var(--text-secondary); font-weight: 400; }
+.inline-input { width: 100%; padding: 0.3rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; }
+.inline-input-port { width: auto; max-width: 5.5em; }
+.col-port { width: 5.5em; }
+.save-status { color: var(--text-secondary); font-size: 11px; margin-left: 6px; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 400; }
+.modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 20px; width: 420px; max-width: 90vw; }
+.col-expand { width: 1.5em; text-align: center; color: var(--text-secondary); }
+.expandable-row { cursor: pointer; }
+.host-detail { display: flex; flex-direction: column; gap: 16px; padding: 8px 0 4px; }
+.host-detail-section .data-table { margin-bottom: 0; }
+
+@media (max-width: 640px) {
+  .hamburger-btn {
+    display: block;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 300;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .view-toggle { display: none; }
+  .sidebar-backdrop.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 250;
+  }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 240px;
+    max-width: 80vw;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    z-index: 260;
+    background: var(--bg-secondary);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  .app-shell .content {
+    margin-top: 56px;
+  }
+  .content h2:first-of-type {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    z-index: 200;
+    margin: 0;
+    padding: 0 10px 0 56px;
+    font-size: 18px;
+    line-height: 56px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table thead {
+    display: none;
+  }
+  .data-table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+    width: 100%;
+  }
+  .data-table tr {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 6px 10px;
+  }
+  .data-table tbody td {
+    border-bottom: none;
+    padding: 4px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .data-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .data-table td.host-detail-cell {
+    display: block;
+  }
+  .data-table td.host-detail-cell::before {
+    content: none;
+  }
+  .app-suggestions { max-height: 50vh; }
+  .app-suggestion { padding: 12px; font-size: 15px; }
+  /* No mobile rules existed for the prompt banner at all (issue #160 follow-up) -- stack the action row instead of wrapping it, so Yes/No/Submit/Dismiss and the freetext input never get clipped or pushed off-screen at narrow widths. */
+  .prompt-banner-actions { flex-direction: column; align-items: stretch; }
+  .prompt-banner-freetext { min-width: 0; }
+}
+
+@media (min-width: 641px) {
+  .card-view .data-table thead {
+    display: none;
+  }
+  .card-view .data-table,
+  .card-view .data-table tr,
+  .card-view .data-table td {
+    display: block;
+    width: 100%;
+  }
+  .card-view .data-table tbody {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .card-view .data-table tr {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .card-view .data-table tbody td {
+    border-bottom: none;
+    padding: 4px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .card-view .data-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .card-view .data-table td.host-detail-cell {
+    display: block;
+  }
+  .card-view .data-table td.host-detail-cell::before {
+    content: none;
+  }
+  .card-view .data-table tr.host-detail-row {
+    grid-column: 1 / -1;
+  }
+  /* UsersSection/GroupsSection edit-row Groups/Members caption: at desktop
+     width the plain (non-card-view) .data-table's <thead> is still visible,
+     so this caption would just repeat the column header text right above
+     it. Hide it here; it stays visible at mobile width, where the <thead>
+     is hidden and it's the only label the checklist has. */
+  .checklist-caption {
+    display: none;
+  }
+}
+
+.gateway-cards { display: flex; flex-wrap: wrap; gap: 16px; }
+.gateway-card { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; min-width: 260px; max-width: 400px; flex: 1 1 260px; }
+.gateway-card h3 { margin: 0 0 4px; }
+.gateway-status { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.gateway-status .label { color: var(--text-secondary); margin-right: 6px; }
+.city-mismatch { background: var(--warning); color: #1d1d1f; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+.data-table td[data-label="vpn"] .field-input { width: auto; margin-bottom: 0; }
+
+.settings-field { border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+.settings-field label { display: block; font-weight: 600; margin-bottom: 6px; }
+.settings-help { margin: 8px 0; font-size: 0.9em; opacity: 0.8; }

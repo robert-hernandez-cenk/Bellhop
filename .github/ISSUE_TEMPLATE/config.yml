@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/robert-hernandez-cenk/Bellhop/security/advisories/new
+    about: >-
+      Please do not file security vulnerabilities as public issues. Report them
+      privately through GitHub instead; see SECURITY.md for details.

@@ -1,0 +1,75 @@
+name: Bug report
+description: Report something in the CLI, web UI, or MCP server that doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Redact before you submit.** This is a public issue tracker. Replace real
+        hostnames, IP addresses, domains, and credentials with example values, such as
+        `pve-node-a`, `192.0.2.10`, `example.com`, and `<api-token>`, everywhere in this
+        form, including pasted output.
+
+        If the problem is security-sensitive, don't file it here. See
+        `SECURITY.md` in the repository root for private reporting.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the toolkit is affected?
+      options:
+        - CLI
+        - Web UI
+        - MCP server
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command or page
+      description: The command you ran or the web UI page you were on.
+      placeholder: sync-caddy --apply, or the Dashboard
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe what you saw, and the steps that lead to it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Describe what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: >-
+        Relevant dry-run or error output. Redact real hostnames, IP addresses, domains,
+        and credentials first, replacing them with example values such as `pve-node-a`,
+        `192.0.2.10`, `example.com`, and `<api-token>`.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: The output of `node --version`.
+      placeholder: v24.0.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: The operating system you ran the toolkit on.
+      placeholder: Windows 11, macOS 15, Ubuntu 24.04
+    validations:
+      required: true

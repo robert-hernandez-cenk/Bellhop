@@ -1,0 +1,75 @@
+{
+  "name": "bellhop",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "A TypeScript CLI, run from your local machine over SSH, for maintenance and provisioning across a Proxmox cluster and its LXC containers and VMs.",
+  "author": {
+    "name": "Robert Hernandez",
+    "url": "https://github.com/robert-hernandez-cenk"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robert-hernandez-cenk/Bellhop.git"
+  },
+  "homepage": "https://github.com/robert-hernandez-cenk/Bellhop#readme",
+  "bugs": {
+    "url": "https://github.com/robert-hernandez-cenk/Bellhop/issues"
+  },
+  "keywords": [
+    "proxmox",
+    "homelab",
+    "ssh",
+    "lxc",
+    "caddy",
+    "authentik",
+    "cli",
+    "mcp"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "bellhop": "./bin/bellhop.js"
+  },
+  "workspaces": [
+    "web-client"
+  ],
+  "scripts": {
+    "bellhop": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "cross-env WEB_UI_DEV_USER=test-user node --import tsx --test \"test/**/*.test.ts\"",
+    "web:dev": "concurrently -n server,client -c blue,green \"cross-env PORT=3001 WEB_UI_DEV_USER=local-dev WEB_UI_DEV_GROUPS=bellhop-admins tsx watch src/web/server.ts\" \"npm run dev --prefix web-client\"",
+    "web:build": "npm run build --prefix web-client",
+    "web:start": "cross-env PORT=3001 tsx src/web/server.ts",
+    "mcp": "tsx src/mcp/server.ts",
+    "service:install": "tsx scripts/windows-service.ts install",
+    "service:uninstall": "tsx scripts/windows-service.ts uninstall"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.2",
+    "commander": "^12.1.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ssh2": "^1.15.0",
+    "ws": "^8.21.1",
+    "yaml": "^2.6.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.13.3",
+    "@types/ssh2": "^1.15.1",
+    "@types/supertest": "^7.2.1",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^10.0.4",
+    "cross-env": "^10.1.0",
+    "node-windows": "^1.0.0-beta.8",
+    "supertest": "^7.2.2",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

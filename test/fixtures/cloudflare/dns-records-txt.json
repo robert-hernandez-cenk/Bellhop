@@ -1,0 +1,62 @@
+{
+  "result": [
+    {
+      "id": "372e67954025e0ba6aaa6d586b9e0b59",
+      "name": "cf2024-1._domainkey.example.com",
+      "type": "TXT",
+      "content": "\"redacted-txt-value-1\"",
+      "proxiable": false,
+      "proxied": false,
+      "ttl": 1,
+      "settings": {},
+      "meta": {
+        "email_routing": true,
+        "read_only": true
+      },
+      "comment": null,
+      "tags": [],
+      "created_on": "2025-04-09T14:49:47.081734Z",
+      "modified_on": "2025-04-09T14:49:47.081734Z"
+    },
+    {
+      "id": "372e67954025e0ba6aaa6d586b9e0b60",
+      "name": "_dmarc.example.com",
+      "type": "TXT",
+      "content": "\"redacted-txt-value-2\"",
+      "proxiable": false,
+      "proxied": false,
+      "ttl": 1,
+      "settings": {},
+      "meta": {},
+      "comment": null,
+      "tags": [],
+      "created_on": "2026-09-06T12:42:14.681375Z",
+      "modified_on": "2026-09-06T12:42:14.681375Z"
+    },
+    {
+      "id": "372e67954025e0ba6aaa6d586b9e0b61",
+      "name": "example.com",
+      "type": "TXT",
+      "content": "\"redacted-txt-value-3\"",
+      "proxiable": false,
+      "proxied": false,
+      "ttl": 1,
+      "settings": {},
+      "meta": {},
+      "comment": null,
+      "tags": [],
+      "created_on": "2025-04-09T14:49:47.071803Z",
+      "modified_on": "2025-04-09T14:49:47.071803Z"
+    }
+  ],
+  "success": true,
+  "errors": [],
+  "messages": [],
+  "result_info": {
+    "page": 1,
+    "per_page": 100,
+    "count": 3,
+    "total_count": 3,
+    "total_pages": 1
+  }
+}

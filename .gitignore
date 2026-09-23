@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.superpowers/
+data/
+daemon/
+*.db-wal
+*.db-shm
+inventory/bellhop.db
