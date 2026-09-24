@@ -849,7 +849,7 @@ test('POST /api/provisioning/delete-guest/apply removes a gated guest\'s Authent
         host: 'pve1',
         ip: '192.168.1.20',
         subdomains: ['sonarr'],
-        authGroup: 'homelab-users',
+        authGroup: 'bellhop-users',
       },
     ],
   };
@@ -893,7 +893,7 @@ test('POST /api/provisioning/delete-guest/apply succeeds for a gated guest when 
         host: 'pve1',
         ip: '192.168.1.20',
         subdomains: ['sonarr'],
-        authGroup: 'homelab-users',
+        authGroup: 'bellhop-users',
       },
     ],
   };

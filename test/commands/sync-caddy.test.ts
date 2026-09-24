@@ -126,7 +126,7 @@ test('buildCaddyBlock adds a forward_auth directive and outpost passthrough when
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const block = buildCaddyBlock(inv);
@@ -149,7 +149,7 @@ test('buildCaddyBlock wraps forward_auth in a not-path matcher when unauthentica
         host: 'pve1',
         ip: '192.168.1.21',
         subdomains: ['whisparr'],
-        authGroup: 'homelab-users',
+        authGroup: 'bellhop-users',
         unauthenticatedPaths: ['/api/*'],
       },
     ],
@@ -174,7 +174,7 @@ test('buildCaddyBlock joins multiple unauthenticatedPaths into one space-separat
         host: 'pve1',
         ip: '192.168.1.21',
         subdomains: ['whisparr'],
-        authGroup: 'homelab-users',
+        authGroup: 'bellhop-users',
         unauthenticatedPaths: ['/api/*', '/system/*'],
       },
     ],
@@ -189,7 +189,7 @@ test('buildCaddyBlock leaves forward_auth unmatched when unauthenticatedPaths is
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const block = buildCaddyBlock(inv);
@@ -224,7 +224,7 @@ test('buildCaddyBlock skips an entry with caddyManual set, even though it has au
         ip: '192.168.1.2',
         subdomains: ['caddy'],
         caddyManual: true,
-        authGroup: 'homelab-users',
+        authGroup: 'bellhop-users',
         unauthenticatedPaths: ['/api/*'],
       },
     ],
@@ -240,7 +240,7 @@ test('buildCaddyBlock throws when an authGroup entry exists but no authentik:tru
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
     guests: [
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   assert.throws(() => buildCaddyBlock(inv), /'sonarr' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set/);
@@ -257,7 +257,7 @@ test('sync-caddy emits the configured Authentik outpost port', async () => {
         { name: 'auth-lxc-host', ssh_target: 'pve2.local', ssh_user: 'root', authentik: true, ip: '192.168.1.9' },
       ],
       guests: [
-        { name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', port: 32400, subdomains: ['plex'], authGroup: 'homelab-users' },
+        { name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', port: 32400, subdomains: ['plex'], authGroup: 'bellhop-users' },
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));

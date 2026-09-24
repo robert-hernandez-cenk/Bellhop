@@ -100,7 +100,7 @@ test('validateInventory flags an authGroup entry when no entry has authentik: tr
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const errors = validateInventory(inv);
@@ -113,7 +113,7 @@ test('validateInventory flags an authGroup entry when the authentik:true entry h
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 111, host: 'pve1', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const errors = validateInventory(inv);
@@ -128,7 +128,7 @@ test('validateInventory allows authGroup when an authentik:true entry exists', (
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 111, host: 'pve1', ip: '192.168.1.11', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   assert.deepEqual(validateInventory(inv), []);
@@ -435,7 +435,7 @@ test('saveInventory/loadInventory round-trips authGroup and authentik on a host 
   const updated: Inventory = {
     ...inv,
     hosts: inv.hosts.map((h) => (h.name === 'pve1' ? { ...h, authentik: true, ip: '192.168.1.5' } : h)),
-    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, authGroup: 'homelab-users' } : g)),
+    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, authGroup: 'bellhop-users' } : g)),
   };
   saveInventory(dest, updated);
 
@@ -446,7 +446,7 @@ test('saveInventory/loadInventory round-trips authGroup and authentik on a host 
     undefined,
     'a host with no authentik given must stay undefined, not false'
   );
-  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.authGroup, 'homelab-users');
+  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.authGroup, 'bellhop-users');
 });
 
 test('saveInventory/loadInventory round-trips unauthenticatedPaths on a host, a guest, and an external site', () => {
@@ -985,12 +985,12 @@ test('saveInventory round-trips authGroup', () => {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' }],
     guests: [
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
       { name: 'plex', type: 'lxc', vmid: 121, host: 'pve1', ip: '192.168.1.21', subdomains: ['plex'] },
     ],
   });
   const loaded = loadInventory(dbPath);
-  assert.equal(loaded.guests.find((g) => g.name === 'sonarr')!.authGroup, 'homelab-users');
+  assert.equal(loaded.guests.find((g) => g.name === 'sonarr')!.authGroup, 'bellhop-users');
   assert.equal(loaded.guests.find((g) => g.name === 'plex')!.authGroup, undefined);
 });
 
@@ -998,7 +998,7 @@ test('parseAuthGroup treats null and empty string as ungated and trims a name', 
   assert.equal(parseAuthGroup(null), undefined);
   assert.equal(parseAuthGroup(''), undefined);
   assert.equal(parseAuthGroup('   '), undefined);
-  assert.equal(parseAuthGroup('  homelab-users  '), 'homelab-users');
+  assert.equal(parseAuthGroup('  bellhop-users  '), 'bellhop-users');
   assert.throws(() => parseAuthGroup(42), /authGroup/);
 });
 
@@ -1006,7 +1006,7 @@ test('validateInventory rejects a gated entry when no entry is flagged authentik
   const errors = validateInventory({
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
-    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' }],
+    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' }],
   });
   assert.equal(errors.length, 1);
   assert.match(errors[0], /'sonarr' has an 'authGroup' set but no entry has 'authentik: true'/);

@@ -71,7 +71,7 @@ test('syncCaddyLive also reconciles Authentik as a third step', async () => {
     ],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const ssh = new FakeSSHClient((_t, _u, c) => {
@@ -113,7 +113,7 @@ test('syncCaddyLive runs sync-authentik when the Authentik API is configured', a
 test('syncCaddyLive returns the slug conflicts sync-authentik reported', async () => {
   const gated: Inventory = {
     ...inventory,
-    guests: [{ ...inventory.guests[0], authGroup: 'homelab-users' }],
+    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
   };
   // An Application already holds slug 'plex' backed by a provider that is
@@ -136,7 +136,7 @@ test('syncCaddyLive returns no conflicts when Authentik is not configured', asyn
 test('syncCaddyLive logWarns each conflict, since a Dashboard-triggered call runs outside any job log', async () => {
   const gated: Inventory = {
     ...inventory,
-    guests: [{ ...inventory.guests[0], authGroup: 'homelab-users' }],
+    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
   };
   const authentik = new FakeAuthentikClient({

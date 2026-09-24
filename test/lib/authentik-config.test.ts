@@ -57,11 +57,11 @@ test('authentikConfigured treats an empty string as unset', () => {
   assert.equal(authentikConfigured({ AUTHENTIK_API_URL: '', AUTHENTIK_API_TOKEN: 'secret' }), false);
 });
 
-test('authentikConfig defaults groupLadder to the four-rung homelab ladder', () => {
+test('authentikConfig defaults groupLadder to the four-rung bellhop ladder', () => {
   assert.deepEqual(authentikConfig({}).groupLadder, [
-    'homelab-app-users-open',
-    'homelab-app-users',
-    'homelab-users',
+    'bellhop-app-users-open',
+    'bellhop-app-users',
+    'bellhop-users',
     'authentik Admins',
   ]);
 });
