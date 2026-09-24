@@ -7,7 +7,7 @@ import { EditableUnauthenticatedPaths } from './EditableUnauthenticatedPaths';
 import { EditableVpn } from './EditableVpn';
 import { ExternalLink } from './ExternalLink';
 import type { GuestEntry, HostEntry, CustomScripts } from '../api/types';
-import { communityScriptsUrl } from '../lib/guest-display';
+import { communityScriptsUrl, communityScriptsLinkLabel } from '../lib/guest-display';
 
 interface Props {
   guest: GuestEntry;
@@ -20,8 +20,7 @@ interface Props {
 
 export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClose, onSaved }: Props) {
   const appUrl = communityScriptsUrl(guest, customScripts);
-  const appLinkLabel =
-    guest.appSource === 'custom' && customScripts ? `Open ${guest.app} in ${customScripts.repo}` : `Open ${guest.app} on community-scripts`;
+  const appLinkLabel = communityScriptsLinkLabel(guest, customScripts);
 
   return (
     <div className="modal-overlay" onClick={onClose}>

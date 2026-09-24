@@ -56,6 +56,18 @@ export function communityScriptsUrl(guest: GuestEntry, customScripts?: CustomScr
   return `https://community-scripts.org/scripts/${guest.app}`;
 }
 
+// The label for communityScriptsUrl's link -- pulled out so
+// AdvancedGuestModal.tsx and UpdatePage.tsx don't each hand-roll the same
+// appSource === 'custom' ternary (review fix round 1, Unit E). Callers
+// still guard rendering on communityScriptsUrl's own return value (this
+// returns a label even when that URL is undefined, e.g. a custom guest with
+// customScripts null).
+export function communityScriptsLinkLabel(guest: GuestEntry, customScripts?: CustomScripts | null): string {
+  return guest.appSource === 'custom' && customScripts
+    ? `Open ${guest.app} in ${customScripts.repo}`
+    : `Open ${guest.app} on community-scripts`;
+}
+
 // Direct ip:port link, bypassing Caddy/subdomains entirely -- https only for
 // the two ports that are conventionally TLS (443, 8443), http otherwise.
 export function ipUrl(guest: GuestEntry): string | undefined {

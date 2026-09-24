@@ -5,7 +5,7 @@ import type { HostEntry, GuestEntry, GuestStatusResponse, CustomScripts } from '
 import { ExternalLink } from '../components/ExternalLink';
 import { PageDescription } from '../components/PageDescription';
 import { IconPackage, IconUpdate } from '../components/icons';
-import { caddyUrl, communityScriptsUrl, sortGuestsForDisplay } from '../lib/guest-display';
+import { caddyUrl, communityScriptsUrl, communityScriptsLinkLabel, sortGuestsForDisplay } from '../lib/guest-display';
 
 export function UpdatePage() {
   const navigate = useNavigate();
@@ -123,8 +123,7 @@ export function UpdatePage() {
         {filtered.map((g) => {
           const service = caddyUrl(g, domain);
           const app = communityScriptsUrl(g, customScripts);
-          const appLinkLabel =
-            g.appSource === 'custom' && customScripts ? `Open ${g.app} in ${customScripts.repo}` : `Open ${g.app} on community-scripts`;
+          const appLinkLabel = communityScriptsLinkLabel(g, customScripts);
           const stopped = statuses[g.name] !== 'running';
           const busy = triggering === g.name;
           return (
