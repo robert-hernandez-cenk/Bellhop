@@ -12,9 +12,15 @@ import {
   parsePort,
   parseAuthGroup,
   parseUnauthenticatedPaths,
+  parseAuthMode,
+  parseOidcRedirectUris,
+  effectiveAuth,
+  oidcConfigErrors,
   sortInventoryForFile,
   refreshInventory,
   HostEntrySchema,
+  GuestEntrySchema,
+  ExternalSiteSchema,
   SettingsSchema,
   SETTINGS_KEYS,
   findCaddyEntry,
@@ -1030,4 +1036,276 @@ test('validateInventory rejects a gated entry when no entry is flagged authentik
   });
   assert.equal(errors.length, 1);
   assert.match(errors[0], /'sonarr' has an 'authGroup' set but no entry has 'authentik: true'/);
+});
+
+// --- Native OIDC gating (issue #1, unit U2): authMode / oidcRedirectUris ---
+
+test('HostEntrySchema/GuestEntrySchema/ExternalSiteSchema accept only "forward" or "oidc" for authMode', () => {
+  const hostBase = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  assert.ok(HostEntrySchema.safeParse({ ...hostBase, authMode: 'forward' }).success);
+  assert.ok(HostEntrySchema.safeParse({ ...hostBase, authMode: 'oidc' }).success);
+  assert.ok(!HostEntrySchema.safeParse({ ...hostBase, authMode: 'basic' }).success);
+  assert.ok(HostEntrySchema.safeParse(hostBase).success, 'authMode stays optional');
+
+  const guestBase = { name: 'sonarr', type: 'lxc' as const, vmid: 120, host: 'pve1' };
+  assert.ok(GuestEntrySchema.safeParse({ ...guestBase, authMode: 'forward' }).success);
+  assert.ok(GuestEntrySchema.safeParse({ ...guestBase, authMode: 'oidc' }).success);
+  assert.ok(!GuestEntrySchema.safeParse({ ...guestBase, authMode: 'basic' }).success);
+
+  const siteBase = { name: 'nas', ip: '192.168.1.5', subdomains: ['nas'] };
+  assert.ok(ExternalSiteSchema.safeParse({ ...siteBase, authMode: 'forward' }).success);
+  assert.ok(ExternalSiteSchema.safeParse({ ...siteBase, authMode: 'oidc' }).success);
+  assert.ok(!ExternalSiteSchema.safeParse({ ...siteBase, authMode: 'basic' }).success);
+});
+
+test('HostEntrySchema/GuestEntrySchema/ExternalSiteSchema accept only absolute http(s) oidcRedirectUris', () => {
+  const hostBase = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  assert.ok(HostEntrySchema.safeParse({ ...hostBase, oidcRedirectUris: ['https://pve1.example.com/callback'] }).success);
+  assert.ok(HostEntrySchema.safeParse({ ...hostBase, oidcRedirectUris: ['http://pve1.example.com/callback'] }).success);
+  assert.ok(!HostEntrySchema.safeParse({ ...hostBase, oidcRedirectUris: ['ftp://pve1.example.com/callback'] }).success);
+  assert.ok(!HostEntrySchema.safeParse({ ...hostBase, oidcRedirectUris: ['/relative/callback'] }).success);
+  assert.ok(!HostEntrySchema.safeParse({ ...hostBase, oidcRedirectUris: ['not-a-url'] }).success);
+
+  const guestBase = { name: 'sonarr', type: 'lxc' as const, vmid: 120, host: 'pve1' };
+  assert.ok(GuestEntrySchema.safeParse({ ...guestBase, oidcRedirectUris: ['https://sonarr.example.com/callback'] }).success);
+  assert.ok(!GuestEntrySchema.safeParse({ ...guestBase, oidcRedirectUris: ['not-a-url'] }).success);
+
+  const siteBase = { name: 'nas', ip: '192.168.1.5', subdomains: ['nas'] };
+  assert.ok(ExternalSiteSchema.safeParse({ ...siteBase, oidcRedirectUris: ['https://nas.example.com/callback'] }).success);
+  assert.ok(!ExternalSiteSchema.safeParse({ ...siteBase, oidcRedirectUris: ['not-a-url'] }).success);
+});
+
+test('saveInventory/loadInventory round-trip authMode and oidcRedirectUris on a host, a guest, and an external site', () => {
+  const dest = tempInventoryDb();
+  const inv = loadInventory(dest);
+  const updated: Inventory = {
+    ...inv,
+    hosts: inv.hosts.map((h) =>
+      h.name === 'pve1'
+        ? { ...h, authGroup: 'bellhop-users', authMode: 'oidc' as const, oidcRedirectUris: ['https://pve1.example.com/callback'] }
+        : h
+    ),
+    guests: inv.guests.map((g) =>
+      g.name === 'proxy'
+        ? {
+            ...g,
+            authGroup: 'bellhop-users',
+            authMode: 'oidc' as const,
+            oidcRedirectUris: ['https://proxy.example.com/callback', 'https://proxy.example.com/callback2'],
+          }
+        : g
+    ),
+    externalSites: [
+      {
+        name: 'nas',
+        ip: '192.168.1.250',
+        subdomains: ['nas'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc' as const,
+        oidcRedirectUris: ['https://nas.example.com/callback'],
+      },
+    ],
+  };
+  saveInventory(dest, updated);
+
+  const reloaded = loadInventory(dest);
+  const pve1 = reloaded.hosts.find((h) => h.name === 'pve1')!;
+  assert.equal(pve1.authMode, 'oidc');
+  assert.deepEqual(pve1.oidcRedirectUris, ['https://pve1.example.com/callback']);
+
+  const proxy = reloaded.guests.find((g) => g.name === 'proxy')!;
+  assert.equal(proxy.authMode, 'oidc');
+  assert.deepEqual(proxy.oidcRedirectUris, ['https://proxy.example.com/callback', 'https://proxy.example.com/callback2']);
+
+  const nas = reloaded.externalSites?.find((s) => s.name === 'nas')!;
+  assert.equal(nas.authMode, 'oidc');
+  assert.deepEqual(nas.oidcRedirectUris, ['https://nas.example.com/callback']);
+
+  const pve2 = reloaded.hosts.find((h) => h.name === 'pve2')!;
+  assert.equal(pve2.authMode, undefined, 'a host with no authMode given must stay undefined, not "forward"');
+  assert.equal(pve2.oidcRedirectUris, undefined, 'a host with no oidcRedirectUris given must stay undefined, not []');
+});
+
+test('opening a pre-existing database without the auth_mode/oidc_redirect_uris_json columns migrates them in place', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  const legacyDb = new Database(dest);
+  legacyDb.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE hosts (
+      name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
+      role TEXT, caddy INTEGER NOT NULL DEFAULT 0,
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
+    );
+    CREATE TABLE guests (
+      name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
+      host TEXT NOT NULL REFERENCES hosts(name),
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      UNIQUE (host, vmid)
+    );
+    CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
+    CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+  `);
+  legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
+  legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
+  legacyDb.close();
+
+  const inv = loadInventory(dest);
+  assert.equal(inv.hosts[0].authMode, undefined, 'a pre-migration row has no auth_mode value');
+  assert.equal(inv.hosts[0].oidcRedirectUris, undefined, 'a pre-migration row has no oidc_redirect_uris_json value');
+
+  const updated: Inventory = {
+    ...inv,
+    hosts: inv.hosts.map((h) => ({
+      ...h,
+      authentik: true,
+      ip: '192.168.1.5',
+      authGroup: 'bellhop-users',
+      authMode: 'oidc' as const,
+      oidcRedirectUris: ['https://pve1.example.com/callback'],
+    })),
+  };
+  saveInventory(dest, updated);
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.hosts[0].authMode, 'oidc', 'the migrated auth_mode column must actually be writable/readable');
+  assert.deepEqual(
+    reloaded.hosts[0].oidcRedirectUris,
+    ['https://pve1.example.com/callback'],
+    'the migrated oidc_redirect_uris_json column must actually be writable/readable'
+  );
+});
+
+test('effectiveAuth returns ungated with no authGroup', () => {
+  assert.equal(effectiveAuth({}), 'ungated');
+  assert.equal(effectiveAuth({ authMode: 'oidc' }), 'ungated');
+});
+
+test('effectiveAuth returns forward with authGroup and authMode unset or forward', () => {
+  assert.equal(effectiveAuth({ authGroup: 'bellhop-users' }), 'forward');
+  assert.equal(effectiveAuth({ authGroup: 'bellhop-users', authMode: 'forward' }), 'forward');
+});
+
+test('effectiveAuth returns oidc with authGroup and authMode: oidc', () => {
+  assert.equal(effectiveAuth({ authGroup: 'bellhop-users', authMode: 'oidc' }), 'oidc');
+});
+
+test('parseAuthMode treats null, undefined, and empty string as unset', () => {
+  assert.equal(parseAuthMode(null), undefined);
+  assert.equal(parseAuthMode(undefined), undefined);
+  assert.equal(parseAuthMode(''), undefined);
+});
+
+test('parseAuthMode accepts forward and oidc verbatim', () => {
+  assert.equal(parseAuthMode('forward'), 'forward');
+  assert.equal(parseAuthMode('oidc'), 'oidc');
+});
+
+test('parseAuthMode throws on an invalid value, naming the field', () => {
+  assert.throws(() => parseAuthMode('basic'), /authMode/);
+});
+
+test('parseOidcRedirectUris accepts a semicolon-joined string, dedupes, and keeps order', () => {
+  assert.deepEqual(
+    parseOidcRedirectUris('https://a.example.com/cb ; https://b.example.com/cb; https://a.example.com/cb'),
+    ['https://a.example.com/cb', 'https://b.example.com/cb']
+  );
+});
+
+test('parseOidcRedirectUris accepts an array, dedupes, and keeps order', () => {
+  assert.deepEqual(
+    parseOidcRedirectUris(['https://a.example.com/cb', 'https://b.example.com/cb', 'https://a.example.com/cb']),
+    ['https://a.example.com/cb', 'https://b.example.com/cb']
+  );
+});
+
+test('parseOidcRedirectUris returns undefined for empty input', () => {
+  assert.equal(parseOidcRedirectUris(''), undefined);
+  assert.equal(parseOidcRedirectUris('   '), undefined);
+  assert.equal(parseOidcRedirectUris(undefined), undefined);
+  assert.equal(parseOidcRedirectUris([]), undefined);
+});
+
+test('parseOidcRedirectUris throws on a non-http(s) URL, naming the URL', () => {
+  assert.throws(() => parseOidcRedirectUris('ftp://a.example.com/cb'), /ftp:\/\/a\.example\.com\/cb/);
+  assert.throws(() => parseOidcRedirectUris('/relative/callback'), /\/relative\/callback/);
+});
+
+test('oidcConfigErrors requires at least one redirect URI when effectiveAuth is oidc and the entry has subdomains', () => {
+  const errors = oidcConfigErrors({ authGroup: 'bellhop-users', authMode: 'oidc', subdomains: ['sonarr'] });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /oidcRedirectUris/);
+});
+
+test('oidcConfigErrors is fine when redirect URIs are present', () => {
+  assert.deepEqual(
+    oidcConfigErrors({
+      authGroup: 'bellhop-users',
+      authMode: 'oidc',
+      subdomains: ['sonarr'],
+      oidcRedirectUris: ['https://sonarr.example.com/cb'],
+    }),
+    []
+  );
+});
+
+test('oidcConfigErrors is fine for a forward-effective entry with no redirect URIs', () => {
+  assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-users', subdomains: ['sonarr'] }), []);
+});
+
+test('oidcConfigErrors is fine for an oidc-effective entry with no subdomains', () => {
+  assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-users', authMode: 'oidc' }), []);
+});
+
+test('validateInventory allows an OIDC-gated entry with no authentik:true entry anywhere', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      {
+        name: 'sonarr',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.168.1.20',
+        subdomains: ['sonarr'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+      },
+    ],
+  };
+  assert.deepEqual(validateInventory(inv), []);
+});
+
+test('validateInventory still requires an authentik:true entry when a forward-gated entry coexists with an OIDC one', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      {
+        name: 'sonarr',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.168.1.20',
+        subdomains: ['sonarr'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+      },
+      {
+        name: 'radarr',
+        type: 'lxc',
+        vmid: 121,
+        host: 'pve1',
+        ip: '192.168.1.21',
+        subdomains: ['radarr'],
+        authGroup: 'bellhop-users',
+      },
+    ],
+  };
+  const errors = validateInventory(inv);
+  assert.ok(errors.some((e) => e.includes("'radarr' has an 'authGroup' set but no entry has 'authentik: true'")));
+  assert.ok(!errors.some((e) => e.includes("'sonarr'")), 'the OIDC-gated entry must not appear in the forward-auth error');
 });
