@@ -19,6 +19,7 @@ import { runSetConfig } from './commands/maintenance/set-config.ts';
 import { runSyncCaddy } from './commands/networking/sync-caddy.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
 import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
+import { runOidcCredentials, formatOidcCredentials } from './commands/networking/oidc-credentials.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
@@ -306,6 +307,18 @@ program
       if (syncAuthentikFailed(result)) {
         process.exitCode = 1;
       }
+    })
+  );
+
+program
+  .command('oidc-credentials <entry>')
+  .description("Print an OIDC-gated entry's issuer, client ID, and client secret, read live from Authentik")
+  .action(
+    action(async (entry: string) => {
+      const inventory = loadInventory(inventoryPath());
+      const authentik = buildAuthentikClient();
+      const result = await runOidcCredentials(entry, { authentik, inventory });
+      console.log(formatOidcCredentials(result));
     })
   );
 

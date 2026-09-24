@@ -1,8 +1,50 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HangingSSHClient } from '../support/hanging-ssh-client.ts';
-import { loadInventory } from '../../src/lib/inventory.ts';
+import { loadInventory, type Inventory } from '../../src/lib/inventory.ts';
+import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { setupMcp as setup, waitForFinished } from '../support/mcp-harness.ts';
+
+// Mirrors sync-authentik.test.ts's/oidc-credentials.test.ts's own OIDC
+// fixture shape -- an OIDC-gated 'media' guest and a matching owned OpenID
+// client for issue #1's get_oidc_client tool.
+function oidcInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      {
+        name: 'media',
+        type: 'lxc',
+        vmid: 130,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        subdomains: ['media'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://media.example.com/oauth/callback'],
+      },
+    ],
+  };
+}
+
+function ownedAuthentik(): FakeAuthentikClient {
+  return new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50', metaPublisher: 'bellhop' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'],
+        redirectUris: [{ matchingMode: 'strict', url: 'https://media.example.com/oauth/callback' }],
+      },
+    ],
+  });
+}
 
 test('tool list covers the registry, read-only, and job tools, and nothing excluded', async () => {
   const { client } = await setup();
@@ -160,4 +202,26 @@ test('operation tools point at wait_for_job, and prompt-watching ones mention qu
   assert.doesNotMatch(createLxc.description!, /installer question/);
   assert.match(installApp.description!, /installer question/);
   assert.match(installApp.description!, /elicitation/);
+});
+
+test('get_oidc_client returns issuer, client ID, and secretAvailableFrom, and never the secret', async () => {
+  const { call } = await setup({ inventory: oidcInventory(), authentik: ownedAuthentik() });
+  const result = JSON.parse((await call('get_oidc_client', { entry: 'media' })).content[0].text);
+  assert.deepEqual(result, {
+    issuer: 'https://auth.example.com/application/o/media/',
+    clientId: 'client-50',
+    secretAvailableFrom: 'the Dashboard (admin) or `bellhop oidc-credentials media`',
+  });
+});
+
+test('get_oidc_client\'s serialized result never contains the fake secret string, and neither does get_inventory or edit_guest', async () => {
+  const { call } = await setup({ inventory: oidcInventory(), authentik: ownedAuthentik() });
+  const oidcResult = await call('get_oidc_client', { entry: 'media' });
+  assert.ok(!oidcResult.content.map((c) => c.text).join('\n').includes('secret-50'));
+
+  const inventoryResult = await call('get_inventory');
+  assert.ok(!inventoryResult.content.map((c) => c.text).join('\n').includes('secret-50'));
+
+  const editResult = await call('edit_guest', { name: 'media', port: 8080 });
+  assert.ok(!editResult.content.map((c) => c.text).join('\n').includes('secret-50'));
 });

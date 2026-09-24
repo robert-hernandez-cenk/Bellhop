@@ -12,6 +12,7 @@ import { JobRunner } from '../../src/web/jobs/job-runner.ts';
 import { FakeSSHClient, defaultResponder } from './fake-ssh-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
+import type { AuthentikClient } from '../../src/lib/authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import type { SSHClient } from '../../src/lib/ssh-client.ts';
 
@@ -45,11 +46,17 @@ export interface McpHarnessOptions {
   // server withdraws the request.
   elicit?: (request: ElicitRequest, signal: AbortSignal) => Promise<ElicitResult>;
   serverOptions?: Parameters<typeof buildMcpServer>[1];
+  // Test-only overrides for OIDC-credential-reading tests (issue #1, unit
+  // U7): everything else in this repo's MCP suite is happy with the fixed
+  // MCP_TEST_INVENTORY and an UnconfiguredAuthentikClient, so both stay
+  // optional and default to the existing behavior.
+  inventory?: Inventory;
+  authentik?: AuthentikClient;
 }
 
 export async function setupMcp(opts: McpHarnessOptions = {}) {
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'mcp-')), 'bellhop.db');
-  saveInventory(inventoryPath, MCP_TEST_INVENTORY);
+  saveInventory(inventoryPath, opts.inventory ?? MCP_TEST_INVENTORY);
   const ssh = new FakeSSHClient(defaultResponder);
   const jobStore = new JobStore(':memory:');
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'mcp-log-')));
@@ -59,7 +66,7 @@ export async function setupMcp(opts: McpHarnessOptions = {}) {
       ssh,
       inventory: loadInventory(inventoryPath),
       inventoryPath,
-      authentik: new UnconfiguredAuthentikClient(),
+      authentik: opts.authentik ?? new UnconfiguredAuthentikClient(),
       cloudflare: new UnconfiguredCloudflareClient(),
       fetchImpl: (async () => new Response(null, { status: 404 })) as unknown as typeof fetch,
       jobStore,

@@ -22,6 +22,7 @@ import { permissionsRoutes } from './routes/permissions.ts';
 import { settingsRoutes } from './routes/settings.ts';
 import { impersonationRoutes } from './routes/impersonation.ts';
 import { networkingRoutes } from './routes/networking.ts';
+import { oidcRoutes } from './routes/oidc.ts';
 
 export interface AppDeps {
   inventory: Inventory;
@@ -91,5 +92,6 @@ export function buildApp(deps: AppDeps): express.Express {
   app.use('/api/settings', settingsRoutes(deps.inventory, deps.inventoryPath));
   app.use('/api/impersonate', impersonationRoutes(deps.authentik, impersonationStore));
   app.use('/api/networking', networkingRoutes(deps.inventory, deps.inventoryPath));
+  app.use('/api/oidc', oidcRoutes(deps.inventory, deps.inventoryPath, deps.authentik, deps.jobRunner));
   return app;
 }
