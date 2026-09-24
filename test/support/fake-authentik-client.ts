@@ -9,6 +9,7 @@ import type {
   AuthentikUser,
   CreateUserInput,
   OAuth2ProviderSettings,
+  ProxyProviderMode,
   UpdateUserInput,
 } from '../../src/lib/authentik-client.ts';
 
@@ -37,7 +38,9 @@ interface FakeOAuth2ProviderRecord extends AuthentikOAuth2Provider {
 export interface FakeAuthentikSeed {
   users?: AuthentikUser[];
   groups?: AuthentikGroup[];
-  proxyProviders?: AuthentikProxyProvider[];
+  // `mode` defaults to 'forward_single', the only mode sync-authentik itself
+  // creates, so a seed only has to name it to model a hand-made provider.
+  proxyProviders?: Array<Omit<AuthentikProxyProvider, 'mode'> & { mode?: ProxyProviderMode }>;
   applications?: AuthentikApplication[];
   outpost?: AuthentikOutpost;
   oauth2Providers?: Array<AuthentikOAuth2Provider & { clientId?: string; clientSecret?: string }>;
@@ -68,7 +71,9 @@ export class FakeAuthentikClient implements AuthentikClient {
   constructor(seed: FakeAuthentikSeed = {}) {
     this.users = new Map((seed.users ?? []).map((u) => [u.id, u]));
     this.groups = new Map((seed.groups ?? []).map((g) => [g.id, g]));
-    this.proxyProviders = new Map((seed.proxyProviders ?? []).map((p) => [p.id, p]));
+    this.proxyProviders = new Map(
+      (seed.proxyProviders ?? []).map((p) => [p.id, { ...p, mode: p.mode ?? 'forward_single' }])
+    );
     this.applications = new Map((seed.applications ?? []).map((a) => [a.id, a]));
     this.outpost = seed.outpost ?? { id: 'outpost-1', name: 'authentik Embedded Outpost', providerIds: [] };
     this.oauth2Providers = new Map(
@@ -251,7 +256,12 @@ export class FakeAuthentikClient implements AuthentikClient {
     invalidationFlowId: string;
   }): Promise<AuthentikProxyProvider> {
     this.requireUniqueProviderName(input.name);
-    const provider: AuthentikProxyProvider = { id: this.newId(), name: input.name, externalHost: input.externalHost };
+    const provider: AuthentikProxyProvider = {
+      id: this.newId(),
+      name: input.name,
+      externalHost: input.externalHost,
+      mode: 'forward_single',
+    };
     this.proxyProviders.set(provider.id, provider);
     this.calls.push(`createProxyProvider ${input.name}`);
     return provider;
@@ -263,11 +273,36 @@ export class FakeAuthentikClient implements AuthentikClient {
     this.calls.push(`deleteProxyProvider ${id}`);
   }
 
-  async renameProxyProvider(id: string, name: string): Promise<void> {
-    const existing = this.requireProxyProvider(id);
-    this.requireUniqueProviderName(name, id);
-    this.proxyProviders.set(id, { ...existing, name });
-    this.calls.push(`renameProxyProvider ${id}`);
+  // Every renameProxyProvider PATCH body as the real client would send it
+  // (name, mode, internal_host), for tests that pin what a rename carries.
+  readonly proxyProviderRenames: Array<{ id: string; name: string; mode: string; internalHost?: string }> = [];
+
+  // Mirrors Authentik 2026.8's own validation of the PATCH the real client
+  // sends: without `mode` (and, in 'proxy' mode, `internal_host`) it is a
+  // 400, verified live. The mode sent is applied, as Authentik applies it --
+  // so a caller that sent the wrong mode would visibly convert the provider.
+  async renameProxyProvider(provider: AuthentikProxyProvider, name: string): Promise<void> {
+    const existing = this.requireProxyProvider(provider.id);
+    if (!provider.mode || (provider.mode === 'proxy' && !provider.internalHost)) {
+      throw new Error(
+        `Authentik API PATCH /api/v3/providers/proxy/${provider.id}/ failed: 400 ` +
+          '{"internal_host":["Internal host cannot be empty when forward auth is disabled."]}'
+      );
+    }
+    this.requireUniqueProviderName(name, provider.id);
+    this.proxyProviders.set(provider.id, {
+      ...existing,
+      name,
+      mode: provider.mode,
+      ...(provider.mode === 'proxy' ? { internalHost: provider.internalHost } : {}),
+    });
+    this.proxyProviderRenames.push({
+      id: provider.id,
+      name,
+      mode: provider.mode,
+      ...(provider.mode === 'proxy' ? { internalHost: provider.internalHost } : {}),
+    });
+    this.calls.push(`renameProxyProvider ${provider.id}`);
   }
 
   async listApplications(): Promise<AuthentikApplication[]> {

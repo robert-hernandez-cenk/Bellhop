@@ -27,10 +27,19 @@ export interface UpdateUserInput {
   groupIds?: string[];
 }
 
+// Authentik's own Proxy Provider `mode` values. sync-authentik only ever
+// creates 'forward_single', but an owned provider may be a hand-made one in
+// any mode (the #154 rule owns a proxy-backed Application by slug alone).
+export type ProxyProviderMode = 'proxy' | 'forward_single' | 'forward_domain';
+
 export interface AuthentikProxyProvider {
   id: string;
   name: string;
   externalHost: string;
+  mode: ProxyProviderMode;
+  // Only meaningful (and required by Authentik) in 'proxy' mode. Undefined
+  // for '' or absent, same convention as every other optional string here.
+  internalHost?: string;
 }
 
 export interface AuthentikApplication {
@@ -128,9 +137,14 @@ export interface AuthentikClient {
   deleteProxyProvider(id: string): Promise<void>;
   // Provider names are unique across every provider kind in Authentik, so a
   // mode switch renames the outgoing provider out of the way before creating
-  // its replacement under the slug name (sync-authentik). Name only -- never
-  // settings or credentials.
-  renameProxyProvider(id: string, name: string): Promise<void>;
+  // its replacement under the slug name (sync-authentik). Takes the whole
+  // provider rather than its id: Authentik 2026.8 rejects a PATCH carrying
+  // only `name` with a 400 ("Internal host cannot be empty when forward auth
+  // is disabled", verified live), so the rename re-sends the provider's own
+  // current `mode` (plus `internal_host` in 'proxy' mode). A fixed mode
+  // would silently convert a hand-made provider in another mode. Never
+  // touches any other setting, or credentials.
+  renameProxyProvider(provider: AuthentikProxyProvider, name: string): Promise<void>;
   listApplications(): Promise<AuthentikApplication[]>;
   createApplication(input: {
     name: string;
@@ -186,6 +200,8 @@ interface RawProxyProvider {
   pk: number | string;
   name: string;
   external_host: string;
+  mode: ProxyProviderMode;
+  internal_host?: string | null;
 }
 
 // Authentik's Application model is keyed by its slug (a CharField primary
@@ -336,9 +352,19 @@ export class RealAuthentikClient implements AuthentikClient {
     await this.request<void>('DELETE', `/api/v3/core/groups/${id}/`);
   }
 
+  private toProxyProvider(raw: RawProxyProvider): AuthentikProxyProvider {
+    return {
+      id: String(raw.pk),
+      name: raw.name,
+      externalHost: raw.external_host,
+      mode: raw.mode,
+      internalHost: raw.internal_host ? raw.internal_host : undefined,
+    };
+  }
+
   async listProxyProviders(): Promise<AuthentikProxyProvider[]> {
     const res = await this.request<{ results: RawProxyProvider[] }>('GET', '/api/v3/providers/proxy/?page_size=500');
-    return res.results.map((r) => ({ id: String(r.pk), name: r.name, externalHost: r.external_host }));
+    return res.results.map((r) => this.toProxyProvider(r));
   }
 
   async createProxyProvider(input: {
@@ -354,15 +380,21 @@ export class RealAuthentikClient implements AuthentikClient {
       authorization_flow: input.authorizationFlowId,
       invalidation_flow: input.invalidationFlowId,
     });
-    return { id: String(raw.pk), name: raw.name, externalHost: raw.external_host };
+    return this.toProxyProvider(raw);
   }
 
   async deleteProxyProvider(id: string): Promise<void> {
     await this.request<void>('DELETE', `/api/v3/providers/proxy/${id}/`);
   }
 
-  async renameProxyProvider(id: string, name: string): Promise<void> {
-    await this.request<void>('PATCH', `/api/v3/providers/proxy/${id}/`, { name });
+  // See the interface comment: `mode` (and `internal_host` in 'proxy' mode)
+  // must ride along, or Authentik 2026.8 rejects the PATCH.
+  async renameProxyProvider(provider: AuthentikProxyProvider, name: string): Promise<void> {
+    await this.request<void>('PATCH', `/api/v3/providers/proxy/${provider.id}/`, {
+      name,
+      mode: provider.mode,
+      ...(provider.mode === 'proxy' ? { internal_host: provider.internalHost } : {}),
+    });
   }
 
   async listApplications(): Promise<AuthentikApplication[]> {
@@ -568,17 +600,33 @@ export class RealAuthentikClient implements AuthentikClient {
       this.request<RawOAuth2Provider>('GET', `/api/v3/providers/oauth2/${id}/`),
       this.request<{ issuer: string }>('GET', `/api/v3/providers/oauth2/${id}/setup_urls/`),
     ]);
+    // A blank value would be shown to the operator as if it were the real
+    // credential, and pasted into the app as one -- fail naming what is
+    // missing instead (e.g. a token that can read the provider but not its
+    // secret).
+    const missing = [
+      ...(provider.client_id ? [] : ['client_id']),
+      ...(provider.client_secret ? [] : ['client_secret']),
+    ];
+    if (missing.length > 0) {
+      throw new Error(
+        `Authentik returned no ${missing.join(' or ')} for OAuth2 provider ${id}; ` +
+          'check that the API token can read OAuth2 provider credentials'
+      );
+    }
     return {
-      clientId: provider.client_id ?? '',
-      clientSecret: provider.client_secret ?? '',
+      clientId: provider.client_id!,
+      clientSecret: provider.client_secret!,
       issuer: setupUrls.issuer,
     };
   }
 
   // Deliberately a separate request from getOAuth2Credentials rather than a
-  // subset of it: this path never fetches the provider record, so the
-  // secret is never even in this process's memory for a caller that only
-  // needs the issuer.
+  // subset of it: this path never fetches the single-provider record, so a
+  // caller that only needs the issuer (sync-authentik's discovery check)
+  // never has a secret handed back to it. It is not a guarantee the secret
+  // is never in this process's memory at all: listOAuth2Providers' raw JSON
+  // carries client_secret until toOAuth2Provider drops it.
   async getOAuth2Issuer(id: string): Promise<string> {
     const setupUrls = await this.request<{ issuer: string }>('GET', `/api/v3/providers/oauth2/${id}/setup_urls/`);
     return setupUrls.issuer;
@@ -688,7 +736,7 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
   deleteProxyProvider(_id: string): Promise<void> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
-  renameProxyProvider(_id: string, _name: string): Promise<void> {
+  renameProxyProvider(_provider: AuthentikProxyProvider, _name: string): Promise<void> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   listApplications(): Promise<AuthentikApplication[]> {

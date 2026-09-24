@@ -1,15 +1,16 @@
-import type { AuthentikApplication, AuthentikClient, AuthentikPolicyBinding } from '../../lib/authentik-client.ts';
+import type { AuthentikApplication, AuthentikClient } from '../../lib/authentik-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import { effectiveAuth } from '../../lib/inventory.ts';
 import { authentikConfig, rungsAtOrAbove } from '../../lib/authentik-config.ts';
 import {
   BELLHOP_META_PUBLISHER,
   MISSING_REDIRECT_URIS_REASON,
-  OIDC_SCOPE_MAPPINGS,
   desiredOAuth2Settings,
   diffOAuth2Settings,
+  indexGroupBindings,
   ownedProviderKind,
   planBindingChanges,
+  resolveOidcInstanceSettings,
   type BindingChange,
 } from './sync-authentik.ts';
 import { findEntry } from './oidc-credentials.ts';
@@ -38,10 +39,6 @@ export interface AdoptOidcClientResult {
   // sync-authentik's own (planBindingChanges, reused directly).
   bindingChanges: BindingChange[];
   applied: boolean;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 // Adopts a hand-made Authentik OpenID client -- an OAuth2-backed Application
@@ -112,23 +109,12 @@ export async function runAdoptOidcClient(
     throw new Error(`${opts.entry}: ${MISSING_REDIRECT_URIS_REASON}`);
   }
 
-  const keyName = authentikConfig().oidcSigningKeyName;
-  let signingKeyId: string;
-  try {
-    signingKeyId = await deps.authentik.getSigningKeyId(keyName);
-  } catch (err) {
-    throw new Error(
-      `could not resolve the OIDC signing key '${keyName}' (AUTHENTIK_OIDC_SIGNING_KEY_NAME): ${errorMessage(err)}`
-    );
-  }
-  let scopeMappingIds: string[];
-  try {
-    scopeMappingIds = await deps.authentik.getScopeMappingIds(OIDC_SCOPE_MAPPINGS);
-  } catch (err) {
-    throw new Error(`could not resolve the OpenID scope mappings: ${errorMessage(err)}`);
-  }
+  // Same lookup and wording as a sync run's; a sync turns a failure into a
+  // per-entry skip, but adopting one entry has nothing else to carry on with.
+  const instance = await resolveOidcInstanceSettings(deps.authentik);
+  if (!instance.ok) throw new Error(instance.reason);
 
-  const desired = desiredOAuth2Settings(redirectUris, signingKeyId, scopeMappingIds);
+  const desired = desiredOAuth2Settings(redirectUris, instance.signingKeyId, instance.scopeMappingIds);
   const { changes, patch } = diffOAuth2Settings(provider, desired);
 
   // Safe non-null assertion: effectiveAuth() only returns 'oidc' when
@@ -140,15 +126,7 @@ export async function runAdoptOidcClient(
   }
 
   const [groups, bindings] = await Promise.all([deps.authentik.listGroups(), deps.authentik.listPolicyBindings()]);
-  const groupIdByName = new Map(groups.map((g) => [g.name, g.id]));
-  const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
-  const bindingsByTarget = new Map<string, AuthentikPolicyBinding[]>();
-  for (const binding of bindings) {
-    if (binding.groupId === undefined) continue;
-    const list = bindingsByTarget.get(binding.targetId) ?? [];
-    list.push(binding);
-    bindingsByTarget.set(binding.targetId, list);
-  }
+  const { groupIdByName, groupNameById, bindingsByTarget } = indexGroupBindings(groups, bindings);
   // A single-entry candidate list, matching planBindingChanges' own input
   // shape (sync-authentik.ts's CandidateEntry) structurally -- this command
   // never needs the type itself, only this one call.

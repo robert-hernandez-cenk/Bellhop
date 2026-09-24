@@ -288,12 +288,22 @@ To switch an entry to OIDC mode: set `authGroup` (its access tier, same as
 today), `authMode: oidc`, and `oidcRedirectUris` (the app's own callback
 URL — an absolute `http://`/`https://` address, e.g.
 `https://media.example.com/auth/callback`, whatever the app's own OIDC/
-OpenID settings call for; more than one is allowed). For a guest, edit all
-three together in the Dashboard's Advanced modal (admin only); a host or
+OpenID settings call for; more than one is allowed). For a guest, use the
+Dashboard's Advanced modal (admin only). Its fields each save on their own,
+and a save that would leave an entry in OIDC mode with an access tier but
+no callback URL is rejected, so go in this order: set the access tier, save
+the Callback URLs, and only then switch Auth mode to OIDC. A host or
 external site is DB/CLI-only, the same as `authGroup` itself. Then run
 `bellhop sync-authentik --apply` (or save the Dashboard edit, which runs
 the same sync as part of its push-live step) to create the OpenID client
-in Authentik. Reveal the entry's credentials from its Advanced modal
+in Authentik.
+
+A Dashboard save pushes the Caddy change *before* the Authentik sync runs,
+so switching an entry to OIDC removes its `forward_auth` gate first. If the
+sync then skips the entry (a missing signing key, say) or fails, the app is
+reachable with no gate in front of it until the next successful sync — read
+the warnings on the save result, and fix whatever they name before relying
+on the app's own login. Reveal the entry's credentials from its Advanced modal
 (admin only), or run `bellhop oidc-credentials <name>`, to get the issuer
 address, client ID, and client secret — paste all three into the app's own
 OIDC settings. The secret is never stored anywhere in this toolkit; both
@@ -311,12 +321,16 @@ create the new one, then use the app's own account-linking/merge feature
 (or delete the duplicate and reassign its data) to move them onto the
 account you want them using — Bellhop has no part in that step.
 
-Switching an entry's mode either direction, or clearing its access tier
-while in OIDC mode, deletes the outgoing OpenID client on the next sync —
-the app's existing login stops working until new credentials are entered
-in it. The Dashboard asks for confirmation, naming the app, before saving
-that kind of edit; the MCP server's `edit_guest` tool rejects the same
-edit unless the call passes `confirmOidcClientDeletion: true`. Changing
+Switching an entry from OIDC back to forward-auth, or clearing its access
+tier while in OIDC mode, deletes its OpenID client on the next sync — the
+app's existing login stops working until new credentials are entered in it.
+The Dashboard asks for confirmation, naming the app, before saving that
+kind of edit; the MCP server's `edit_guest` tool rejects the same edit
+unless the call passes `confirmOidcClientDeletion: true`. Switching the
+other way, from forward-auth to OIDC, deletes only the entry's forward-auth
+Proxy Provider (there is no OpenID client yet to lose), so it needs no
+confirmation. Either way the Application itself, and so its access-tier
+bindings, is kept. Changing
 `authMode` or `oidcRedirectUris` is admin-only in both directions on every
 front end (unlike an access tier, which a non-admin may raise but not
 lower), since switching to OIDC removes the forward-auth gate and the
@@ -334,8 +348,10 @@ the token in `data/authentik.env` than forward-auth-only gating did: read
 and write on OAuth2/OpenID Providers (not just Proxy Providers), read on
 certificate-keypairs (to resolve the signing key), read on property/scope
 mappings, and update on Applications. `sync-authentik` lists OAuth2
-Providers on every run, even one with no OIDC entries in it, so a token
-missing these scopes fails the whole sync, not just the OIDC part of it.
+Providers on every run. When no entry is in OIDC mode, a token that cannot
+read them is tolerated — the sync carries on as forward-auth-only gating
+always did — but once any entry is in OIDC mode, a token missing these
+scopes fails the whole sync, not just the OIDC part of it.
 
 **Signing key.** A new OpenID client signs its identity tokens with the
 Authentik certificate-keypair named `AUTHENTIK_OIDC_SIGNING_KEY_NAME`

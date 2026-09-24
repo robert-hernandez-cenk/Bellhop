@@ -605,12 +605,18 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   OpenID client sharing an entry's slug is therefore never a false match,
   unlike a Proxy Provider, which stays owned by slug alone regardless of
   marker (the unchanged #154 rule, kept so an Application created before
-  the marker existed is still recognized). Because it now lists OAuth2
-  Providers on every run (to compute ownership even for a run with no OIDC
-  entries), the Authentik API token in `data/authentik.env` needs a few
-  scopes forward-auth-only gating never required: read/write on OAuth2/
-  OpenID Providers, read on certificate-keypairs and scope/property
-  mappings, and update on Applications -- see README's "OIDC mode" section.
+  the marker existed is still recognized). It lists OAuth2 Providers on
+  every run (to compute ownership even for a run with no OIDC entries), so
+  once any entry is in OIDC mode the Authentik API token in
+  `data/authentik.env` needs a few scopes forward-auth-only gating never
+  required: read/write on OAuth2/OpenID Providers, read on
+  certificate-keypairs and scope/property mappings, and update on
+  Applications -- see README's "OIDC mode" section. With *no* candidate in
+  `authMode: 'oidc'` (gated or not), a failed OAuth2 listing is treated as
+  an empty one (`listOAuth2ProvidersForRun`), so a forward-only deployment
+  whose token predates this feature keeps working exactly as before; with
+  any, it propagates, since an OpenID client's ownership can't be decided
+  without it.
   The OpenID client itself is confidential, explicitly permits the
   authorization-code + refresh-token grant types (`OIDC_GRANT_TYPES` --
   Authentik silently stores `[]` and rejects every authorize request if
@@ -651,7 +657,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   outgoing provider can't simply be deleted and a same-named one created in
   its place without a moment where neither holds that name; instead
   `planProviderName` renames the outgoing provider to `'<slug> (replaced)'`
-  (`REPLACED_PROVIDER_SUFFIX`) first, creates the new provider under the
+  (`REPLACED_PROVIDER_SUFFIX`) first -- a proxy-provider rename re-sends the
+  provider's own `mode` (and `internal_host` in `proxy` mode), since
+  Authentik 2026.8 rejects a name-only PATCH with a 400 and a fixed mode
+  would convert a hand-made provider (`renameProxyProvider` takes the whole
+  `AuthentikProxyProvider` for this) -- creates the new provider under the
   bare slug name, repoints the Application at it (clearing `meta_publisher`
   on an oidc -> forward switch, since a Proxy-backed Application is owned
   without it; setting it on a forward -> oidc switch), and only then
@@ -690,9 +700,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   backed by *any* OAuth2 provider (marked or not -- a marked one is never
   actually a conflict, since it would already be owned) can be adopted; one
   backed by a Proxy Provider or by nothing is not, and stays a plain,
-  unresolvable conflict (`resolve-by-hand`). `formatSyncAuthentik` and the
-  Dashboard's own conflict banners print a different message for the two
-  cases, the adoptable one pointing at `adopt-oidc-client`.
+  unresolvable conflict (`resolve-by-hand`). `conflictExplanation(slug,
+  result)` is the one place the wording is chosen, used by
+  `formatSyncAuthentik`, `syncCaddyLive`'s job-log warnings, and
+  delete-guest's pre-removal sync; `syncCaddyLive` also returns
+  `authentikAdoptableConflicts`, which `commitGuestEdit` narrows to the
+  edited guest as `authentikConflictAdoptable: true`, so the Dashboard's
+  shared `AuthentikConflictBanner` (`AuthentikSyncBanners.tsx`) offers
+  adoption instead of "resolve by hand" -- the Adopt button for an admin on
+  an OIDC-effective guest, a "switch to OIDC mode, then adopt" note for a
+  forward-mode one.
 
   **Post-apply discovery check** (FR-013, research.md R6): after every real
   `--apply`, each OIDC entry that still has a Bellhop-owned client gets its
@@ -747,7 +764,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   live in the same request; any post-apply discovery-check failures for the
   caller's own guest are echoed back as `oidcDiscoveryFailures` and
   rendered as a warning banner, the OIDC counterpart to the existing
-  `authentikConflicts` banner.
+  `authentikConflicts` banner. The same goes for why the sync left the
+  guest alone: `syncCaddyLive` returns both `authentikOidcSkipped` and
+  `authentikForwardSkipped`, and `commitGuestEdit` echoes the edited
+  guest's own entries from both as one `oidcSkipped` list (rendered by
+  `AuthentikSkipBanner`). That matters because the push-live step writes
+  Caddy *before* it syncs Authentik: switching to OIDC drops the
+  `forward_auth` gate first, so a skipped or failed sync leaves the app
+  ungated at the edge until the next successful one.
 - **OIDC credentials and adoption**
   (`src/commands/networking/oidc-credentials.ts`, `adopt-oidc-client.ts`,
   `src/web/routes/oidc.ts`, issue #1) are `sync-authentik`'s companion

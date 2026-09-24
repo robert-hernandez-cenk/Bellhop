@@ -4,8 +4,8 @@ import type { Inventory } from '../lib/inventory.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
 import { runSyncCaddy } from '../commands/networking/sync-caddy.ts';
 import { runRenderStatusPage, statusPagePathSkipMessage } from '../commands/networking/render-status-page.ts';
-import { runSyncAuthentik, CONFLICT_EXPLANATION, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
-import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
+import { runSyncAuthentik, conflictExplanation, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
+import type { ForwardSkip, OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import { logInfo, logWarn } from '../lib/log.ts';
 import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
@@ -19,6 +19,10 @@ export interface SyncCaddyLiveResult {
   // outside any job context -- logWarn's console.error reaches the service's
   // stderr there and nothing the operator can see.
   authentikConflicts: string[];
+  // The subset of authentikConflicts adopt-oidc-client can take over
+  // (sync-authentik's adoptableConflicts), so a Dashboard banner can offer
+  // adoption instead of "resolve by hand" (FR-011).
+  authentikAdoptableConflicts: string[];
   // Entries whose authGroup names a group absent from AUTHENTIK_GROUP_LADDER,
   // and ladder rungs absent from Authentik itself. Surfaced for the same
   // reason as authentikConflicts: the Dashboard's guest PATCH calls
@@ -33,6 +37,10 @@ export interface SyncCaddyLiveResult {
   // fields above; the save itself still succeeds, since the client in
   // Authentik is correct either way.
   authentikOidcSkipped: OidcSkip[];
+  // Forward-auth entries left alone because the provider name they need is
+  // taken (sync-authentik's forwardSkipped) -- the forward-mode counterpart
+  // of authentikOidcSkipped, returned for the same reason.
+  authentikForwardSkipped: ForwardSkip[];
   authentikOidcDiscoveryFailures: { slug: string; issuer: string; error: string }[];
 }
 
@@ -86,9 +94,11 @@ export async function syncCaddyLive(deps: {
   }
   let result: SyncCaddyLiveResult = {
     authentikConflicts: [],
+    authentikAdoptableConflicts: [],
     authentikOffLadder: [],
     authentikMissingRungs: [],
     authentikOidcSkipped: [],
+    authentikForwardSkipped: [],
     authentikOidcDiscoveryFailures: [],
   };
   // Skipped rather than attempted when there is no Authentik API to talk to.
@@ -102,14 +112,17 @@ export async function syncCaddyLive(deps: {
     const authentikResult = await runSyncAuthentik({ apply: true }, deps);
     // Kept alongside the return value: a provisioning-job-triggered call
     // runs inside withCapturedConsole, so this does reach that job's log.
-    for (const name of authentikResult.conflicts) logWarn(`sync-authentik: ${name} — ${CONFLICT_EXPLANATION}`);
+    for (const name of authentikResult.conflicts) {
+      logWarn(`sync-authentik: ${name} — ${conflictExplanation(name, authentikResult)}`);
+    }
     for (const entry of authentikResult.offLadder) {
       logWarn(`sync-authentik: ${entry.slug} (${entry.authGroup}) — ${OFF_LADDER_EXPLANATION}`);
     }
     for (const rung of authentikResult.missingRungs) logWarn(`sync-authentik: ${rung} — ${MISSING_RUNG_EXPLANATION}`);
     const oidcSkipped = authentikResult.oidcSkipped ?? [];
     for (const skip of oidcSkipped) logWarn(`sync-authentik: ${skip.slug} — OIDC skipped: ${skip.reason}`);
-    for (const skip of authentikResult.forwardSkipped ?? []) {
+    const forwardSkipped = authentikResult.forwardSkipped ?? [];
+    for (const skip of forwardSkipped) {
       logWarn(`sync-authentik: ${skip.slug} — forward-auth skipped: ${skip.reason}`);
     }
     const discoveryFailures = (authentikResult.discovery ?? [])
@@ -120,9 +133,11 @@ export async function syncCaddyLive(deps: {
     }
     result = {
       authentikConflicts: authentikResult.conflicts,
+      authentikAdoptableConflicts: authentikResult.adoptableConflicts ?? [],
       authentikOffLadder: authentikResult.offLadder,
       authentikMissingRungs: authentikResult.missingRungs,
       authentikOidcSkipped: oidcSkipped,
+      authentikForwardSkipped: forwardSkipped,
       authentikOidcDiscoveryFailures: discoveryFailures,
     };
   }

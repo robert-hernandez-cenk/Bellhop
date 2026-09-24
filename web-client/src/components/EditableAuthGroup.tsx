@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { GuestEntry } from '../api/types';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
-import { AdoptOidcClientButton } from './AdoptOidcClientButton';
+import { AuthentikConflictBanner, AuthentikSkipBanner, type AuthentikSkip } from './AuthentikSyncBanners';
 import { isOidcEffective, needsOidcDeletionConfirmation } from '../lib/oidc';
 
 interface Rung {
@@ -28,8 +28,10 @@ interface PatchResponse {
   caddySynced: boolean;
   caddyError?: string;
   authentikConflicts?: string[];
+  authentikConflictAdoptable?: true;
   authentikOffLadder?: OffLadderEntry[];
   authentikMissingRungs?: string[];
+  oidcSkipped?: AuthentikSkip[];
 }
 
 interface Props {
@@ -50,6 +52,10 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [offLadder, setOffLadder] = useState<OffLadderEntry[]>([]);
   const [missingRungs, setMissingRungs] = useState<string[]>([]);
+  const [conflictAdoptable, setConflictAdoptable] = useState(false);
+  // Gating a guest here is also how a forward-auth entry gets skipped for a
+  // taken provider name, so this row shows skips too, not just the OIDC rows.
+  const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
   // T035: clearing the tier on an OIDC-effective guest deletes its OpenID
   // client (FR-022a), so that one transition is confirmed first. Every
   // other authGroup change (including lowering to a different rung while
@@ -88,6 +94,8 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
     setConflicts([]);
     setOffLadder([]);
     setMissingRungs([]);
+    setConflictAdoptable(false);
+    setSkipped([]);
     try {
       const res = await apiPatch<PatchResponse>(`/inventory/guests/${encodeURIComponent(guest.name)}`, {
         authGroup: next === NONE ? null : next,
@@ -96,6 +104,8 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       setConflicts(res.authentikConflicts ?? []);
       setOffLadder(res.authentikOffLadder ?? []);
       setMissingRungs(res.authentikMissingRungs ?? []);
+      setConflictAdoptable(res.authentikConflictAdoptable === true);
+      setSkipped(res.oidcSkipped ?? []);
       if (res.caddySynced) {
         setStatus('saved');
       } else {
@@ -190,16 +200,11 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       )}
       {ladderError && <div className="warning-banner">Could not load auth groups: {ladderError}</div>}
       {error && <div className="warning-banner">{error}</div>}
-      {conflicts.length > 0 && (
-        <div className="warning-banner">
-          Authentik slug conflict: {conflicts.join(', ')} — the slug is held by an Application this
-          toolkit does not manage; logins will fail until it is resolved by hand.
-          {/* T042: canLower is admin-equivalent (auth-groups.ts derives it
-              from the same isAdminUser check GET /whoami's isAdmin uses),
-              so this reuses it rather than a second /whoami fetch. */}
-          {canLower && isOidcEffective(guest) && <AdoptOidcClientButton entryName={guest.name} />}
-        </div>
-      )}
+      {/* T042: canLower is admin-equivalent (auth-groups.ts derives it
+          from the same isAdminUser check GET /whoami's isAdmin uses), so
+          this reuses it rather than a second /whoami fetch. */}
+      <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={canLower} />
+      <AuthentikSkipBanner skipped={skipped} />
       {offLadder.length > 0 && (
         <div className="warning-banner">
           Unknown auth group: {offLadder.map((o) => o.authGroup).join(', ')} — not on the configured

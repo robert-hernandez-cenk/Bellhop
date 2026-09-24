@@ -14,7 +14,7 @@ import {
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
 import { syncCaddyLive } from '../web/caddy-sync.ts';
-import type { OffLadderEntry } from '../commands/networking/sync-authentik.ts';
+import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
 
 // The Dashboard's inline guest edit, extracted from the PATCH handler in
@@ -45,12 +45,23 @@ export type EditGuestResult =
       guest: GuestEntry;
       caddySynced: true;
       authentikConflicts?: string[];
+      // Set only when this guest's own conflict is one adopt-oidc-client can
+      // take over (an unmarked OpenID client holds its slug), so the banner
+      // can offer adoption instead of "resolve by hand" (FR-011).
+      authentikConflictAdoptable?: true;
       authentikOffLadder?: OffLadderEntry[];
       authentikMissingRungs?: string[];
       // Native OIDC gating (issue #1): the post-apply issuer discovery check
       // for this guest's own OpenID client, scoped and omitted-when-empty the
       // same way authentikConflicts is -- see commitGuestEdit.
       oidcDiscoveryFailures?: { slug: string; issuer: string; error: string }[];
+      // Why sync-authentik left this guest's own Authentik state alone this
+      // run -- an OIDC skip (no callback URL, missing signing key or scope
+      // mapping, provider name taken) or a forward-auth one (provider name
+      // taken), in one list since either way the save succeeded but the gate
+      // did not change as asked (FR-015). Scoped and omitted-when-empty like
+      // authentikConflicts.
+      oidcSkipped?: OidcSkip[];
     }
   | { guest: GuestEntry; caddySynced: false; caddyError: string };
 
@@ -135,7 +146,15 @@ export async function commitGuestEdit(
   inventory.guests = guests;
 
   try {
-    const { authentikConflicts, authentikOffLadder, authentikMissingRungs, authentikOidcDiscoveryFailures } = await syncCaddyLive({
+    const {
+      authentikConflicts,
+      authentikAdoptableConflicts,
+      authentikOffLadder,
+      authentikMissingRungs,
+      authentikOidcSkipped,
+      authentikForwardSkipped,
+      authentikOidcDiscoveryFailures,
+    } = await syncCaddyLive({
       ssh: deps.ssh,
       inventory,
       authentik: deps.authentik,
@@ -158,12 +177,18 @@ export async function commitGuestEdit(
     // owned OIDC client on each sync, so another entry's stale/unreachable
     // issuer must not surface as a warning on this guest's own edit.
     const ownOidcDiscoveryFailures = ownConflict ? authentikOidcDiscoveryFailures.filter((f) => f.slug === ownConflict) : [];
+    const ownConflictAdoptable = ownConflicts.length > 0 && authentikAdoptableConflicts.includes(ownConflict!);
+    // Same scoping again, both skip lists together.
+    const ownSkipped = ownConflict
+      ? [...authentikOidcSkipped, ...authentikForwardSkipped].filter((s) => s.slug === ownConflict)
+      : [];
     return {
       guest: updated,
       caddySynced: true,
       // Omitted when empty so the ordinary response shape is unchanged
       // for every edit that produces no conflict.
       ...(ownConflicts.length > 0 ? { authentikConflicts: ownConflicts } : {}),
+      ...(ownConflictAdoptable ? { authentikConflictAdoptable: true as const } : {}),
       // Same conditional-spread convention as authentikConflicts above.
       ...(ownOffLadder.length > 0 ? { authentikOffLadder: ownOffLadder } : {}),
       // NOT scoped -- a missing rung is about AUTHENTIK_GROUP_LADDER
@@ -172,6 +197,7 @@ export async function commitGuestEdit(
       ...(authentikMissingRungs.length > 0 ? { authentikMissingRungs } : {}),
       // Same conditional-spread convention as authentikConflicts above.
       ...(ownOidcDiscoveryFailures.length > 0 ? { oidcDiscoveryFailures: ownOidcDiscoveryFailures } : {}),
+      ...(ownSkipped.length > 0 ? { oidcSkipped: ownSkipped } : {}),
     };
   } catch (err) {
     return { guest: updated, caddySynced: false, caddyError: err instanceof Error ? err.message : String(err) };

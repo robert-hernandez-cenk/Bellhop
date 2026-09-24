@@ -5,7 +5,7 @@ import { syncCaddyLive } from '../../src/web/caddy-sync.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
-import { CONFLICT_EXPLANATION } from '../../src/commands/networking/sync-authentik.ts';
+import { CONFLICT_EXPLANATION, OAUTH2_CONFLICT_EXPLANATION } from '../../src/commands/networking/sync-authentik.ts';
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/caddy-sync.ts';
@@ -247,9 +247,11 @@ test('syncCaddyLive still resolves, with a warning, when the Cloudflare prune th
   });
   assert.deepEqual(result, {
     authentikConflicts: [],
+    authentikAdoptableConflicts: [],
     authentikOffLadder: [],
     authentikMissingRungs: [],
     authentikOidcSkipped: [],
+    authentikForwardSkipped: [],
     authentikOidcDiscoveryFailures: [],
   });
   assert.ok(logs.warn.some((l) => l.includes('prune-acme-challenges: skipped — Cloudflare API 403: Authentication error')));
@@ -338,4 +340,51 @@ test('syncCaddyLive warns and returns each OIDC skip', async () => {
     [['plex', 'missing-redirect-uris']]
   );
   assert.ok(logs.warn.some((l) => l.includes('sync-authentik: plex — OIDC skipped') && l.includes('oidcRedirectUris')));
+});
+
+// Final-review fix 2: a forward-auth entry skipped for a taken provider name
+// is returned too, not only logged.
+test('syncCaddyLive warns and returns each forward-auth skip', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  const gated: Inventory = {
+    ...inventory,
+    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+  };
+  // An unused OAuth2 provider already holds the name 'plex' -- the new
+  // proxy provider cannot take it.
+  const authentik = new FakeAuthentikClient({
+    oauth2Providers: [
+      { id: '70', name: 'plex', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
+    ],
+  });
+  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  const logs = await captureLogs(async () => {
+    result = await syncCaddyLive({ ssh, inventory: gated, authentik });
+  });
+  assert.deepEqual(
+    result!.authentikForwardSkipped.map((s) => [s.slug, s.kind]),
+    [['plex', 'provider-name-taken']]
+  );
+  assert.ok(logs.warn.some((l) => l.includes('sync-authentik: plex — forward-auth skipped')));
+});
+
+// Final-review fix 3 (FR-011): an adoptable conflict points at
+// adopt-oidc-client in the log and is flagged in the result.
+test('syncCaddyLive returns adoptable conflicts and logs them with the adopt-oidc-client explanation', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  const authentik = new FakeAuthentikClient({
+    oauth2Providers: [
+      { id: '70', name: 'hand-made', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
+    ],
+    applications: [{ id: 'plex', pk: 'pk-plex', name: 'plex', slug: 'plex', providerId: '70' }],
+  });
+  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  const logs = await captureLogs(async () => {
+    result = await syncCaddyLive({ ssh, inventory: oidcGated(), authentik });
+  });
+  assert.deepEqual(result!.authentikConflicts, ['plex']);
+  assert.deepEqual(result!.authentikAdoptableConflicts, ['plex']);
+  assert.ok(logs.warn.some((l) => l.includes(`sync-authentik: plex — ${OAUTH2_CONFLICT_EXPLANATION}`)));
+  assert.ok(!logs.warn.some((l) => l.includes(CONFLICT_EXPLANATION)), 'never the resolve-by-hand wording');
 });

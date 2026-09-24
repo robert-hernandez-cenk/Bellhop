@@ -1122,3 +1122,76 @@ test('PATCH guest leaving OIDC gating needs confirmOidcClientDeletion: true, eve
     assert.equal('confirmOidcClientDeletion' in accepted.body.guest, false);
   }
 });
+
+// Final-review fix 2: sync-authentik's skip reasons for this guest reach the
+// Dashboard (and MCP edit_guest) response rather than only the service log.
+test('PATCH guest authMode/oidcRedirectUris reports this guest\'s own oidcSkipped when the signing key is missing', async () => {
+  const inventory = oidcInventory({ authMode: undefined, oidcRedirectUris: undefined });
+  inventory.guests.push({
+    name: 'radarr',
+    type: 'lxc',
+    vmid: 121,
+    host: 'pve1',
+    ip: '192.168.1.21',
+    subdomains: ['radarr'],
+    authGroup: USERS_RUNG,
+    authMode: 'oidc',
+    oidcRedirectUris: ['https://radarr.example.com/oauth/callback'],
+  });
+  const app = testApp(inventory, undefined, new FakeAuthentikClient({ signingKeys: {} }));
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({
+    authMode: 'oidc',
+    oidcRedirectUris: ['https://sonarr.example.com/oauth/callback'],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.caddySynced, true, 'a skip never fails the save');
+  assert.deepEqual(
+    res.body.oidcSkipped.map((s: { slug: string; kind: string }) => [s.slug, s.kind]),
+    [['sonarr', 'missing-signing-key']],
+    "radarr's skip belongs to a different row"
+  );
+  assert.match(res.body.oidcSkipped[0].reason, /AUTHENTIK_OIDC_SIGNING_KEY_NAME/);
+});
+
+test('PATCH guest reports a forward-auth skip for this guest in oidcSkipped, and omits the field when nothing was skipped', async () => {
+  const inventory = oidcInventory({ authMode: undefined, oidcRedirectUris: undefined });
+  const taken = new FakeAuthentikClient({
+    oauth2Providers: [
+      { id: '70', name: 'sonarr', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
+    ],
+  });
+  const res = await asAdmin(request(testApp(inventory, undefined, taken)).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(
+    res.body.oidcSkipped.map((s: { slug: string; kind: string }) => [s.slug, s.kind]),
+    [['sonarr', 'provider-name-taken']]
+  );
+
+  const clean = await asAdmin(request(testApp(oidcInventory({ authMode: undefined, oidcRedirectUris: undefined }))).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.equal(clean.status, 200);
+  assert.equal('oidcSkipped' in clean.body, false, 'the ordinary response shape is unchanged');
+});
+
+// Final-review fix 3 (FR-011): the response says when this guest's conflict
+// can be adopted, so the banner can offer that instead of "resolve by hand".
+test('PATCH guest flags an adoptable conflict on this guest with authentikConflictAdoptable', async () => {
+  const handMade = () =>
+    new FakeAuthentikClient({
+      oauth2Providers: [
+        { id: '70', name: 'hand-made', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
+      ],
+      applications: [{ id: 'sonarr', pk: 'pk-sonarr', name: 'sonarr', slug: 'sonarr', providerId: '70' }],
+    });
+  const res = await asAdmin(request(testApp(oidcInventory(), undefined, handMade())).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.authentikConflicts, ['sonarr']);
+  assert.equal(res.body.authentikConflictAdoptable, true);
+
+  // A proxy-less, OAuth2-less Application is a plain conflict: not adoptable.
+  const plain = new FakeAuthentikClient({
+    applications: [{ id: 'sonarr', pk: 'pk-sonarr', name: 'sonarr', slug: 'sonarr', providerId: '99' }],
+  });
+  const res2 = await asAdmin(request(testApp(oidcInventory(), undefined, plain)).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.deepEqual(res2.body.authentikConflicts, ['sonarr']);
+  assert.equal('authentikConflictAdoptable' in res2.body, false);
+});

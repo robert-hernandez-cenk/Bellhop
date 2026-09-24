@@ -3,7 +3,7 @@ import { apiGet, apiPatch } from '../api/client';
 import type { GuestEntry } from '../api/types';
 import type { WhoAmI } from './Sidebar';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
-import { AdoptOidcClientButton } from './AdoptOidcClientButton';
+import { AuthentikConflictBanner, AuthentikSkipBanner, type AuthentikSkip } from './AuthentikSyncBanners';
 import { isOidcEffective, needsOidcDeletionConfirmation } from '../lib/oidc';
 
 interface OidcDiscoveryFailure {
@@ -17,7 +17,9 @@ interface PatchResponse {
   caddySynced: boolean;
   caddyError?: string;
   authentikConflicts?: string[];
+  authentikConflictAdoptable?: true;
   oidcDiscoveryFailures?: OidcDiscoveryFailure[];
+  oidcSkipped?: AuthentikSkip[];
 }
 
 interface Props {
@@ -64,6 +66,8 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [discoveryFailures, setDiscoveryFailures] = useState<OidcDiscoveryFailure[]>([]);
+  const [conflictAdoptable, setConflictAdoptable] = useState(false);
+  const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
   const [confirmingSwitch, setConfirmingSwitch] = useState(false);
 
   // Re-sync from a fresh guest.authMode the same way EditableAuthGroup does
@@ -84,11 +88,15 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
     setStatus('saving');
     setError(null);
     setConflicts([]);
+    setConflictAdoptable(false);
     setDiscoveryFailures([]);
+    setSkipped([]);
     try {
       const res = await patchGuest(guest.name, body);
       setConflicts(res.authentikConflicts ?? []);
+      setConflictAdoptable(res.authentikConflictAdoptable === true);
       setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
+      setSkipped(res.oidcSkipped ?? []);
       if (res.caddySynced) {
         setStatus('saved');
       } else {
@@ -140,7 +148,6 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
 
   const disabled = !isAdmin || status === 'saving';
   const title = isAdmin ? undefined : "Only an admin may change an app's auth mode";
-  const showAdopt = isAdmin && isOidcEffective(guest);
 
   return (
     <div>
@@ -160,13 +167,8 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
       {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
       {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
-      {conflicts.length > 0 && (
-        <div className="warning-banner">
-          Authentik slug conflict: {conflicts.join(', ')} — the slug is held by an Application this
-          toolkit does not manage; logins will fail until it is resolved by hand.
-          {showAdopt && <AdoptOidcClientButton entryName={guest.name} />}
-        </div>
-      )}
+      <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={isAdmin} />
+      <AuthentikSkipBanner skipped={skipped} />
       {discoveryFailures.length > 0 && (
         <div className="warning-banner">
           OIDC discovery check failed: {discoveryFailures.map((f) => `${f.slug} (${f.issuer}): ${f.error}`).join('; ')}
@@ -207,24 +209,29 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [discoveryFailures, setDiscoveryFailures] = useState<OidcDiscoveryFailure[]>([]);
+  const [conflictAdoptable, setConflictAdoptable] = useState(false);
+  const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
 
   useEffect(() => {
     setValue((guest.oidcRedirectUris ?? []).join('; '));
   }, [guest.oidcRedirectUris]);
 
   const isAdmin = !!whoami?.isAdmin;
-  const showAdopt = isAdmin && isOidcEffective(guest);
 
   const save = async () => {
     if (sameList(parseLocal(value), guest.oidcRedirectUris ?? [])) return;
     setStatus('saving');
     setError(null);
     setConflicts([]);
+    setConflictAdoptable(false);
     setDiscoveryFailures([]);
+    setSkipped([]);
     try {
       const res = await patchGuest(guest.name, { oidcRedirectUris: value });
       setConflicts(res.authentikConflicts ?? []);
+      setConflictAdoptable(res.authentikConflictAdoptable === true);
       setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
+      setSkipped(res.oidcSkipped ?? []);
       if (res.caddySynced) {
         setStatus('saved');
       } else {
@@ -258,13 +265,8 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
       {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
       {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
-      {conflicts.length > 0 && (
-        <div className="warning-banner">
-          Authentik slug conflict: {conflicts.join(', ')} — the slug is held by an Application this
-          toolkit does not manage; logins will fail until it is resolved by hand.
-          {showAdopt && <AdoptOidcClientButton entryName={guest.name} />}
-        </div>
-      )}
+      <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={isAdmin} />
+      <AuthentikSkipBanner skipped={skipped} />
       {discoveryFailures.length > 0 && (
         <div className="warning-banner">
           OIDC discovery check failed: {discoveryFailures.map((f) => `${f.slug} (${f.issuer}): ${f.error}`).join('; ')}

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
-import type { AuthentikUser } from '../../src/lib/authentik-client.ts';
+import { RealAuthentikClient, UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
+import type { AuthentikProxyProvider, AuthentikUser } from '../../src/lib/authentik-client.ts';
+import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 
 const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
@@ -224,9 +225,9 @@ test('FakeAuthentikClient rejects a duplicate provider name across proxy and OAu
   await assert.rejects(client.createProxyProvider(proxyInput('media')), /name already exists/);
   const oauth2 = await client.createOAuth2Provider(oauth2Input('books'));
   await assert.rejects(client.renameOAuth2Provider(oauth2.id, 'media'), /name already exists/);
-  await assert.rejects(client.renameProxyProvider(proxy.id, 'books'), /name already exists/);
+  await assert.rejects(client.renameProxyProvider(proxy, 'books'), /name already exists/);
 
-  await client.renameProxyProvider(proxy.id, 'media (replaced)');
+  await client.renameProxyProvider(proxy, 'media (replaced)');
   assert.equal((await client.listProxyProviders())[0].name, 'media (replaced)');
   await client.renameOAuth2Provider(oauth2.id, 'media');
   assert.equal((await client.listOAuth2Providers())[0].name, 'media');
@@ -238,6 +239,125 @@ test('FakeAuthentikClient rejects a duplicate provider name across proxy and OAu
 
 test('UnconfiguredAuthentikClient rejects the provider rename methods', async () => {
   const client = new UnconfiguredAuthentikClient();
-  await assert.rejects(client.renameProxyProvider('1', 'a'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.renameProxyProvider({ id: '1', name: 'a', externalHost: 'https://a.example.com', mode: 'forward_single' }, 'a'), { message: UNCONFIGURED_MESSAGE });
   await assert.rejects(client.renameOAuth2Provider('1', 'a'), { message: UNCONFIGURED_MESSAGE });
+});
+
+// Final-review fix 1: Authentik 2026.8 answers a PATCH carrying only `name`
+// with 400 "Internal host cannot be empty when forward auth is disabled"
+// (verified live). The fake mirrors that, so a rename has to re-send the
+// provider's own mode -- and, in 'proxy' mode, its internal host.
+test('FakeAuthentikClient.renameProxyProvider rejects a rename without the provider mode, like Authentik 2026.8', async () => {
+  const client = new FakeAuthentikClient({
+    proxyProviders: [
+      { id: '7', name: 'hand', externalHost: 'https://hand.example.com', mode: 'proxy', internalHost: 'http://192.0.2.10:8080' },
+    ],
+  });
+  const created = await client.createProxyProvider({
+    name: 'media',
+    externalHost: 'https://media.example.com',
+    authorizationFlowId: 'f',
+    invalidationFlowId: 'g',
+  });
+  assert.equal(created.mode, 'forward_single', 'the only mode sync-authentik creates');
+
+  const noMode = { ...created, mode: undefined } as unknown as AuthentikProxyProvider;
+  await assert.rejects(client.renameProxyProvider(noMode, 'media (replaced)'), /Internal host cannot be empty/);
+  const [hand] = (await client.listProxyProviders()).filter((p) => p.id === '7');
+  await assert.rejects(
+    client.renameProxyProvider({ ...hand, internalHost: undefined }, 'hand (replaced)'),
+    /Internal host cannot be empty/,
+    "'proxy' mode needs its internal host re-sent too"
+  );
+
+  await client.renameProxyProvider(hand, 'hand (replaced)');
+  const renamed = (await client.listProxyProviders()).find((p) => p.id === '7')!;
+  assert.equal(renamed.name, 'hand (replaced)');
+  assert.equal(renamed.mode, 'proxy', 'the rename keeps the provider in its own mode');
+  assert.equal(renamed.internalHost, 'http://192.0.2.10:8080');
+  assert.deepEqual(client.proxyProviderRenames, [
+    { id: '7', name: 'hand (replaced)', mode: 'proxy', internalHost: 'http://192.0.2.10:8080' },
+  ]);
+});
+
+// RealAuthentikClient has no live-instance test (same precedent as
+// Ssh2SSHClient), but the request bodies it builds and the responses it maps
+// are pure functions of global fetch, so these pin them with a stubbed one.
+async function withStubbedFetch(
+  respond: (url: string, init: RequestInit) => Response,
+  fn: (client: RealAuthentikClient, requests: Array<{ url: string; method: string; body: unknown }>) => Promise<void>
+): Promise<void> {
+  const original = globalThis.fetch;
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = String(input);
+    requests.push({ url, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : undefined });
+    return respond(url, init);
+  }) as typeof fetch;
+  try {
+    await fn(new RealAuthentikClient('https://auth.example.com', 'test-token', authentikConfig({})), requests);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+test('RealAuthentikClient maps a proxy provider mode and internal host, and a rename re-sends them', async () => {
+  await withStubbedFetch(
+    (url) =>
+      url.includes('/providers/proxy/?')
+        ? json({
+            results: [
+              { pk: 5, name: 'media', external_host: 'https://media.example.com', mode: 'forward_single', internal_host: '' },
+              { pk: 6, name: 'hand', external_host: 'https://hand.example.com', mode: 'proxy', internal_host: 'http://192.0.2.10:8080' },
+            ],
+          })
+        : new Response(null, { status: 204 }),
+    async (client, requests) => {
+      const [media, hand] = await client.listProxyProviders();
+      assert.deepEqual(media, { id: '5', name: 'media', externalHost: 'https://media.example.com', mode: 'forward_single', internalHost: undefined });
+      assert.equal(hand.mode, 'proxy');
+      assert.equal(hand.internalHost, 'http://192.0.2.10:8080');
+
+      await client.renameProxyProvider(media, 'media (replaced)');
+      await client.renameProxyProvider(hand, 'hand (replaced)');
+      assert.deepEqual(requests.slice(1), [
+        { url: 'https://auth.example.com/api/v3/providers/proxy/5/', method: 'PATCH', body: { name: 'media (replaced)', mode: 'forward_single' } },
+        {
+          url: 'https://auth.example.com/api/v3/providers/proxy/6/',
+          method: 'PATCH',
+          body: { name: 'hand (replaced)', mode: 'proxy', internal_host: 'http://192.0.2.10:8080' },
+        },
+      ]);
+    }
+  );
+});
+
+// Final-review fix 4: a blank secret must never be shown as if it were real.
+test('RealAuthentikClient.getOAuth2Credentials throws, naming the provider, when Authentik returns no client_id or client_secret', async () => {
+  for (const provider of [{ client_id: 'abc' }, { client_secret: 'shh' }, { client_id: '', client_secret: 'shh' }]) {
+    await withStubbedFetch(
+      (url) =>
+        url.endsWith('/setup_urls/')
+          ? json({ issuer: 'https://auth.example.com/application/o/media/' })
+          : json({ pk: 9, name: 'media', client_type: 'confidential', ...provider }),
+      async (client) => {
+        await assert.rejects(client.getOAuth2Credentials('9'), /no client_(id|secret).*OAuth2 provider 9/);
+      }
+    );
+  }
+  await withStubbedFetch(
+    (url) =>
+      url.endsWith('/setup_urls/')
+        ? json({ issuer: 'https://auth.example.com/application/o/media/' })
+        : json({ pk: 9, name: 'media', client_type: 'confidential', client_id: 'abc', client_secret: 'shh' }),
+    async (client) => {
+      assert.deepEqual(await client.getOAuth2Credentials('9'), {
+        clientId: 'abc',
+        clientSecret: 'shh',
+        issuer: 'https://auth.example.com/application/o/media/',
+      });
+    }
+  );
 });

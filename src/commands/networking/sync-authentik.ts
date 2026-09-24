@@ -1,6 +1,7 @@
 import type {
   AuthentikApplication,
   AuthentikClient,
+  AuthentikGroup,
   AuthentikOAuth2Provider,
   AuthentikPolicyBinding,
   AuthentikProxyProvider,
@@ -192,6 +193,14 @@ export const CONFLICT_EXPLANATION =
 // hand". See adoptableConflicts for the exact ownership state this covers.
 export const OAUTH2_CONFLICT_EXPLANATION =
   "an OpenID client with this slug already exists in Authentik and is not marked as Bellhop's; run adopt-oidc-client to adopt it";
+
+// The one place a conflict's explanation is chosen (FR-011), shared by
+// formatSyncAuthentik, syncCaddyLive's job-log warnings, and delete-guest's
+// pre-removal sync, so no front end tells an operator to resolve by hand a
+// conflict adopt-oidc-client could take over.
+export function conflictExplanation(slug: string, result: Pick<SyncAuthentikResult, 'adoptableConflicts'>): string {
+  return (result.adoptableConflicts ?? []).includes(slug) ? OAUTH2_CONFLICT_EXPLANATION : CONFLICT_EXPLANATION;
+}
 
 // Wording from contracts/interfaces.md's CLI section.
 export const OIDC_DELETION_WARNING = "the app's OIDC login stops working until new credentials are entered in it";
@@ -395,11 +404,14 @@ export async function runSyncAuthentik(
   // command never created. Reused by the apply steps below.
   const proxyProviders = await deps.authentik.listProxyProviders();
   const proxyProviderIds = new Set(proxyProviders.map((p) => p.id));
+  // A mode switch's rename re-sends the outgoing proxy provider's own mode
+  // (see AuthentikClient.renameProxyProvider), so it needs the full record.
+  const proxyProvidersById = new Map(proxyProviders.map((p) => [p.id, p]));
   // Fetched for the same parity reason, and always -- ownership of an
   // existing OAuth2-backed Application matters even in a run whose
   // inventory has no OIDC entry (a forward entry must not treat one as a
   // conflict).
-  const oauth2Providers = await deps.authentik.listOAuth2Providers();
+  const oauth2Providers = await listOAuth2ProvidersForRun(deps.authentik, candidates);
   const oauth2ProvidersById = new Map(oauth2Providers.map((p) => [p.id, p]));
   const ownership = { proxyProviderIds, oauth2ProviderIds: new Set(oauth2ProvidersById.keys()) };
   // Ownership is slug *and* provider backing (ownedProviderKind). Matching on
@@ -558,8 +570,18 @@ export async function runSyncAuthentik(
   // Fetched in the dry run too, so a preview reports a missing rung the same
   // way apply does rather than announcing bindings it could not have made.
   const groups = await deps.authentik.listGroups();
-  const groupIdByName = new Map(groups.map((g) => [g.name, g.id]));
-  const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
+  // Fetched here too (not just inside an apply branch) so a dry run's
+  // binding-change preview is computed from the same data --apply would
+  // use, matching the `groups`/`proxyProviders` fetches above (issue #158
+  // fix wave item 1).
+  const bindings = await deps.authentik.listPolicyBindings();
+  // A deleted Application's bindings are gone with it (Authentik cascades),
+  // so they are left out of the index entirely.
+  const { groupIdByName, groupNameById, bindingsByTarget } = indexGroupBindings(
+    groups,
+    bindings,
+    new Set(toRemove.map((a) => a.pk))
+  );
 
   const neededRungs = new Set<string>();
   // The `!` here (and in planBindingChanges below) is safe because
@@ -572,22 +594,6 @@ export async function runSyncAuthentik(
   // Ladder order, not Set insertion order, so the report reads bottom-up.
   const missingRungs = ladder.filter((rung) => neededRungs.has(rung) && !groupIdByName.has(rung));
 
-  // Fetched here too (not just inside an apply branch) so a dry run's
-  // binding-change preview is computed from the same data --apply would
-  // use, matching the `groups`/`proxyProviders` fetches above (issue #158
-  // fix wave item 1).
-  const bindings = await deps.authentik.listPolicyBindings();
-  const removedApplicationPks = new Set(toRemove.map((a) => a.pk));
-  const bindingsByTarget = new Map<string, AuthentikPolicyBinding[]>();
-  for (const binding of bindings) {
-    // A policy- or user-backed binding is never ours; a deleted
-    // Application's bindings are gone with it (Authentik cascades).
-    if (binding.groupId === undefined) continue;
-    if (removedApplicationPks.has(binding.targetId)) continue;
-    const list = bindingsByTarget.get(binding.targetId) ?? [];
-    list.push(binding);
-    bindingsByTarget.set(binding.targetId, list);
-  }
   // Computed once and reported identically by both branches -- `--apply`
   // below executes exactly this plan rather than recomputing wantedIds/
   // boundIds itself.
@@ -710,7 +716,9 @@ export async function runSyncAuthentik(
   // OIDC creates, forward -> oidc switches, and drift fixes.
   for (const create of oidcPlan.creates) {
     if (create.switchFrom && create.renameOutgoing) {
-      await deps.authentik.renameProxyProvider(create.switchFrom.providerId!, `${create.slug}${REPLACED_PROVIDER_SUFFIX}`);
+      // Owned as proxy (a forward -> oidc switch), so this lookup always succeeds.
+      const outgoing = proxyProvidersById.get(create.switchFrom.providerId!)!;
+      await deps.authentik.renameProxyProvider(outgoing, `${create.slug}${REPLACED_PROVIDER_SUFFIX}`);
     }
     let providerId: string;
     if (create.orphan) {
@@ -820,6 +828,86 @@ export async function runSyncAuthentik(
   };
 }
 
+// Every OAuth2 provider, for ownership. A forward-only deployment whose API
+// token predates OIDC mode may lack OAuth2 read access (README "Authentik
+// API token permissions"); when no candidate is in OIDC mode, a failed
+// listing is treated as "no OAuth2 providers" -- exactly how this command
+// behaved before OAuth2 ownership existed: an OAuth2-backed Application at a
+// gated slug reads as an unowned conflict and is never touched. With any
+// candidate in OIDC mode (gated or not -- a cleared gate still has an owned
+// client to delete), ownership of an OpenID client cannot be decided
+// without the listing, so the failure propagates.
+async function listOAuth2ProvidersForRun(
+  authentik: AuthentikClient,
+  candidates: CandidateEntry[]
+): Promise<AuthentikOAuth2Provider[]> {
+  try {
+    return await authentik.listOAuth2Providers();
+  } catch (err) {
+    if (candidates.some((c) => c.authMode === 'oidc')) throw err;
+    return [];
+  }
+}
+
+export type OidcInstanceSettings =
+  | { ok: true; signingKeyId: string; scopeMappingIds: string[] }
+  | { ok: false; kind: 'missing-signing-key' | 'missing-scope-mapping'; reason: string };
+
+// The instance-wide half of an OpenID client's settings (research R3): the
+// signing key named AUTHENTIK_OIDC_SIGNING_KEY_NAME and the managed scope
+// mappings. Shared by planOidc (which turns a failure into a skip for every
+// OIDC entry, FR-015) and adopt-oidc-client (which throws the same reason),
+// so both word a missing key or mapping identically. Never throws.
+export async function resolveOidcInstanceSettings(authentik: AuthentikClient): Promise<OidcInstanceSettings> {
+  const keyName = authentikConfig().oidcSigningKeyName;
+  let signingKeyId: string;
+  try {
+    signingKeyId = await authentik.getSigningKeyId(keyName);
+  } catch (err) {
+    return {
+      ok: false,
+      kind: 'missing-signing-key',
+      reason: `could not resolve the OIDC signing key '${keyName}' (AUTHENTIK_OIDC_SIGNING_KEY_NAME): ${errorMessage(err)}`,
+    };
+  }
+  try {
+    return { ok: true, signingKeyId, scopeMappingIds: await authentik.getScopeMappingIds(OIDC_SCOPE_MAPPINGS) };
+  } catch (err) {
+    return { ok: false, kind: 'missing-scope-mapping', reason: `could not resolve the OpenID scope mappings: ${errorMessage(err)}` };
+  }
+}
+
+export interface GroupBindingIndex {
+  groupIdByName: Map<string, string>;
+  groupNameById: Map<string, string>;
+  // Group-backed bindings only, keyed by target Application pk.
+  bindingsByTarget: Map<string, AuthentikPolicyBinding[]>;
+}
+
+// The lookups planBindingChanges takes, built once from the raw group and
+// binding listings -- shared by runSyncAuthentik and adopt-oidc-client. A
+// policy- or user-backed binding is never ours, so it is left out; so is
+// any binding on an Application in `excludeTargetPks` (one this run deletes).
+export function indexGroupBindings(
+  groups: AuthentikGroup[],
+  bindings: AuthentikPolicyBinding[],
+  excludeTargetPks: ReadonlySet<string> = new Set()
+): GroupBindingIndex {
+  const bindingsByTarget = new Map<string, AuthentikPolicyBinding[]>();
+  for (const binding of bindings) {
+    if (binding.groupId === undefined) continue;
+    if (excludeTargetPks.has(binding.targetId)) continue;
+    const list = bindingsByTarget.get(binding.targetId) ?? [];
+    list.push(binding);
+    bindingsByTarget.set(binding.targetId, list);
+  }
+  return {
+    groupIdByName: new Map(groups.map((g) => [g.name, g.id])),
+    groupNameById: new Map(groups.map((g) => [g.id, g.name])),
+    bindingsByTarget,
+  };
+}
+
 interface OidcCreatePlan {
   slug: string;
   settings: DesiredOAuth2Settings;
@@ -883,23 +971,12 @@ async function planOidc(
   }
   if (withUris.length === 0) return plan;
 
-  const keyName = authentikConfig().oidcSigningKeyName;
-  let signingKeyId: string;
-  try {
-    signingKeyId = await authentik.getSigningKeyId(keyName);
-  } catch (err) {
-    const reason = `could not resolve the OIDC signing key '${keyName}' (AUTHENTIK_OIDC_SIGNING_KEY_NAME): ${errorMessage(err)}`;
-    for (const entry of withUris) plan.skipped.push({ slug: entry.slug, kind: 'missing-signing-key', reason });
+  const instance = await resolveOidcInstanceSettings(authentik);
+  if (!instance.ok) {
+    for (const entry of withUris) plan.skipped.push({ slug: entry.slug, kind: instance.kind, reason: instance.reason });
     return plan;
   }
-  let scopeMappingIds: string[];
-  try {
-    scopeMappingIds = await authentik.getScopeMappingIds(OIDC_SCOPE_MAPPINGS);
-  } catch (err) {
-    const reason = `could not resolve the OpenID scope mappings: ${errorMessage(err)}`;
-    for (const entry of withUris) plan.skipped.push({ slug: entry.slug, kind: 'missing-scope-mapping', reason });
-    return plan;
-  }
+  const { signingKeyId, scopeMappingIds } = instance;
 
   for (const entry of withUris) {
     const settings = desiredOAuth2Settings(entry.oidcRedirectUris, signingKeyId, scopeMappingIds);
@@ -1227,10 +1304,7 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
   // Printed only when non-empty, so ordinary output is unchanged.
   if (result.conflicts.length > 0) {
     lines.push(`Applications in conflict: ${result.conflicts.length}`);
-    const adoptable = new Set(result.adoptableConflicts ?? []);
-    for (const name of result.conflicts) {
-      lines.push(`  ! ${name} — ${adoptable.has(name) ? OAUTH2_CONFLICT_EXPLANATION : CONFLICT_EXPLANATION}`);
-    }
+    for (const name of result.conflicts) lines.push(`  ! ${name} — ${conflictExplanation(name, result)}`);
   }
   if (result.offLadder.length > 0) {
     lines.push(`Entries with an unknown authGroup: ${result.offLadder.length}`);

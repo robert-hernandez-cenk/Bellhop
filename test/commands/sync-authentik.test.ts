@@ -8,6 +8,9 @@ import {
   ownedProviderKind,
   diffOAuth2Settings,
   desiredOAuth2Settings,
+  conflictExplanation,
+  CONFLICT_EXPLANATION,
+  OAUTH2_CONFLICT_EXPLANATION,
 } from '../../src/commands/networking/sync-authentik.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
@@ -1403,7 +1406,7 @@ test('mode switch oidc -> forward self-heals a prior partial run: an already-ren
 
 test('mode switch forward -> oidc self-heals a prior partial run: an already-renamed proxy provider and an orphaned OAuth2 provider', async () => {
   const { authentik, app, proxy } = await forwardOwned();
-  await authentik.renameProxyProvider(proxy.id, 'media (replaced)');
+  await authentik.renameProxyProvider(proxy, 'media (replaced)');
   const orphan = await authentik.createOAuth2Provider({
     name: 'media',
     ...desiredOAuth2Settings(OIDC_URIS, 'key-1', SCOPE_IDS),
@@ -1955,5 +1958,69 @@ test('forward create: skipped (not attempted) when the slug name is held by an O
     assert.deepEqual(authentik.calls.slice(callsBefore), [], `${label}: nothing is written`);
     assert.match(formatSyncAuthentik(result), /Forward-auth entries skipped: 1\n {2}! sonarr — /, label);
     assert.equal(syncAuthentikFailed(result), false, label);
+  }
+});
+
+// Final-review fix 1: an owned proxy provider may be a hand-made one in
+// Authentik's 'proxy' mode (the #154 rule owns it by slug alone). The
+// forward -> oidc switch's rename must re-send that mode and its internal
+// host -- a name-only PATCH is a 400 on Authentik 2026.8, and a fixed
+// 'forward_single' would convert the provider.
+test('mode switch forward -> oidc renames a hand-made proxy-mode provider in its own mode', async () => {
+  const authentik = new FakeAuthentikClient({
+    proxyProviders: [
+      { id: '50', name: 'media', externalHost: 'https://media.example.com', mode: 'proxy', internalHost: 'http://192.0.2.30:8080' },
+    ],
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+  });
+  await seedLadderGroups(authentik);
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(result.modeSwitches, [{ slug: 'media', from: 'forward', to: 'oidc' }]);
+  assert.deepEqual(authentik.proxyProviderRenames, [
+    { id: '50', name: 'media (replaced)', mode: 'proxy', internalHost: 'http://192.0.2.30:8080' },
+  ]);
+  assert.equal((await authentik.listApplications())[0].metaPublisher, 'bellhop');
+});
+
+// Final-review fix 3: one shared wording for a conflict, whichever front end
+// prints it.
+test('conflictExplanation points an adoptable conflict at adopt-oidc-client and every other one at resolving by hand', () => {
+  const result = { adoptableConflicts: ['media'] };
+  assert.equal(conflictExplanation('media', result), OAUTH2_CONFLICT_EXPLANATION);
+  assert.equal(conflictExplanation('plex', result), CONFLICT_EXPLANATION);
+  assert.equal(conflictExplanation('plex', {}), CONFLICT_EXPLANATION);
+});
+
+// Final-review fix 6: a forward-only deployment whose token predates OIDC
+// mode (no OAuth2 read scope) keeps working as it did before this feature.
+function denyOAuth2List(authentik: FakeAuthentikClient): void {
+  authentik.listOAuth2Providers = async () => {
+    throw new Error('Authentik API GET /api/v3/providers/oauth2/?page_size=500 failed: 403 permission denied');
+  };
+}
+
+test('with no OIDC-mode entries, an OAuth2 provider listing failure reads as no OAuth2 providers', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  denyOAuth2List(authentik);
+  const inventory = oidcInventory({ authMode: undefined, oidcRedirectUris: undefined });
+  const dry = await runSyncAuthentik({}, { authentik, inventory });
+  assert.deepEqual(dry.toCreate, ['media']);
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual(result.toCreate, ['media']);
+  assert.equal((await authentik.listProxyProviders()).length, 1);
+  assert.equal((await authentik.listApplications())[0].slug, 'media');
+});
+
+test('with an OIDC-mode entry, an OAuth2 provider listing failure still fails the run', async () => {
+  for (const overrides of [{}, { authGroup: undefined }]) {
+    const authentik = new FakeAuthentikClient();
+    await seedLadderGroups(authentik);
+    denyOAuth2List(authentik);
+    await assert.rejects(
+      runSyncAuthentik({}, { authentik, inventory: oidcInventory(overrides), fetchImpl: okFetch() }),
+      /403 permission denied/,
+      `overrides ${JSON.stringify(overrides)}: ownership of an OpenID client cannot be decided without the listing`
+    );
   }
 });
