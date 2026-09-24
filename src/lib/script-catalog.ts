@@ -1,13 +1,22 @@
 import Database from 'better-sqlite3';
 import { logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
+import type { Inventory } from './inventory.ts';
+import { customScriptSource, type CustomScriptSource, type ShadowedRepo } from './app-source.ts';
 
 // How stale a stored catalog may get before getScriptCatalog refetches it.
 // Read-triggered only -- there is no background timer and no manual refresh
 // control anywhere in the CLI or web UI.
 export const CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-const GITHUB_API_BASE = 'https://api.github.com/repos/community-scripts';
+// The custom-repository group (issue #11) is never persisted (see the
+// getCustomGroup comment below for why), so it gets its own, much shorter
+// TTL than the persisted upstream catalog's 24h -- an operator adding an app
+// to their fork branch should see it in the suggestion list soon after,
+// not up to a day later.
+export const CUSTOM_CATALOG_MAX_AGE_MS = 5 * 60 * 1000;
+
+const GITHUB_OWNER = 'community-scripts';
 const CATALOG_FETCH_TIMEOUT_MS = 5000;
 
 // The community-scripts org publishes no machine-readable catalog metadata
@@ -36,23 +45,37 @@ interface ContentsEntry {
 // up in the logs instead of just quietly shrinking the catalog.
 const GITHUB_CONTENTS_LISTING_CEILING = 1000;
 
-async function fetchRepoSlugs(repo: string, fetchImpl: typeof fetch): Promise<string[]> {
+// Generalised (issue #11) to take an arbitrary owner/repo/ref rather than a
+// bare community-scripts repo name, so the same listing+filtering logic
+// serves both the persisted upstream catalog (fetchCatalog, below, calls
+// this with owner: GITHUB_OWNER and no ref -- byte-identical URLs/behavior
+// to before this generalisation) and the operator's custom repository
+// (getCustomGroup, further below, which always passes a ref: the
+// configured branch).
+async function fetchRepoSlugs(
+  target: { owner: string; repo: string; ref?: string },
+  fetchImpl: typeof fetch
+): Promise<string[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CATALOG_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(`${GITHUB_API_BASE}/${repo}/contents/ct`, {
+    const label = `${target.owner}/${target.repo}`;
+    const url = `https://api.github.com/repos/${label}/contents/ct${
+      target.ref === undefined ? '' : `?ref=${encodeURIComponent(target.ref)}`
+    }`;
+    const response = await fetchImpl(url, {
       signal: controller.signal,
       // GitHub rejects unauthenticated API requests that send no User-Agent.
       headers: { 'User-Agent': 'bellhop', Accept: 'application/vnd.github+json' },
     });
-    if (!response.ok) throw new Error(`GitHub returned ${response.status} listing ${repo}/ct`);
+    if (!response.ok) throw new Error(`GitHub returned ${response.status} listing ${label}/ct`);
     const body: unknown = await response.json();
     if (!Array.isArray(body)) {
-      throw new Error(`GitHub returned a non-array response listing community-scripts/${repo}/ct`);
+      throw new Error(`GitHub returned a non-array response listing ${label}/ct`);
     }
     if (body.length >= GITHUB_CONTENTS_LISTING_CEILING) {
       logWarn(
-        `community-scripts/${repo}/ct listing returned ${body.length} entries, at or past GitHub's ${GITHUB_CONTENTS_LISTING_CEILING}-entry contents API ceiling -- the catalog may be silently truncated`
+        `${label}/ct listing returned ${body.length} entries, at or past GitHub's ${GITHUB_CONTENTS_LISTING_CEILING}-entry contents API ceiling -- the catalog may be silently truncated`
       );
     }
     const entries = body as ContentsEntry[];
@@ -79,8 +102,8 @@ async function fetchRepoSlugs(repo: string, fetchImpl: typeof fetch): Promise<st
 // it would misrepresent what actually gets installed.
 export async function fetchCatalog(fetchImpl: typeof fetch = fetch): Promise<CatalogSlugs> {
   const [stable, dev] = await Promise.all([
-    fetchRepoSlugs(STABLE_REPO, fetchImpl),
-    fetchRepoSlugs(DEV_REPO, fetchImpl),
+    fetchRepoSlugs({ owner: GITHUB_OWNER, repo: STABLE_REPO }, fetchImpl),
+    fetchRepoSlugs({ owner: GITHUB_OWNER, repo: DEV_REPO }, fetchImpl),
   ]);
   const stableSlugs = new Set(stable);
   return { stable, dev: dev.filter((slug) => !stableSlugs.has(slug)) };
@@ -159,6 +182,21 @@ export interface ScriptCatalog extends CatalogSlugs {
   // ignores this and renders no banner -- with no manual refresh control
   // there would be no action for one to offer.
   stale: boolean;
+  // The operator's configured custom script repository's own ct/ listing
+  // (issue #11, data-model.md "Catalog response"). Absent when the feature
+  // is off (no inventory passed, or both settings unset), when the settings
+  // are half-configured, or when the custom listing fetch itself failed --
+  // getScriptCatalog must never throw over this, so every one of those
+  // cases just omits the group rather than failing the whole catalog.
+  // `slugs` are also removed from `stable`/`dev` above (in this response
+  // only -- the persisted script_catalog table is untouched). `shadows` is
+  // keyed by slug, present only for a slug that also exists in `stable`/
+  // `dev` before removal.
+  custom?: {
+    label: string;
+    slugs: string[];
+    shadows: Record<string, ShadowedRepo[]>;
+  };
 }
 
 // getScriptCatalog is read-triggered on every /install-app/apps request (the
@@ -184,6 +222,22 @@ let inFlightFetch: Promise<CatalogSlugs> | null = null;
 let lastFailureAt: number | null = null;
 const FETCH_FAILURE_COOLDOWN_MS = 60 * 1000;
 
+// The custom-repository group's own cache (issue #11), modeled on the pair
+// above but deliberately never persisted to script_catalog: at a 5-minute
+// TTL it would be stale in the database anyway (research R4), and adding a
+// third `repo` value there would need a CHECK-constraint table rebuild for
+// no real benefit. Keyed by the source's own "<owner>/<repo>@<branch>"
+// label, so changing either setting changes the key and the old listing is
+// never served (data-model.md "Catalog response") -- a stale cache entry
+// under an old key just goes unused rather than needing an explicit evict.
+// customLastFailureAt mirrors lastFailureAt's single-scalar cooldown rather
+// than being keyed too: it only ever blocks a retry for a few seconds
+// (FETCH_FAILURE_COOLDOWN_MS), and keeping it a single scalar matches the
+// existing pattern exactly rather than adding a second Map for a rare edge
+// case (a settings change landing within seconds of a prior failure).
+const customCatalogCache = new Map<string, { slugs: string[]; fetchedAt: number }>();
+let customLastFailureAt: number | null = null;
+
 // Test-only hook: clears the module-scope state above. Never called from
 // production code -- there is deliberately no way to force a refetch from
 // the CLI or web UI (see the module-level "no manual refresh control"
@@ -191,6 +245,8 @@ const FETCH_FAILURE_COOLDOWN_MS = 60 * 1000;
 export function resetCatalogFetchState(): void {
   inFlightFetch = null;
   lastFailureAt = null;
+  customCatalogCache.clear();
+  customLastFailureAt = null;
 }
 
 function fallback(stored: (CatalogSlugs & { fetchedAt: string }) | undefined): ScriptCatalog {
@@ -198,14 +254,7 @@ function fallback(stored: (CatalogSlugs & { fetchedAt: string }) | undefined): S
   return { stable: [], dev: [], fetchedAt: null, stale: true };
 }
 
-// Never rejects. Every failure path degrades to the best list available,
-// because an unusable dropdown must not block the Install App form -- the
-// App field stays free text and check-app still validates whatever is typed.
-export async function getScriptCatalog(
-  dbPath: string,
-  fetchImpl: typeof fetch = fetch,
-  now: Date = new Date()
-): Promise<ScriptCatalog> {
+async function getUpstreamCatalog(dbPath: string, fetchImpl: typeof fetch, now: Date): Promise<ScriptCatalog> {
   const stored = loadCatalog(dbPath);
   if (stored && now.getTime() - Date.parse(stored.fetchedAt) < CATALOG_MAX_AGE_MS) {
     return { ...stored, stale: false };
@@ -245,4 +294,89 @@ export async function getScriptCatalog(
     lastFailureAt = now.getTime();
     return fallback(stored);
   }
+}
+
+// Resolves and fetches the operator's custom-repository ct/ listing, memoized
+// by getScriptCatalog's own cache/cooldown below. Returns undefined for
+// every case data-model.md says omits the group: feature off (no inventory,
+// or both settings unset), half-configured (customScriptSource throws), or
+// the fetch itself failing -- every one of those is logged via logWarn
+// except "feature off", which isn't a problem to warn about at all.
+async function getCustomGroup(
+  inventory: Inventory | undefined,
+  fetchImpl: typeof fetch,
+  now: Date
+): Promise<{ label: string; slugs: string[] } | undefined> {
+  if (!inventory) return undefined;
+
+  let source: CustomScriptSource | undefined;
+  try {
+    source = customScriptSource(inventory);
+  } catch (err) {
+    logWarn(`Skipping the custom script catalog group: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  if (!source) return undefined;
+
+  const cached = customCatalogCache.get(source.label);
+  if (cached && now.getTime() - cached.fetchedAt < CUSTOM_CATALOG_MAX_AGE_MS) {
+    return { label: source.label, slugs: cached.slugs };
+  }
+
+  if (customLastFailureAt !== null && now.getTime() - customLastFailureAt < FETCH_FAILURE_COOLDOWN_MS) {
+    // Still cooling down from a recent failure -- skip the network call and
+    // omit the group entirely rather than retry on every single catalog
+    // request while the fork (or GitHub itself) is unreachable.
+    return undefined;
+  }
+
+  try {
+    const slugs = await fetchRepoSlugs({ owner: source.owner, repo: source.repo, ref: source.branch }, fetchImpl);
+    customCatalogCache.set(source.label, { slugs, fetchedAt: now.getTime() });
+    customLastFailureAt = null;
+    return { label: source.label, slugs };
+  } catch (err) {
+    logWarn(`Failed to fetch the custom script catalog (${source.label}): ${err instanceof Error ? err.message : String(err)}`);
+    customLastFailureAt = now.getTime();
+    return undefined;
+  }
+}
+
+// Strips the custom group's slugs out of stable/dev (in this response only
+// -- the persisted script_catalog table this reads from is never touched)
+// and records, per removed slug, which upstream repo(s) it shadowed.
+function withCustomGroup(base: ScriptCatalog, custom: { label: string; slugs: string[] }): ScriptCatalog {
+  const stableSet = new Set(base.stable);
+  const devSet = new Set(base.dev);
+  const customSlugs = new Set(custom.slugs);
+  const shadows: Record<string, ShadowedRepo[]> = {};
+  for (const slug of custom.slugs) {
+    const shadowedBy: ShadowedRepo[] = [];
+    if (stableSet.has(slug)) shadowedBy.push('ProxmoxVE');
+    if (devSet.has(slug)) shadowedBy.push('ProxmoxVED');
+    if (shadowedBy.length > 0) shadows[slug] = shadowedBy;
+  }
+  return {
+    ...base,
+    stable: base.stable.filter((slug) => !customSlugs.has(slug)),
+    dev: base.dev.filter((slug) => !customSlugs.has(slug)),
+    custom: { label: custom.label, slugs: custom.slugs, shadows },
+  };
+}
+
+// Never rejects. Every failure path degrades to the best list available,
+// because an unusable dropdown must not block the Install App form -- the
+// App field stays free text and check-app still validates whatever is typed.
+// `inventory` is optional so every existing call site/test that doesn't
+// care about the custom group needs no change; every real caller (the web
+// route and the MCP tool, issue #11) now passes it.
+export async function getScriptCatalog(
+  dbPath: string,
+  fetchImpl: typeof fetch = fetch,
+  now: Date = new Date(),
+  inventory?: Inventory
+): Promise<ScriptCatalog> {
+  const base = await getUpstreamCatalog(dbPath, fetchImpl, now);
+  const custom = await getCustomGroup(inventory, fetchImpl, now);
+  return custom ? withCustomGroup(base, custom) : base;
 }

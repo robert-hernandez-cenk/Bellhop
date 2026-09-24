@@ -128,7 +128,18 @@ export function dashboardRoutes(
   router.get('/inventory', (req, res) => {
     const groups = req.user?.groups ?? [];
     const { hosts, guests } = filterInventoryForUser(inventoryPath, groups, inventory);
-    res.json({ hosts, guests, domain: inventory.domain });
+    // Both-or-neither (see customScriptSource/CLAUDE.md's Settings bullet):
+    // null unless both settings are actually set, so the client's
+    // communityScriptsUrl never has to re-derive that rule itself. Read
+    // directly off `inventory` (not customScriptSource(), which throws on a
+    // half-configured pair) -- a route that lists inventory must never 500
+    // over a Settings misconfiguration the admin-only Settings page/set-config
+    // are the actual place to fix.
+    const customScripts =
+      inventory.customScriptsRepo && inventory.customScriptsBranch
+        ? { repo: inventory.customScriptsRepo, branch: inventory.customScriptsBranch }
+        : null;
+    res.json({ hosts, guests, domain: inventory.domain, customScripts });
   });
 
   // The client used to hardcode both admin group names to decide what to

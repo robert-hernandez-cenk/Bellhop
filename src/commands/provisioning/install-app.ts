@@ -6,16 +6,21 @@ import { logInfo, logWarn } from '../../lib/log.ts';
 import { pickStorage } from '../../lib/storage.ts';
 import { resolveNfsMountPath, buildNfsAttachScript } from '../../lib/nfs.ts';
 import { readHostAuthorizedKeys } from '../../lib/authorized-keys.ts';
+import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE, resolveAppSource, formatOverrideWarning, type AppSource } from '../../lib/app-source.ts';
 export { pickStorage } from '../../lib/storage.ts';
 
-const COMMUNITY_SCRIPTS_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct';
+// The /ct-scoped bases resolveAppUrl/resolveDevAppUrl build URLs from,
+// derived from app-source.ts's raw repo-root constants (shared with that
+// module's own custom-repository resolution) rather than hardcoded here a
+// second time.
+const COMMUNITY_SCRIPTS_BASE = `${UPSTREAM_STABLE_BASE}/ct`;
 // Apps still under active development (e.g. budget-board) live in a
 // separate repo -- same owner, same ct/<slug>.sh layout, "ProxmoxVED"
 // (dev) instead of "ProxmoxVE" -- until they graduate to the main one.
 // Never assumed up front: resolveAppUrl always targets the main repo, and
 // this is only ever tried as a fallback once that 404s (see
 // buildInstallAppScript's curl fallback and provisioning.ts's checkAppUrl).
-const COMMUNITY_SCRIPTS_DEV_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct';
+const COMMUNITY_SCRIPTS_DEV_BASE = `${UPSTREAM_DEV_BASE}/ct`;
 
 // --app accepts either a bare community-scripts slug ("plex") or a full script
 // URL pasted verbatim -- the latter is used as-is, with no reformatting, so
@@ -88,13 +93,24 @@ export interface InstallAppOptions {
   // and answerable live. Never set by the web UI, which has no terminal
   // to attach to.
   interactive?: boolean;
+  // A pre-resolved source (research R5): previewAndEnqueue resolves once per
+  // operation and passes its result here so preview and apply -- and the
+  // prompt pre-scan -- all read the same pinned commit, instead of each
+  // separately calling resolveAppSource (and each potentially pinning a
+  // different one). When omitted (the CLI, and the plain web/MCP preview
+  // routes that call op.preview directly), runInstallApp resolves it itself.
+  source?: AppSource;
+  // Only consulted when `source` is omitted, to resolve one. Defaults to the
+  // global fetch.
+  fetchImpl?: typeof fetch;
 }
 
 export function buildInstallAppScript(
   opts: InstallAppOptions,
   mid: ResolvedMid,
   storage: { template: string; container: string },
-  hostKeys?: string
+  hostKeys?: string,
+  source?: AppSource
 ): string {
   const cores = opts.cores ?? 1;
   const memory = opts.memory ?? 512;
@@ -102,13 +118,19 @@ export function buildInstallAppScript(
   const bridge = opts.bridge ?? 'vmbr0';
   const appUrl = resolveAppUrl(opts.app);
   const devAppUrl = resolveDevAppUrl(opts.app);
+  const isCustom = source?.kind === 'custom';
   // Tried at curl-time rather than resolved up front: curl -fsSL exits
   // non-zero and prints nothing on a 404 (-f), so `curl1 || curl2` inside
   // $(...) reliably falls back to the dev-repo script only when the main
-  // repo's actually 404s, with no separate existence check needed here.
-  const curlAppScript = devAppUrl
-    ? `curl -fsSL ${shellQuote(appUrl)} 2>/dev/null || curl -fsSL ${shellQuote(devAppUrl)}`
-    : `curl -fsSL ${shellQuote(appUrl)}`;
+  // repo's actually 404s, with no separate existence check needed here. A
+  // custom-repository resolution has already confirmed the script exists at
+  // the pinned commit (resolveAppSource's own ct/<slug>.sh fetch), so it
+  // curls that one URL directly, with no upstream fallback.
+  const curlAppScript = isCustom
+    ? `curl -fsSL ${shellQuote(source!.ctUrl!)}`
+    : devAppUrl
+      ? `curl -fsSL ${shellQuote(appUrl)} 2>/dev/null || curl -fsSL ${shellQuote(devAppUrl)}`
+      : `curl -fsSL ${shellQuote(appUrl)}`;
   return [
     // community-scripts' shared build.func calls `clear` unconditionally
     // partway through, even in unattended mode (the var_* overrides below
@@ -169,6 +191,14 @@ export function buildInstallAppScript(
     'touch /usr/local/community-scripts/default.vars',
     "sed -i '/^[#[:space:]]*var_template_storage=/d;/^[#[:space:]]*var_container_storage=/d' /usr/local/community-scripts/default.vars",
     `printf 'var_template_storage=%s\\nvar_container_storage=%s\\n' ${shellQuote(storage.template)} ${shellQuote(storage.container)} >> /usr/local/community-scripts/default.vars`,
+    // research R1: community-scripts' shared core/build.func resolves every
+    // non-engine path (ct/..., install/...) against COMMUNITY_SCRIPTS_URL
+    // when it's set, falling back to upstream ProxmoxVED otherwise --
+    // without this export, a fork-installed app's own install/<slug>-
+    // install.sh would still be pulled from upstream (or 404 if upstream
+    // has no such app at all). Exported at the pinned commit, never the
+    // branch name, and only for a custom-repository resolution.
+    ...(isCustom ? [`export COMMUNITY_SCRIPTS_URL=${shellQuote(source!.scriptsBaseUrl!)}`] : []),
     `bash -c "$(${curlAppScript})"`,
   ].join('\n');
 }
@@ -176,7 +206,7 @@ export function buildInstallAppScript(
 export async function runInstallApp(
   opts: InstallAppOptions,
   deps: { ssh: SSHClient; inventory: Inventory }
-): Promise<{ script: string; mid: ResolvedMid; applied: boolean }> {
+): Promise<{ script: string; mid: ResolvedMid; applied: boolean; source: AppSource }> {
   if (!opts.app.includes('://') && !/^[a-z0-9-]+$/.test(opts.app)) {
     throw new Error(`--app must contain only lowercase letters, digits, and hyphens, got: ${opts.app}`);
   }
@@ -194,6 +224,18 @@ export async function runInstallApp(
   if (!host) {
     throw new Error(`Not a Proxmox host in inventory: ${opts.host}`);
   }
+
+  // research R1/R5: resolved (or reused, when the caller already pinned one
+  // -- see InstallAppOptions.source) before any Proxmox call, so a
+  // resolution failure (bad customScriptsRepo/Branch, GitHub unreachable)
+  // never creates or half-creates a guest. The override warning, when the
+  // resolved source also shadows an upstream copy of the same slug, is
+  // logged here -- before resolveMid/checkVmidAvailable -- so it's the
+  // first line of a dry run, a captured preview, and the apply job's log.
+  const source = opts.source ?? (await resolveAppSource(opts.app, deps.inventory, opts.fetchImpl ?? fetch));
+  const overrideWarning = formatOverrideWarning(source);
+  if (overrideWarning) logWarn(overrideWarning);
+
   const mid = resolveMid(deps.inventory, opts.host, opts.mid);
   await checkVmidAvailable(deps.ssh, deps.inventory, opts.host, mid.vmid);
   const storage = {
@@ -206,7 +248,7 @@ export async function runInstallApp(
   // be baked in at build time, not appended as a separate call the way
   // create-lxc's own follow-up pct exec is).
   const hostKeys = await readHostAuthorizedKeys(deps.ssh, deps.inventory, opts.host);
-  const installScript = buildInstallAppScript(opts, mid, storage, hostKeys);
+  const installScript = buildInstallAppScript(opts, mid, storage, hostKeys, source);
 
   let nfsScript: string | undefined;
   if (opts.nfsStorage && opts.nfsMountPoint) {
@@ -219,7 +261,7 @@ export async function runInstallApp(
   const script = nfsScript ? `${installScript}\n\n# --- attach NFS mount (separate remote call) ---\n${nfsScript}` : installScript;
 
   if (!opts.apply) {
-    return { script, mid, applied: false };
+    return { script, mid, applied: false, source };
   }
   if (!hostKeys) {
     logWarn(`No authorized_keys found on host '${opts.host}'; skipping SSH key provisioning for ${opts.hostname}`);
@@ -254,5 +296,5 @@ export async function runInstallApp(
     }
   }
   logInfo(`Connect with: ssh root@${stripCidr(mid.ip)}`);
-  return { script, mid, applied: true };
+  return { script, mid, applied: true, source };
 }

@@ -161,6 +161,17 @@ export const GuestEntrySchema = z.object({
   // an `app` key at all. Drives the Dashboard's community-scripts quick-open
   // link; undefined for any guest not created via install-app.
   app: z.string().optional(),
+  // Set only by the web/MCP install-app apply path (never the CLI, which
+  // never touches inventory at all -- see the `app` comment above) when the
+  // resolved AppSource.kind was 'custom' (src/lib/app-source.ts) -- i.e. this
+  // guest's `app` slug was actually installed from the operator-configured
+  // customScriptsRepo/customScriptsBranch, not from upstream
+  // ProxmoxVE/ProxmoxVED. Preserved across a repeat apply for the same
+  // host+vmid the same way `app` is (upsertGuestEntry in
+  // src/operations/provisioning.ts), and never touched by sync-inventory's
+  // merge. Drives the Dashboard/Update page's "open on GitHub" link instead
+  // of the plain community-scripts.org one -- see research R8.
+  appSource: z.literal('custom').optional(),
   // Marks this guest as a VPN gateway for a provider -- any number of
   // guests may share the same value (e.g. two 'nordvpn' gateways in
   // different regions). Set by deploy-vpn-gateway --apply on the guest it
@@ -207,11 +218,46 @@ export const ExternalSiteSchema = z.object({
 // the point of use rather than falling back to this repo author's own
 // network, since a wrong IP is worse than a missing one for any other
 // operator. Persisted as rows in the `meta` table alongside `domain`.
+// `customScriptsRepo`/`customScriptsBranch` (issue #11) are a related pair
+// naming a public GitHub repository laid out like ProxmoxVED (a fork
+// branch) that install-app/update-app resolve apps from before falling
+// back to the upstream community-scripts repos -- see src/lib/app-source.ts.
+// Both unset means the feature is off. Unlike every other setting here,
+// these two have a cross-field rule (set together or not at all), but that
+// rule is deliberately NOT enforced by this schema: set-config writes one
+// key at a time, so a schema-level both-or-neither check would make it
+// impossible to ever set the first of the pair. The rule is instead
+// enforced at the point of use, by customScriptSource() in
+// src/lib/app-source.ts.
 export const SettingsSchema = z.object({
   nfsServer: z.string().min(1).optional(),
   backupStorage: z.string().min(1).optional(),
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
+  // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
+  // the repo name (research R7).
+  customScriptsRepo: z
+    .string()
+    .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/, 'must be owner/repo')
+    .optional(),
+  // A git branch name -- the character class alone doesn't rule out every
+  // invalid ref (git also forbids "..", a leading "/" or "-", and a
+  // trailing "/" or ".lock"), so those are checked explicitly rather than
+  // relied on to fall out of the regex.
+  customScriptsBranch: z
+    .string()
+    .refine(
+      (value) =>
+        /^[A-Za-z0-9._/-]+$/.test(value) &&
+        !value.includes('..') &&
+        !value.startsWith('/') &&
+        !value.startsWith('-') &&
+        !value.endsWith('/') &&
+        !value.endsWith('.lock'),
+      'must be a valid git branch name'
+    )
+    .optional(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -358,6 +404,7 @@ function openInventoryDb(path: string): Database.Database {
   ensureColumn(db, 'guests', 'oidc_redirect_uris_json', 'oidc_redirect_uris_json TEXT');
   ensureColumn(db, 'external_sites', 'auth_mode', 'auth_mode TEXT');
   ensureColumn(db, 'external_sites', 'oidc_redirect_uris_json', 'oidc_redirect_uris_json TEXT');
+  ensureColumn(db, 'guests', 'app_source', 'app_source TEXT');
   // Must run after the auth_group ensureColumn calls above -- it writes
   // into that column before dropping the one it read from.
   for (const table of ['hosts', 'guests', 'external_sites']) {
@@ -650,6 +697,7 @@ interface GuestRow {
   caddy_manual: number | null;
   unprivileged: number | null;
   app: string | null;
+  app_source: string | null;
   vpn_gateway: string | null;
   vpn: string | null;
   unauthenticated_paths_json: string | null;
@@ -735,6 +783,7 @@ export function loadInventory(path: string): Inventory {
       caddyManual: row.caddy_manual ? true : undefined,
       unprivileged: row.unprivileged === null ? undefined : !!row.unprivileged,
       app: row.app ?? undefined,
+      appSource: (row.app_source ?? undefined) as 'custom' | undefined,
       vpnGateway: (row.vpn_gateway ?? undefined) as 'nordvpn' | 'pia' | undefined,
       vpn: row.vpn ?? undefined,
       unauthenticatedPaths: row.unauthenticated_paths_json ? JSON.parse(row.unauthenticated_paths_json) : undefined,
@@ -944,8 +993,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, caddy, caddy_manual, unprivileged, app, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @caddy, @caddy_manual, @unprivileged, @app, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, caddy, caddy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @caddy, @caddy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -960,6 +1009,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           caddy_manual: guest.caddyManual ? 1 : null,
           unprivileged: guest.unprivileged === undefined ? null : guest.unprivileged ? 1 : 0,
           app: guest.app ?? null,
+          app_source: guest.appSource ?? null,
           vpn_gateway: guest.vpnGateway ?? null,
           vpn: guest.vpn ?? null,
           auth_group: guest.authGroup ?? null,

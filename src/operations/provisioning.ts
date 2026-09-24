@@ -37,13 +37,27 @@ function upsertGuestEntry(guests: GuestEntry[], entry: GuestEntry): GuestEntry[]
   // a repeat apply for the same host+vmid doesn't silently clobber a
   // previously-good app slug with undefined.
   const app = entry.app !== undefined ? entry.app : existing.app;
+  // Unlike port/app/insecureBackendTls, entry.appSource is NOT simply
+  // "fall back to existing when undefined": once entry.app is set (a
+  // resolvable slug, from install-app's own appSlugFor(i.app)), appSource is
+  // authoritative -- it reflects exactly what this apply's resolution
+  // actually was ('custom' or undefined for upstream), so an upstream
+  // reinstall for the same host+vmid (e.g. the operator unset
+  // customScriptsRepo/Branch) correctly clears a stale 'custom' rather than
+  // leaving inventory claiming a provenance this install didn't use.
+  // entry.app is undefined only for a pasted full script URL (never
+  // resolved against the custom repository at all, so appSource carries no
+  // fresh signal either way) or for create-lxc/create-vm (which never touch
+  // app/appSource) -- in both of those cases, fall back to the existing
+  // recorded value exactly like `app` itself does.
+  const appSource = entry.app !== undefined ? entry.appSource : existing.appSource;
   // Same reasoning as port/app: entry.insecureBackendTls is undefined
   // whenever the create/install form's checkbox was left unchecked (or its
   // key omitted entirely, since an untouched checkbox never enters the
   // generic form's values object) -- fall back to whatever the existing
   // entry already had rather than silently clearing it on a repeat apply.
   const insecureBackendTls = entry.insecureBackendTls !== undefined ? entry.insecureBackendTls : existing.insecureBackendTls;
-  const merged: GuestEntry = { ...existing, ...entry, subdomains, port, app, insecureBackendTls };
+  const merged: GuestEntry = { ...existing, ...entry, subdomains, port, app, appSource, insecureBackendTls };
   return guests.map((g, i) => (i === idx ? merged : g));
 }
 
@@ -179,7 +193,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     id: 'install-app',
     category: 'provisioning',
     description:
-      'Create a new LXC container by running a community-scripts (ProxmoxVE) install script unattended. The job watches for interactive prompts; answer them with answer_job_prompt.',
+      'Create a new LXC container by running a community-scripts (ProxmoxVE) install script unattended, or, when an operator-configured custom script repository is set (see set-config customScriptsRepo/customScriptsBranch), from that fork branch instead. The job watches for interactive prompts; answer them with answer_job_prompt.',
     shape: {
       app: reqStr('community-scripts app slug or full script URL'),
       host: reqStr('Proxmox host name'),
@@ -196,12 +210,15 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     target: (i) => i.host,
     targetType: 'host',
     watchForPrompts: true,
+    resolvesApp: true,
     preview: async (i, deps) => {
-      const { text, result } = await withCapturedConsole(() => runInstallApp({ ...(i as any), apply: false }, deps));
+      const { text, result } = await withCapturedConsole(() =>
+        runInstallApp({ ...(i as any), apply: false, source: i.appSource, fetchImpl: deps.fetchImpl }, deps)
+      );
       return [text, result.script].filter(Boolean).join('\n');
     },
     apply: async (i, deps) => {
-      const result = await runInstallApp({ ...(i as any), apply: true }, deps);
+      const result = await runInstallApp({ ...(i as any), apply: true, source: i.appSource, fetchImpl: deps.fetchImpl }, deps);
       await recordProvisionedGuest(deps, {
         name: i.hostname,
         type: 'lxc',
@@ -211,6 +228,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
         subdomains: parseSubdomains(i.subdomains),
         port: i.port ? parsePort(i.port) : undefined,
         app: appSlugFor(i.app),
+        appSource: i.appSource?.kind === 'custom' ? 'custom' : undefined,
         insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
       });
     },

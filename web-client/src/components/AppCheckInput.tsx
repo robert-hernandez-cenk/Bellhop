@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiGet } from '../api/client';
-import type { AppDefaults } from '../api/types';
+import type { AppCheckResponse, AppDefaults } from '../api/types';
 
 export type CheckStatus = 'idle' | 'checking' | 'ok' | 'missing';
 
+// issue #11: the operator-configured custom script repository's own ct/
+// listing, already stripped out of `stable`/`dev` server-side (see
+// getScriptCatalog/withCustomGroup in src/lib/script-catalog.ts). `shadows`
+// is keyed by slug, present only for a slug that also exists upstream --
+// used to render the "overrides ProxmoxVE"/"ProxmoxVED" tag below.
 interface Catalog {
   stable: string[];
   dev: string[];
+  custom?: { label: string; slugs: string[]; shadows: Record<string, string[]> };
 }
 
 // A one-character filter can match hundreds of the ~671 catalog slugs.
@@ -63,7 +69,21 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
   // babysitting before they click Apply, rather than discovering it when the
   // job pauses several minutes in.
   const [scriptPrompts, setScriptPrompts] = useState<string[]>([]);
-  const [catalog, setCatalog] = useState<Catalog>({ stable: [], dev: [] });
+  // Set when the resolved source is the operator-configured custom script
+  // repository (issue #11, research R5/R8) -- the repo@branch label and the
+  // pinned commit's short SHA, shown so the operator knows exactly what
+  // Apply will install from.
+  const [custom, setCustom] = useState<{ label: string; sha: string } | undefined>(undefined);
+  // Non-empty only for a custom resolution that also shadows an upstream
+  // copy of the same slug (research R6) -- the ProxmoxVE/ProxmoxVED names
+  // whose install this overrides.
+  const [shadows, setShadows] = useState<string[]>([]);
+  // Set when resolving --app itself threw (a misconfigured
+  // customScriptsRepo/customScriptsBranch, or GitHub unreachable) -- shown
+  // under the field, with the status left 'missing' the same as any other
+  // non-existent app.
+  const [checkError, setCheckError] = useState<string | undefined>(undefined);
+  const [catalog, setCatalog] = useState<Catalog>({ stable: [], dev: [], custom: undefined });
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const listRef = useRef<HTMLUListElement>(null);
@@ -82,7 +102,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
     let cancelled = false;
     apiGet<Catalog>('/provisioning/install-app/apps')
       .then((fetched) => {
-        if (!cancelled) setCatalog({ stable: fetched.stable ?? [], dev: fetched.dev ?? [] });
+        if (!cancelled) setCatalog({ stable: fetched.stable ?? [], dev: fetched.dev ?? [], custom: fetched.custom });
       })
       .catch(() => {});
     return () => {
@@ -95,6 +115,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       onStatusChange('idle');
       setDevWarning(false);
       setScriptPrompts([]);
+      setCustom(undefined);
+      setShadows([]);
+      setCheckError(undefined);
       return;
     }
     // Mirror resolveAppUrl's own bare-slug-vs-URL split: a bare slug gets
@@ -108,18 +131,33 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
     lastCheckedRef.current = normalized;
     onStatusChange('checking');
     try {
-      const res = await apiGet<{ exists: boolean; defaults?: AppDefaults; dev?: boolean; prompts?: string[] }>(
-        `${checkEndpoint}?value=${encodeURIComponent(normalized)}`
-      );
+      const res = await apiGet<AppCheckResponse>(`${checkEndpoint}?value=${encodeURIComponent(normalized)}`);
+      // A later runCheck for a different value may have already started (and
+      // possibly already resolved) while this one was in flight -- if
+      // lastCheckedRef has moved on since this call started, this response
+      // is stale and must not overwrite what the field now shows (status,
+      // the custom-repository notice, the override banner, the error, the
+      // dev warning, or the prompt list) for a value the operator has since
+      // changed away from.
+      if (normalized !== lastCheckedRef.current) return;
       onStatusChange(res.exists ? 'ok' : 'missing');
       setDevWarning(!!res.dev);
       setScriptPrompts(res.exists ? res.prompts ?? [] : []);
+      setCustom(res.exists ? res.custom : undefined);
+      setShadows(res.exists ? res.shadows ?? [] : []);
+      setCheckError(res.error);
       if (res.exists && res.defaults) onDefaults?.(res.defaults);
       if (res.exists && !normalized.includes('://')) onExists?.(normalized);
     } catch {
+      // Same staleness guard as the success path above -- a stale failure
+      // must not clobber a newer, still-in-flight (or already-settled) check.
+      if (normalized !== lastCheckedRef.current) return;
       onStatusChange('missing');
       setDevWarning(false);
       setScriptPrompts([]);
+      setCustom(undefined);
+      setShadows([]);
+      setCheckError(undefined);
     }
   };
 
@@ -128,11 +166,16 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
   const filtering = query !== '' && !value.includes('://');
   const matchIn = (slugs: string[]) =>
     filtering ? rankMatches(slugs.filter((slug) => slug.includes(query)), query) : [];
+  // The custom group is always shown first (issue #11) -- it's the
+  // operator's own fork branch, which they configured specifically to take
+  // priority over the upstream catalog.
+  const customMatches = catalog.custom ? matchIn(catalog.custom.slugs) : [];
   const stableMatches = matchIn(catalog.stable);
   const devMatches = matchIn(catalog.dev);
+  const shownCustom = customMatches.slice(0, MAX_ROWS_PER_GROUP);
   const shownStable = stableMatches.slice(0, MAX_ROWS_PER_GROUP);
   const shownDev = devMatches.slice(0, MAX_ROWS_PER_GROUP);
-  const flatMatches = [...shownStable, ...shownDev];
+  const flatMatches = [...shownCustom, ...shownStable, ...shownDev];
   const showPopup = open && flatMatches.length > 0;
 
   useEffect(() => {
@@ -171,7 +214,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
     }
   };
 
-  const renderOption = (slug: string, index: number) => (
+  // `overrides` is only ever passed for a custom-group row (see the render
+  // below) -- the slug's own shadowed-upstream-repo list, when non-empty.
+  const renderOption = (slug: string, index: number, overrides?: string[]) => (
     <li
       key={slug}
       data-index={index}
@@ -183,6 +228,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       onClick={() => select(slug)}
     >
       {slug}
+      {overrides && overrides.length > 0 && (
+        <span className="app-suggestion-override-tag">overrides {overrides.join(', ')}</span>
+      )}
     </li>
   );
 
@@ -201,6 +249,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
           onStatusChange('idle');
           setDevWarning(false);
           setScriptPrompts([]);
+          setCustom(undefined);
+          setShadows([]);
+          setCheckError(undefined);
           setOpen(true);
           setActiveIndex(-1);
         }}
@@ -218,12 +269,23 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       />
       {showPopup && (
         <ul className="app-suggestions" role="listbox" ref={listRef}>
+          {shownCustom.length > 0 && (
+            <li className="app-suggestions-group app-suggestions-group-custom" role="presentation">
+              {catalog.custom!.label} (custom)
+            </li>
+          )}
+          {shownCustom.map((slug, i) => renderOption(slug, i, catalog.custom?.shadows[slug]))}
+          {customMatches.length > shownCustom.length && (
+            <li className="app-suggestions-more" role="presentation">
+              …and {customMatches.length - shownCustom.length} more — keep typing
+            </li>
+          )}
           {shownStable.length > 0 && (
             <li className="app-suggestions-group" role="presentation">
               ProxmoxVE (stable)
             </li>
           )}
-          {shownStable.map((slug, i) => renderOption(slug, i))}
+          {shownStable.map((slug, i) => renderOption(slug, shownCustom.length + i))}
           {stableMatches.length > shownStable.length && (
             <li className="app-suggestions-more" role="presentation">
               …and {stableMatches.length - shownStable.length} more — keep typing
@@ -234,13 +296,24 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
               ProxmoxVED (development)
             </li>
           )}
-          {shownDev.map((slug, i) => renderOption(slug, shownStable.length + i))}
+          {shownDev.map((slug, i) => renderOption(slug, shownCustom.length + shownStable.length + i))}
           {devMatches.length > shownDev.length && (
             <li className="app-suggestions-more" role="presentation">
               …and {devMatches.length - shownDev.length} more — keep typing
             </li>
           )}
         </ul>
+      )}
+      {checkError && <div className="app-check-error">{checkError}</div>}
+      {custom && (
+        <div className="app-custom-notice">
+          Installing from the custom script repository {custom.label} (commit {custom.sha.slice(0, 7)}).
+        </div>
+      )}
+      {shadows.length > 0 && custom && (
+        <div className="custom-override-warning">
+          This installs your custom copy from {custom.label}, overriding the upstream copy in {shadows.join(', ')}.
+        </div>
       )}
       {devWarning && (
         <div className="dev-app-warning">

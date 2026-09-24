@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet, apiPost } from '../api/client';
-import type { HostEntry, GuestEntry, GuestStatusResponse } from '../api/types';
+import type { HostEntry, GuestEntry, GuestStatusResponse, CustomScripts } from '../api/types';
 import { DeleteGuestModal } from '../components/DeleteGuestModal';
 import { AdvancedGuestModal } from '../components/AdvancedGuestModal';
 import { PageDescription } from '../components/PageDescription';
@@ -17,6 +17,7 @@ export function Dashboard() {
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [guests, setGuests] = useState<GuestEntry[]>([]);
   const [domain, setDomain] = useState('');
+  const [customScripts, setCustomScripts] = useState<CustomScripts | null>(null);
   const [filter, setFilter] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +38,13 @@ export function Dashboard() {
   };
 
   const load = () => {
-    apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string }>('/inventory').then((data) => {
+    apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string; customScripts: CustomScripts | null }>(
+      '/inventory'
+    ).then((data) => {
       setHosts(data.hosts);
       setGuests(data.guests);
       setDomain(data.domain);
+      setCustomScripts(data.customScripts);
     });
   };
 
@@ -309,6 +313,7 @@ export function Dashboard() {
           guest={advancedGuest}
           hosts={hosts}
           guests={guests}
+          customScripts={customScripts}
           onClose={() => setAdvancedGuestName(null)}
           onSaved={load}
         />

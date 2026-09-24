@@ -46,12 +46,14 @@ export interface McpHarnessOptions {
   // server withdraws the request.
   elicit?: (request: ElicitRequest, signal: AbortSignal) => Promise<ElicitResult>;
   serverOptions?: Parameters<typeof buildMcpServer>[1];
-  // Test-only overrides for OIDC-credential-reading tests (issue #1, unit
-  // U7): everything else in this repo's MCP suite is happy with the fixed
-  // MCP_TEST_INVENTORY and an UnconfiguredAuthentikClient, so both stay
-  // optional and default to the existing behavior.
+  // Overrides the default MCP_TEST_INVENTORY fixture -- e.g. an OIDC-mode
+  // entry (issue #1) or customScriptsRepo/customScriptsBranch (issue #11).
   inventory?: Inventory;
+  // Overrides the default UnconfiguredAuthentikClient, for the
+  // OIDC-credential-reading tests (issue #1).
   authentik?: AuthentikClient;
+  // Overrides the default always-404 fetch stub.
+  fetchImpl?: typeof fetch;
 }
 
 export async function setupMcp(opts: McpHarnessOptions = {}) {
@@ -68,7 +70,7 @@ export async function setupMcp(opts: McpHarnessOptions = {}) {
       inventoryPath,
       authentik: opts.authentik ?? new UnconfiguredAuthentikClient(),
       cloudflare: new UnconfiguredCloudflareClient(),
-      fetchImpl: (async () => new Response(null, { status: 404 })) as unknown as typeof fetch,
+      fetchImpl: opts.fetchImpl ?? ((async () => new Response(null, { status: 404 })) as unknown as typeof fetch),
       jobStore,
       jobLog,
       jobRunner,

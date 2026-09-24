@@ -4,6 +4,7 @@ import request from 'supertest';
 import { buildApp } from '../../../src/web/app.ts';
 import { checkAppUrl, parseAppDefaults, parsePromptHints, parseSubdomains } from '../../../src/web/routes/provisioning.ts';
 import { resolveInstallScriptUrl } from '../../../src/commands/provisioning/install-app.ts';
+import { UPSTREAM_STABLE_BASE } from '../../../src/lib/app-source.ts';
 import { JobStore } from '../../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../../src/web/jobs/job-log.ts';
 import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
@@ -11,8 +12,9 @@ import { FakeSSHClient, defaultResponder } from '../../support/fake-ssh-client.t
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { UnconfiguredAuthentikClient } from '../../../src/lib/authentik-client.ts';
 import { runSyncAuthentik } from '../../../src/commands/networking/sync-authentik.ts';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { Inventory } from '../../../src/lib/inventory.ts';
 import { loadInventory, saveInventory } from '../../../src/lib/inventory.ts';
@@ -457,6 +459,77 @@ test('GET /api/provisioning/install-app/check-app uses the injected fetch, not t
   const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'plex' });
   assert.equal(res.status, 200);
   assert.equal(res.body.exists, false);
+});
+
+// --- custom script repository (issue #11) ---
+// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// on branch my-apps is the same example the spec/plan/data-model/
+// test/lib/app-source.test.ts use.
+
+const customFixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'github');
+const CUSTOM_HEAD_SHA_RAW = readFileSync(path.join(customFixtureDir, 'branch-head-sha.txt'), 'utf8');
+const CUSTOM_SHA = CUSTOM_HEAD_SHA_RAW.trim();
+const CUSTOM_OWNER = 'example-user';
+const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_BRANCH = 'my-apps';
+const CUSTOM_HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${CUSTOM_SHA}/ct/${slug}.sh`;
+
+function customScriptFetch(slug: string): typeof fetch {
+  return (async (url: unknown) => {
+    const href = String(url);
+    if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    // Both upstream shadow probes -- always "not present" for this test.
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('GET /api/provisioning/install-app/check-app resolves through the custom script repository, returning custom.sha', async () => {
+  const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
+  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl: customScriptFetch('myapp') });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.exists, true);
+  assert.equal(res.body.url, customCtUrl('myapp'));
+  assert.deepEqual(res.body.custom, { label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: CUSTOM_SHA });
+  assert.equal(res.body.shadows, undefined);
+});
+
+// Same as customScriptFetch, but the ProxmoxVE shadow probe hits -- used to
+// prove check-app's `shadows` field (research R6) reflects a real upstream
+// collision rather than always being empty/undefined the way the test above
+// exercises.
+function customScriptFetchWithStableShadow(slug: string): typeof fetch {
+  return (async (url: unknown) => {
+    const href = String(url);
+    if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/${slug}.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    // The ProxmoxVED shadow probe -- "not present" for this test.
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('GET /api/provisioning/install-app/check-app reports shadows for a slug present upstream', async () => {
+  const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
+  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), {
+    fetchImpl: customScriptFetchWithStableShadow('myapp'),
+  });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.exists, true);
+  assert.deepEqual(res.body.shadows, ['ProxmoxVE']);
+});
+
+test('GET /api/provisioning/install-app/check-app reports error and exists=false when the custom settings are half-configured', async () => {
+  const halfConfiguredInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
+  const { app } = isolatedApp(halfConfiguredInventory, () => ({ stdout: '', stderr: '', code: 0 }));
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.exists, false);
+  assert.equal(res.body.url, '');
+  assert.match(res.body.error, /customScriptsBranch is not set \(customScriptsRepo is\)/);
 });
 
 test('GET /api/provisioning/install-app/apps returns the two catalog groups', async () => {

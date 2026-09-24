@@ -147,17 +147,30 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     }
   );
 
-  server.registerTool('list_install_apps', { description: 'The cached community-scripts app catalog usable with install_app.', inputSchema: {} }, async () =>
-    json(await getScriptCatalog(deps.inventoryPath, deps.fetchImpl ?? fetch))
+  server.registerTool(
+    'list_install_apps',
+    {
+      description:
+        'The cached community-scripts app catalog usable with install_app. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), the response also carries a custom group listing that fork branch\'s own ct/ scripts -- already removed from stable/dev -- plus which upstream repo(s) each overrides.',
+      inputSchema: {},
+    },
+    async () => {
+      refresh();
+      return json(await getScriptCatalog(deps.inventoryPath, deps.fetchImpl ?? fetch, new Date(), deps.inventory));
+    }
   );
 
   server.registerTool(
     'check_install_app',
     {
-      description: "Resolve an install_app slug or URL: whether it exists, dev-repo status, the script's recommended sizing and port, and any interactive prompts it contains.",
+      description:
+        "Resolve an install_app slug or URL: whether it exists, dev-repo status, the script's recommended sizing and port, and any interactive prompts it contains. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), also resolves against that fork branch first -- the response then carries custom (label, pinned commit sha) and, if the slug also exists upstream, shadows (which upstream repo(s) it overrides). A resolution failure (bad settings, GitHub unreachable) comes back as exists: false plus error, rather than throwing.",
       inputSchema: { app: z.string().describe('App slug or full script URL') },
     },
-    async (args: { app: string }) => json(await checkAppUrl(args.app, deps.fetchImpl))
+    async (args: { app: string }) => {
+      refresh();
+      return json(await checkAppUrl(args.app, deps.fetchImpl, deps.inventory));
+    }
   );
 
   server.registerTool(
