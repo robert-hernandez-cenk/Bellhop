@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { apiPatch } from '../api/client';
 import { SubdomainsInput } from './SubdomainsInput';
+import { AuthentikConflictBanner } from './AuthentikSyncBanners';
 import type { GuestEntry, HostEntry } from '../api/types';
 
 interface Props {
@@ -21,22 +22,26 @@ export function EditableSubdomains({ guest, hosts, guests, onSaved }: Props) {
   const [status, setStatus] = useState<SaveStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
+  const [conflictAdoptable, setConflictAdoptable] = useState(false);
 
   const applyPatch = async (body: Record<string, unknown>) => {
     setStatus('saving');
     setError(null);
     setConflicts([]);
+    setConflictAdoptable(false);
     try {
       const res = await apiPatch<{
         guest: GuestEntry;
         caddySynced: boolean;
         caddyError?: string;
         authentikConflicts?: string[];
+        authentikConflictAdoptable?: true;
       }>(
         `/inventory/guests/${encodeURIComponent(guest.name)}`,
         body
       );
       setConflicts(res.authentikConflicts ?? []);
+      setConflictAdoptable(res.authentikConflictAdoptable === true);
       if (res.caddySynced) {
         setStatus('saved');
       } else {
@@ -73,12 +78,7 @@ export function EditableSubdomains({ guest, hosts, guests, onSaved }: Props) {
       {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
       {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
-      {conflicts.length > 0 && (
-        <div className="warning-banner">
-          Authentik slug conflict: {conflicts.join(', ')} — the slug is held by an Application this
-          toolkit does not manage; logins will fail until it is resolved by hand.
-        </div>
-      )}
+      <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} />
     </div>
   );
 }

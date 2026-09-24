@@ -125,6 +125,15 @@ export interface GuestEntry {
   // The Authentik group ladder rung gating this entry, or absent/null when
   // ungated. Mirrors the server's authGroup (src/lib/inventory.ts).
   authGroup?: string | null;
+  // Native OIDC gating (issue #1). Only meaningful when authGroup is set --
+  // "effective OIDC" everywhere in this build means authGroup && authMode
+  // === 'oidc' (src/lib/oidc.ts's isOidcEffective, mirroring the server's
+  // effectiveAuth() in src/lib/inventory.ts). Absent/'forward' both mean
+  // forward-auth, matching the server's own default.
+  authMode?: 'forward' | 'oidc';
+  // Callback URLs Authentik's OpenID client redirects back to after a
+  // sign-in, only meaningful in OIDC mode.
+  oidcRedirectUris?: string[];
   unauthenticatedPaths?: string[];
   caddy?: boolean;
   app?: string;

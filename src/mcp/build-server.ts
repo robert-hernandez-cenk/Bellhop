@@ -11,6 +11,7 @@ import type { OperationDeps } from '../operations/types.ts';
 import { MCP_OPERATIONS } from '../operations/index.ts';
 import { parseOperationInput, previewAndEnqueue, scrubSecretValues } from '../operations/core.ts';
 import { runEditGuest, EDIT_GUEST_SHAPE } from '../operations/edit-guest.ts';
+import { runOidcClientInfo } from '../commands/networking/oidc-credentials.ts';
 import { checkAppUrl } from '../operations/app-check.ts';
 import { MAX_LOG_CHUNK, json, pageLog, requireOwned as requireOwnedJob, summarizeJob, text } from './job-helpers.ts';
 import { PromptTracker } from './elicitation.ts';
@@ -99,12 +100,31 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'edit_guest',
     {
       description:
-        "Edit a guest's inventory routing fields (subdomains, port, caddyManual, insecureBackendTls, authGroup, unauthenticatedPaths), then push Caddy, the status page, and Authentik live. Applies immediately. Only the fields you pass are changed.",
+        "Edit a guest's inventory routing fields (subdomains, port, caddyManual, insecureBackendTls, authGroup, unauthenticatedPaths, authMode, oidcRedirectUris), then push Caddy, the status page, and Authentik live. Applies immediately. Only the fields you pass are changed. This server runs as the local admin operator, so authMode/oidcRedirectUris changes are always permitted here. An edit that takes an OIDC-gated entry out of OIDC (authMode to 'forward', or clearing authGroup) deletes its OpenID client on sync, so it is rejected unless you pass confirmOidcClientDeletion: true -- ask the user first.",
       inputSchema: EDIT_GUEST_SHAPE,
     },
     async (args: Record<string, unknown>) => {
       refresh();
       return json(await runEditGuest(args as { name: string } & Record<string, unknown>, deps));
+    }
+  );
+
+  server.registerTool(
+    'get_oidc_client',
+    {
+      description:
+        "An OIDC-gated entry's issuer address and client ID, read live from Authentik (FR-019a). " +
+        'Never returns the client secret -- see secretAvailableFrom for where to get it (FR-019b).',
+      inputSchema: { entry: z.string().describe('Host, guest, or external-site name') },
+    },
+    async (args: { entry: string }) => {
+      refresh();
+      const { issuer, clientId } = await runOidcClientInfo(args.entry, deps);
+      return json({
+        issuer,
+        clientId,
+        secretAvailableFrom: `the Dashboard (admin) or \`bellhop oidc-credentials ${args.entry}\``,
+      });
     }
   );
 

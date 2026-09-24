@@ -12,6 +12,7 @@ import { JobRunner } from '../../src/web/jobs/job-runner.ts';
 import { FakeSSHClient, defaultResponder } from './fake-ssh-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
+import type { AuthentikClient } from '../../src/lib/authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import type { SSHClient } from '../../src/lib/ssh-client.ts';
 
@@ -45,9 +46,12 @@ export interface McpHarnessOptions {
   // server withdraws the request.
   elicit?: (request: ElicitRequest, signal: AbortSignal) => Promise<ElicitResult>;
   serverOptions?: Parameters<typeof buildMcpServer>[1];
-  // Overrides the default MCP_TEST_INVENTORY fixture -- e.g. to set
-  // customScriptsRepo/customScriptsBranch (issue #11).
+  // Overrides the default MCP_TEST_INVENTORY fixture -- e.g. an OIDC-mode
+  // entry (issue #1) or customScriptsRepo/customScriptsBranch (issue #11).
   inventory?: Inventory;
+  // Overrides the default UnconfiguredAuthentikClient, for the
+  // OIDC-credential-reading tests (issue #1).
+  authentik?: AuthentikClient;
   // Overrides the default always-404 fetch stub.
   fetchImpl?: typeof fetch;
 }
@@ -64,7 +68,7 @@ export async function setupMcp(opts: McpHarnessOptions = {}) {
       ssh,
       inventory: loadInventory(inventoryPath),
       inventoryPath,
-      authentik: new UnconfiguredAuthentikClient(),
+      authentik: opts.authentik ?? new UnconfiguredAuthentikClient(),
       cloudflare: new UnconfiguredCloudflareClient(),
       fetchImpl: opts.fetchImpl ?? ((async () => new Response(null, { status: 404 })) as unknown as typeof fetch),
       jobStore,

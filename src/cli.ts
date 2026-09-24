@@ -18,7 +18,9 @@ import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/pu
 import { runSetConfig } from './commands/maintenance/set-config.ts';
 import { runSyncCaddy } from './commands/networking/sync-caddy.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
-import { runSyncAuthentik, formatSyncAuthentik } from './commands/networking/sync-authentik.ts';
+import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
+import { runOidcCredentials, formatOidcCredentials } from './commands/networking/oidc-credentials.ts';
+import { runAdoptOidcClient, formatAdoptOidcClient } from './commands/networking/adopt-oidc-client.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
@@ -300,6 +302,41 @@ program
       console.log(formatSyncAuthentik(result));
       if (!opts.apply) {
         logInfo('[DRY RUN] Not modifying Authentik. Pass --apply to create/update/delete these objects.');
+      }
+      // Same partial-failure pattern as prune-acme-challenges: everything
+      // that could be applied was, and the report above says what was not.
+      if (syncAuthentikFailed(result)) {
+        process.exitCode = 1;
+      }
+    })
+  );
+
+program
+  .command('oidc-credentials <entry>')
+  .description("Print an OIDC-gated entry's issuer, client ID, and client secret, read live from Authentik")
+  .action(
+    action(async (entry: string) => {
+      const inventory = loadInventory(inventoryPath());
+      const authentik = buildAuthentikClient();
+      const result = await runOidcCredentials(entry, { authentik, inventory });
+      console.log(formatOidcCredentials(result));
+    })
+  );
+
+program
+  .command('adopt-oidc-client <entry>')
+  .description(
+    "Adopt a hand-made Authentik OpenID client at an OIDC-gated entry's slug as Bellhop-managed, without rotating its client ID or secret"
+  )
+  .option('--apply', 'adopt the client for real (default: dry run)')
+  .action(
+    action(async (entry: string, opts: { apply?: boolean }) => {
+      const inventory = loadInventory(inventoryPath());
+      const authentik = buildAuthentikClient();
+      const result = await runAdoptOidcClient({ entry, apply: opts.apply }, { authentik, inventory });
+      console.log(formatAdoptOidcClient(result));
+      if (!opts.apply) {
+        logInfo('[DRY RUN] Not modifying Authentik. Pass --apply to adopt this client.');
       }
     })
   );

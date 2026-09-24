@@ -5,13 +5,56 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { HangingSSHClient } from '../support/hanging-ssh-client.ts';
 import { loadInventory, type Inventory } from '../../src/lib/inventory.ts';
+import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { setupMcp as setup, waitForFinished, parse, MCP_TEST_INVENTORY } from '../support/mcp-harness.ts';
+
+// Mirrors sync-authentik.test.ts's/oidc-credentials.test.ts's own OIDC
+// fixture shape -- an OIDC-gated 'media' guest and a matching owned OpenID
+// client for issue #1's get_oidc_client tool.
+function oidcInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      {
+        name: 'media',
+        type: 'lxc',
+        vmid: 130,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        subdomains: ['media'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://media.example.com/oauth/callback'],
+      },
+    ],
+  };
+}
+
+function ownedAuthentik(): FakeAuthentikClient {
+  return new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50', metaPublisher: 'bellhop' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'],
+        redirectUris: [{ matchingMode: 'strict', url: 'https://media.example.com/oauth/callback' }],
+      },
+    ],
+  });
+}
 
 test('tool list covers the registry, read-only, and job tools, and nothing excluded', async () => {
   const { client } = await setup();
   const names = (await client.listTools()).tools.map((t) => t.name);
   for (const expected of [
     'create_lxc', 'install_app', 'delete_guest', 'update_all', 'guest_power', 'set_config', 'sync_authentik',
+    'adopt_oidc_client',
     'edit_guest', 'get_inventory', 'get_guest_status', 'audit_nfs_mounts', 'list_install_apps', 'check_install_app',
     'list_jobs', 'get_job', 'wait_for_job', 'answer_job_prompt', 'dismiss_job_prompt', 'cancel_job',
   ]) {
@@ -163,6 +206,97 @@ test('operation tools point at wait_for_job, and prompt-watching ones mention qu
   assert.doesNotMatch(createLxc.description!, /installer question/);
   assert.match(installApp.description!, /installer question/);
   assert.match(installApp.description!, /elicitation/);
+});
+
+test('get_oidc_client returns issuer, client ID, and secretAvailableFrom, and never the secret', async () => {
+  const { call } = await setup({ inventory: oidcInventory(), authentik: ownedAuthentik() });
+  const result = JSON.parse((await call('get_oidc_client', { entry: 'media' })).content[0].text);
+  assert.deepEqual(result, {
+    issuer: 'https://auth.example.com/application/o/media/',
+    clientId: 'client-50',
+    secretAvailableFrom: 'the Dashboard (admin) or `bellhop oidc-credentials media`',
+  });
+});
+
+test('get_oidc_client\'s serialized result never contains the fake secret string, and neither does get_inventory or edit_guest', async () => {
+  const { call } = await setup({ inventory: oidcInventory(), authentik: ownedAuthentik() });
+  const oidcResult = await call('get_oidc_client', { entry: 'media' });
+  assert.ok(!oidcResult.content.map((c) => c.text).join('\n').includes('secret-50'));
+
+  const inventoryResult = await call('get_inventory');
+  assert.ok(!inventoryResult.content.map((c) => c.text).join('\n').includes('secret-50'));
+
+  const editResult = await call('edit_guest', { name: 'media', port: 8080 });
+  assert.ok(!editResult.content.map((c) => c.text).join('\n').includes('secret-50'));
+});
+
+// T038: adopt_oidc_client is a plain generated Operation tool (registered
+// from NETWORKING_OPERATIONS via MCP_OPERATIONS, like sync_authentik), so it
+// previews by default and only mutates with apply: true -- same contract
+// every other operation tool tested above already gets, exercised here
+// against an unmarked (hand-made) OpenID client so the preview text has
+// something real to report.
+function handMadeAuthentik(): FakeAuthentikClient {
+  return new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'],
+        redirectUris: [{ matchingMode: 'strict', url: 'https://media.example.com/oauth/callback' }],
+      },
+    ],
+  });
+}
+
+test('adopt_oidc_client previews by default and mutates nothing', async () => {
+  const authentik = handMadeAuthentik();
+  const { call } = await setup({ inventory: oidcInventory(), authentik });
+  const result = await call('adopt_oidc_client', { entry: 'media' });
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /meta_publisher -> bellhop/);
+  assert.equal((await authentik.listApplications())[0].metaPublisher, undefined, 'a preview must not mutate anything');
+});
+
+test('adopt_oidc_client with apply: true enqueues a job that adopts the client', async () => {
+  const authentik = handMadeAuthentik();
+  const { call, jobStore } = await setup({ inventory: oidcInventory(), authentik });
+  const started = JSON.parse((await call('adopt_oidc_client', { entry: 'media', apply: true })).content[0].text);
+  assert.equal(typeof started.jobId, 'number');
+  await waitForFinished(jobStore, started.jobId);
+  assert.equal((await authentik.listApplications())[0].metaPublisher, 'bellhop');
+});
+
+// T032: edit_guest enforces the same OpenID-client-deletion confirmation
+// as the Dashboard (FR-022a) -- the MCP server's admin trust does not waive it.
+test('edit_guest rejects leaving OIDC gating without confirmOidcClientDeletion, and accepts it with true', async () => {
+  // A forward-auth entry needs an 'authentik: true' entry to validate, so
+  // the fixture's host carries one here.
+  const base = oidcInventory();
+  const inventory = { ...base, hosts: base.hosts.map((h) => ({ ...h, authentik: true, ip: '192.0.2.5' })) };
+  const { client, call, inventoryPath } = await setup({ inventory, authentik: ownedAuthentik() });
+  const describe = (await client.listTools()).tools.find((t) => t.name === 'edit_guest')!;
+  assert.match(describe.description ?? '', /confirmOidcClientDeletion/);
+  assert.ok('confirmOidcClientDeletion' in (describe.inputSchema.properties ?? {}));
+
+  const refused = await call('edit_guest', { name: 'media', authMode: 'forward' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /confirmOidcClientDeletion: true/);
+  assert.equal(loadInventory(inventoryPath).guests.find((g) => g.name === 'media')?.authMode, 'oidc');
+
+  const refusedClear = await call('edit_guest', { name: 'media', authGroup: null });
+  assert.equal(refusedClear.isError, true);
+
+  const accepted = await call('edit_guest', { name: 'media', authMode: 'forward', confirmOidcClientDeletion: true });
+  assert.notEqual(accepted.isError, true, accepted.content[0].text);
+  const saved = loadInventory(inventoryPath).guests.find((g) => g.name === 'media')!;
+  assert.equal(saved.authMode, 'forward');
+  assert.equal('confirmOidcClientDeletion' in saved, false);
 });
 
 // --- check_install_app / custom script repository (issue #11) ---

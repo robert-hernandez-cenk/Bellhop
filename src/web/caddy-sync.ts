@@ -4,8 +4,8 @@ import type { Inventory } from '../lib/inventory.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
 import { runSyncCaddy } from '../commands/networking/sync-caddy.ts';
 import { runRenderStatusPage, statusPagePathSkipMessage } from '../commands/networking/render-status-page.ts';
-import { runSyncAuthentik, CONFLICT_EXPLANATION, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
-import type { OffLadderEntry } from '../commands/networking/sync-authentik.ts';
+import { runSyncAuthentik, conflictExplanation, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
+import type { ForwardSkip, OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import { logInfo, logWarn } from '../lib/log.ts';
 import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
@@ -19,6 +19,10 @@ export interface SyncCaddyLiveResult {
   // outside any job context -- logWarn's console.error reaches the service's
   // stderr there and nothing the operator can see.
   authentikConflicts: string[];
+  // The subset of authentikConflicts adopt-oidc-client can take over
+  // (sync-authentik's adoptableConflicts), so a Dashboard banner can offer
+  // adoption instead of "resolve by hand" (FR-011).
+  authentikAdoptableConflicts: string[];
   // Entries whose authGroup names a group absent from AUTHENTIK_GROUP_LADDER,
   // and ladder rungs absent from Authentik itself. Surfaced for the same
   // reason as authentikConflicts: the Dashboard's guest PATCH calls
@@ -26,6 +30,18 @@ export interface SyncCaddyLiveResult {
   // logWarn alone would only reach the service's stderr.
   authentikOffLadder: OffLadderEntry[];
   authentikMissingRungs: string[];
+  // Native OIDC gating (issue #1): OIDC entries sync-authentik left alone
+  // (no callback URL, missing signing key or scope mapping), and owned
+  // OpenID clients whose issuer discovery document could not be fetched
+  // after the apply. Returned for the same outside-any-job reason as the
+  // fields above; the save itself still succeeds, since the client in
+  // Authentik is correct either way.
+  authentikOidcSkipped: OidcSkip[];
+  // Forward-auth entries left alone because the provider name they need is
+  // taken (sync-authentik's forwardSkipped) -- the forward-mode counterpart
+  // of authentikOidcSkipped, returned for the same reason.
+  authentikForwardSkipped: ForwardSkip[];
+  authentikOidcDiscoveryFailures: { slug: string; issuer: string; error: string }[];
 }
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
@@ -63,6 +79,8 @@ export async function syncCaddyLive(deps: {
   inventory: Inventory;
   authentik: AuthentikClient;
   cloudflare?: CloudflareClient;
+  // Passed through to sync-authentik's discovery check; tests inject one.
+  fetchImpl?: typeof fetch;
 }): Promise<SyncCaddyLiveResult> {
   await runSyncCaddy({ apply: true }, deps);
   // The status page is opt-in: an operator who has not configured a path
@@ -74,7 +92,15 @@ export async function syncCaddyLive(deps: {
   } else {
     logInfo(statusPagePathSkipMessage());
   }
-  let result: SyncCaddyLiveResult = { authentikConflicts: [], authentikOffLadder: [], authentikMissingRungs: [] };
+  let result: SyncCaddyLiveResult = {
+    authentikConflicts: [],
+    authentikAdoptableConflicts: [],
+    authentikOffLadder: [],
+    authentikMissingRungs: [],
+    authentikOidcSkipped: [],
+    authentikForwardSkipped: [],
+    authentikOidcDiscoveryFailures: [],
+  };
   // Skipped rather than attempted when there is no Authentik API to talk to.
   // Before issue #123 this ran unconditionally, and runSyncAuthentik calls
   // listApplications() before checking whether anything actually needs
@@ -86,15 +112,33 @@ export async function syncCaddyLive(deps: {
     const authentikResult = await runSyncAuthentik({ apply: true }, deps);
     // Kept alongside the return value: a provisioning-job-triggered call
     // runs inside withCapturedConsole, so this does reach that job's log.
-    for (const name of authentikResult.conflicts) logWarn(`sync-authentik: ${name} — ${CONFLICT_EXPLANATION}`);
+    for (const name of authentikResult.conflicts) {
+      logWarn(`sync-authentik: ${name} — ${conflictExplanation(name, authentikResult)}`);
+    }
     for (const entry of authentikResult.offLadder) {
       logWarn(`sync-authentik: ${entry.slug} (${entry.authGroup}) — ${OFF_LADDER_EXPLANATION}`);
     }
     for (const rung of authentikResult.missingRungs) logWarn(`sync-authentik: ${rung} — ${MISSING_RUNG_EXPLANATION}`);
+    const oidcSkipped = authentikResult.oidcSkipped ?? [];
+    for (const skip of oidcSkipped) logWarn(`sync-authentik: ${skip.slug} — OIDC skipped: ${skip.reason}`);
+    const forwardSkipped = authentikResult.forwardSkipped ?? [];
+    for (const skip of forwardSkipped) {
+      logWarn(`sync-authentik: ${skip.slug} — forward-auth skipped: ${skip.reason}`);
+    }
+    const discoveryFailures = (authentikResult.discovery ?? [])
+      .filter((d) => !d.ok)
+      .map((d) => ({ slug: d.slug, issuer: d.issuer, error: d.error ?? 'unknown error' }));
+    for (const failure of discoveryFailures) {
+      logWarn(`sync-authentik: ${failure.slug} — OIDC discovery failed for ${failure.issuer}: ${failure.error}`);
+    }
     result = {
       authentikConflicts: authentikResult.conflicts,
+      authentikAdoptableConflicts: authentikResult.adoptableConflicts ?? [],
       authentikOffLadder: authentikResult.offLadder,
       authentikMissingRungs: authentikResult.missingRungs,
+      authentikOidcSkipped: oidcSkipped,
+      authentikForwardSkipped: forwardSkipped,
+      authentikOidcDiscoveryFailures: discoveryFailures,
     };
   }
   await pruneAcmeChallengesLive(deps.cloudflare ?? new UnconfiguredCloudflareClient(), deps.inventory);

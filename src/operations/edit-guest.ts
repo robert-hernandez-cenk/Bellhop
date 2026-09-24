@@ -6,11 +6,15 @@ import {
   parsePort,
   parseAuthGroup,
   parseUnauthenticatedPaths,
+  parseAuthMode,
+  parseOidcRedirectUris,
+  oidcConfigErrors,
   validateInventory,
+  effectiveAuth,
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
 import { syncCaddyLive } from '../web/caddy-sync.ts';
-import type { OffLadderEntry } from '../commands/networking/sync-authentik.ts';
+import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
 
 // The Dashboard's inline guest edit, extracted from the PATCH handler in
@@ -22,13 +26,42 @@ import type { OperationDeps } from './types.ts';
 
 export class GuestEditValidationError extends Error {}
 
+// FR-022a / research R8. Exact wording is part of the MCP contract: the
+// model reads it to learn how to confirm.
+export const OIDC_CLIENT_DELETION_CONFIRMATION_ERROR =
+  "This edit deletes the app's OpenID client, so its OIDC login stops working until new credentials are entered in the app. Resend with confirmOidcClientDeletion: true to confirm.";
+
+// Whether an edit takes an entry out of effective OIDC gating -- switching
+// it to forward-auth or clearing its tier -- which makes the next sync
+// delete its OpenID client. Decided from the inventory alone (FR-022a): it
+// applies even if the sync never created a client, and no other edit
+// needs confirmation.
+export function editDeletesOidcClient(current: GuestEntry, updated: GuestEntry): boolean {
+  return effectiveAuth(current) === 'oidc' && effectiveAuth(updated) !== 'oidc';
+}
+
 export type EditGuestResult =
   | {
       guest: GuestEntry;
       caddySynced: true;
       authentikConflicts?: string[];
+      // Set only when this guest's own conflict is one adopt-oidc-client can
+      // take over (an unmarked OpenID client holds its slug), so the banner
+      // can offer adoption instead of "resolve by hand" (FR-011).
+      authentikConflictAdoptable?: true;
       authentikOffLadder?: OffLadderEntry[];
       authentikMissingRungs?: string[];
+      // Native OIDC gating (issue #1): the post-apply issuer discovery check
+      // for this guest's own OpenID client, scoped and omitted-when-empty the
+      // same way authentikConflicts is -- see commitGuestEdit.
+      oidcDiscoveryFailures?: { slug: string; issuer: string; error: string }[];
+      // Why sync-authentik left this guest's own Authentik state alone this
+      // run -- an OIDC skip (no callback URL, missing signing key or scope
+      // mapping, provider name taken) or a forward-auth one (provider name
+      // taken), in one list since either way the save succeeded but the gate
+      // did not change as asked (FR-015). Scoped and omitted-when-empty like
+      // authentikConflicts.
+      oidcSkipped?: OidcSkip[];
     }
   | { guest: GuestEntry; caddySynced: false; caddyError: string };
 
@@ -44,6 +77,8 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   if ('insecureBackendTls' in body) updated.insecureBackendTls = !!body.insecureBackendTls;
   if ('authGroup' in body) updated.authGroup = parseAuthGroup(body.authGroup);
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
+  if ('authMode' in body) updated.authMode = parseAuthMode(body.authMode);
+  if ('oidcRedirectUris' in body) updated.oidcRedirectUris = parseOidcRedirectUris(asDelimited(body.oidcRedirectUris));
   return updated;
 }
 
@@ -58,15 +93,31 @@ export async function commitGuestEdit(
   deps: OperationDeps,
   name: string,
   updated: GuestEntry,
-  touchedRouting: boolean
+  touchedRouting: boolean,
+  // A request flag, never an inventory field: applyGuestEdits does not copy
+  // it onto the entry, so it is never saved.
+  confirmOidcClientDeletion = false
 ): Promise<EditGuestResult> {
   const { inventory } = deps;
   const idx = inventory.guests.findIndex((g) => g.name === name);
   if (idx === -1) throw new Error(`Unknown guest: ${name}`);
+  // Checked first, before anything is validated or written, so an
+  // unconfirmed edit leaves the entry and its client exactly as they were.
+  if (editDeletesOidcClient(inventory.guests[idx], updated) && confirmOidcClientDeletion !== true) {
+    throw new GuestEditValidationError(OIDC_CLIENT_DELETION_CONFIRMATION_ERROR);
+  }
   const guests = inventory.guests.map((g, i) => (i === idx ? updated : g));
 
   const errors = validateInventory({ ...inventory, guests });
   if (errors.length > 0) throw new GuestEditValidationError(errors.join('\n'));
+
+  // Write-level OIDC rule (research R7): an OIDC-effective entry (authMode
+  // 'oidc' plus an authGroup) with subdomains must carry at least one
+  // callback URL, or Authentik has nowhere to send a sign-in token back to.
+  // Deliberately not part of validateInventory() -- see oidcConfigErrors's
+  // own doc comment -- so this is the one write path that enforces it.
+  const oidcErrors = oidcConfigErrors(updated);
+  if (oidcErrors.length > 0) throw new GuestEditValidationError(oidcErrors.join('\n'));
 
   // Only when this edit actually touched subdomains or port (an
   // insecureBackendTls/caddyManual/authGroup-only edit never
@@ -95,11 +146,20 @@ export async function commitGuestEdit(
   inventory.guests = guests;
 
   try {
-    const { authentikConflicts, authentikOffLadder, authentikMissingRungs } = await syncCaddyLive({
+    const {
+      authentikConflicts,
+      authentikAdoptableConflicts,
+      authentikOffLadder,
+      authentikMissingRungs,
+      authentikOidcSkipped,
+      authentikForwardSkipped,
+      authentikOidcDiscoveryFailures,
+    } = await syncCaddyLive({
       ssh: deps.ssh,
       inventory,
       authentik: deps.authentik,
       cloudflare: deps.cloudflare,
+      fetchImpl: deps.fetchImpl,
     });
     // Conflicts are computed inventory-wide, but this response belongs to
     // one guest -- surfacing another entry's conflict here would render a
@@ -113,18 +173,31 @@ export async function commitGuestEdit(
     // Scoped to this guest for the same reason ownConflicts is: another
     // entry's misconfiguration must not render a banner on this row.
     const ownOffLadder = ownConflict ? authentikOffLadder.filter((o) => o.slug === ownConflict) : [];
+    // Same scoping again: the post-apply discovery check runs for every
+    // owned OIDC client on each sync, so another entry's stale/unreachable
+    // issuer must not surface as a warning on this guest's own edit.
+    const ownOidcDiscoveryFailures = ownConflict ? authentikOidcDiscoveryFailures.filter((f) => f.slug === ownConflict) : [];
+    const ownConflictAdoptable = ownConflicts.length > 0 && authentikAdoptableConflicts.includes(ownConflict!);
+    // Same scoping again, both skip lists together.
+    const ownSkipped = ownConflict
+      ? [...authentikOidcSkipped, ...authentikForwardSkipped].filter((s) => s.slug === ownConflict)
+      : [];
     return {
       guest: updated,
       caddySynced: true,
       // Omitted when empty so the ordinary response shape is unchanged
       // for every edit that produces no conflict.
       ...(ownConflicts.length > 0 ? { authentikConflicts: ownConflicts } : {}),
+      ...(ownConflictAdoptable ? { authentikConflictAdoptable: true as const } : {}),
       // Same conditional-spread convention as authentikConflicts above.
       ...(ownOffLadder.length > 0 ? { authentikOffLadder: ownOffLadder } : {}),
       // NOT scoped -- a missing rung is about AUTHENTIK_GROUP_LADDER
       // itself, not about any one entry. Same conditional-spread
       // convention as authentikConflicts above.
       ...(authentikMissingRungs.length > 0 ? { authentikMissingRungs } : {}),
+      // Same conditional-spread convention as authentikConflicts above.
+      ...(ownOidcDiscoveryFailures.length > 0 ? { oidcDiscoveryFailures: ownOidcDiscoveryFailures } : {}),
+      ...(ownSkipped.length > 0 ? { oidcSkipped: ownSkipped } : {}),
     };
   } catch (err) {
     return { guest: updated, caddySynced: false, caddyError: err instanceof Error ? err.message : String(err) };
@@ -142,12 +215,27 @@ export const EDIT_GUEST_SHAPE = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe("Caddy path globs exempt from forward-auth (array or ';'-separated)"),
+  authMode: z
+    .enum(['forward', 'oidc'])
+    .nullable()
+    .optional()
+    .describe("Auth mode when authGroup is set: 'forward' (Caddy forward-auth, default) or 'oidc' (native OIDC); null or empty clears to forward. Admin only."),
+  oidcRedirectUris: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .describe("OIDC callback URLs (array or ';'-separated absolute http(s) URLs); required when authMode is 'oidc' and the entry has subdomains. Admin only."),
+  confirmOidcClientDeletion: z
+    .boolean()
+    .optional()
+    .describe(
+      "Must be true for an edit that takes an OIDC-gated entry (authMode 'oidc' with an authGroup) out of OIDC -- switching it to forward-auth or clearing authGroup -- because the next sync deletes its OpenID client and the app's OIDC login stops working until new credentials are entered in it. Rejected otherwise. Never saved."
+    ),
 };
 
 export async function runEditGuest(input: { name: string } & Record<string, unknown>, deps: OperationDeps): Promise<EditGuestResult> {
-  const { name, ...fields } = input;
+  const { name, confirmOidcClientDeletion, ...fields } = input;
   const current = deps.inventory.guests.find((g) => g.name === name);
   if (!current) throw new Error(`Unknown guest: ${name}`);
   const updated = applyGuestEdits(current, fields);
-  return commitGuestEdit(deps, name, updated, 'subdomains' in fields || 'port' in fields);
+  return commitGuestEdit(deps, name, updated, 'subdomains' in fields || 'port' in fields, confirmOidcClientDeletion === true);
 }

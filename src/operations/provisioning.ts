@@ -13,7 +13,7 @@ import { runMigrateNfsMount } from '../commands/provisioning/migrate-nfs-mount.t
 import { runDeleteGuest } from '../commands/provisioning/delete-guest.ts';
 import { runDeployVpnGateway } from '../commands/provisioning/deploy-vpn-gateway.ts';
 import { runMigrateGuest } from '../commands/provisioning/migrate-guest.ts';
-import { runSyncAuthentik, CONFLICT_EXPLANATION } from '../commands/networking/sync-authentik.ts';
+import { runSyncAuthentik, conflictExplanation } from '../commands/networking/sync-authentik.ts';
 import { logWarn } from '../lib/log.ts';
 import type { Operation, OperationDeps } from './types.ts';
 import { reqStr, optStr, reqInt, optInt, flag, portStr } from './fields.ts';
@@ -371,7 +371,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
           guests: deps.inventory.guests.map((g) => (g.name === i.guest ? { ...g, authGroup: undefined } : g)),
         };
         const result = await runSyncAuthentik({ apply: true }, { authentik: deps.authentik, inventory: preRemovalInventory });
-        for (const name of result.conflicts) logWarn(`sync-authentik: ${name} — ${CONFLICT_EXPLANATION}`);
+        for (const name of result.conflicts) logWarn(`sync-authentik: ${name} — ${conflictExplanation(name, result)}`);
       }
 
       await runDeleteGuest({ ...(i as any), apply: true }, deps);

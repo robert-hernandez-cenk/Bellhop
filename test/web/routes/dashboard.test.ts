@@ -17,12 +17,15 @@ import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import { authentikConfig } from '../../../src/lib/authentik-config.ts';
 import { FakeCloudflareClient, txtRecord } from '../../support/fake-cloudflare-client.ts';
 import type { CloudflareClient } from '../../../src/lib/cloudflare-client.ts';
+import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
 
 function testApp(
   inventory: Inventory,
   respond: FakeSSHResponder = () => ({ stdout: '', stderr: '', code: 0 }),
   authentik: AuthentikClient = new FakeAuthentikClient(),
-  cloudflare?: CloudflareClient
+  cloudflare?: CloudflareClient,
+  fetchImpl?: typeof fetch,
+  impersonationStore?: ImpersonationStore
 ) {
   const jobStore = new JobStore(':memory:');
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
@@ -32,7 +35,7 @@ function testApp(
   // saveInventory, which reads-then-rewrites this path.
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
-  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik, cloudflare });
+  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik, cloudflare, fetchImpl, impersonationStore });
 }
 
 function asAdmin(req: request.Test): request.Test {
@@ -980,4 +983,233 @@ test('PATCH guest authGroup + unauthenticatedPaths rejects adding a path while g
     'rejected PATCH must not write either field'
   );
   assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').unauthenticatedPaths, undefined);
+});
+
+// Native OIDC gating (issue #1, unit U6): authMode/oidcRedirectUris are
+// unconditionally admin-only in both directions (FR-018) -- unlike
+// authGroup's raise/lower asymmetry, there is no non-admin "raise" case
+// here, since switching to OIDC removes the forward-auth gate and the
+// callback URL decides where Authentik sends a sign-in token.
+function oidcInventory(overrides: Partial<Inventory['guests'][number]> = {}): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    guests: [
+      {
+        name: 'sonarr',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.168.1.20',
+        subdomains: ['sonarr'],
+        authGroup: USERS_RUNG,
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://sonarr.example.com/oauth/callback'],
+        ...overrides,
+      },
+    ],
+  };
+}
+
+test('PATCH guest authMode rejects a non-admin changing it, and leaves it unwritten', async () => {
+  const app = testApp(oidcInventory());
+  const res = await asUser(request(app).patch('/api/inventory/guests/sonarr').send({ authMode: 'forward' }));
+  assert.equal(res.status, 403);
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode or callback URLs");
+
+  const invRes = await request(app).get('/api/inventory');
+  assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').authMode, 'oidc', 'rejected PATCH must not have been persisted');
+});
+
+test('PATCH guest oidcRedirectUris rejects a non-admin changing it', async () => {
+  const res = await asUser(
+    request(testApp(oidcInventory()))
+      .patch('/api/inventory/guests/sonarr')
+      .send({ oidcRedirectUris: ['https://sonarr.example.com/oauth/callback2'] })
+  );
+  assert.equal(res.status, 403);
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode or callback URLs");
+});
+
+test('PATCH guest authMode is a no-op-safe re-submit of the current value for a non-admin', async () => {
+  // The Dashboard PATCHes the full object on some edits -- re-submitting the
+  // stored value unchanged (compared as the parsed value, not the raw body)
+  // must not be treated as a change requiring admin.
+  const res = await asUser(
+    request(testApp(oidcInventory()))
+      .patch('/api/inventory/guests/sonarr')
+      .send({ authMode: 'oidc', oidcRedirectUris: ['https://sonarr.example.com/oauth/callback'], port: 8989 })
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.guest.port, 8989);
+});
+
+test('PATCH guest authMode rejects an admin impersonating a non-admin group', async () => {
+  const store: ImpersonationStore = new Map([['admin', 'bellhop-app-users']]);
+  const app = testApp(oidcInventory(), undefined, undefined, undefined, undefined, store);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ authMode: 'forward' });
+  assert.equal(res.status, 403);
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode or callback URLs");
+});
+
+test('PATCH guest oidcRedirectUris rejects an admin impersonating a non-admin group', async () => {
+  const store: ImpersonationStore = new Map([['admin', 'bellhop-app-users']]);
+  const app = testApp(oidcInventory(), undefined, undefined, undefined, undefined, store);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({
+    oidcRedirectUris: ['https://sonarr.example.com/oauth/callback2'],
+  });
+  assert.equal(res.status, 403);
+});
+
+test('PATCH guest authMode/oidcRedirectUris lets an admin change them and reports oidcDiscoveryFailures for this guest when discovery fails', async () => {
+  const fetchImpl = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
+  const app = testApp(oidcInventory(), undefined, new FakeAuthentikClient(), undefined, fetchImpl);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({
+    oidcRedirectUris: ['https://sonarr.example.com/oauth/callback', 'https://sonarr.example.com/oauth/callback2'],
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.guest.oidcRedirectUris, [
+    'https://sonarr.example.com/oauth/callback',
+    'https://sonarr.example.com/oauth/callback2',
+  ]);
+  assert.equal(res.body.oidcDiscoveryFailures.length, 1);
+  assert.equal(res.body.oidcDiscoveryFailures[0].slug, 'sonarr');
+});
+
+test('PATCH guest authMode/oidcRedirectUris omits oidcDiscoveryFailures when discovery succeeds', async () => {
+  const fetchImpl = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+  const app = testApp(oidcInventory(), undefined, new FakeAuthentikClient(), undefined, fetchImpl);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ authMode: 'oidc' });
+  assert.equal(res.status, 200);
+  assert.equal('oidcDiscoveryFailures' in res.body, false);
+});
+
+test('PATCH guest authMode/oidcRedirectUris reports only its own oidcDiscoveryFailures, not another entry\'s', async () => {
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    guests: [
+      {
+        name: 'sonarr',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.168.1.20',
+        subdomains: ['sonarr'],
+        authGroup: USERS_RUNG,
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://sonarr.example.com/oauth/callback'],
+      },
+      {
+        name: 'radarr',
+        type: 'lxc',
+        vmid: 121,
+        host: 'pve1',
+        ip: '192.168.1.21',
+        subdomains: ['radarr'],
+        authGroup: USERS_RUNG,
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://radarr.example.com/oauth/callback'],
+      },
+    ],
+  };
+  // Every discovery check fails (radarr's included), but only sonarr's own
+  // failure may appear on this PATCH's response.
+  const fetchImpl = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
+  const app = testApp(inventory, undefined, new FakeAuthentikClient(), undefined, fetchImpl);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ authMode: 'oidc' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.oidcDiscoveryFailures.map((f: { slug: string }) => f.slug), ['sonarr']);
+});
+
+// FR-022a (T034): the Dashboard PATCH carries confirmOidcClientDeletion
+// through to commitGuestEdit -- an admin leaving OIDC gating without it gets
+// a 400 and nothing is written; with it, the edit saves and the flag is not.
+test('PATCH guest leaving OIDC gating needs confirmOidcClientDeletion: true, even for an admin', async () => {
+  for (const edit of [{ authMode: 'forward' }, { authGroup: '' }]) {
+    const app = testApp(oidcInventory());
+    const refused = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send(edit);
+    assert.equal(refused.status, 400);
+    assert.match(refused.body.error, /confirmOidcClientDeletion: true/);
+    const before = (await request(app).get('/api/inventory')).body.guests.find((g: any) => g.name === 'sonarr');
+    assert.equal(before.authMode, 'oidc');
+    assert.equal(before.authGroup, USERS_RUNG);
+
+    const accepted = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ ...edit, confirmOidcClientDeletion: true });
+    assert.equal(accepted.status, 200);
+    assert.equal('confirmOidcClientDeletion' in accepted.body.guest, false);
+  }
+});
+
+// Final-review fix 2: sync-authentik's skip reasons for this guest reach the
+// Dashboard (and MCP edit_guest) response rather than only the service log.
+test('PATCH guest authMode/oidcRedirectUris reports this guest\'s own oidcSkipped when the signing key is missing', async () => {
+  const inventory = oidcInventory({ authMode: undefined, oidcRedirectUris: undefined });
+  inventory.guests.push({
+    name: 'radarr',
+    type: 'lxc',
+    vmid: 121,
+    host: 'pve1',
+    ip: '192.168.1.21',
+    subdomains: ['radarr'],
+    authGroup: USERS_RUNG,
+    authMode: 'oidc',
+    oidcRedirectUris: ['https://radarr.example.com/oauth/callback'],
+  });
+  const app = testApp(inventory, undefined, new FakeAuthentikClient({ signingKeys: {} }));
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({
+    authMode: 'oidc',
+    oidcRedirectUris: ['https://sonarr.example.com/oauth/callback'],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.caddySynced, true, 'a skip never fails the save');
+  assert.deepEqual(
+    res.body.oidcSkipped.map((s: { slug: string; kind: string }) => [s.slug, s.kind]),
+    [['sonarr', 'missing-signing-key']],
+    "radarr's skip belongs to a different row"
+  );
+  assert.match(res.body.oidcSkipped[0].reason, /AUTHENTIK_OIDC_SIGNING_KEY_NAME/);
+});
+
+test('PATCH guest reports a forward-auth skip for this guest in oidcSkipped, and omits the field when nothing was skipped', async () => {
+  const inventory = oidcInventory({ authMode: undefined, oidcRedirectUris: undefined });
+  const taken = new FakeAuthentikClient({
+    oauth2Providers: [
+      { id: '70', name: 'sonarr', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
+    ],
+  });
+  const res = await asAdmin(request(testApp(inventory, undefined, taken)).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(
+    res.body.oidcSkipped.map((s: { slug: string; kind: string }) => [s.slug, s.kind]),
+    [['sonarr', 'provider-name-taken']]
+  );
+
+  const clean = await asAdmin(request(testApp(oidcInventory({ authMode: undefined, oidcRedirectUris: undefined }))).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.equal(clean.status, 200);
+  assert.equal('oidcSkipped' in clean.body, false, 'the ordinary response shape is unchanged');
+});
+
+// Final-review fix 3 (FR-011): the response says when this guest's conflict
+// can be adopted, so the banner can offer that instead of "resolve by hand".
+test('PATCH guest flags an adoptable conflict on this guest with authentikConflictAdoptable', async () => {
+  const handMade = () =>
+    new FakeAuthentikClient({
+      oauth2Providers: [
+        { id: '70', name: 'hand-made', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
+      ],
+      applications: [{ id: 'sonarr', pk: 'pk-sonarr', name: 'sonarr', slug: 'sonarr', providerId: '70' }],
+    });
+  const res = await asAdmin(request(testApp(oidcInventory(), undefined, handMade())).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.authentikConflicts, ['sonarr']);
+  assert.equal(res.body.authentikConflictAdoptable, true);
+
+  // A proxy-less, OAuth2-less Application is a plain conflict: not adoptable.
+  const plain = new FakeAuthentikClient({
+    applications: [{ id: 'sonarr', pk: 'pk-sonarr', name: 'sonarr', slug: 'sonarr', providerId: '99' }],
+  });
+  const res2 = await asAdmin(request(testApp(oidcInventory(), undefined, plain)).patch('/api/inventory/guests/sonarr')).send({ port: 8989 });
+  assert.deepEqual(res2.body.authentikConflicts, ['sonarr']);
+  assert.equal('authentikConflictAdoptable' in res2.body, false);
 });

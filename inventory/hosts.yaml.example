@@ -75,6 +75,27 @@ guests:
     host: pve1
     ip: 192.168.1.10
     caddy: true          # this entry runs Caddy; sync-caddy.sh writes/reloads here
+  - name: bookstack
+    type: lxc
+    vmid: 111
+    host: pve1
+    ip: 192.168.1.52
+    port: 80
+    subdomains:
+      - bookstack           # -> bookstack.example.com
+    authGroup: bellhop-app-users  # gates this subdomain behind Authentik at this group-ladder rung
+    # authMode (optional; defaults to forward) picks how that gate is
+    # enforced: "forward" puts Caddy's forward_auth in front of the app
+    # (the default -- omit authMode entirely for this); "oidc" instead gives
+    # the app its own Authentik OpenID Connect client, for an app with its
+    # own user accounts that can tell users apart itself. See README's
+    # "OIDC mode" section.
+    authMode: oidc
+    # oidcRedirectUris: required once authMode is "oidc" and this entry has
+    # subdomains -- the app's own OIDC callback URL(s), read by sync-authentik
+    # to configure the OpenID client's accepted redirects.
+    oidcRedirectUris:
+      - https://bookstack.example.com/oidc/callback
 
 # Only for a subdomain whose own backend serves HTTPS with a self-signed/
 # otherwise-untrusted cert (e.g. a NAS's web UI, Proxmox's own web UI) --

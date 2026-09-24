@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { apiPatch } from '../api/client';
 import type { GuestEntry } from '../api/types';
+import { isOidcEffective } from '../lib/oidc';
 
 interface Props {
   guest: GuestEntry;
@@ -62,6 +63,13 @@ export function EditableUnauthenticatedPaths({ guest, onSaved }: Props) {
         }}
         onBlur={save}
       />
+      {/* Edge case in specs/002-native-oidc-gating/spec.md: there is no
+          forward-auth check in OIDC mode, so there is nothing for a path
+          exemption to exempt. Says so rather than silently ignoring the
+          field. */}
+      {isOidcEffective(guest) && (
+        <div className="field-note">Inert in OIDC mode — there is no forward-auth check to exempt paths from.</div>
+      )}
       {status === 'saving' && <span className="save-status">Saving…</span>}
       {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
       {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
