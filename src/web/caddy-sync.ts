@@ -109,6 +109,9 @@ export async function syncCaddyLive(deps: {
     for (const rung of authentikResult.missingRungs) logWarn(`sync-authentik: ${rung} — ${MISSING_RUNG_EXPLANATION}`);
     const oidcSkipped = authentikResult.oidcSkipped ?? [];
     for (const skip of oidcSkipped) logWarn(`sync-authentik: ${skip.slug} — OIDC skipped: ${skip.reason}`);
+    for (const skip of authentikResult.forwardSkipped ?? []) {
+      logWarn(`sync-authentik: ${skip.slug} — forward-auth skipped: ${skip.reason}`);
+    }
     const discoveryFailures = (authentikResult.discovery ?? [])
       .filter((d) => !d.ok)
       .map((d) => ({ slug: d.slug, issuer: d.issuer, error: d.error ?? 'unknown error' }));

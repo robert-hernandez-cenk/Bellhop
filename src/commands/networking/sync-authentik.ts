@@ -76,6 +76,17 @@ export interface SyncAuthentikResult {
   oidcDeletions?: string[];
   // OIDC entries left alone this run, and why (controller ruling R-1).
   oidcSkipped?: OidcSkip[];
+  // Embedded-outpost membership changes this run makes, reconciled every
+  // run rather than only on create/remove: every owned, desired,
+  // proxy-backed Application's provider belongs on the outpost, and a
+  // retired one does not. So an Application left off it by an earlier run
+  // that failed partway is repaired on the next run, and the dry run shows
+  // that repair (FR-014). Only providers this command owns are ever added or
+  // removed.
+  outpostChanges?: OutpostChange[];
+  // New forward-auth entries left alone because the provider name they need
+  // is taken (planProviderName), and why. No Application is created.
+  forwardSkipped?: ForwardSkip[];
   // Apply only: the post-apply discovery check, one per owned OIDC entry.
   discovery?: OidcDiscoveryResult[];
   applied: boolean;
@@ -101,6 +112,17 @@ export type OidcSkipKind =
   | 'missing-signing-key'
   | 'missing-scope-mapping'
   | 'provider-name-taken';
+
+export interface OutpostChange {
+  slug: string;
+  action: 'add' | 'remove';
+}
+
+export interface ForwardSkip {
+  slug: string;
+  kind: 'provider-name-taken';
+  reason: string;
+}
 
 export interface ModeSwitch {
   slug: string;
@@ -387,7 +409,7 @@ export async function runSyncAuthentik(
   const notYetManaged = actionable.filter((d) => !managedBySlug.has(d.slug));
   const conflicting = notYetManaged.filter((d) => applicationsBySlug.has(d.slug));
   const unclaimed = notYetManaged.filter((d) => !applicationsBySlug.has(d.slug));
-  const toCreate = unclaimed.filter((d) => wantedKind(d) === 'proxy');
+  const toCreateCandidates = unclaimed.filter((d) => wantedKind(d) === 'proxy');
   // Every owned Application no longer desired, of either kind. An OAuth2 one
   // is also an OpenID client deletion (FR-012).
   const toRemove = applications.filter(
@@ -420,6 +442,22 @@ export async function runSyncAuthentik(
     managedBySlug,
     providerIndex
   );
+  // New forward-auth Applications. Their proxy provider's name goes through
+  // the same planProviderName check as every other new provider, so a
+  // same-named provider of either kind that is in use (or an OAuth2 one at
+  // all) skips the entry here rather than failing the whole apply on
+  // Authentik's duplicate-name 400. An unused same-named proxy provider is
+  // still reused -- the partial-failure self-heal.
+  const toCreate: Array<CandidateEntry & { reuseProviderId?: string }> = [];
+  const forwardSkipped: ForwardSkip[] = [];
+  for (const entry of toCreateCandidates) {
+    const naming = planProviderName(entry.slug, 'proxy', undefined, providerIndex);
+    if ('skip' in naming) {
+      forwardSkipped.push({ slug: entry.slug, kind: 'provider-name-taken', reason: naming.skip });
+    } else {
+      toCreate.push({ ...entry, ...(naming.reuseId ? { reuseProviderId: naming.reuseId } : {}) });
+    }
+  }
   const oidcSkipped = [...oidcPlan.skipped, ...forwardSwitchPlan.skipped];
   // A skipped entry with no Application yet gets nothing, bindings
   // included. A skipped entry that is already owned (including a skipped
@@ -436,6 +474,53 @@ export async function runSyncAuthentik(
     ...forwardSwitchPlan.switches.map((s) => s.slug),
     ...toRemove.filter((a) => ownedKindBySlug.get(a.slug) === 'oauth2').map((a) => a.slug),
   ];
+
+  // Outpost membership, reconciled against the live outpost rather than
+  // derived from this run's creates alone (see SyncAuthentikResult
+  // .outpostChanges). Only proxy providers of Applications this command owns
+  // are considered, so a hand-added provider is never removed.
+  const outpost = await deps.authentik.getEmbeddedOutpost();
+  const onOutpost = new Set(outpost.providerIds);
+  const outpostChanges: OutpostChange[] = [];
+  // Existing providers to add (repairs); new providers are added in apply as
+  // they are created.
+  const outpostRepairIds: string[] = [];
+  const outpostRemoveIds: string[] = [];
+  const switchingToOidc = new Map(
+    oidcPlan.creates.filter((c) => c.switchFrom).map((c) => [c.slug, c.switchFrom!.providerId!])
+  );
+  for (const entry of actionable) {
+    // Owned, desired, forward, and staying proxy-backed. A forward -> oidc
+    // switch (planned or skipped) is an OIDC entry, so it is not here.
+    if (wantedKind(entry) !== 'proxy' || ownedKindBySlug.get(entry.slug) !== 'proxy') continue;
+    const providerId = managedBySlug.get(entry.slug)!.providerId!;
+    if (!onOutpost.has(providerId)) {
+      outpostChanges.push({ slug: entry.slug, action: 'add' });
+      outpostRepairIds.push(providerId);
+    }
+  }
+  for (const entry of toCreate) {
+    if (!(entry.reuseProviderId && onOutpost.has(entry.reuseProviderId))) {
+      outpostChanges.push({ slug: entry.slug, action: 'add' });
+    }
+  }
+  for (const change of forwardSwitchPlan.switches) {
+    if (!(change.orphanProxyProviderId && onOutpost.has(change.orphanProxyProviderId))) {
+      outpostChanges.push({ slug: change.slug, action: 'add' });
+    }
+  }
+  for (const application of toRemove) {
+    if (ownedKindBySlug.get(application.slug) === 'proxy' && onOutpost.has(application.providerId!)) {
+      outpostChanges.push({ slug: application.slug, action: 'remove' });
+      outpostRemoveIds.push(application.providerId!);
+    }
+  }
+  for (const [slug, providerId] of switchingToOidc) {
+    if (onOutpost.has(providerId)) {
+      outpostChanges.push({ slug, action: 'remove' });
+      outpostRemoveIds.push(providerId);
+    }
+  }
 
   // Fetched in the dry run too, so a preview reports a missing rung the same
   // way apply does rather than announcing bindings it could not have made.
@@ -475,7 +560,7 @@ export async function runSyncAuthentik(
   // boundIds itself.
   const bindingPlans = planBindingChanges(
     actionable,
-    new Set([...conflictingSlugs, ...oidcSkippedUnowned]),
+    new Set([...conflictingSlugs, ...oidcSkippedUnowned, ...forwardSkipped.map((s) => s.slug)]),
     managedBySlug,
     bindingsByTarget,
     ladder,
@@ -492,6 +577,8 @@ export async function runSyncAuthentik(
     modeSwitches,
     oidcDeletions,
     oidcSkipped,
+    outpostChanges,
+    forwardSkipped,
   };
 
   if (!opts.apply) {
@@ -519,49 +606,47 @@ export async function runSyncAuthentik(
     return flowIds;
   };
 
-  // Embedded-outpost membership changes, collected across every step below
-  // and written once. Only proxy providers are ever on the outpost: an
-  // OAuth2 client is reached by the app itself, not through forward-auth.
-  const outpostAdds: string[] = [];
-  const outpostRemoves: string[] = [];
+  // Embedded-outpost membership, written once after every repoint so a
+  // retiring proxy provider leaves only after its Application has moved off
+  // it, and a new one joins only once its Application points at it. Only
+  // proxy providers are ever on the outpost: an OAuth2 client is reached by
+  // the app itself, not through forward-auth. If a step below throws first,
+  // the next run's reconcile (outpostChanges) repairs the membership.
+  const outpostAdds: string[] = [...outpostRepairIds];
   // Old providers of switched Applications, deleted only after the
   // Application points at its new provider and the outpost is updated, so
   // no step ever leaves an Application without a working provider.
   const switchedAwayProxyIds: string[] = [];
   const switchedAwayOAuth2Ids: string[] = [];
 
-  // Look up existing Providers by name before creating one -- self-heals
-  // a prior partial failure (Provider created, Application creation
-  // failed) by reusing the orphaned Provider instead of colliding with
-  // it on a duplicate name.
-  // The name here is the slug verbatim (#156), so this lookup's
-  // namespace is now the short-name space hand-created Providers also
-  // live in -- ownership everywhere else keys on slug plus
-  // proxy-provider backing (#154), never on name. A false match would
-  // adopt a hand-created Provider onto a new Application and delete it
-  // on a later gate change; unlikely, since it needs a name collision on
-  // a Provider whose Application slug differs, but this is the one place
-  // where that is possible.
+  // An unused proxy provider already named after the slug (reuseProviderId,
+  // from planProviderName) self-heals a prior partial failure (Provider
+  // created, then Application creation failed) instead of colliding with it
+  // on a duplicate name. The name here is the slug verbatim (#156), the
+  // short-name space hand-created Providers also live in; a false match
+  // would adopt an unused hand-created proxy Provider onto a new
+  // Application, but never one some other Application relies on.
   for (const entry of toCreate) {
-    let provider = proxyProviders.find((p) => p.name === entry.slug);
-    if (!provider) {
-      provider = await deps.authentik.createProxyProvider({
-        name: entry.slug,
-        externalHost: entry.externalHost,
-        ...(await getFlowIds()),
-      });
-    }
+    const providerId =
+      entry.reuseProviderId ??
+      (
+        await deps.authentik.createProxyProvider({
+          name: entry.slug,
+          externalHost: entry.externalHost,
+          ...(await getFlowIds()),
+        })
+      ).id;
     const application = await deps.authentik.createApplication({
       name: entry.slug,
       slug: entry.slug,
-      providerId: provider.id,
+      providerId,
     });
     // Deliberately no policy binding here. The reconcile pass below
     // treats a just-created Application and a long-standing one
     // identically -- which is exactly what stops an Application's
     // audience from being frozen at creation time (#158).
     managedBySlug.set(application.slug, application);
-    outpostAdds.push(provider.id);
+    outpostAdds.push(providerId);
   }
 
   // oidc -> forward (research R5): a proxy provider in, the Application
@@ -615,7 +700,6 @@ export async function runSyncAuthentik(
       // Same Application, new provider: the pk and its bindings survive.
       await deps.authentik.updateApplication(create.slug, { providerId, metaPublisher: BELLHOP_META_PUBLISHER });
       managedBySlug.set(create.slug, { ...create.switchFrom, providerId, metaPublisher: BELLHOP_META_PUBLISHER });
-      outpostRemoves.push(create.switchFrom.providerId!);
       switchedAwayProxyIds.push(create.switchFrom.providerId!);
     } else {
       const application = await deps.authentik.createApplication({
@@ -634,18 +718,12 @@ export async function runSyncAuthentik(
     await deps.authentik.updateOAuth2Provider(update.providerId, update.patch);
   }
 
-  // Both invariants below always hold for anything in toRemove -- ownership
-  // already required a providerId of the matching kind.
-  for (const application of toRemove) {
-    if (ownedKindBySlug.get(application.slug) === 'proxy' && application.providerId) {
-      outpostRemoves.push(application.providerId);
-    }
-  }
-  if (outpostAdds.length > 0 || outpostRemoves.length > 0) {
-    const outpost = await deps.authentik.getEmbeddedOutpost();
+  // Executes the planned outpostChanges against the membership read at
+  // planning time -- nothing in this run writes the outpost before here.
+  if (outpostChanges.length > 0) {
     const outpostProviderIds = new Set(outpost.providerIds);
     for (const id of outpostAdds) outpostProviderIds.add(id);
-    for (const id of outpostRemoves) outpostProviderIds.delete(id);
+    for (const id of outpostRemoveIds) outpostProviderIds.delete(id);
     await deps.authentik.setOutpostProviders(outpost.id, [...outpostProviderIds]);
   }
 
@@ -1103,6 +1181,11 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
       lines.push(`  ${symbol} ${change.slug} -> ${change.group}`);
     }
   }
+  const outpostChanges = result.outpostChanges ?? [];
+  if (outpostChanges.length > 0) {
+    lines.push(`Outpost changes: ${outpostChanges.length}`);
+    for (const change of outpostChanges) lines.push(`  ${change.action === 'add' ? '+' : '-'} ${change.slug}`);
+  }
   // Printed only when non-empty, so ordinary output is unchanged.
   if (result.conflicts.length > 0) {
     lines.push(`Applications in conflict: ${result.conflicts.length}`);
@@ -1117,6 +1200,11 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
   if (result.missingRungs.length > 0) {
     lines.push(`Ladder rungs missing from Authentik: ${result.missingRungs.length}`);
     for (const rung of result.missingRungs) lines.push(`  ! ${rung} — ${MISSING_RUNG_EXPLANATION}`);
+  }
+  const forwardSkipped = result.forwardSkipped ?? [];
+  if (forwardSkipped.length > 0) {
+    lines.push(`Forward-auth entries skipped: ${forwardSkipped.length}`);
+    for (const skip of forwardSkipped) lines.push(`  ! ${skip.slug} — ${skip.reason}`);
   }
   const oidcSkipped = result.oidcSkipped ?? [];
   if (oidcSkipped.length > 0) {

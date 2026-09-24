@@ -1725,3 +1725,108 @@ test('diffOAuth2Settings: reports each drifted field and a patch holding only th
   assert.deepEqual(drifted.changes, ['redirect_uris', 'grant_types', 'property_mappings', 'signing_key', 'client_type']);
   assert.deepEqual(drifted.patch, desired);
 });
+
+// Review fix round 1: outpost membership is reconciled every run, and new
+// forward-auth creates go through the same provider-name check.
+
+function mixedInventory(): Inventory {
+  const base = oidcInventory();
+  return {
+    ...base,
+    guests: [
+      ...base.guests,
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['sonarr'], authGroup: USERS_RUNG },
+    ],
+  };
+}
+
+test('outpost: a forward entry left off the outpost by a run that failed partway is re-added on the next run, and the dry run reports it', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const original = authentik.createOAuth2Provider.bind(authentik);
+  authentik.createOAuth2Provider = async () => {
+    throw new Error('Authentik API POST /providers/oauth2/ failed: 400');
+  };
+  await assert.rejects(runSyncAuthentik({ apply: true }, { authentik, inventory: mixedInventory(), fetchImpl: okFetch() }), /400/);
+  authentik.createOAuth2Provider = original;
+  const sonarr = (await authentik.listApplications()).find((a) => a.slug === 'sonarr')!;
+  assert.ok(sonarr, 'the forward Application was created before the failure');
+  assert.ok(!(await authentik.getEmbeddedOutpost()).providerIds.includes(sonarr.providerId!), 'precondition: left off the outpost');
+
+  const callsBeforeDry = authentik.calls.length;
+  const dry = await runSyncAuthentik({}, { authentik, inventory: mixedInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(authentik.calls.slice(callsBeforeDry), []);
+  assert.deepEqual(dry.outpostChanges, [{ slug: 'sonarr', action: 'add' }]);
+  assert.match(formatSyncAuthentik(dry), /Outpost changes: 1\n {2}\+ sonarr/);
+
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: mixedInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(planOf(result), planOf(dry));
+  assert.ok((await authentik.getEmbeddedOutpost()).providerIds.includes(sonarr.providerId!), 'repaired');
+  assert.deepEqual(result.oidcToCreate, ['media']);
+  assert.deepEqual((await runSyncAuthentik({}, { authentik, inventory: mixedInventory(), fetchImpl: okFetch() })).outpostChanges, []);
+});
+
+test('outpost: changes are reported for creates, removals, and both switch directions; a hand-added provider is never removed', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const hand = await authentik.createProxyProvider({
+    name: 'hand-made',
+    externalHost: 'https://hand.example.com',
+    authorizationFlowId: 'default-flow',
+    invalidationFlowId: 'default-invalidation-flow',
+  });
+  await authentik.setOutpostProviders('outpost-1', [hand.id]);
+  const forward = oidcInventory({ authMode: undefined });
+
+  const create = await runSyncAuthentik({ apply: true }, { authentik, inventory: forward });
+  assert.deepEqual(create.outpostChanges, [{ slug: 'media', action: 'add' }]);
+  const toOidc = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(toOidc.outpostChanges, [{ slug: 'media', action: 'remove' }]);
+  const toForward = await runSyncAuthentik({ apply: true }, { authentik, inventory: forward });
+  assert.deepEqual(toForward.outpostChanges, [{ slug: 'media', action: 'add' }]);
+  const cleared = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authMode: undefined, authGroup: undefined }) });
+  assert.deepEqual(cleared.outpostChanges, [{ slug: 'media', action: 'remove' }]);
+  assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [hand.id]);
+});
+
+test('forward create: skipped (not attempted) when the slug name is held by an OAuth2 provider or by a proxy provider serving another Application', async () => {
+  const setups: Array<[string, (a: FakeAuthentikClient) => Promise<void>, RegExp]> = [
+    [
+      'unused OAuth2 provider',
+      async (a) => {
+        await a.createOAuth2Provider({
+          name: 'sonarr',
+          ...desiredOAuth2Settings(OIDC_URIS, 'key-1', SCOPE_IDS),
+          authorizationFlowId: 'f',
+          invalidationFlowId: 'g',
+        });
+      },
+      /OAuth2 provider named 'sonarr'/,
+    ],
+    [
+      'proxy provider serving another Application',
+      async (a) => {
+        const p = await a.createProxyProvider({ name: 'sonarr', externalHost: 'https://x.example.com', authorizationFlowId: 'f', invalidationFlowId: 'g' });
+        await a.createApplication({ name: 'other', slug: 'other', providerId: p.id });
+      },
+      /'other'/,
+    ],
+  ];
+  for (const [label, setup, pattern] of setups) {
+    const authentik = new FakeAuthentikClient();
+    await seedLadderGroups(authentik);
+    await setup(authentik);
+    const dry = await runSyncAuthentik({}, { authentik, inventory: gatedInventory });
+    const callsBefore = authentik.calls.length;
+    const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: gatedInventory });
+    assert.deepEqual(planOf(result), planOf(dry), label);
+    assert.deepEqual(result.toCreate, [], label);
+    assert.deepEqual(result.bindingChanges, [], label);
+    assert.deepEqual(result.outpostChanges, [], label);
+    assert.deepEqual(result.forwardSkipped?.map((s) => [s.slug, s.kind]), [['sonarr', 'provider-name-taken']], label);
+    assert.match(result.forwardSkipped![0].reason, pattern, label);
+    assert.deepEqual(authentik.calls.slice(callsBefore), [], `${label}: nothing is written`);
+    assert.match(formatSyncAuthentik(result), /Forward-auth entries skipped: 1\n {2}! sonarr — /, label);
+    assert.equal(syncAuthentikFailed(result), false, label);
+  }
+});
