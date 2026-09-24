@@ -1,4 +1,6 @@
 import { resolveAppUrl, resolveDevAppUrl, resolveInstallScriptUrl } from '../commands/provisioning/install-app.ts';
+import { resolveAppSource, type AppSource, type ShadowedRepo } from '../lib/app-source.ts';
+import type { Inventory } from '../lib/inventory.ts';
 
 export interface AppDefaults {
   cores?: number;
@@ -88,6 +90,46 @@ async function fetchInstallPrompts(ctUrl: string, fetchImpl: typeof fetch): Prom
   return body === undefined ? [] : parsePromptHints(body);
 }
 
+// Upstream (ProxmoxVE -> ProxmoxVED) prompt lookup for a bare slug, used by
+// promptsForSource's non-custom branch -- mirrors checkAppUrl's own
+// exists-then-fetch-prompts fallback below, but returns only the prompts:
+// an AppSource of kind 'upstream' doesn't record which of the two upstream
+// repos the slug actually lives in (resolveAppSource never probes upstream
+// at all for that kind -- see src/lib/app-source.ts), so this redoes that
+// same two-repo try independently.
+async function upstreamPromptsFor(slug: string, fetchImpl: typeof fetch): Promise<string[]> {
+  const url = resolveAppUrl(slug);
+  const body = await fetchScriptBody(url, fetchImpl);
+  if (body !== undefined) return fetchInstallPrompts(url, fetchImpl);
+  const devUrl = resolveDevAppUrl(slug);
+  if (devUrl) {
+    const devBody = await fetchScriptBody(devUrl, fetchImpl);
+    if (devBody !== undefined) return fetchInstallPrompts(devUrl, fetchImpl);
+  }
+  return [];
+}
+
+// The prompts for an already-resolved AppSource (research R5) -- reused by
+// checkAppUrl's own 'custom' branch below, and exported for
+// previewAndEnqueue (src/operations/core.ts), which has already resolved a
+// source once per operation and must read prompts from that same resolution
+// rather than calling checkAppUrl(app, ...) a second time (which would
+// re-derive, and for a custom source potentially re-resolve, where the
+// script actually lives). Never throws -- every fetch here is swallowed the
+// same way fetchScriptBody already swallows one.
+export async function promptsForSource(source: AppSource, fetchImpl: typeof fetch): Promise<string[]> {
+  if (source.kind === 'custom') {
+    if (!source.scriptsBaseUrl || !source.slug) return [];
+    const body = await fetchScriptBody(`${source.scriptsBaseUrl}/install/${source.slug}-install.sh`, fetchImpl);
+    return body === undefined ? [] : parsePromptHints(body);
+  }
+  // kind 'url' has no slug to derive a script location from -- same as
+  // checkAppUrl's own pasted-URL handling, which only ever finds prompts
+  // when the pasted URL itself happens to match the ct/<slug>.sh shape.
+  if (source.slug === undefined) return [];
+  return upstreamPromptsFor(source.slug, fetchImpl);
+}
+
 // Resolves --app the same way buildInstallAppScript would (bare slug ->
 // community-scripts URL, full URL -> used as-is) and reports whether that
 // URL is actually fetchable, so the UI's check reflects exactly what Apply
@@ -99,10 +141,53 @@ async function fetchInstallPrompts(ctUrl: string, fetchImpl: typeof fetch): Prom
 // development" (e.g. budget-board) checks out green instead of looking
 // invalid. `dev: true` on that branch lets the UI flag it as still in
 // development, rather than silently treating it the same as a graduated app.
+//
+// `inventory`/`preResolved` are optional (issue #11): when an inventory is
+// given (and no already-resolved source is handed in via `preResolved`),
+// `app` is first run through resolveAppSource. A 'custom' resolution takes
+// its own branch below (fetching ctUrl directly and the install script from
+// scriptsBaseUrl, never touching the VE/VED fallback at all); an 'upstream'
+// or 'url' resolution -- and the no-inventory-given case, unchanged from
+// before this feature existed -- falls through to today's VE->VED logic. A
+// thrown resolution (bad customScriptsRepo/Branch, GitHub unreachable, see
+// FR-008) becomes `{ exists: false, url: '', error: <message> }` rather than
+// propagating, since this is a read-only status check, not a mutation.
 export async function checkAppUrl(
   app: string,
-  fetchImpl: typeof fetch = fetch
-): Promise<{ exists: boolean; url: string; dev?: boolean; defaults?: AppDefaults; prompts?: string[] }> {
+  fetchImpl: typeof fetch = fetch,
+  inventory?: Inventory,
+  preResolved?: AppSource
+): Promise<{
+  exists: boolean;
+  url: string;
+  dev?: boolean;
+  defaults?: AppDefaults;
+  prompts?: string[];
+  custom?: { label: string; sha: string };
+  shadows?: ShadowedRepo[];
+  error?: string;
+}> {
+  let source = preResolved;
+  if (!source && inventory) {
+    try {
+      source = await resolveAppSource(app, inventory, fetchImpl);
+    } catch (err) {
+      return { exists: false, url: '', error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  if (source?.kind === 'custom') {
+    const body = await fetchScriptBody(source.ctUrl!, fetchImpl);
+    return {
+      exists: body !== undefined,
+      url: source.ctUrl!,
+      defaults: body !== undefined ? parseAppDefaults(body) : undefined,
+      prompts: await promptsForSource(source, fetchImpl),
+      custom: { label: source.custom!.label, sha: source.custom!.sha },
+      ...(source.shadows.length > 0 ? { shadows: source.shadows } : {}),
+    };
+  }
+
   const url = resolveAppUrl(app);
   const body = await fetchScriptBody(url, fetchImpl);
   if (body !== undefined)

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { JobRunner } from '../web/jobs/job-runner.ts';
 import type { Operation, OperationDeps } from './types.ts';
-import { checkAppUrl } from './app-check.ts';
+import { checkAppUrl, promptsForSource } from './app-check.ts';
+import { resolveAppSource } from '../lib/app-source.ts';
 import { refreshInventory } from '../lib/inventory.ts';
 
 export interface Attribution {
@@ -88,10 +89,32 @@ export async function previewAndEnqueue(
   attribution: Attribution
 ): Promise<{ jobId: number; preview: string }> {
   const input = parseOperationInput(op, raw);
+  // research R5: pin a custom-repository resolution once per operation,
+  // right here -- before preview -- so preview's own runInstallApp/
+  // runUpdateApp call, the prompt pre-scan below, and apply (which runs
+  // inside the job, and can start much later) all read the same resolved
+  // source rather than each independently re-resolving (and each
+  // potentially pinning a different head commit). Stored on the parsed
+  // input as the internal field `appSource`: it's never part of any
+  // operation's `shape`, so it's never accepted from the raw request body
+  // and this line always overwrites whatever a caller supplied -- and it's
+  // never serialized into a job's argsJson either, since enqueue() below
+  // stringifies `raw`, not `input`.
+  if (op.resolvesApp) {
+    input.appSource = await resolveAppSource(input.app, deps.inventory, deps.fetchImpl ?? fetch);
+  }
   const preview = await op.preview(input, deps);
-  // checkAppUrl swallows fetch failures and returns no prompts, so a network
-  // hiccup never blocks the apply.
-  const expectedPrompts = op.watchForPrompts ? (await checkAppUrl(input.app, deps.fetchImpl)).prompts ?? [] : undefined;
+  // checkAppUrl/promptsForSource both swallow fetch failures and return no
+  // prompts, so a network hiccup never blocks the apply. A resolvesApp
+  // operation reads prompts from the source already pinned above
+  // (promptsForSource) instead of calling checkAppUrl(input.app, ...) a
+  // second time, which would re-derive -- and for a custom source,
+  // re-resolve -- where the script actually lives.
+  const expectedPrompts = op.watchForPrompts
+    ? op.resolvesApp
+      ? await promptsForSource(input.appSource, deps.fetchImpl ?? fetch)
+      : ((await checkAppUrl(input.app, deps.fetchImpl)).prompts ?? [])
+    : undefined;
   const jobId = enqueue(op, input, raw, deps, jobRunner, attribution, expectedPrompts, preview);
   return { jobId, preview };
 }

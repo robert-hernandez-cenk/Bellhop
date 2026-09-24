@@ -45,11 +45,16 @@ export interface McpHarnessOptions {
   // server withdraws the request.
   elicit?: (request: ElicitRequest, signal: AbortSignal) => Promise<ElicitResult>;
   serverOptions?: Parameters<typeof buildMcpServer>[1];
+  // Overrides the default MCP_TEST_INVENTORY fixture -- e.g. to set
+  // customScriptsRepo/customScriptsBranch (issue #11).
+  inventory?: Inventory;
+  // Overrides the default always-404 fetch stub.
+  fetchImpl?: typeof fetch;
 }
 
 export async function setupMcp(opts: McpHarnessOptions = {}) {
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'mcp-')), 'bellhop.db');
-  saveInventory(inventoryPath, MCP_TEST_INVENTORY);
+  saveInventory(inventoryPath, opts.inventory ?? MCP_TEST_INVENTORY);
   const ssh = new FakeSSHClient(defaultResponder);
   const jobStore = new JobStore(':memory:');
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'mcp-log-')));
@@ -61,7 +66,7 @@ export async function setupMcp(opts: McpHarnessOptions = {}) {
       inventoryPath,
       authentik: new UnconfiguredAuthentikClient(),
       cloudflare: new UnconfiguredCloudflareClient(),
-      fetchImpl: (async () => new Response(null, { status: 404 })) as unknown as typeof fetch,
+      fetchImpl: opts.fetchImpl ?? ((async () => new Response(null, { status: 404 })) as unknown as typeof fetch),
       jobStore,
       jobLog,
       jobRunner,

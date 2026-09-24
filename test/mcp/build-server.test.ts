@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { HangingSSHClient } from '../support/hanging-ssh-client.ts';
-import { loadInventory } from '../../src/lib/inventory.ts';
-import { setupMcp as setup, waitForFinished } from '../support/mcp-harness.ts';
+import { loadInventory, type Inventory } from '../../src/lib/inventory.ts';
+import { setupMcp as setup, waitForFinished, parse, MCP_TEST_INVENTORY } from '../support/mcp-harness.ts';
 
 test('tool list covers the registry, read-only, and job tools, and nothing excluded', async () => {
   const { client } = await setup();
@@ -160,4 +163,51 @@ test('operation tools point at wait_for_job, and prompt-watching ones mention qu
   assert.doesNotMatch(createLxc.description!, /installer question/);
   assert.match(installApp.description!, /installer question/);
   assert.match(installApp.description!, /elicitation/);
+});
+
+// --- check_install_app / custom script repository (issue #11) ---
+// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// on branch my-apps is the same example the spec/plan/data-model/
+// test/lib/app-source.test.ts use.
+
+const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'github');
+const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
+const SHA = HEAD_SHA_RAW.trim();
+const CUSTOM_OWNER = 'example-user';
+const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_BRANCH = 'my-apps';
+const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
+
+function customScriptFetch(slug: string): typeof fetch {
+  return (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    // Both upstream shadow probes -- always "not present" for this test.
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('check_install_app resolves through the custom script repository and returns custom.sha', async () => {
+  const inventory: Inventory = {
+    ...MCP_TEST_INVENTORY,
+    customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`,
+    customScriptsBranch: CUSTOM_BRANCH,
+  };
+  const { call } = await setup({ inventory, fetchImpl: customScriptFetch('myapp') });
+  const result = parse(await call('check_install_app', { app: 'myapp' }));
+  assert.equal(result.exists, true);
+  assert.equal(result.url, customCtUrl('myapp'));
+  assert.deepEqual(result.custom, { label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA });
+  assert.equal(result.shadows, undefined);
+});
+
+test('check_install_app reports error and exists=false when the custom settings are half-configured', async () => {
+  const inventory: Inventory = { ...MCP_TEST_INVENTORY, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
+  const { call } = await setup({ inventory });
+  const result = parse(await call('check_install_app', { app: 'myapp' }));
+  assert.equal(result.exists, false);
+  assert.equal(result.url, '');
+  assert.match(result.error, /customScriptsRepo and customScriptsBranch must be set together/);
 });

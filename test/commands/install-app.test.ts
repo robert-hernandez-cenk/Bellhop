@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import type { Inventory } from '../../src/lib/inventory.ts';
 import {
   runInstallApp,
@@ -10,7 +13,8 @@ import {
   pickStorage,
 } from '../../src/commands/provisioning/install-app.ts';
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
-import { InteractiveCancelledError } from '../../src/lib/ssh-client.ts';
+import { InteractiveCancelledError, shellQuote } from '../../src/lib/ssh-client.ts';
+import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE, type AppSource } from '../../src/lib/app-source.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -565,4 +569,161 @@ test('runInstallApp warns when the host has no authorized_keys to provision', as
     console.error = originalError;
   }
   assert.ok(errors.some((l) => l.includes("No authorized_keys found on host 'pve1'")));
+});
+
+// --- custom script repository (issue #11) ---
+// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// on branch my-apps is the same example the spec/plan/data-model/
+// test/lib/app-source.test.ts use.
+
+const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'github');
+function fixtureText(name: string): string {
+  return readFileSync(path.join(fixtureDir, name), 'utf8');
+}
+const HEAD_SHA_RAW = fixtureText('branch-head-sha.txt');
+const SHA = HEAD_SHA_RAW.trim();
+
+const CUSTOM_OWNER = 'example-user';
+const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_BRANCH = 'my-apps';
+const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
+const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
+const customScriptsBaseUrl = `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}`;
+const shadowUrl = (base: string, slug: string) => `${base}/ct/${slug}.sh`;
+
+const inventoryWithCustomSource: Inventory = {
+  ...inventory,
+  customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`,
+  customScriptsBranch: CUSTOM_BRANCH,
+};
+
+// Routes a full custom-repository resolution: head-SHA lookup, the custom
+// ct/<slug>.sh script itself (always a hit), and both upstream shadow probes
+// (always "not present" -- a plain 404) -- mirrors app-source.test.ts's own
+// customFetch, kept local to this file rather than shared/exported since
+// each test file in this suite owns its own fixtures.
+function customFetch(slug: string): typeof fetch {
+  return (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response(null, { status: 404 });
+    if (href === shadowUrl(UPSTREAM_DEV_BASE, slug)) return new Response(null, { status: 404 });
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+}
+
+test('buildInstallAppScript with an upstream (or omitted) source produces byte-identical output to before this feature existed', () => {
+  const expected = [
+    'export TERM=xterm',
+    'export mode=default',
+    'export PHS_SILENT=1',
+    "export var_hostname='plex'",
+    'export var_ctid=4004',
+    'export var_cpu=1',
+    'export var_ram=512',
+    'export var_disk=8',
+    "export var_brg='vmbr0'",
+    "export var_net='192.168.1.4/16'",
+    "export var_gateway='192.168.3.1'",
+    "export var_template_storage='local'",
+    "export var_container_storage='local-lvm'",
+    'export var_ssh=no',
+    'mkdir -p /usr/local/community-scripts',
+    'touch /usr/local/community-scripts/default.vars',
+    "sed -i '/^[#[:space:]]*var_template_storage=/d;/^[#[:space:]]*var_container_storage=/d' /usr/local/community-scripts/default.vars",
+    "printf 'var_template_storage=%s\\nvar_container_storage=%s\\n' 'local' 'local-lvm' >> /usr/local/community-scripts/default.vars",
+    `bash -c "$(curl -fsSL 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh' 2>/dev/null || curl -fsSL 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/plex.sh')"`,
+  ].join('\n');
+
+  const withoutSource = buildInstallAppScript(
+    { host: 'pve1', mid: 4, app: 'plex', hostname: 'plex' },
+    { vmid: 4004, ip: '192.168.1.4/16', gateway: '192.168.3.1' },
+    storage
+  );
+  assert.equal(withoutSource, expected);
+
+  const withUpstreamSource = buildInstallAppScript(
+    { host: 'pve1', mid: 4, app: 'plex', hostname: 'plex' },
+    { vmid: 4004, ip: '192.168.1.4/16', gateway: '192.168.3.1' },
+    storage,
+    undefined,
+    { kind: 'upstream', slug: 'plex', shadows: [] }
+  );
+  assert.equal(withUpstreamSource, expected);
+});
+
+test('buildInstallAppScript exports COMMUNITY_SCRIPTS_URL immediately before the curl line and has no upstream fallback for a custom source', () => {
+  const source: AppSource = {
+    kind: 'custom',
+    slug: 'myapp',
+    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: CUSTOM_LABEL, sha: SHA },
+    ctUrl: customCtUrl('myapp'),
+    scriptsBaseUrl: customScriptsBaseUrl,
+    shadows: [],
+  };
+  const script = buildInstallAppScript(
+    { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp' },
+    { vmid: 4004, ip: '192.168.1.4/16', gateway: '192.168.3.1' },
+    storage,
+    undefined,
+    source
+  );
+  const lines = script.split('\n');
+  const exportLine = `export COMMUNITY_SCRIPTS_URL=${shellQuote(customScriptsBaseUrl)}`;
+  const curlLine = `bash -c "$(curl -fsSL ${shellQuote(customCtUrl('myapp'))})"`;
+  assert.equal(lines[lines.length - 2], exportLine);
+  assert.equal(lines[lines.length - 1], curlLine);
+  assert.doesNotMatch(script, /\|\|/);
+});
+
+test('runInstallApp resolves a custom source via fetchImpl and produces the same script for dry run and apply', async () => {
+  const fetchImpl = customFetch('myapp');
+  const dryRun = await runInstallApp(
+    { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp', fetchImpl },
+    { ssh: new FakeSSHClient(defaultResponder), inventory: inventoryWithCustomSource }
+  );
+  assert.equal(dryRun.applied, false);
+  assert.equal(dryRun.source.kind, 'custom');
+  assert.ok(dryRun.script.includes(`export COMMUNITY_SCRIPTS_URL=${shellQuote(customScriptsBaseUrl)}`));
+
+  const applySsh = new FakeSSHClient(defaultResponder);
+  const applied = await runInstallApp(
+    { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp', apply: true, fetchImpl },
+    { ssh: applySsh, inventory: inventoryWithCustomSource }
+  );
+  assert.equal(applied.applied, true);
+  assert.equal(applied.script, dryRun.script);
+  const installCall = applySsh.history.find((c) => c.command.includes('COMMUNITY_SCRIPTS_URL'));
+  assert.ok(installCall, 'install script call should be recorded');
+  assert.equal(installCall!.command, applied.script);
+});
+
+test('runInstallApp throws a resolution failure before any pct/install exec is recorded', async () => {
+  const ssh = new FakeSSHClient(defaultResponder);
+  const failingFetch = (async () => new Response('rate limited', { status: 403 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () =>
+      runInstallApp(
+        { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp', fetchImpl: failingFetch },
+        { ssh, inventory: inventoryWithCustomSource }
+      ),
+    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub returned 403/
+  );
+  assert.equal(ssh.history.length, 0, 'no pct/install exec should have been recorded');
+});
+
+test('runInstallApp uses a passed-in opts.source without ever calling fetch', async () => {
+  const ssh = new FakeSSHClient(defaultResponder);
+  const throwingFetch = (async () => {
+    throw new Error('runInstallApp should not have called fetch when opts.source is already given');
+  }) as unknown as typeof fetch;
+  const source: AppSource = { kind: 'upstream', slug: 'plex', shadows: [] };
+  const result = await runInstallApp(
+    { host: 'pve1', mid: 4, app: 'plex', hostname: 'plex', source, fetchImpl: throwingFetch },
+    { ssh, inventory: inventoryWithCustomSource }
+  );
+  assert.equal(result.applied, false);
+  assert.equal(result.source, source);
 });

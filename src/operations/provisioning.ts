@@ -179,7 +179,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     id: 'install-app',
     category: 'provisioning',
     description:
-      'Create a new LXC container by running a community-scripts (ProxmoxVE) install script unattended. The job watches for interactive prompts; answer them with answer_job_prompt.',
+      'Create a new LXC container by running a community-scripts (ProxmoxVE) install script unattended, or, when an operator-configured custom script repository is set (see set-config customScriptsRepo/customScriptsBranch), from that fork branch instead. The job watches for interactive prompts; answer them with answer_job_prompt.',
     shape: {
       app: reqStr('community-scripts app slug or full script URL'),
       host: reqStr('Proxmox host name'),
@@ -196,12 +196,15 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     target: (i) => i.host,
     targetType: 'host',
     watchForPrompts: true,
+    resolvesApp: true,
     preview: async (i, deps) => {
-      const { text, result } = await withCapturedConsole(() => runInstallApp({ ...(i as any), apply: false }, deps));
+      const { text, result } = await withCapturedConsole(() =>
+        runInstallApp({ ...(i as any), apply: false, source: i.appSource, fetchImpl: deps.fetchImpl }, deps)
+      );
       return [text, result.script].filter(Boolean).join('\n');
     },
     apply: async (i, deps) => {
-      const result = await runInstallApp({ ...(i as any), apply: true }, deps);
+      const result = await runInstallApp({ ...(i as any), apply: true, source: i.appSource, fetchImpl: deps.fetchImpl }, deps);
       await recordProvisionedGuest(deps, {
         name: i.hostname,
         type: 'lxc',
