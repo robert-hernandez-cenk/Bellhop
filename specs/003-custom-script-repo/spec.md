@@ -128,7 +128,7 @@ A guest installed from the custom repository records that fact. The Dashboard's 
 - **FR-009**: The app catalog MUST include a third group for the custom repository, labelled with the repository and branch, ordered before the upstream groups. Slugs that also exist upstream MUST appear only in the custom group, annotated with the upstream repository they override.
 - **FR-010**: The custom repository's catalog listing MUST be refreshed after a short freshness window (on the order of minutes), independently of the upstream listings' existing 24-hour window, and MUST be discarded when the configured repository or branch changes.
 - **FR-011**: A failure to list the custom repository MUST NOT prevent the upstream catalog groups from being shown; it MUST be logged as a warning.
-- **FR-012**: A guest installed through the web UI or MCP apply path MUST record which source its app came from (ProxmoxVE, ProxmoxVED, or custom) alongside the existing app slug, preserved across inventory syncs the same way the slug is.
+- **FR-012**: A guest installed through the web UI or MCP apply path from the custom repository MUST record that fact alongside the existing app slug, preserved across inventory syncs the same way the slug is. Guests installed from ProxmoxVE or ProxmoxVED record nothing new; their existing behavior is unchanged.
 - **FR-013**: The Dashboard's app link for a guest whose recorded source is custom MUST point at that app's script in the configured custom repository and branch.
 - **FR-014**: Updating an app MUST resolve the slug the same way installing does (FR-004 through FR-008).
 - **FR-015**: The custom repository MUST be public and laid out like ProxmoxVED (`ct/<slug>.sh` and `install/<slug>-install.sh` at its root); supporting other layouts or authenticated access is out of scope.
@@ -140,7 +140,7 @@ A guest installed from the custom repository records that fact. The Dashboard's 
 - **Pinned commit**: the commit the configured branch pointed at when an app was checked; the single version read by every later step of that install or update.
 - **App resolution result**: which source an app slug resolved to (custom, ProxmoxVE, or ProxmoxVED), the script location, the pinned commit when custom, and the list of upstream repositories it overrides.
 - **Catalog group**: a named list of slugs from one source; the custom group carries per-slug override annotations.
-- **Guest app provenance**: the source an installed guest's app came from, stored alongside its app slug.
+- **Guest app provenance**: a marker, stored alongside the app slug, that the guest's app came from the custom repository.
 
 ## Success Criteria *(mandatory)*
 
