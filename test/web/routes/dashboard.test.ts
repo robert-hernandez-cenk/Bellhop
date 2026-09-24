@@ -1103,3 +1103,22 @@ test('PATCH guest authMode/oidcRedirectUris reports only its own oidcDiscoveryFa
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.oidcDiscoveryFailures.map((f: { slug: string }) => f.slug), ['sonarr']);
 });
+
+// FR-022a (T034): the Dashboard PATCH carries confirmOidcClientDeletion
+// through to commitGuestEdit -- an admin leaving OIDC gating without it gets
+// a 400 and nothing is written; with it, the edit saves and the flag is not.
+test('PATCH guest leaving OIDC gating needs confirmOidcClientDeletion: true, even for an admin', async () => {
+  for (const edit of [{ authMode: 'forward' }, { authGroup: '' }]) {
+    const app = testApp(oidcInventory());
+    const refused = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send(edit);
+    assert.equal(refused.status, 400);
+    assert.match(refused.body.error, /confirmOidcClientDeletion: true/);
+    const before = (await request(app).get('/api/inventory')).body.guests.find((g: any) => g.name === 'sonarr');
+    assert.equal(before.authMode, 'oidc');
+    assert.equal(before.authGroup, USERS_RUNG);
+
+    const accepted = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ ...edit, confirmOidcClientDeletion: true });
+    assert.equal(accepted.status, 200);
+    assert.equal('confirmOidcClientDeletion' in accepted.body.guest, false);
+  }
+});

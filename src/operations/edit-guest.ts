@@ -10,6 +10,7 @@ import {
   parseOidcRedirectUris,
   oidcConfigErrors,
   validateInventory,
+  effectiveAuth,
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
 import { syncCaddyLive } from '../web/caddy-sync.ts';
@@ -24,6 +25,20 @@ import type { OperationDeps } from './types.ts';
 // operator, who is admin.
 
 export class GuestEditValidationError extends Error {}
+
+// FR-022a / research R8. Exact wording is part of the MCP contract: the
+// model reads it to learn how to confirm.
+export const OIDC_CLIENT_DELETION_CONFIRMATION_ERROR =
+  "This edit deletes the app's OpenID client, so its OIDC login stops working until new credentials are entered in the app. Resend with confirmOidcClientDeletion: true to confirm.";
+
+// Whether an edit takes an entry out of effective OIDC gating -- switching
+// it to forward-auth or clearing its tier -- which makes the next sync
+// delete its OpenID client. Decided from the inventory alone (FR-022a): it
+// applies even if the sync never created a client, and no other edit
+// needs confirmation.
+export function editDeletesOidcClient(current: GuestEntry, updated: GuestEntry): boolean {
+  return effectiveAuth(current) === 'oidc' && effectiveAuth(updated) !== 'oidc';
+}
 
 export type EditGuestResult =
   | {
@@ -67,11 +82,19 @@ export async function commitGuestEdit(
   deps: OperationDeps,
   name: string,
   updated: GuestEntry,
-  touchedRouting: boolean
+  touchedRouting: boolean,
+  // A request flag, never an inventory field: applyGuestEdits does not copy
+  // it onto the entry, so it is never saved.
+  confirmOidcClientDeletion = false
 ): Promise<EditGuestResult> {
   const { inventory } = deps;
   const idx = inventory.guests.findIndex((g) => g.name === name);
   if (idx === -1) throw new Error(`Unknown guest: ${name}`);
+  // Checked first, before anything is validated or written, so an
+  // unconfirmed edit leaves the entry and its client exactly as they were.
+  if (editDeletesOidcClient(inventory.guests[idx], updated) && confirmOidcClientDeletion !== true) {
+    throw new GuestEditValidationError(OIDC_CLIENT_DELETION_CONFIRMATION_ERROR);
+  }
   const guests = inventory.guests.map((g, i) => (i === idx ? updated : g));
 
   const errors = validateInventory({ ...inventory, guests });
@@ -175,12 +198,18 @@ export const EDIT_GUEST_SHAPE = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe("OIDC callback URLs (array or ';'-separated absolute http(s) URLs); required when authMode is 'oidc' and the entry has subdomains. Admin only."),
+  confirmOidcClientDeletion: z
+    .boolean()
+    .optional()
+    .describe(
+      "Must be true for an edit that takes an OIDC-gated entry (authMode 'oidc' with an authGroup) out of OIDC -- switching it to forward-auth or clearing authGroup -- because the next sync deletes its OpenID client and the app's OIDC login stops working until new credentials are entered in it. Rejected otherwise. Never saved."
+    ),
 };
 
 export async function runEditGuest(input: { name: string } & Record<string, unknown>, deps: OperationDeps): Promise<EditGuestResult> {
-  const { name, ...fields } = input;
+  const { name, confirmOidcClientDeletion, ...fields } = input;
   const current = deps.inventory.guests.find((g) => g.name === name);
   if (!current) throw new Error(`Unknown guest: ${name}`);
   const updated = applyGuestEdits(current, fields);
-  return commitGuestEdit(deps, name, updated, 'subdomains' in fields || 'port' in fields);
+  return commitGuestEdit(deps, name, updated, 'subdomains' in fields || 'port' in fields, confirmOidcClientDeletion === true);
 }

@@ -246,7 +246,12 @@ export function dashboardRoutes(
           { ssh, inventory, inventoryPath, authentik, cloudflare, fetchImpl },
           req.params.name as string,
           updated,
-          'subdomains' in req.body || 'port' in req.body
+          'subdomains' in req.body || 'port' in req.body,
+          // FR-022a: an edit leaving OIDC gating is rejected (400) unless
+          // the Dashboard's confirmation dialog sent this. It applies to
+          // admins too -- a non-admin cannot clear or lower a tier at all
+          // (authGroupChangeError above).
+          req.body?.confirmOidcClientDeletion === true
         );
         res.json(result);
       } catch (err) {

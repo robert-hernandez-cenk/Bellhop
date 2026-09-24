@@ -373,6 +373,12 @@ export class FakeAuthentikClient implements AuthentikClient {
   }
 
   async createOAuth2Provider(input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider> {
+    // Real Authentik rejects a provider whose name is already taken, so a
+    // plan that would POST a duplicate must fail here too rather than pass
+    // silently (U5 review finding 1).
+    if ([...this.oauth2Providers.values()].some((p) => p.name === input.name)) {
+      throw new Error(`Authentik API POST /providers/oauth2/ failed: 400 provider with this name already exists (${input.name})`);
+    }
     const id = this.newId();
     const record: FakeOAuth2ProviderRecord = {
       id,

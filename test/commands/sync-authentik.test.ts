@@ -973,26 +973,61 @@ test('OIDC: a reused orphan with stale settings is brought to the desired settin
   assert.deepEqual(provider.redirectUris, [{ matchingMode: 'strict', url: OIDC_URIS[0] }]);
 });
 
-test('OIDC: an OAuth2 provider named after the slug that already serves another Application is not reused', async () => {
-  const authentik = new FakeAuthentikClient({
-    applications: [{ id: 'other', pk: 'pk-other', name: 'other', slug: 'other', providerId: '60' }],
-    oauth2Providers: [
-      {
-        id: '60',
-        name: 'media',
-        assignedApplicationSlug: 'other',
-        clientType: 'confidential',
-        grantTypes: ['authorization_code'],
-        propertyMappingIds: [],
-        redirectUris: [],
-      },
-    ],
-  });
+test('OIDC: an OAuth2 provider named after the slug that already serves another Application is not reused, and the entry is skipped as provider-name-taken', async () => {
+  const seed = () =>
+    new FakeAuthentikClient({
+      applications: [{ id: 'other', pk: 'pk-other', name: 'other', slug: 'other', providerId: '60' }],
+      oauth2Providers: [
+        {
+          id: '60',
+          name: 'media',
+          assignedApplicationSlug: 'other',
+          clientType: 'confidential',
+          grantTypes: ['authorization_code'],
+          propertyMappingIds: [],
+          redirectUris: [],
+        },
+      ],
+    });
+  // Creating a second provider under the same name is what real Authentik
+  // rejects, so the fake does too -- the plan must never attempt it.
+  const fake = seed();
+  await assert.rejects(
+    fake.createOAuth2Provider({
+      name: 'media',
+      clientType: 'confidential',
+      grantTypes: [],
+      signingKeyId: 'key-1',
+      propertyMappingIds: [],
+      redirectUris: [],
+      authorizationFlowId: 'f',
+      invalidationFlowId: 'f',
+    }),
+    /name/
+  );
+
+  const dryClient = seed();
+  await seedLadderGroups(dryClient);
+  const dry = await runSyncAuthentik({}, { authentik: dryClient, inventory: oidcInventory(), fetchImpl: okFetch() });
+
+  const authentik = seed();
   await seedLadderGroups(authentik);
-  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
-  const media = (await authentik.listApplications()).find((a) => a.slug === 'media')!;
-  assert.notEqual(media.providerId, '60');
-  assert.equal((await authentik.listOAuth2Providers()).length, 2);
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+
+  for (const r of [dry, result]) {
+    assert.deepEqual(r.oidcToCreate, []);
+    assert.deepEqual(r.bindingChanges, [], 'a skipped entry with no Application gets no bindings');
+    assert.equal(r.oidcSkipped!.length, 1);
+    assert.equal(r.oidcSkipped![0].slug, 'media');
+    assert.equal(r.oidcSkipped![0].kind, 'provider-name-taken');
+    assert.match(r.oidcSkipped![0].reason, /'media'/);
+    assert.match(r.oidcSkipped![0].reason, /'other'/);
+  }
+  assert.deepEqual(authentik.calls.slice(callsBefore), [], 'apply makes no mutating call for the skipped entry');
+  assert.equal((await authentik.listApplications()).some((a) => a.slug === 'media'), false);
+  assert.equal((await authentik.listOAuth2Providers()).length, 1);
+  assert.equal(syncAuthentikFailed(result), false, 'one entry\'s name clash is not instance-wide misconfiguration');
 });
 
 test('OIDC: an Application at the slug backed by an unmarked OAuth2 provider is a conflict, not touched', async () => {
@@ -1021,52 +1056,235 @@ test('OIDC: an Application at the slug backed by an unmarked OAuth2 provider is 
   assert.deepEqual(authentik.calls.slice(callsBefore), []);
 });
 
-test('OIDC: a proxy-owned Application for an OIDC entry (a mode switch) is left untouched in this release', async () => {
+// T031 -- mode switches (research R5) and OIDC deletions. The Application
+// (slug and pk) survives a switch, so its policy bindings do too.
+
+// Everything a dry run reports that --apply must report identically: the
+// full result minus the two fields that differ by design.
+function planOf(result: Awaited<ReturnType<typeof runSyncAuthentik>>) {
+  const { discovery: _discovery, applied: _applied, ...plan } = result;
+  return plan;
+}
+
+async function forwardOwned() {
   const authentik = new FakeAuthentikClient();
-  await seedLadderGroups(authentik);
+  const ids = await seedLadderGroups(authentik);
   await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authMode: undefined }) });
-  const callsBefore = authentik.calls.length;
+  const app = (await authentik.listApplications())[0];
+  const proxy = (await authentik.listProxyProviders())[0];
+  return { authentik, ids, app, proxy };
+}
 
-  const result = await runSyncAuthentik(
-    { apply: true },
-    { authentik, inventory: oidcInventory({ authGroup: ADMIN_RUNG }), fetchImpl: okFetch() }
+async function oidcOwned() {
+  const authentik = new FakeAuthentikClient();
+  const ids = await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const app = (await authentik.listApplications())[0];
+  const oauth2 = (await authentik.listOAuth2Providers())[0];
+  return { authentik, ids, app, oauth2 };
+}
+
+test('mode switch forward -> oidc: the dry run reports the switch and no binding changes, writes nothing, and matches apply', async () => {
+  const { authentik, ids, app, proxy } = await forwardOwned();
+  assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [proxy.id]);
+  const bindingsBefore = boundGroupNames(authentik, app.pk, ids);
+  assert.deepEqual(bindingsBefore, [USERS_RUNG, ADMIN_RUNG].sort());
+
+  const callsBeforeDry = authentik.calls.length;
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(authentik.calls.slice(callsBeforeDry), [], 'a dry run makes no mutating call');
+  assert.deepEqual(dry.modeSwitches, [{ slug: 'media', from: 'forward', to: 'oidc' }]);
+  assert.deepEqual(dry.oidcDeletions, [], 'forward -> oidc deletes no OpenID client');
+  assert.deepEqual(dry.bindingChanges, [], 'the Application keeps its bindings');
+  assert.deepEqual(dry.oidcToCreate, [], 'a switch is not a new Application');
+  assert.deepEqual(dry.toCreate, []);
+  assert.deepEqual(dry.toRemove, []);
+  assert.deepEqual(dry.conflicts, []);
+  assert.deepEqual(dry.oidcSkipped, []);
+  assert.match(formatSyncAuthentik(dry), /Auth mode switches: 1\n {2}~ media: forward -> oidc/);
+  assert.doesNotMatch(formatSyncAuthentik(dry), /OpenID clients to delete/);
+
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(planOf(result), planOf(dry), 'apply reports exactly the plan the dry run showed');
+
+  const oauth2 = await authentik.listOAuth2Providers();
+  assert.equal(oauth2.length, 1);
+  assert.equal(oauth2[0].name, 'media');
+  assert.deepEqual(oauth2[0].redirectUris, [{ matchingMode: 'strict', url: OIDC_URIS[0] }]);
+  const apps = await authentik.listApplications();
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].slug, 'media');
+  assert.equal(apps[0].pk, app.pk, 'the same Application, not a recreated one');
+  assert.equal(apps[0].providerId, oauth2[0].id);
+  assert.equal(apps[0].metaPublisher, 'bellhop');
+  assert.deepEqual(await authentik.listProxyProviders(), [], 'the proxy provider is deleted');
+  assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [], 'and removed from the outpost');
+  assert.deepEqual(boundGroupNames(authentik, app.pk, ids), bindingsBefore, 'bindings untouched');
+  assert.deepEqual(authentik.calls.slice(callsBefore), [
+    'createOAuth2Provider media',
+    'updateApplication media',
+    'setOutpostProviders outpost-1',
+    `deleteProxyProvider ${proxy.id}`,
+  ]);
+  assert.deepEqual(
+    result.discovery?.map((d) => [d.slug, d.ok]),
+    [['media', true]],
+    'a switched-to-OIDC entry is discovery-checked like any owned OIDC entry'
   );
-  assert.deepEqual(result.oidcToCreate, []);
-  assert.deepEqual(result.oidcUpdates, []);
-  assert.deepEqual(result.oidcSkipped, []);
-  assert.deepEqual(result.conflicts, []);
-  assert.deepEqual(result.toRemove, []);
-  assert.deepEqual(result.bindingChanges, []);
-  assert.deepEqual(result.discovery, []);
-  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+
+  const callsBeforeSecond = authentik.calls.length;
+  const second = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(second.modeSwitches, []);
+  assert.deepEqual(authentik.calls.slice(callsBeforeSecond), [], 'a second apply is a no-op');
 });
 
-test('OIDC: a forward entry whose slug holds a Bellhop-owned OAuth2 Application is left untouched in this release', async () => {
-  const authentik = new FakeAuthentikClient();
-  await seedLadderGroups(authentik);
-  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
-  const callsBefore = authentik.calls.length;
+test('mode switch oidc -> forward: the dry run warns about the OpenID client deletion, and apply swaps in a proxy provider on the outpost', async () => {
+  const { authentik, ids, app, oauth2 } = await oidcOwned();
+  const bindingsBefore = boundGroupNames(authentik, app.pk, ids);
+  const inventory = oidcInventory({ authMode: 'forward' });
 
-  const result = await runSyncAuthentik(
-    { apply: true },
-    { authentik, inventory: oidcInventory({ authMode: 'forward', authGroup: ADMIN_RUNG }) }
+  const callsBeforeDry = authentik.calls.length;
+  const dry = await runSyncAuthentik({}, { authentik, inventory });
+  assert.deepEqual(authentik.calls.slice(callsBeforeDry), [], 'a dry run makes no mutating call');
+  assert.deepEqual(dry.modeSwitches, [{ slug: 'media', from: 'oidc', to: 'forward' }]);
+  assert.deepEqual(dry.oidcDeletions, ['media']);
+  assert.deepEqual(dry.bindingChanges, []);
+  assert.deepEqual(dry.toCreate, [], 'a switch is not a new Application');
+  assert.deepEqual(dry.toRemove, []);
+  const output = formatSyncAuthentik(dry);
+  assert.match(output, /Auth mode switches: 1\n {2}~ media: oidc -> forward/);
+  assert.match(
+    output,
+    /OpenID clients to delete: 1\n {2}- media — the app's OIDC login stops working until new credentials are entered in it/
   );
-  assert.deepEqual(result.toCreate, []);
-  assert.deepEqual(result.conflicts, []);
-  assert.deepEqual(result.bindingChanges, []);
-  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual(planOf(result), planOf(dry), 'apply reports exactly the plan the dry run showed');
+
+  const proxies = await authentik.listProxyProviders();
+  assert.equal(proxies.length, 1);
+  assert.equal(proxies[0].name, 'media');
+  assert.equal(proxies[0].externalHost, 'https://media.example.com');
+  const apps = await authentik.listApplications();
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].pk, app.pk, 'the same Application, not a recreated one');
+  assert.equal(apps[0].providerId, proxies[0].id);
+  assert.ok(!apps[0].metaPublisher, 'meta_publisher is cleared');
+  assert.deepEqual(await authentik.listOAuth2Providers(), [], 'the OAuth2 provider is deleted');
+  assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [proxies[0].id], 'the proxy provider joins the outpost');
+  assert.deepEqual(boundGroupNames(authentik, app.pk, ids), bindingsBefore, 'bindings untouched');
+  assert.deepEqual(authentik.calls.slice(callsBefore), [
+    'createProxyProvider media',
+    'updateApplication media',
+    'setOutpostProviders outpost-1',
+    `deleteOAuth2Provider ${oauth2.id}`,
+  ]);
+  assert.deepEqual(result.discovery, [], 'a switched-to-forward entry is not discovery-checked');
+
+  const callsBeforeSecond = authentik.calls.length;
+  const second = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual(second.modeSwitches, []);
+  assert.deepEqual(second.oidcDeletions, []);
+  assert.deepEqual(authentik.calls.slice(callsBeforeSecond), [], 'a second apply is a no-op');
 });
 
-test('OIDC: a Bellhop-owned OAuth2 Application whose gate was cleared is left in place and not listed in toRemove', async () => {
-  const authentik = new FakeAuthentikClient();
-  await seedLadderGroups(authentik);
-  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
-  const callsBefore = authentik.calls.length;
+test('clearing the gate on an OIDC entry deletes its Application and OAuth2 provider and never touches the outpost', async () => {
+  const { authentik, oauth2 } = await oidcOwned();
+  const inventory = oidcInventory({ authGroup: undefined });
 
-  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authGroup: undefined }) });
-  assert.deepEqual(result.toRemove, []);
+  const callsBeforeDry = authentik.calls.length;
+  const dry = await runSyncAuthentik({}, { authentik, inventory });
+  assert.deepEqual(authentik.calls.slice(callsBeforeDry), []);
+  assert.deepEqual(dry.toRemove, ['media']);
+  assert.deepEqual(dry.oidcDeletions, ['media']);
+  assert.deepEqual(dry.modeSwitches, []);
+  assert.match(formatSyncAuthentik(dry), /OpenID clients to delete: 1\n {2}- media — /);
+
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual(planOf(result), planOf(dry));
+  assert.deepEqual(await authentik.listApplications(), []);
+  assert.deepEqual(await authentik.listOAuth2Providers(), []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), ['deleteApplication media', `deleteOAuth2Provider ${oauth2.id}`]);
+  assert.ok(!authentik.calls.some((c) => c.startsWith('setOutpostProviders')), 'the outpost is never written');
+});
+
+test('mode switch forward -> oidc is not attempted when the OIDC entry is skipped; the proxy Application stays as it is', async () => {
+  const cases: Array<[string, Partial<Inventory['guests'][number]>, (a: FakeAuthentikClient) => void, string]> = [
+    ['no callback URLs', { oidcRedirectUris: undefined }, () => {}, 'missing-redirect-uris'],
+    [
+      'no signing key',
+      {},
+      (a) => {
+        a.getSigningKeyId = async () => {
+          throw new Error('no key');
+        };
+      },
+      'missing-signing-key',
+    ],
+  ];
+  for (const [label, overrides, breakIt, kind] of cases) {
+    const { authentik, app, proxy } = await forwardOwned();
+    breakIt(authentik);
+    const inventory = oidcInventory(overrides);
+    const dry = await runSyncAuthentik({}, { authentik, inventory, fetchImpl: okFetch() });
+    const callsBefore = authentik.calls.length;
+    const result = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+    assert.deepEqual(planOf(result), planOf(dry), label);
+    assert.deepEqual(result.modeSwitches, [], label);
+    assert.deepEqual(result.oidcDeletions, [], label);
+    assert.deepEqual(result.oidcSkipped?.map((s) => [s.slug, s.kind]), [['media', kind]], label);
+    assert.deepEqual(authentik.calls.slice(callsBefore), [], `${label}: nothing is written`);
+    assert.deepEqual(await authentik.listApplications(), [app], label);
+    assert.deepEqual(await authentik.listProxyProviders(), [proxy], label);
+    assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [proxy.id], label);
+    assert.deepEqual(result.discovery, [], `${label}: a still-proxy-backed entry is not discovery-checked`);
+  }
+});
+
+test('mode switch oidc -> forward reuses an orphaned proxy provider named after the slug', async () => {
+  const { authentik, app } = await oidcOwned();
+  const orphan = await authentik.createProxyProvider({
+    name: 'media',
+    externalHost: 'https://media.example.com',
+    authorizationFlowId: 'default-flow',
+    invalidationFlowId: 'default-invalidation-flow',
+  });
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authMode: 'forward' }) });
+  assert.deepEqual(result.modeSwitches, [{ slug: 'media', from: 'oidc', to: 'forward' }]);
+  assert.ok(!authentik.calls.slice(callsBefore).some((c) => c.startsWith('createProxyProvider')));
+  const apps = await authentik.listApplications();
+  assert.equal(apps[0].pk, app.pk);
+  assert.equal(apps[0].providerId, orphan.id);
+  assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [orphan.id]);
+});
+
+test('mode switch oidc -> forward is skipped as provider-name-taken when a proxy provider named after the slug serves another Application', async () => {
+  const { authentik, app, oauth2 } = await oidcOwned();
+  const taken = await authentik.createProxyProvider({
+    name: 'media',
+    externalHost: 'https://other.example.com',
+    authorizationFlowId: 'default-flow',
+    invalidationFlowId: 'default-invalidation-flow',
+  });
+  await authentik.createApplication({ name: 'other', slug: 'other', providerId: taken.id });
+  const inventory = oidcInventory({ authMode: 'forward' });
+  const dry = await runSyncAuthentik({}, { authentik, inventory });
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual(planOf(result), planOf(dry));
+  assert.deepEqual(result.modeSwitches, []);
+  assert.deepEqual(result.oidcDeletions, [], 'the OpenID client is kept when the switch cannot happen');
+  assert.equal(result.oidcSkipped?.length, 1);
+  assert.equal(result.oidcSkipped![0].kind, 'provider-name-taken');
+  assert.match(result.oidcSkipped![0].reason, /'other'/);
   assert.deepEqual(authentik.calls.slice(callsBefore), []);
-  assert.equal((await authentik.listApplications()).length, 1);
+  const media = (await authentik.listApplications()).find((a) => a.slug === 'media')!;
+  assert.equal(media.pk, app.pk);
+  assert.equal(media.providerId, oauth2.id);
 });
 
 // T011
@@ -1227,6 +1445,21 @@ test('OIDC discovery: non-200, a thrown error, a timeout, and a non-JSON body ar
       /timeout/i,
     ],
     ['non-JSON 200', (async () => new Response('<html></html>', { status: 200 })) as typeof fetch, /JSON/],
+    [
+      // The timeout signal also covers reading the body, so a stall after
+      // the headers surfaces from response.json() -- still a timeout, not
+      // "not JSON".
+      'timeout while reading the body',
+      (async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+          },
+        }) as unknown as Response) as typeof fetch,
+      /^timeout/,
+    ],
   ];
   for (const [label, fetchImpl, pattern] of cases) {
     const authentik = new FakeAuthentikClient();
@@ -1293,7 +1526,15 @@ test('formatSyncAuthentik prints each OIDC section only when non-empty', () => {
     bindingChanges: [],
     applied: true,
   };
-  const none = formatSyncAuthentik({ ...base, oidcToCreate: [], oidcUpdates: [], oidcSkipped: [], discovery: [] });
+  const none = formatSyncAuthentik({
+    ...base,
+    oidcToCreate: [],
+    oidcUpdates: [],
+    modeSwitches: [],
+    oidcDeletions: [],
+    oidcSkipped: [],
+    discovery: [],
+  });
   assert.doesNotMatch(none, /OpenID|OIDC/, 'ordinary output is unchanged');
   assert.equal(none, formatSyncAuthentik(base), 'absent and empty OIDC fields print identically');
 
@@ -1301,6 +1542,8 @@ test('formatSyncAuthentik prints each OIDC section only when non-empty', () => {
     ...base,
     oidcToCreate: ['media'],
     oidcUpdates: [{ slug: 'books', changes: ['redirect_uris', 'grant_types'] }],
+    modeSwitches: [{ slug: 'music', from: 'forward', to: 'oidc' }],
+    oidcDeletions: ['films'],
     oidcSkipped: [{ slug: 'notes', kind: 'missing-redirect-uris', reason: 'no callback URL set' }],
     discovery: [
       { slug: 'media', issuer: 'https://auth.example.com/application/o/media/', ok: true },
@@ -1308,7 +1551,11 @@ test('formatSyncAuthentik prints each OIDC section only when non-empty', () => {
     ],
   });
   assert.match(full, /OpenID clients to create: 1\n {2}\+ media/);
-  assert.match(full, /OpenID client settings to update: 1\n {2}~ books: redirect_uris, grant_types/);
+  // Contract order (contracts/interfaces.md): create, update, switches, delete.
+  assert.match(
+    full,
+    /OpenID client settings to update: 1\n {2}~ books: redirect_uris, grant_types\nAuth mode switches: 1\n {2}~ music: forward -> oidc\nOpenID clients to delete: 1\n {2}- films — the app's OIDC login stops working until new credentials are entered in it/
+  );
   assert.match(full, /OIDC entries skipped: 1\n {2}! notes — no callback URL set/);
   assert.match(
     full,

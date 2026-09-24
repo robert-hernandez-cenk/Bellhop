@@ -3,6 +3,7 @@ import type {
   AuthentikClient,
   AuthentikOAuth2Provider,
   AuthentikPolicyBinding,
+  AuthentikProxyProvider,
   OAuth2ProviderSettings,
 } from '../../lib/authentik-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
@@ -65,6 +66,14 @@ export interface SyncAuthentikResult {
   oidcToCreate?: string[];
   // Settings drift on an owned OpenID client, fixed in place on apply.
   oidcUpdates?: OidcUpdate[];
+  // Owned Applications whose provider is swapped to the other kind, keeping
+  // the Application itself (slug, pk, and so its bindings) -- research R5.
+  // Not repeated in toCreate/oidcToCreate: no Application is created.
+  modeSwitches?: ModeSwitch[];
+  // Slugs whose Bellhop-owned OpenID client is deleted this run: an
+  // oidc -> forward switch, or an OIDC entry whose gate was cleared (that
+  // one also sits in toRemove). Drives the dry-run warning (FR-014).
+  oidcDeletions?: string[];
   // OIDC entries left alone this run, and why (controller ruling R-1).
   oidcSkipped?: OidcSkip[];
   // Apply only: the post-apply discovery check, one per owned OIDC entry.
@@ -83,7 +92,20 @@ export interface OidcUpdate {
 // missing callback URL is one entry's incomplete configuration, while a
 // missing signing key or scope mapping is instance-wide misconfiguration
 // that blocks every OIDC entry.
-export type OidcSkipKind = 'missing-redirect-uris' | 'missing-signing-key' | 'missing-scope-mapping';
+// 'provider-name-taken' is also one entry's problem: a provider named after
+// its slug already serves some other Application, and Authentik rejects a
+// second provider under the same name, so creating one is never attempted.
+export type OidcSkipKind =
+  | 'missing-redirect-uris'
+  | 'missing-signing-key'
+  | 'missing-scope-mapping'
+  | 'provider-name-taken';
+
+export interface ModeSwitch {
+  slug: string;
+  from: 'forward' | 'oidc';
+  to: 'forward' | 'oidc';
+}
 
 export interface OidcSkip {
   slug: string;
@@ -127,6 +149,9 @@ export const MISSING_RUNG_EXPLANATION =
 // banner-shortening commit).
 export const CONFLICT_EXPLANATION =
   'an Application with this slug already exists in Authentik and is not managed by this toolkit (no proxy provider behind it, and not an OpenID client marked as Bellhop\'s); resolve by hand';
+
+// Wording from contracts/interfaces.md's CLI section.
+export const OIDC_DELETION_WARNING = "the app's OIDC login stops working until new credentials are entered in it";
 
 // Wording from contracts/interfaces.md's CLI section.
 export const MISSING_REDIRECT_URIS_REASON = 'no callback URL set (set oidcRedirectUris, or Callback URLs on the Dashboard)';
@@ -315,9 +340,9 @@ export async function runSyncAuthentik(
 
   const applications = await deps.authentik.listApplications();
   // Fetched here rather than inside the apply branch so the dry run computes
-  // `managed` exactly the way --apply does -- before issue #154 the preview
+  // ownership exactly the way --apply does -- before issue #154 the preview
   // would report a deletion that apply then made against an Application this
-  // command never created. Reused by both apply branches below.
+  // command never created. Reused by the apply steps below.
   const proxyProviders = await deps.authentik.listProxyProviders();
   const proxyProviderIds = new Set(proxyProviders.map((p) => p.id));
   // Fetched for the same parity reason, and always -- ownership of an
@@ -337,55 +362,69 @@ export async function runSyncAuthentik(
     const kind = ownedProviderKind(application, ownership);
     if (kind) ownedKindBySlug.set(application.slug, kind);
   }
-  // `managed` keeps its pre-OIDC meaning -- proxy-owned only -- because it
-  // drives toRemove and the proxy/outpost cleanup below. Deleting an owned
-  // OAuth2 Application whose gate was cleared is later work (T031/T033,
-  // oidcDeletions); until then such an Application is left in place.
-  const managed = applications.filter((a) => ownedKindBySlug.get(a.slug) === 'proxy');
   // Every owned Application of either kind: what binding planning and the
-  // apply-time binding pass resolve a slug's Application pk through.
+  // apply-time binding pass resolve a slug's Application pk through. A mode
+  // switch keeps the Application, so its pk -- and every binding on it --
+  // stays valid across the swap (research R5).
   const managedBySlug = new Map(
     applications.filter((a) => ownedKindBySlug.has(a.slug)).map((a) => [a.slug, a])
-  );
-
-  // An entry whose slug holds an owned Application of the *other* provider
-  // kind is a mode switch (forward <-> oidc, research R5). Swapping the
-  // provider is later work (T031); until then the entry is left completely
-  // untouched -- no create, no settings reconcile, no binding changes, and
-  // nothing reported -- so a half-implemented swap can never run.
-  const wantedKind = (d: CandidateEntry): OwnedProviderKind => (effectiveAuth(d) === 'oidc' ? 'oauth2' : 'proxy');
-  const modeSwitchDeferred = new Set(
-    actionable
-      .filter((d) => {
-        const owned = ownedKindBySlug.get(d.slug);
-        return owned !== undefined && owned !== wantedKind(d);
-      })
-      .map((d) => d.slug)
   );
 
   // A desired entry's slug is a candidate slug by construction, so "not
   // managed but an Application exists" means exactly "that Application is
   // not owned by either rule" -- another provider kind, no provider, or an
   // OAuth2 client without the Bellhop marker.
+  const wantedKind = (d: CandidateEntry): OwnedProviderKind => (effectiveAuth(d) === 'oidc' ? 'oauth2' : 'proxy');
   const applicationsBySlug = new Map(applications.map((a) => [a.slug, a]));
   const notYetManaged = actionable.filter((d) => !managedBySlug.has(d.slug));
   const conflicting = notYetManaged.filter((d) => applicationsBySlug.has(d.slug));
   const unclaimed = notYetManaged.filter((d) => !applicationsBySlug.has(d.slug));
   const toCreate = unclaimed.filter((d) => wantedKind(d) === 'proxy');
-  const toRemove = managed.filter((a) => !desired.some((d) => d.slug === a.slug));
+  // Every owned Application no longer desired, of either kind. An OAuth2 one
+  // is also an OpenID client deletion (FR-012).
+  const toRemove = applications.filter(
+    (a) => ownedKindBySlug.has(a.slug) && !desired.some((d) => d.slug === a.slug)
+  );
   const conflictingSlugs = new Set(conflicting.map((d) => d.slug));
 
-  // Every OIDC entry this run may create or reconcile: not blocked by a
-  // conflict and not a deferred mode switch.
-  const oidcEntries = actionable.filter(
-    (d) => wantedKind(d) === 'oauth2' && !conflictingSlugs.has(d.slug) && !modeSwitchDeferred.has(d.slug)
+  // Every OIDC entry this run may create, reconcile, or switch to: not
+  // blocked by a conflict. One whose slug holds an owned proxy Application
+  // is a forward -> oidc switch; planOidc applies the same skip rules to it
+  // as to a fresh create, so a skipped switch is never attempted and the
+  // proxy Application stays exactly as it is.
+  const oidcEntries = actionable.filter((d) => wantedKind(d) === 'oauth2' && !conflictingSlugs.has(d.slug));
+  const oidcPlan = await planOidc(
+    oidcEntries,
+    managedBySlug,
+    ownedKindBySlug,
+    oauth2Providers,
+    oauth2ProvidersById,
+    deps.authentik
   );
-  const oidcPlan = await planOidc(oidcEntries, managedBySlug, oauth2Providers, oauth2ProvidersById, deps.authentik);
+  // The other direction: a forward entry whose slug holds an owned OAuth2
+  // Application gets a proxy provider in place of its OpenID client.
+  const forwardSwitchPlan = planForwardSwitches(
+    actionable.filter((d) => wantedKind(d) === 'proxy' && ownedKindBySlug.get(d.slug) === 'oauth2'),
+    managedBySlug,
+    applications,
+    proxyProviders
+  );
+  const oidcSkipped = [...oidcPlan.skipped, ...forwardSwitchPlan.skipped];
   // A skipped entry with no Application yet gets nothing, bindings
-  // included. A skipped entry that is already owned still has its bindings
-  // reconciled: they do not depend on the missing setting, and skipping
-  // them would leave a raised tier's wider audience in place.
-  const oidcSkippedUnowned = oidcPlan.skipped.filter((s) => !managedBySlug.has(s.slug)).map((s) => s.slug);
+  // included. A skipped entry that is already owned (including a skipped
+  // switch, whose Application keeps its current provider) still has its
+  // bindings reconciled: they do not depend on the missing setting, and
+  // skipping them would leave a raised tier's wider audience in place.
+  const oidcSkippedUnowned = oidcSkipped.filter((s) => !managedBySlug.has(s.slug)).map((s) => s.slug);
+
+  const modeSwitches: ModeSwitch[] = [
+    ...oidcPlan.creates.filter((c) => c.switchFrom).map((c) => ({ slug: c.slug, from: 'forward' as const, to: 'oidc' as const })),
+    ...forwardSwitchPlan.switches.map((s) => ({ slug: s.slug, from: 'oidc' as const, to: 'forward' as const })),
+  ];
+  const oidcDeletions = [
+    ...forwardSwitchPlan.switches.map((s) => s.slug),
+    ...toRemove.filter((a) => ownedKindBySlug.get(a.slug) === 'oauth2').map((a) => a.slug),
+  ];
 
   // Fetched in the dry run too, so a preview reports a missing rung the same
   // way apply does rather than announcing bindings it could not have made.
@@ -425,7 +464,7 @@ export async function runSyncAuthentik(
   // boundIds itself.
   const bindingPlans = planBindingChanges(
     actionable,
-    new Set([...conflictingSlugs, ...modeSwitchDeferred, ...oidcSkippedUnowned]),
+    new Set([...conflictingSlugs, ...oidcSkippedUnowned]),
     managedBySlug,
     bindingsByTarget,
     ladder,
@@ -435,9 +474,13 @@ export async function runSyncAuthentik(
   const bindingChanges = bindingPlans.flatMap((p) => p.changes);
 
   const oidcReport = {
-    oidcToCreate: oidcPlan.creates.map((c) => c.slug),
+    // A forward -> oidc switch gets a new OpenID client but no new
+    // Application, so it is reported in modeSwitches instead.
+    oidcToCreate: oidcPlan.creates.filter((c) => !c.switchFrom).map((c) => c.slug),
     oidcUpdates: oidcPlan.updates.map((u) => ({ slug: u.slug, changes: u.changes })),
-    oidcSkipped: oidcPlan.skipped,
+    modeSwitches,
+    oidcDeletions,
+    oidcSkipped,
   };
 
   if (!opts.apply) {
@@ -465,68 +508,72 @@ export async function runSyncAuthentik(
     return flowIds;
   };
 
-  if (toCreate.length > 0 || toRemove.length > 0) {
-    const outpost = await deps.authentik.getEmbeddedOutpost();
-    const outpostProviderIds = new Set(outpost.providerIds);
+  // Embedded-outpost membership changes, collected across every step below
+  // and written once. Only proxy providers are ever on the outpost: an
+  // OAuth2 client is reached by the app itself, not through forward-auth.
+  const outpostAdds: string[] = [];
+  const outpostRemoves: string[] = [];
+  // Old providers of switched Applications, deleted only after the
+  // Application points at its new provider and the outpost is updated, so
+  // no step ever leaves an Application without a working provider.
+  const switchedAwayProxyIds: string[] = [];
+  const switchedAwayOAuth2Ids: string[] = [];
 
-    if (toCreate.length > 0) {
-      const { authorizationFlowId, invalidationFlowId } = await getFlowIds();
-      // Look up existing Providers by name before creating one -- self-heals
-      // a prior partial failure (Provider created, then Application creation
-      // failed) by reusing the orphaned Provider instead of colliding with
-      // it on a duplicate name.
-      // The name here is the slug verbatim (#156), so this lookup's
-      // namespace is now the short-name space hand-created Providers also
-      // live in -- ownership everywhere else keys on slug plus
-      // proxy-provider backing (#154), never on name. A false match would
-      // adopt a hand-created Provider onto a new Application and delete it
-      // on a later gate change; unlikely, since it needs a name collision on
-      // a Provider whose Application slug differs, but this is the one place
-      // where that is possible.
-      for (const entry of toCreate) {
-        let provider = proxyProviders.find((p) => p.name === entry.slug);
-        if (!provider) {
-          provider = await deps.authentik.createProxyProvider({
-            name: entry.slug,
-            externalHost: entry.externalHost,
-            authorizationFlowId,
-            invalidationFlowId,
-          });
-        }
-        const application = await deps.authentik.createApplication({
-          name: entry.slug,
-          slug: entry.slug,
-          providerId: provider.id,
-        });
-        // Deliberately no policy binding here. The reconcile pass below
-        // treats a just-created Application and a long-standing one
-        // identically -- which is exactly what stops an Application's
-        // audience from being frozen at creation time (#158).
-        managedBySlug.set(application.slug, application);
-        outpostProviderIds.add(provider.id);
-      }
+  // Look up existing Providers by name before creating one -- self-heals
+  // a prior partial failure (Provider created, Application creation
+  // failed) by reusing the orphaned Provider instead of colliding with
+  // it on a duplicate name.
+  // The name here is the slug verbatim (#156), so this lookup's
+  // namespace is now the short-name space hand-created Providers also
+  // live in -- ownership everywhere else keys on slug plus
+  // proxy-provider backing (#154), never on name. A false match would
+  // adopt a hand-created Provider onto a new Application and delete it
+  // on a later gate change; unlikely, since it needs a name collision on
+  // a Provider whose Application slug differs, but this is the one place
+  // where that is possible.
+  for (const entry of toCreate) {
+    let provider = proxyProviders.find((p) => p.name === entry.slug);
+    if (!provider) {
+      provider = await deps.authentik.createProxyProvider({
+        name: entry.slug,
+        externalHost: entry.externalHost,
+        ...(await getFlowIds()),
+      });
     }
-
-    if (toRemove.length > 0) {
-      for (const application of toRemove) {
-        await deps.authentik.deleteApplication(application.id);
-        // Both this and the `provider` lookup below are always satisfied for
-        // anything in toRemove -- `managed` already required a providerId
-        // present in proxyProviderIds. Kept as cheap invariant guards rather
-        // than removed, so this loop stays correct if `managed` ever loosens.
-        if (application.providerId) {
-          outpostProviderIds.delete(application.providerId);
-          const provider = proxyProviders.find((p) => p.id === application.providerId);
-          if (provider) await deps.authentik.deleteProxyProvider(provider.id);
-        }
-      }
-    }
-
-    await deps.authentik.setOutpostProviders(outpost.id, [...outpostProviderIds]);
+    const application = await deps.authentik.createApplication({
+      name: entry.slug,
+      slug: entry.slug,
+      providerId: provider.id,
+    });
+    // Deliberately no policy binding here. The reconcile pass below
+    // treats a just-created Application and a long-standing one
+    // identically -- which is exactly what stops an Application's
+    // audience from being frozen at creation time (#158).
+    managedBySlug.set(application.slug, application);
+    outpostAdds.push(provider.id);
   }
 
-  // OIDC creates and drift fixes. Never touches the embedded outpost: an
-  // OAuth2 client is reached by the app itself, not through forward-auth.
+  // oidc -> forward (research R5): a proxy provider in, the Application
+  // repointed with its Bellhop OAuth2 marker cleared (a proxy-backed
+  // Application is owned without it), then onto the outpost below.
+  for (const change of forwardSwitchPlan.switches) {
+    const providerId =
+      change.orphanProxyProviderId ??
+      (
+        await deps.authentik.createProxyProvider({
+          name: change.slug,
+          externalHost: change.externalHost,
+          ...(await getFlowIds()),
+        })
+      ).id;
+    await deps.authentik.updateApplication(change.slug, { providerId, metaPublisher: '' });
+    managedBySlug.set(change.slug, { ...change.application, providerId, metaPublisher: undefined });
+    ownedKindBySlug.set(change.slug, 'proxy');
+    outpostAdds.push(providerId);
+    switchedAwayOAuth2Ids.push(change.application.providerId!);
+  }
+
+  // OIDC creates, forward -> oidc switches, and drift fixes.
   for (const create of oidcPlan.creates) {
     let providerId: string;
     if (create.orphan) {
@@ -546,21 +593,57 @@ export async function runSyncAuthentik(
       });
       providerId = provider.id;
     }
-    const application = await deps.authentik.createApplication({
-      name: create.slug,
-      slug: create.slug,
-      providerId,
-      metaPublisher: BELLHOP_META_PUBLISHER,
-    });
-    // Bindings come from the shared reconcile pass below, same as a new
-    // proxy-backed Application.
-    managedBySlug.set(application.slug, application);
+    if (create.switchFrom) {
+      // Same Application, new provider: the pk and its bindings survive.
+      await deps.authentik.updateApplication(create.slug, { providerId, metaPublisher: BELLHOP_META_PUBLISHER });
+      managedBySlug.set(create.slug, { ...create.switchFrom, providerId, metaPublisher: BELLHOP_META_PUBLISHER });
+      outpostRemoves.push(create.switchFrom.providerId!);
+      switchedAwayProxyIds.push(create.switchFrom.providerId!);
+    } else {
+      const application = await deps.authentik.createApplication({
+        name: create.slug,
+        slug: create.slug,
+        providerId,
+        metaPublisher: BELLHOP_META_PUBLISHER,
+      });
+      // Bindings come from the shared reconcile pass below, same as a new
+      // proxy-backed Application.
+      managedBySlug.set(application.slug, application);
+    }
+    ownedKindBySlug.set(create.slug, 'oauth2');
   }
   for (const update of oidcPlan.updates) {
     await deps.authentik.updateOAuth2Provider(update.providerId, update.patch);
   }
 
-  // Deliberately outside the create/remove guard above: an entry moving
+  // Both invariants below always hold for anything in toRemove -- ownership
+  // already required a providerId of the matching kind.
+  for (const application of toRemove) {
+    if (ownedKindBySlug.get(application.slug) === 'proxy' && application.providerId) {
+      outpostRemoves.push(application.providerId);
+    }
+  }
+  if (outpostAdds.length > 0 || outpostRemoves.length > 0) {
+    const outpost = await deps.authentik.getEmbeddedOutpost();
+    const outpostProviderIds = new Set(outpost.providerIds);
+    for (const id of outpostAdds) outpostProviderIds.add(id);
+    for (const id of outpostRemoves) outpostProviderIds.delete(id);
+    await deps.authentik.setOutpostProviders(outpost.id, [...outpostProviderIds]);
+  }
+
+  for (const application of toRemove) {
+    await deps.authentik.deleteApplication(application.id);
+    if (!application.providerId) continue;
+    if (ownedKindBySlug.get(application.slug) === 'oauth2') {
+      await deps.authentik.deleteOAuth2Provider(application.providerId);
+    } else {
+      await deps.authentik.deleteProxyProvider(application.providerId);
+    }
+  }
+  for (const id of switchedAwayProxyIds) await deps.authentik.deleteProxyProvider(id);
+  for (const id of switchedAwayOAuth2Ids) await deps.authentik.deleteOAuth2Provider(id);
+
+  // Deliberately outside every create/remove step above: an entry moving
   // between rungs changes nothing about which Applications exist, and would
   // otherwise be skipped silently. Executes exactly the plan computed above
   // -- `managedBySlug` now also holds anything just created, so a plan
@@ -578,13 +661,16 @@ export async function runSyncAuthentik(
   }
 
   // Every OIDC entry that has a Bellhop-owned OpenID client after this
-  // apply -- created, updated, or unchanged -- so an apply always reports
-  // current health, not just what it touched. A failure is reported, never
-  // rolled back: the client is correct in Authentik, and the usual cause
-  // (Authentik unreachable from here, a proxy in front of it) is outside it.
+  // apply -- created, switched to, updated, or unchanged -- so an apply
+  // always reports current health, not just what it touched. A skipped
+  // forward -> oidc switch is still proxy-backed, so it is not checked. A
+  // failure is reported, never rolled back: the client is correct in
+  // Authentik, and the usual cause (Authentik unreachable from here, a
+  // proxy in front of it) is outside it.
   const fetchImpl = deps.fetchImpl ?? fetch;
   const discovery = await Promise.all(
     oidcEntries
+      .filter((d) => ownedKindBySlug.get(d.slug) === 'oauth2')
       .map((d) => managedBySlug.get(d.slug))
       .filter((a): a is AuthentikApplication & { providerId: string } => a?.providerId != null)
       .map((a) => checkOidcDiscovery(a.slug, a.providerId, deps.authentik, fetchImpl))
@@ -609,6 +695,10 @@ interface OidcCreatePlan {
   // An existing provider named after the slug with no Application, reused
   // instead of creating a duplicate, plus whatever drift it has.
   orphan?: { id: string; changes: string[]; patch: Partial<OAuth2ProviderSettings> };
+  // Set for a forward -> oidc switch: the owned proxy-backed Application
+  // that gets repointed at the new client instead of a new Application
+  // being created (research R5).
+  switchFrom?: AuthentikApplication;
 }
 
 interface OidcUpdatePlan {
@@ -626,9 +716,10 @@ interface OidcPlan {
 
 // The OIDC half of the planning section: computed from data fetched before
 // any mutation, reported identically by the dry run and executed as-is by
-// --apply. `entries` are OIDC entries that are either free (no Application
-// at the slug) or backed by a Bellhop-owned OAuth2 client; conflicts and
-// deferred mode switches were filtered out by the caller.
+// --apply. `entries` are OIDC entries that are free (no Application at the
+// slug), backed by a Bellhop-owned OAuth2 client, or backed by a
+// Bellhop-owned proxy provider (a forward -> oidc switch); conflicts were
+// filtered out by the caller.
 //
 // The signing key and scope mappings are instance-wide, so they are looked
 // up once, and only when some entry has callback URLs to act on. Either
@@ -638,6 +729,7 @@ interface OidcPlan {
 async function planOidc(
   entries: CandidateEntry[],
   managedBySlug: Map<string, AuthentikApplication>,
+  ownedKindBySlug: Map<string, OwnedProviderKind>,
   oauth2Providers: AuthentikOAuth2Provider[],
   oauth2ProvidersById: Map<string, AuthentikOAuth2Provider>,
   authentik: AuthentikClient
@@ -678,25 +770,79 @@ async function planOidc(
   for (const entry of withUris) {
     const settings = desiredOAuth2Settings(entry.oidcRedirectUris, signingKeyId, scopeMappingIds);
     const application = managedBySlug.get(entry.slug);
-    if (application) {
-      // Owned as OAuth2 (the caller removed mode switches), so this lookup
-      // always succeeds.
+    if (application && ownedKindBySlug.get(entry.slug) === 'oauth2') {
+      // Owned as OAuth2, so this lookup always succeeds.
       const provider = oauth2ProvidersById.get(application.providerId!)!;
       const { changes, patch } = diffOAuth2Settings(provider, settings);
       if (changes.length > 0) plan.updates.push({ slug: entry.slug, providerId: provider.id, changes, patch });
       continue;
     }
+    // A new client is needed (a fresh entry, or a forward -> oidc switch).
     // Same name-based self-heal as the proxy path, restricted to a provider
     // with no assigned Application so it can never adopt a client some other
-    // Application is using.
-    const orphan = oauth2Providers.find((p) => p.name === entry.slug && p.assignedApplicationSlug === undefined);
+    // Application is using. A same-named provider that *is* assigned
+    // elsewhere blocks the create outright -- Authentik rejects a duplicate
+    // provider name -- so it is caught here, where dry run and apply both
+    // see it, instead of failing mid-apply.
+    const named = oauth2Providers.find((p) => p.name === entry.slug);
+    if (named?.assignedApplicationSlug !== undefined) {
+      plan.skipped.push({
+        slug: entry.slug,
+        kind: 'provider-name-taken',
+        reason: providerNameTakenReason('OAuth2', entry.slug, named.assignedApplicationSlug),
+      });
+      continue;
+    }
     plan.creates.push({
       slug: entry.slug,
       settings,
-      ...(orphan ? { orphan: { id: orphan.id, ...diffOAuth2Settings(orphan, settings) } } : {}),
+      ...(named ? { orphan: { id: named.id, ...diffOAuth2Settings(named, settings) } } : {}),
+      ...(application ? { switchFrom: application } : {}),
     });
   }
   return plan;
+}
+
+interface ForwardSwitch {
+  slug: string;
+  externalHost: string;
+  // The owned OAuth2-backed Application, repointed in place.
+  application: AuthentikApplication;
+  // An existing proxy provider named after the slug that no Application
+  // points at, reused instead of creating a duplicate (the same self-heal
+  // as the proxy create path).
+  orphanProxyProviderId?: string;
+}
+
+// The oidc -> forward half of research R5, planned before any mutation like
+// everything else. `entries` are forward entries whose slug holds a
+// Bellhop-owned OAuth2 Application. A proxy provider already named after
+// the slug and serving some other Application blocks the switch (Authentik
+// rejects a duplicate name, and repointing at it would take that provider
+// from its Application): the entry is reported and its OpenID client kept.
+function planForwardSwitches(
+  entries: CandidateEntry[],
+  managedBySlug: Map<string, AuthentikApplication>,
+  applications: AuthentikApplication[],
+  proxyProviders: AuthentikProxyProvider[]
+): { switches: ForwardSwitch[]; skipped: OidcSkip[] } {
+  const switches: ForwardSwitch[] = [];
+  const skipped: OidcSkip[] = [];
+  for (const entry of entries) {
+    const named = proxyProviders.find((p) => p.name === entry.slug);
+    const user = named ? applications.find((a) => a.providerId === named.id) : undefined;
+    if (user) {
+      skipped.push({ slug: entry.slug, kind: 'provider-name-taken', reason: providerNameTakenReason('proxy', entry.slug, user.slug) });
+      continue;
+    }
+    switches.push({
+      slug: entry.slug,
+      externalHost: entry.externalHost,
+      application: managedBySlug.get(entry.slug)!,
+      ...(named ? { orphanProxyProviderId: named.id } : {}),
+    });
+  }
+  return { switches, skipped };
 }
 
 // research.md R6: fetch `<issuer>.well-known/openid-configuration` and
@@ -718,7 +864,7 @@ async function checkOidcDiscovery(
       response = await fetchImpl(url, { signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS) });
     } catch (err) {
       if (err instanceof Error && err.name === 'TimeoutError') {
-        return { slug, issuer, ok: false, error: `timeout: no response from ${url} within ${DISCOVERY_TIMEOUT_MS / 1000}s` };
+        return { slug, issuer, ok: false, error: timeoutError(url) };
       }
       throw err;
     }
@@ -727,13 +873,26 @@ async function checkOidcDiscovery(
     // Authentik's place (a proxy's error or login page), not a working issuer.
     try {
       await response.json();
-    } catch {
+    } catch (err) {
+      // The timeout signal also covers reading the body, so a stall after
+      // the headers lands here -- report it as the timeout it is.
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        return { slug, issuer, ok: false, error: timeoutError(url) };
+      }
       return { slug, issuer, ok: false, error: `${url} did not return a JSON discovery document` };
     }
     return { slug, issuer, ok: true };
   } catch (err) {
     return { slug, issuer, ok: false, error: errorMessage(err) };
   }
+}
+
+function timeoutError(url: string): string {
+  return `timeout: no response from ${url} within ${DISCOVERY_TIMEOUT_MS / 1000}s`;
+}
+
+function providerNameTakenReason(kind: 'OAuth2' | 'proxy', name: string, applicationSlug: string): string {
+  return `${kind === 'OAuth2' ? 'an OAuth2' : 'a proxy'} provider named '${name}' already exists and serves the Application '${applicationSlug}'; rename or delete that provider in Authentik`;
 }
 
 function errorMessage(err: unknown): string {
@@ -782,9 +941,8 @@ function planBindingChanges(
 
   for (const entry of actionable) {
     // Not ours to touch this run: an existing, unowned Application already
-    // holds this slug (`conflicting`), the entry is a deferred mode switch,
-    // or it is an OIDC entry skipped before its Application was ever created
-    // (see runSyncAuthentik).
+    // holds this slug (`conflicting`), or it is an OIDC-related entry skipped
+    // before its Application was ever created (see runSyncAuthentik).
     if (skipSlugs.has(entry.slug)) continue;
 
     const application = managedBySlug.get(entry.slug);
@@ -842,6 +1000,18 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
   if (oidcUpdates.length > 0) {
     lines.push(`OpenID client settings to update: ${oidcUpdates.length}`);
     for (const update of oidcUpdates) lines.push(`  ~ ${update.slug}: ${update.changes.join(', ')}`);
+  }
+  const modeSwitches = result.modeSwitches ?? [];
+  if (modeSwitches.length > 0) {
+    lines.push(`Auth mode switches: ${modeSwitches.length}`);
+    for (const change of modeSwitches) lines.push(`  ~ ${change.slug}: ${change.from} -> ${change.to}`);
+  }
+  // The FR-014 warning: deleting an OpenID client breaks the app's
+  // configured login, so the preview says so before apply does it.
+  const oidcDeletions = result.oidcDeletions ?? [];
+  if (oidcDeletions.length > 0) {
+    lines.push(`OpenID clients to delete: ${oidcDeletions.length}`);
+    for (const slug of oidcDeletions) lines.push(`  - ${slug} — ${OIDC_DELETION_WARNING}`);
   }
   // Printed only when non-empty, so ordinary output is unchanged. Covers a
   // pure tier change too -- one that creates and deletes no Applications

@@ -225,3 +225,30 @@ test('get_oidc_client\'s serialized result never contains the fake secret string
   const editResult = await call('edit_guest', { name: 'media', port: 8080 });
   assert.ok(!editResult.content.map((c) => c.text).join('\n').includes('secret-50'));
 });
+
+// T032: edit_guest enforces the same OpenID-client-deletion confirmation
+// as the Dashboard (FR-022a) -- the MCP server's admin trust does not waive it.
+test('edit_guest rejects leaving OIDC gating without confirmOidcClientDeletion, and accepts it with true', async () => {
+  // A forward-auth entry needs an 'authentik: true' entry to validate, so
+  // the fixture's host carries one here.
+  const base = oidcInventory();
+  const inventory = { ...base, hosts: base.hosts.map((h) => ({ ...h, authentik: true, ip: '192.0.2.5' })) };
+  const { client, call, inventoryPath } = await setup({ inventory, authentik: ownedAuthentik() });
+  const describe = (await client.listTools()).tools.find((t) => t.name === 'edit_guest')!;
+  assert.match(describe.description ?? '', /confirmOidcClientDeletion/);
+  assert.ok('confirmOidcClientDeletion' in (describe.inputSchema.properties ?? {}));
+
+  const refused = await call('edit_guest', { name: 'media', authMode: 'forward' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /confirmOidcClientDeletion: true/);
+  assert.equal(loadInventory(inventoryPath).guests.find((g) => g.name === 'media')?.authMode, 'oidc');
+
+  const refusedClear = await call('edit_guest', { name: 'media', authGroup: null });
+  assert.equal(refusedClear.isError, true);
+
+  const accepted = await call('edit_guest', { name: 'media', authMode: 'forward', confirmOidcClientDeletion: true });
+  assert.notEqual(accepted.isError, true, accepted.content[0].text);
+  const saved = loadInventory(inventoryPath).guests.find((g) => g.name === 'media')!;
+  assert.equal(saved.authMode, 'forward');
+  assert.equal('confirmOidcClientDeletion' in saved, false);
+});

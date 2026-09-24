@@ -100,7 +100,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'edit_guest',
     {
       description:
-        "Edit a guest's inventory routing fields (subdomains, port, caddyManual, insecureBackendTls, authGroup, unauthenticatedPaths, authMode, oidcRedirectUris), then push Caddy, the status page, and Authentik live. Applies immediately. Only the fields you pass are changed. This server runs as the local admin operator, so authMode/oidcRedirectUris changes are always permitted here.",
+        "Edit a guest's inventory routing fields (subdomains, port, caddyManual, insecureBackendTls, authGroup, unauthenticatedPaths, authMode, oidcRedirectUris), then push Caddy, the status page, and Authentik live. Applies immediately. Only the fields you pass are changed. This server runs as the local admin operator, so authMode/oidcRedirectUris changes are always permitted here. An edit that takes an OIDC-gated entry out of OIDC (authMode to 'forward', or clearing authGroup) deletes its OpenID client on sync, so it is rejected unless you pass confirmOidcClientDeletion: true -- ask the user first.",
       inputSchema: EDIT_GUEST_SHAPE,
     },
     async (args: Record<string, unknown>) => {

@@ -142,3 +142,81 @@ test('runEditGuest omits oidcDiscoveryFailures when the discovery check passes',
   assert.equal(result.caddySynced, true);
   assert.equal('oidcDiscoveryFailures' in result, false);
 });
+
+// T032 (FR-022a, research R8): an edit that takes an entry out of effective
+// OIDC gating deletes its OpenID client on the next sync, so it needs an
+// explicit confirmation. Decided from the inventory alone.
+
+const OIDC_GUEST = {
+  name: 'media-lxc',
+  type: 'lxc' as const,
+  vmid: 4005,
+  host: 'pve1',
+  ip: '192.168.1.5',
+  subdomains: ['media'],
+  authGroup: 'bellhop-users',
+  authMode: 'oidc' as const,
+  oidcRedirectUris: ['https://media.example.com/cb'],
+};
+
+function oidcDeps(): OperationDeps {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-oidc-')), 'bellhop.db');
+  saveInventory(inventoryPath, {
+    ...inventory,
+    hosts: inventory.hosts.map((h) => ({ ...h, authentik: true, ip: '192.168.1.10' })),
+    guests: [...inventory.guests, OIDC_GUEST],
+  });
+  return {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loadInventory(inventoryPath),
+    inventoryPath,
+    authentik: new UnconfiguredAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+}
+
+const CONFIRMATION_ERROR =
+  "This edit deletes the app's OpenID client, so its OIDC login stops working until new credentials are entered in the app. Resend with confirmOidcClientDeletion: true to confirm.";
+
+for (const [label, edit] of [
+  ['switching to forward-auth', { authMode: 'forward' }],
+  ['clearing authMode', { authMode: null }],
+  ['clearing authGroup', { authGroup: null }],
+] as const) {
+  test(`runEditGuest: ${label} on an OIDC-effective entry needs confirmOidcClientDeletion: true`, async () => {
+    for (const confirm of [undefined, false]) {
+      const d = oidcDeps();
+      await assert.rejects(
+        runEditGuest({ name: 'media-lxc', ...edit, ...(confirm === undefined ? {} : { confirmOidcClientDeletion: confirm }) }, d),
+        (err: unknown) => err instanceof GuestEditValidationError && (err as Error).message === CONFIRMATION_ERROR
+      );
+      const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'media-lxc')!;
+      assert.equal(saved.authMode, 'oidc', 'nothing is saved without confirmation');
+      assert.equal(saved.authGroup, 'bellhop-users');
+    }
+
+    const d = oidcDeps();
+    const result = await runEditGuest({ name: 'media-lxc', ...edit, confirmOidcClientDeletion: true }, d);
+    assert.equal('confirmOidcClientDeletion' in result.guest, false, 'the flag is not an inventory field');
+    const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'media-lxc')!;
+    assert.equal('confirmOidcClientDeletion' in saved, false);
+    assert.notEqual(saved.authMode === 'oidc' && Boolean(saved.authGroup), true, 'the entry left OIDC gating');
+  });
+}
+
+test('runEditGuest: edits that keep or enter OIDC gating never need confirmOidcClientDeletion', async () => {
+  // A port change and a tier change on an OIDC entry stay OIDC.
+  await runEditGuest({ name: 'media-lxc', port: 8080 }, oidcDeps());
+  await runEditGuest({ name: 'media-lxc', authGroup: 'bellhop-app-users' }, oidcDeps());
+  await runEditGuest({ name: 'media-lxc', oidcRedirectUris: ['https://media.example.com/cb2'] }, oidcDeps());
+  // Entering OIDC, and forward/ungated edits, never delete an OpenID client.
+  await runEditGuest(
+    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
+    oidcDeps()
+  );
+  await runEditGuest({ name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users' }, oidcDeps());
+  // Mode 'oidc' without a tier was never OIDC-effective, so clearing it needs nothing.
+  const d = oidcDeps();
+  await runEditGuest({ name: 'media-lxc', authGroup: null, confirmOidcClientDeletion: true }, d);
+  await runEditGuest({ name: 'media-lxc', authMode: null }, d);
+});
