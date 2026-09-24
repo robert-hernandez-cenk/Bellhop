@@ -109,7 +109,7 @@ A guest installed from the custom repository records that fact. The Dashboard's 
 - The custom repository is unreachable while reading the catalog: upstream groups still show; the custom group is omitted and a warning is logged.
 - A pasted full script URL: used exactly as given, as today. It is never rewritten to the custom repository, and it never triggers an override warning.
 - A slug exists in the custom repository's `ct/` but it has no matching `install/<slug>-install.sh`: the install proceeds (the installer reports its own failure), and the prompt pre-scan finds no expected prompts, the same as an upstream app with no conventional install script today.
-- The branch moves between the check and the apply: the apply still uses the commit recorded at check time, so the preview and the apply read identical code.
+- The branch moves between the check and the apply: the apply uses the commit pinned when Apply was clicked (a fresh pin of its own, independent of any earlier standalone check), which the job log's own preview line shows.
 - A guest records the custom source but the custom repository is later unset: the Dashboard link falls back to showing no community-scripts link for it, and updating it resolves through upstream only.
 - A slug in the custom repository's catalog differs from upstream only by case: slugs are lowercased the same way as today.
 
@@ -121,7 +121,7 @@ A guest installed from the custom repository records that fact. The Dashboard's 
 - **FR-002**: When both settings are unset, every install, update, catalog, and app-check behavior MUST be unchanged from today.
 - **FR-003**: When exactly one of the two settings is set, any operation that resolves an app slug MUST fail with an error naming the missing setting and how to set it.
 - **FR-004**: A bare app slug MUST resolve in the order: custom repository, then ProxmoxVE, then ProxmoxVED. A pasted full script URL MUST be used exactly as given.
-- **FR-005**: When the custom repository is configured, resolving a slug MUST first pin the configured branch to its current head commit, and every later step of that operation (app check result, preview, expected-prompt pre-scan, apply) MUST read the custom repository at that commit.
+- **FR-005**: When the custom repository is configured, resolving a slug MUST first pin the configured branch to its current head commit, and every later step of that operation (preview, expected-prompt pre-scan, apply) MUST read the custom repository at that commit.
 - **FR-006**: When an app resolves to the custom repository, the install and update commands sent to the host MUST direct the community-scripts installer to download the app's install script (and any other per-app script files) from the custom repository at the pinned commit, rather than from upstream.
 - **FR-007**: When an app resolves to the custom repository and the same slug also exists in ProxmoxVE or ProxmoxVED, the app-check result MUST list each overridden upstream repository, and the CLI output, web App check, install and update previews, job logs, and MCP app-check result MUST each show a warning naming them.
 - **FR-008**: If the custom repository, branch, or commit cannot be resolved while resolving a slug, the operation MUST fail with an error naming the configured repository and branch; it MUST NOT fall back to upstream.

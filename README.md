@@ -390,7 +390,13 @@ status page instead of failing the rest of the job.
 **public** GitHub repository laid out exactly like
 [ProxmoxVED](https://github.com/community-scripts/ProxmoxVED) — `ct/<slug>.sh`
 and `install/<slug>-install.sh` at its root — plus the branch on it to
-install from. A personal fork branch is the intended use case:
+install from. A personal fork branch is the intended use case. Because a
+fork branch carrying every one of upstream ProxmoxVED's `ct/` scripts
+overrides essentially all of them once configured (any slug your branch
+also happens to carry, not just the ones you actually changed), keep it
+rebased on upstream — a stale fork branch silently shadows upstream fixes
+for every app it happens to still carry, not just the ones you meant to
+override.
 
 ```bash
 bellhop set-config customScriptsRepo example-user/ProxmoxVED --apply
@@ -412,11 +418,16 @@ as given, never resolved against the custom repository, and never
 triggers an override warning.
 
 Resolving a slug against the custom repository pins the configured
-branch to its current head commit before anything else happens; every
-later step of that same install or update — the preview, the web UI's
-expected-prompt pre-scan, and the apply itself — reads that exact commit,
-so a push to the branch mid-operation can never make the preview and the
-applied script diverge. The app catalog (the web UI's Install App
+branch to its current head commit. One commit is pinned per apply
+operation, at the moment the web UI or MCP server enqueues it: the preview
+written at the top of that job's own log, the expected-prompt pre-scan,
+and the apply itself all read that one commit, so a push to the branch
+after that point can never make what actually ran differ from what the
+job log's own preview shows. A standalone Preview click or App check pins
+its own commit independently, at whatever moment it runs — if the branch
+moves between a standalone Preview/check and a later Apply, Apply pins a
+fresh commit of its own, and the job log for that apply is what shows
+exactly which one. The app catalog (the web UI's Install App
 suggestion list, and the MCP `list_install_apps` tool) gets a third group
 for the custom repository, listed first and refreshed roughly every 5
 minutes rather than upstream's 24 hours, so an app you just pushed shows
@@ -434,6 +445,23 @@ no knowledge of a fork-only app — it may report one as already current,
 or not found, regardless of what your branch actually has. Update a
 custom-sourced app through Bellhop's `update-app`, not the container's
 own `update` command, for a result that reflects your branch.
+
+A guest's recorded app source (the Dashboard/Update page's link to the
+custom repository's copy of its script) is set once, by the web/MCP
+`install-app` apply that created it — `update-app` never changes it,
+whichever repository the update itself actually ran from. So the Dashboard
+link always reflects where a guest was *installed* from, not where its
+most recent update came from; a guest installed from upstream and later
+updated through a configured custom repository (because its slug now also
+exists there) still links to the plain community-scripts site.
+
+Each app check, preview, and apply that resolves a slug against the custom
+repository makes exactly one unauthenticated `api.github.com` request (to
+pin the branch's head commit) — GitHub's unauthenticated rate limit is 60
+requests per hour per source IP, shared with anything else on your network
+making unauthenticated GitHub API calls. Hitting that limit fails the
+operation with a named error (GitHub's non-200 status is reported
+verbatim) rather than silently falling back to upstream, per FR-008 above.
 
 Two related values are *derived*, not configured: `set-guest-vpn --vpn
 none` restores the guest's parent host's `midScheme.gateway`, and the

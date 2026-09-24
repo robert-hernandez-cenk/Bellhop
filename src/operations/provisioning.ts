@@ -37,13 +37,20 @@ function upsertGuestEntry(guests: GuestEntry[], entry: GuestEntry): GuestEntry[]
   // a repeat apply for the same host+vmid doesn't silently clobber a
   // previously-good app slug with undefined.
   const app = entry.app !== undefined ? entry.app : existing.app;
-  // Same reasoning as app: entry.appSource is undefined on every apply that
-  // isn't install-app itself (create-lxc/create-vm never set it) and on a
-  // repeat install-app apply for the same host+vmid that resolved upstream
-  // this time -- fall back to the existing recorded value so a guest that
-  // was previously recorded as custom-installed doesn't silently lose that
-  // provenance just because this particular apply didn't resolve custom.
-  const appSource = entry.appSource !== undefined ? entry.appSource : existing.appSource;
+  // Unlike port/app/insecureBackendTls, entry.appSource is NOT simply
+  // "fall back to existing when undefined": once entry.app is set (a
+  // resolvable slug, from install-app's own appSlugFor(i.app)), appSource is
+  // authoritative -- it reflects exactly what this apply's resolution
+  // actually was ('custom' or undefined for upstream), so an upstream
+  // reinstall for the same host+vmid (e.g. the operator unset
+  // customScriptsRepo/Branch) correctly clears a stale 'custom' rather than
+  // leaving inventory claiming a provenance this install didn't use.
+  // entry.app is undefined only for a pasted full script URL (never
+  // resolved against the custom repository at all, so appSource carries no
+  // fresh signal either way) or for create-lxc/create-vm (which never touch
+  // app/appSource) -- in both of those cases, fall back to the existing
+  // recorded value exactly like `app` itself does.
+  const appSource = entry.app !== undefined ? entry.appSource : existing.appSource;
   // Same reasoning as port/app: entry.insecureBackendTls is undefined
   // whenever the create/install form's checkbox was left unchecked (or its
   // key omitted entirely, since an untouched checkbox never enters the

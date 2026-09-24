@@ -8,7 +8,7 @@
 | `customScriptsBranch` | string, optional | git branch name (research R7) | Resolved to a commit on every app resolution. |
 
 - Both unset: feature off (FR-002).
-- Exactly one set: every app resolution throws `customScriptsRepo and customScriptsBranch must be set together; set the missing one with "bellhop set-config <key> <value> --apply" or on the Settings page` (FR-003).
+- Exactly one set: every app resolution throws `<missing key> is not set (<present key> is); set it with "bellhop set-config <missing key> <value> --apply" or on the Settings page, or unset <present key>` (FR-003), e.g. `customScriptsBranch is not set (customScriptsRepo is); set it with "bellhop set-config customScriptsBranch <value> --apply" or on the Settings page, or unset customScriptsRepo`.
 - Written by `set-config` and `PATCH /api/settings`, and persisted by `saveInventory`'s existing per-key upsert/delete. No schema migration: `meta` is key/value.
 
 ## CustomScriptSource (derived, `src/lib/app-source.ts`)

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PROVISIONING_OPERATIONS } from '../../src/operations/provisioning.ts';
+import { MAINTENANCE_OPERATIONS } from '../../src/operations/maintenance.ts';
 import { UPSTREAM_STABLE_BASE, type AppSource } from '../../src/lib/app-source.ts';
 import { PROVISIONING_COMMANDS } from '../../src/web/commands-meta.ts';
 import { parseOperationInput, previewAndEnqueue } from '../../src/operations/core.ts';
@@ -208,17 +209,89 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   );
 });
 
-// T025/T027: install-app's apply passes appSource: 'custom' into
-// recordProvisionedGuest only when the pinned resolution was actually
-// 'custom' (never for 'upstream'/'url'), and upsertGuestEntry must carry a
-// previously-recorded 'custom' provenance forward the same way it already
-// does for `app`/`port` -- a repeat apply for the same host+vmid that
-// happens to resolve upstream this time (e.g. the operator unset
-// customScriptsRepo/Branch) must not silently erase that history. appSource
-// is set directly on the parsed input here (mirroring what
-// previewAndEnqueue's own pin-once step does, covered end-to-end by the
-// test above) so this test can focus purely on op.apply's own upsert logic.
-test("install-app apply records appSource: 'custom' on the guest, and a repeat upstream apply for the same host+vmid keeps it", async () => {
+// Final fix wave item 4: the same pin-once guarantee, but for the real
+// MAINTENANCE_OPERATIONS['update-app'] -- mirrors the install-app test
+// above, except the applied command reaches a *guest* (runRemote's lxc
+// branch), so it's wrapped `pct exec <vmid> -- sh -c <shellQuote(...)>`
+// rather than sent directly to a pve host. Asserts the wrapped/re-quoted
+// command still contains the pinned COMMUNITY_SCRIPTS_URL base.
+test("previewAndEnqueue on the real update-app operation pins one custom-repository resolution across preview and the job's apply, and the applied (sh -c-wrapped) exec contains the pinned COMMUNITY_SCRIPTS_URL base", async () => {
+  const customInventory: Inventory = {
+    ...inventory,
+    customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`,
+    customScriptsBranch: CUSTOM_BRANCH,
+  };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'opprov-update-')), 'bellhop.db');
+  saveInventory(inventoryPath, customInventory);
+
+  const ssh = new FakeSSHClient(defaultResponder);
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'opprov-update-log-')));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh, { owner: 'test' });
+
+  let headShaCalls = 0;
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) {
+      headShaCalls++;
+      return new Response(HEAD_SHA_RAW, { status: 200 });
+    }
+    if (href === customCtUrl('myapp')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === customInstallUrl('myapp')) return new Response('no prompts here\n', { status: 200 });
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+
+  const d: OperationDeps = {
+    ssh,
+    inventory: structuredClone(customInventory),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+    fetchImpl,
+  };
+
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  const { jobId } = await previewAndEnqueue(op, { guest: 'caddy-lxc', app: 'myapp' }, d, jobRunner, {});
+  assert.equal(headShaCalls, 1, 'resolveHeadSha should run exactly once, during preview');
+
+  await waitForJobFinished(jobStore, jobId);
+  assert.equal(jobStore.get(jobId)!.status, 'success');
+  assert.equal(
+    headShaCalls,
+    1,
+    "apply must not re-resolve -- it reuses the source previewAndEnqueue already pinned onto input.appSource"
+  );
+
+  const updateCall = ssh.history.find((c) => c.command.includes('COMMUNITY_SCRIPTS_URL'));
+  assert.ok(updateCall, 'the applied update-app exec should be recorded on the FakeSSHClient');
+  // runRemote's lxc branch wraps/re-quotes the whole script as one `sh -c`
+  // argument (see src/lib/targets.ts's shellQuote, which escapes every `'`
+  // in the inner script as `'\''`) rather than sending it verbatim -- so the
+  // pinned base URL itself (which contains no quote characters) is still a
+  // verbatim substring of the wrapped command, just no longer immediately
+  // preceded by a literal `='`.
+  assert.ok(
+    updateCall!.command.startsWith(`pct exec 4002 -- sh -c `),
+    `expected the update-app exec to be pct exec/sh -c-wrapped, got: ${updateCall!.command}`
+  );
+  assert.ok(
+    updateCall!.command.includes(customScriptsBaseUrl),
+    `expected the pinned COMMUNITY_SCRIPTS_URL base in the wrapped/re-quoted command: ${updateCall!.command}`
+  );
+});
+
+// T025/T027, amended by the final fix wave item 2: install-app's apply
+// passes appSource: 'custom' into recordProvisionedGuest only when the
+// pinned resolution was actually 'custom' (never for 'upstream'/'url'). Once
+// entry.app is set (a resolvable slug -- from either a custom or an upstream
+// resolution), appSource must be authoritative: an upstream reinstall for
+// the same host+vmid must clear a stale 'custom' rather than silently
+// leaving it in place, the same way any other field that's actually
+// re-resolved on every apply would. appSource is set directly on the parsed
+// input here (mirroring what previewAndEnqueue's own pin-once step does,
+// covered end-to-end by the test above) so this test can focus purely on
+// op.apply's own upsert logic.
+test("install-app apply records appSource: 'custom' on the guest, and a repeat upstream apply for the same host+vmid clears it", async () => {
   const d = deps();
   const op = PROVISIONING_OPERATIONS['install-app'];
 
@@ -245,7 +318,47 @@ test("install-app apply records appSource: 'custom' on the guest, and a repeat u
   const afterSecond = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
   assert.equal(
     afterSecond?.appSource,
+    undefined,
+    'a repeat upstream reinstall must clear a stale custom provenance, since appSource is authoritative whenever entry.app (a resolved slug) is set'
+  );
+});
+
+// The other half of item 2: entry.app is undefined only when the operator
+// pasted a full script URL (appSlugFor returns undefined for a URL) --
+// resolveAppSource never resolves a URL against the custom repository
+// either (kind 'url', appSource undefined), so there is no fresh signal to
+// trust. That case must keep carrying the existing recorded provenance
+// forward, exactly like it already does for `app` itself.
+test('install-app apply preserves a previously-recorded appSource across a repeat apply with a pasted URL (entry.app undefined)', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['install-app'];
+
+  const customSource: AppSource = {
+    kind: 'custom',
+    slug: 'myapp',
+    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA },
+    ctUrl: customCtUrl('myapp'),
+    scriptsBaseUrl: customScriptsBaseUrl,
+    shadows: [],
+  };
+  const firstInput = parseOperationInput(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }) as Record<string, any>;
+  firstInput.appSource = customSource;
+  await withCapturedConsole(() => op.apply(firstInput, d));
+
+  const urlSource: AppSource = { kind: 'url', shadows: [] };
+  const secondInput = parseOperationInput(op, {
+    app: 'https://example.com/myapp-install.sh',
+    host: 'pve1',
+    mid: 5,
+    hostname: 'myapp-lxc',
+  }) as Record<string, any>;
+  secondInput.appSource = urlSource;
+  await withCapturedConsole(() => op.apply(secondInput, d));
+
+  const afterSecond = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
+  assert.equal(
+    afterSecond?.appSource,
     'custom',
-    'a repeat upstream apply must not clobber the previously-recorded custom provenance'
+    'a repeat apply from a pasted URL (no resolvable slug) must carry the existing provenance forward, same as app'
   );
 });

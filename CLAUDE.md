@@ -1128,13 +1128,23 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   operation and for a pasted URL, which has no `scriptsBaseUrl` to scan),
   and the job's own `apply()` (which receives `input.appSource` as
   `InstallAppOptions.source`/`UpdateAppOptions.source`) therefore all read
-  the exact same pinned commit (SC-004) -- a branch push between preview
-  and apply can never make what the operator saw diverge from what actually
-  ran. The CLI has no such shared pin: it runs a dry run and a separate
-  `--apply` invocation, each resolving independently, matching how it
-  already treats every other live lookup (authorized_keys, NFS storage
-  paths) rather than introducing a CLI-only caching layer for this one
-  case.
+  the exact same pinned commit (SC-004): one commit is pinned per apply
+  operation, at the moment `previewAndEnqueue` runs, and the preview text
+  logged at the top of that job's log, the prompt pre-scan, and the apply
+  itself all read that one commit -- a branch push after that point can
+  never make what actually ran diverge from what the job log's own preview
+  shows. This is narrower than "preview and apply always match": the web
+  UI's standalone Preview button (`POST /api/provisioning/:id/preview`,
+  which calls `op.preview` directly, not through `previewAndEnqueue`) and
+  the App check (`GET .../check-app`) each pin their own commit
+  independently, at whatever moment they're called -- a branch push between
+  a standalone Preview/check and a later Apply click is exactly the case
+  this can't cover, and the job log's own preview line is what shows the
+  commit that apply actually pinned and used. The CLI has no shared pin at
+  all: it runs a dry run and a separate `--apply` invocation, each resolving
+  independently, matching how it already treats every other live lookup
+  (authorized_keys, NFS storage paths) rather than introducing a CLI-only
+  caching layer for this one case.
 - **Live TLS-backend probing** (`src/lib/tls-probe.ts`, issue #100) augments
   the previously fully-manual `insecureBackendTls` checkbox with a live
   probe of the guest's actual running app on two web-UI paths -- the

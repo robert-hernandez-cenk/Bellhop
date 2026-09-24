@@ -529,7 +529,7 @@ test('GET /api/provisioning/install-app/check-app reports error and exists=false
   assert.equal(res.status, 200);
   assert.equal(res.body.exists, false);
   assert.equal(res.body.url, '');
-  assert.match(res.body.error, /customScriptsRepo and customScriptsBranch must be set together/);
+  assert.match(res.body.error, /customScriptsBranch is not set \(customScriptsRepo is\)/);
 });
 
 test('GET /api/provisioning/install-app/apps returns the two catalog groups', async () => {

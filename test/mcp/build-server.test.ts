@@ -209,5 +209,5 @@ test('check_install_app reports error and exists=false when the custom settings 
   const result = parse(await call('check_install_app', { app: 'myapp' }));
   assert.equal(result.exists, false);
   assert.equal(result.url, '');
-  assert.match(result.error, /customScriptsRepo and customScriptsBranch must be set together/);
+  assert.match(result.error, /customScriptsBranch is not set \(customScriptsRepo is\)/);
 });

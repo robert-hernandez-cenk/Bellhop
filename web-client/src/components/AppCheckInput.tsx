@@ -132,6 +132,14 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
     onStatusChange('checking');
     try {
       const res = await apiGet<AppCheckResponse>(`${checkEndpoint}?value=${encodeURIComponent(normalized)}`);
+      // A later runCheck for a different value may have already started (and
+      // possibly already resolved) while this one was in flight -- if
+      // lastCheckedRef has moved on since this call started, this response
+      // is stale and must not overwrite what the field now shows (status,
+      // the custom-repository notice, the override banner, the error, the
+      // dev warning, or the prompt list) for a value the operator has since
+      // changed away from.
+      if (normalized !== lastCheckedRef.current) return;
       onStatusChange(res.exists ? 'ok' : 'missing');
       setDevWarning(!!res.dev);
       setScriptPrompts(res.exists ? res.prompts ?? [] : []);
@@ -141,6 +149,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       if (res.exists && res.defaults) onDefaults?.(res.defaults);
       if (res.exists && !normalized.includes('://')) onExists?.(normalized);
     } catch {
+      // Same staleness guard as the success path above -- a stale failure
+      // must not clobber a newer, still-in-flight (or already-settled) check.
+      if (normalized !== lastCheckedRef.current) return;
       onStatusChange('missing');
       setDevWarning(false);
       setScriptPrompts([]);

@@ -94,17 +94,20 @@ test('customScriptSource returns the split/derived source when both settings are
   assert.deepEqual(customScriptSource(withCustomSource()), SOURCE);
 });
 
-test('customScriptSource throws when only customScriptsRepo is set', () => {
+test('customScriptSource throws naming the missing setting when only customScriptsRepo is set', () => {
   const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/ProxmoxVED' };
   assert.throws(
     () => customScriptSource(inv),
-    /customScriptsRepo and customScriptsBranch must be set together; set the missing one with "bellhop set-config <key> <value> --apply" or on the Settings page/
+    /customScriptsBranch is not set \(customScriptsRepo is\); set it with "bellhop set-config customScriptsBranch <value> --apply" or on the Settings page, or unset customScriptsRepo/
   );
 });
 
-test('customScriptSource throws when only customScriptsBranch is set', () => {
+test('customScriptSource throws naming the missing setting when only customScriptsBranch is set', () => {
   const inv: Inventory = { ...BASE_INVENTORY, customScriptsBranch: 'my-apps' };
-  assert.throws(() => customScriptSource(inv), /must be set together/);
+  assert.throws(
+    () => customScriptSource(inv),
+    /customScriptsRepo is not set \(customScriptsBranch is\); set it with "bellhop set-config customScriptsRepo <value> --apply" or on the Settings page, or unset customScriptsBranch/
+  );
 });
 
 // --- resolveHeadSha ---
@@ -171,6 +174,25 @@ test('resolveHeadSha throws "unexpected response" when the body is not a 40-hex 
   );
 });
 
+// Item 8 of the final fix wave: response.text() must be read while the same
+// timeout/AbortController that guards the fetch() call is still active, so a
+// stalled body read is bounded by GITHUB_FETCH_TIMEOUT_MS the same as a
+// stalled connection. Before the fix, text() ran after fetchWithTimeout's own
+// try/finally had already returned (and cleared the timeout), so an error
+// thrown from text() propagated raw -- this simulates that failure directly
+// (rather than waiting out a real 5s timeout) and asserts it gets the same
+// "could not reach GitHub" wrapping a fetch()-level failure gets.
+test('resolveHeadSha wraps a failure from reading the response body the same as a failed fetch (item 8)', async () => {
+  const fetchImpl = (async () => ({
+    ok: true,
+    status: 200,
+    text: () => {
+      throw new Error('aborted');
+    },
+  })) as unknown as typeof fetch;
+  await assert.rejects(() => resolveHeadSha(SOURCE, fetchImpl), /could not reach GitHub \(aborted\)/);
+});
+
 // --- resolveAppSource ---
 
 test('resolveAppSource makes no fetch calls when the feature is off', async () => {
@@ -180,7 +202,7 @@ test('resolveAppSource makes no fetch calls when the feature is off', async () =
 
 test('resolveAppSource throws the both-or-neither message on half-config, with no fetch call', async () => {
   const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/ProxmoxVED' };
-  await assert.rejects(() => resolveAppSource('plex', inv, throwingFetch), /must be set together/);
+  await assert.rejects(() => resolveAppSource('plex', inv, throwingFetch), /customScriptsBranch is not set \(customScriptsRepo is\)/);
 });
 
 test('resolveAppSource passes a full URL through verbatim with no network access', async () => {

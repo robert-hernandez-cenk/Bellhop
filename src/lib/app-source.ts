@@ -55,8 +55,14 @@ export function customScriptSource(inv: Inventory): CustomScriptSource | undefin
   const { customScriptsRepo, customScriptsBranch } = inv;
   if (!customScriptsRepo && !customScriptsBranch) return undefined;
   if (!customScriptsRepo || !customScriptsBranch) {
+    // Name which setting is actually missing (rather than a generic "must be
+    // set together") so the operator doesn't have to go check both --
+    // set-config's own error output should point at the one key that's
+    // actually wrong.
+    const missing = customScriptsRepo ? 'customScriptsBranch' : 'customScriptsRepo';
+    const present = customScriptsRepo ? 'customScriptsRepo' : 'customScriptsBranch';
     throw new Error(
-      'customScriptsRepo and customScriptsBranch must be set together; set the missing one with "bellhop set-config <key> <value> --apply" or on the Settings page'
+      `${missing} is not set (${present} is); set it with "bellhop set-config ${missing} <value> --apply" or on the Settings page, or unset ${present}`
     );
   }
   // SettingsSchema's regex on customScriptsRepo guarantees exactly one '/',
@@ -98,18 +104,34 @@ async function fetchWithTimeout(
 // preview/apply silently diverge; a commit-SHA raw URL is immutable).
 export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: typeof fetch): Promise<string> {
   const prefix = `Custom script repository ${source.label}:`;
-  const response = await fetchWithTimeout(
-    `https://api.github.com/repos/${source.owner}/${source.repo}/commits/${encodeURIComponent(source.branch)}`,
-    fetchImpl,
-    prefix,
-    { Accept: 'application/vnd.github.sha' }
-  );
+  // Deliberately not built on fetchWithTimeout here (unlike every other
+  // caller in this module): that helper clears its timeout as soon as
+  // fetchImpl's promise settles, before a caller ever reads the response
+  // body -- fine for a caller that only inspects .ok/.status, but this is
+  // the one call site that also reads the body (the SHA itself). Reading it
+  // after the timeout already cleared would leave a stalled body read
+  // completely unbounded, so response.text() runs inside this try, while the
+  // same AbortController/timeout that guards the fetch() call is still live.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GITHUB_FETCH_TIMEOUT_MS);
+  let response: Response;
+  let body: string;
+  try {
+    response = await fetchImpl(
+      `https://api.github.com/repos/${source.owner}/${source.repo}/commits/${encodeURIComponent(source.branch)}`,
+      { signal: controller.signal, headers: { 'User-Agent': 'bellhop', Accept: 'application/vnd.github.sha' } }
+    );
+    body = (await response.text()).trim();
+  } catch (err) {
+    throw new Error(`${prefix} could not reach GitHub (${err instanceof Error ? err.message : String(err)})${ERROR_SUFFIX}`);
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     if (response.status === 404) throw new Error(`${prefix} repository not found or not public${ERROR_SUFFIX}`);
     if (response.status === 422) throw new Error(`${prefix} branch not found${ERROR_SUFFIX}`);
     throw new Error(`${prefix} GitHub returned ${response.status}${ERROR_SUFFIX}`);
   }
-  const body = (await response.text()).trim();
   if (!/^[0-9a-f]{40}$/.test(body)) throw new Error(`${prefix} unexpected response${ERROR_SUFFIX}`);
   return body;
 }
