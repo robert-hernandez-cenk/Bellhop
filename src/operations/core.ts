@@ -105,13 +105,20 @@ export async function previewAndEnqueue(
   }
   const preview = await op.preview(input, deps);
   // checkAppUrl/promptsForSource both swallow fetch failures and return no
-  // prompts, so a network hiccup never blocks the apply. A resolvesApp
-  // operation reads prompts from the source already pinned above
-  // (promptsForSource) instead of calling checkAppUrl(input.app, ...) a
-  // second time, which would re-derive -- and for a custom source,
-  // re-resolve -- where the script actually lives.
+  // prompts, so a network hiccup never blocks the apply. Only a 'custom'
+  // resolution reads prompts from the source already pinned above
+  // (promptsForSource, whose only job is the custom scriptsBaseUrl/install/
+  // <slug>-install.sh path) -- an 'upstream' or 'url' resolution (including
+  // every op that isn't resolvesApp at all, where input.appSource is
+  // undefined) still goes through checkAppUrl(input.app, ...), the same as
+  // before this feature existed. This matters even with the custom-
+  // repository feature off entirely: a pasted ct-shaped URL
+  // (kind 'url', no slug) has no scriptsBaseUrl for promptsForSource to
+  // read prompts from -- checkAppUrl's own VE->VED-agnostic pasted-URL
+  // handling (resolveInstallScriptUrl on the URL itself) is what finds
+  // its prompts, so it must stay the one this always calls for that case.
   const expectedPrompts = op.watchForPrompts
-    ? op.resolvesApp
+    ? input.appSource?.kind === 'custom'
       ? await promptsForSource(input.appSource, deps.fetchImpl ?? fetch)
       : ((await checkAppUrl(input.app, deps.fetchImpl)).prompts ?? [])
     : undefined;

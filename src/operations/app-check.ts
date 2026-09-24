@@ -90,44 +90,22 @@ async function fetchInstallPrompts(ctUrl: string, fetchImpl: typeof fetch): Prom
   return body === undefined ? [] : parsePromptHints(body);
 }
 
-// Upstream (ProxmoxVE -> ProxmoxVED) prompt lookup for a bare slug, used by
-// promptsForSource's non-custom branch -- mirrors checkAppUrl's own
-// exists-then-fetch-prompts fallback below, but returns only the prompts:
-// an AppSource of kind 'upstream' doesn't record which of the two upstream
-// repos the slug actually lives in (resolveAppSource never probes upstream
-// at all for that kind -- see src/lib/app-source.ts), so this redoes that
-// same two-repo try independently.
-async function upstreamPromptsFor(slug: string, fetchImpl: typeof fetch): Promise<string[]> {
-  const url = resolveAppUrl(slug);
-  const body = await fetchScriptBody(url, fetchImpl);
-  if (body !== undefined) return fetchInstallPrompts(url, fetchImpl);
-  const devUrl = resolveDevAppUrl(slug);
-  if (devUrl) {
-    const devBody = await fetchScriptBody(devUrl, fetchImpl);
-    if (devBody !== undefined) return fetchInstallPrompts(devUrl, fetchImpl);
-  }
-  return [];
-}
-
-// The prompts for an already-resolved AppSource (research R5) -- reused by
-// checkAppUrl's own 'custom' branch below, and exported for
-// previewAndEnqueue (src/operations/core.ts), which has already resolved a
-// source once per operation and must read prompts from that same resolution
-// rather than calling checkAppUrl(app, ...) a second time (which would
-// re-derive, and for a custom source potentially re-resolve, where the
-// script actually lives). Never throws -- every fetch here is swallowed the
-// same way fetchScriptBody already swallows one.
+// The prompts for an already-resolved *custom* AppSource (research R5) --
+// reused by checkAppUrl's own 'custom' branch below, and exported for
+// previewAndEnqueue (src/operations/core.ts), which -- only for a 'custom'
+// resolution -- has already resolved a source once per operation and must
+// read prompts from that same resolution rather than calling
+// checkAppUrl(app, ...) a second time (which would re-resolve where the
+// script actually lives, potentially pinning a different commit). An
+// 'upstream' or 'url' source has no custom install-script location to read,
+// so callers use checkAppUrl's own VE->VED (or pasted-URL) logic for those
+// instead of calling this at all -- see previewAndEnqueue's guard. Never
+// throws -- every fetch here is swallowed the same way fetchScriptBody
+// already swallows one.
 export async function promptsForSource(source: AppSource, fetchImpl: typeof fetch): Promise<string[]> {
-  if (source.kind === 'custom') {
-    if (!source.scriptsBaseUrl || !source.slug) return [];
-    const body = await fetchScriptBody(`${source.scriptsBaseUrl}/install/${source.slug}-install.sh`, fetchImpl);
-    return body === undefined ? [] : parsePromptHints(body);
-  }
-  // kind 'url' has no slug to derive a script location from -- same as
-  // checkAppUrl's own pasted-URL handling, which only ever finds prompts
-  // when the pasted URL itself happens to match the ct/<slug>.sh shape.
-  if (source.slug === undefined) return [];
-  return upstreamPromptsFor(source.slug, fetchImpl);
+  if (source.kind !== 'custom' || !source.scriptsBaseUrl || !source.slug) return [];
+  const body = await fetchScriptBody(`${source.scriptsBaseUrl}/install/${source.slug}-install.sh`, fetchImpl);
+  return body === undefined ? [] : parsePromptHints(body);
 }
 
 // Resolves --app the same way buildInstallAppScript would (bare slug ->

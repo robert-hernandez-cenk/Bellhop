@@ -1,17 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PROVISIONING_OPERATIONS } from '../../src/operations/provisioning.ts';
 import { PROVISIONING_COMMANDS } from '../../src/web/commands-meta.ts';
-import { parseOperationInput } from '../../src/operations/core.ts';
+import { parseOperationInput, previewAndEnqueue } from '../../src/operations/core.ts';
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import type { OperationDeps } from '../../src/operations/types.ts';
 import { withCapturedConsole } from '../../src/web/console-capture.ts';
+import { JobStore } from '../../src/web/jobs/job-store.ts';
+import { createJobLog } from '../../src/web/jobs/job-log.ts';
+import { JobRunner } from '../../src/web/jobs/job-runner.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -94,4 +98,93 @@ test('delete-guest apply refuses the caddy guest', async () => {
 test('install-app is the only provisioning operation that watches for prompts', () => {
   const watching = Object.values(PROVISIONING_OPERATIONS).filter((op) => op.watchForPrompts).map((op) => op.id);
   assert.deepEqual(watching, ['install-app']);
+});
+
+// --- custom script repository (issue #11), real install-app wiring ---
+// Fix round 1: T010's original coverage used a stand-in demo operation
+// (test/operations/core.test.ts), which never exercised
+// PROVISIONING_OPERATIONS['install-app']'s own resolvesApp: true and
+// `source: i.appSource` plumbing (src/operations/provisioning.ts). This runs
+// previewAndEnqueue against the real operation, a real FakeSSHClient, and a
+// real JobRunner, the same way the web/MCP front ends do.
+// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// on branch my-apps is the same example the spec/plan/data-model/
+// test/lib/app-source.test.ts use.
+
+const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'github');
+const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
+const SHA = HEAD_SHA_RAW.trim();
+const CUSTOM_OWNER = 'example-user';
+const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_BRANCH = 'my-apps';
+const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
+const customScriptsBaseUrl = `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}`;
+const customInstallUrl = (slug: string) => `${customScriptsBaseUrl}/install/${slug}-install.sh`;
+
+function waitForJobFinished(store: JobStore, id: number): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => {
+      const status = store.get(id)?.status;
+      if (status && status !== 'queued' && status !== 'running') resolve();
+      else setTimeout(check, 10);
+    };
+    check();
+  });
+}
+
+test("previewAndEnqueue on the real install-app operation pins one custom-repository resolution across preview and the job's apply, and the applied script exports COMMUNITY_SCRIPTS_URL at the pinned commit", async () => {
+  const customInventory: Inventory = {
+    ...inventory,
+    customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`,
+    customScriptsBranch: CUSTOM_BRANCH,
+  };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'opprov-install-')), 'bellhop.db');
+  saveInventory(inventoryPath, customInventory);
+
+  const ssh = new FakeSSHClient(defaultResponder);
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'opprov-install-log-')));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh, { owner: 'test' });
+
+  let headShaCalls = 0;
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) {
+      headShaCalls++;
+      return new Response(HEAD_SHA_RAW, { status: 200 });
+    }
+    if (href === customCtUrl('myapp')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === customInstallUrl('myapp')) return new Response('no prompts here\n', { status: 200 });
+    // Upstream shadow probes -- "not present" for this test.
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+
+  const d: OperationDeps = {
+    ssh,
+    inventory: structuredClone(customInventory),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+    fetchImpl,
+  };
+
+  const op = PROVISIONING_OPERATIONS['install-app'];
+  const { jobId } = await previewAndEnqueue(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }, d, jobRunner, {});
+  assert.equal(headShaCalls, 1, 'resolveHeadSha should run exactly once, during preview');
+
+  await waitForJobFinished(jobStore, jobId);
+  assert.equal(jobStore.get(jobId)!.status, 'success');
+  assert.equal(
+    headShaCalls,
+    1,
+    "apply must not re-resolve -- it reuses the source previewAndEnqueue already pinned onto input.appSource"
+  );
+
+  const installCall = ssh.history.find((c) => c.command.includes('COMMUNITY_SCRIPTS_URL'));
+  assert.ok(installCall, 'the applied install-app exec should be recorded on the FakeSSHClient');
+  assert.ok(
+    installCall!.command.includes(`export COMMUNITY_SCRIPTS_URL='${customScriptsBaseUrl}'`),
+    `expected COMMUNITY_SCRIPTS_URL at the pinned SHA in: ${installCall!.command}`
+  );
 });

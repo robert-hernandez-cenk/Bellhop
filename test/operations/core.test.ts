@@ -212,3 +212,36 @@ test('previewAndEnqueue pins a resolvesApp operation\'s custom-repository resolu
   assert.equal(applied.custom?.sha, PINNED_SHA);
   assert.notEqual(applied.custom?.sha, OTHER_SHA);
 });
+
+// Regression (fix round 1): previewAndEnqueue used to call promptsForSource
+// for *every* resolvesApp operation whenever op.resolvesApp was true, and
+// promptsForSource returns [] for anything that isn't a 'custom' resolution
+// -- including kind 'url' (a pasted full script URL), which has no
+// scriptsBaseUrl to read prompts from. That silently dropped expectedPrompts
+// for a pasted ct-shaped URL even with the custom-repository feature
+// entirely off, since resolveAppSource always resolves a '://'-containing
+// --app value to kind 'url' regardless of settings. previewAndEnqueue now
+// only reads promptsForSource when the pinned source is actually 'custom';
+// every other case (including this one) still goes through checkAppUrl,
+// exactly as it did before resolvesApp/promptsForSource existed.
+test('previewAndEnqueue still finds install-script prompts for a pasted ct-shaped URL with the custom-repository feature off (FR-002 regression)', async () => {
+  const { store, runner, deps } = setup();
+  // deps.inventory has neither customScriptsRepo nor customScriptsBranch set
+  // (setup()'s plain { domain, hosts: [], guests: [] }) -- feature off.
+  const pastedUrl = 'https://example.com/fork/ct/myapp.sh';
+  const installUrl = 'https://example.com/fork/install/myapp-install.sh';
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === pastedUrl) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === installUrl) return new Response('read -rp "Enter something: " x\n', { status: 200 });
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+  deps.fetchImpl = fetchImpl;
+
+  const { jobId } = await previewAndEnqueue(resolvingOp, { app: pastedUrl }, deps, runner, {});
+  const row = store.get(jobId)!;
+  assert.deepEqual(JSON.parse(row.expectedPromptsJson!), ['Enter something: ']);
+
+  await waitForFinished(store, jobId);
+  assert.equal(store.get(jobId)!.status, 'success');
+});
