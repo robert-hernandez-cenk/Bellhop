@@ -163,6 +163,9 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
    an error-colored banner doesn't inherit that banner's white text. */
 .adopt-oidc-client { margin-top: 8px; }
 .adopt-oidc-client .preview-pane { margin-bottom: 8px; }
+/* Scoped wrapper for the Cancel/Confirm adopt row -- see the comment at its
+   call site in AdoptOidcClientButton.tsx for why this isn't .stats-row. */
+.adopt-oidc-client-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .oidc-credentials-note { color: var(--text-secondary); font-size: 13px; }
 .oidc-credentials { display: flex; flex-direction: column; gap: 10px; }
 .oidc-credential-row { display: flex; flex-direction: column; gap: 4px; }

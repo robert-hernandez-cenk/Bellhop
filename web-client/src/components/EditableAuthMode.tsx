@@ -75,7 +75,12 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
   const isAdmin = !!whoami?.isAdmin;
   const wasOidc = isOidcEffective(guest);
 
-  const send = async (body: Record<string, unknown>, previous: 'forward' | 'oidc') => {
+  // `rethrow` is true only for the confirm-modal path (confirmSwitch below):
+  // ConfirmDeleteModal.submit() only keeps the modal open and shows its own
+  // inline error when onConfirm's promise rejects -- swallowing the error
+  // here (the ordinary, non-confirmed save behavior) would make the modal
+  // close and silently discard a failed confirmed save instead.
+  const send = async (body: Record<string, unknown>, previous: 'forward' | 'oidc', rethrow = false) => {
     setStatus('saving');
     setError(null);
     setConflicts([]);
@@ -104,6 +109,10 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
         return;
       }
       setMode(previous);
+      if (rethrow) {
+        setStatus('idle');
+        throw err instanceof Error ? err : new Error(message);
+      }
       setStatus('error');
       setError(message);
     }
@@ -126,7 +135,7 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
   const confirmSwitch = async () => {
     const previous = mode;
     setMode('forward');
-    await send({ authMode: 'forward', confirmOidcClientDeletion: true }, previous);
+    await send({ authMode: 'forward', confirmOidcClientDeletion: true }, previous, true);
   };
 
   const disabled = !isAdmin || status === 'saving';
@@ -196,19 +205,26 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
   const [value, setValue] = useState((guest.oidcRedirectUris ?? []).join('; '));
   const [status, setStatus] = useState<SaveStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  const [discoveryFailures, setDiscoveryFailures] = useState<OidcDiscoveryFailure[]>([]);
 
   useEffect(() => {
     setValue((guest.oidcRedirectUris ?? []).join('; '));
   }, [guest.oidcRedirectUris]);
 
   const isAdmin = !!whoami?.isAdmin;
+  const showAdopt = isAdmin && isOidcEffective(guest);
 
   const save = async () => {
     if (sameList(parseLocal(value), guest.oidcRedirectUris ?? [])) return;
     setStatus('saving');
     setError(null);
+    setConflicts([]);
+    setDiscoveryFailures([]);
     try {
       const res = await patchGuest(guest.name, { oidcRedirectUris: value });
+      setConflicts(res.authentikConflicts ?? []);
+      setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
       if (res.caddySynced) {
         setStatus('saved');
       } else {
@@ -237,11 +253,23 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
         }}
         onBlur={save}
       />
-      {guest.authMode !== 'oidc' && <div className="field-note">Only used in OIDC mode.</div>}
+      {!isOidcEffective(guest) && <div className="field-note">Only used in OIDC mode.</div>}
       {status === 'saving' && <span className="save-status">Saving…</span>}
       {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
       {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
+      {conflicts.length > 0 && (
+        <div className="warning-banner">
+          Authentik slug conflict: {conflicts.join(', ')} — the slug is held by an Application this
+          toolkit does not manage; logins will fail until it is resolved by hand.
+          {showAdopt && <AdoptOidcClientButton entryName={guest.name} />}
+        </div>
+      )}
+      {discoveryFailures.length > 0 && (
+        <div className="warning-banner">
+          OIDC discovery check failed: {discoveryFailures.map((f) => `${f.slug} (${f.issuer}): ${f.error}`).join('; ')}
+        </div>
+      )}
     </div>
   );
 }

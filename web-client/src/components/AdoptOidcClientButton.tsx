@@ -58,7 +58,11 @@ export function AdoptOidcClientButton({ entryName }: Props) {
   return (
     <div className="adopt-oidc-client">
       <pre className="preview-pane">{preview}</pre>
-      <div className="stats-row">
+      {/* A scoped class, not the global .stats-row -- that one has no
+          flex-wrap, and this button pair sits nested inside a narrow
+          .form-row-value inside a .warning-banner, where two full-width
+          buttons side by side can overflow at 375px. */}
+      <div className="adopt-oidc-client-actions">
         <button className="button" onClick={() => setPreview(null)} disabled={busy}>
           Cancel
         </button>

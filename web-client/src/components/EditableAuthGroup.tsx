@@ -73,7 +73,14 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       .catch((err) => setLadderError(err instanceof Error ? err.message : String(err)));
   }, []);
 
-  const save = async (next: string, confirmed: boolean) => {
+  // `rethrow` is true only for the confirm-modal path (confirmClear below):
+  // ConfirmDeleteModal.submit() only keeps the modal open and shows its own
+  // inline error when onConfirm's promise rejects -- swallowing the error
+  // here (the ordinary, non-confirmed save behavior) would make the modal
+  // close and silently discard a failed confirmed save instead. Guarded on
+  // `confirmed` implying `rethrow` never fires the safety-net branch below,
+  // since that branch only ever runs for a non-confirmed attempt.
+  const save = async (next: string, confirmed: boolean, rethrow = false) => {
     const previous = authGroup;
     setAuthGroup(next);
     setStatus('saving');
@@ -110,6 +117,10 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
         return;
       }
       setAuthGroup(previous);
+      if (rethrow) {
+        setStatus('idle');
+        throw err instanceof Error ? err : new Error(message);
+      }
       setStatus('error');
       setError(message);
     }
@@ -126,7 +137,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
     void save(next, false);
   };
 
-  const confirmClear = () => save(NONE, true);
+  const confirmClear = () => save(NONE, true, true);
 
   const rungs = ladder?.rungs ?? [];
   const canLower = ladder?.canLower ?? false;
