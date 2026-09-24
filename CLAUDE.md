@@ -271,11 +271,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `requires_auth` column: every row with `requires_auth = 1` gets
   `auth_group` set to the configured `AUTHENTIK_GROUP_LADDER`'s *top*
   rung -- a deliberate fail-closed choice (the narrowest audience), not
-  one tuned to match any particular operator's prior Authentik state,
-  though for this operator's own database it happens to match what the
-  four gated Applications were already bound to, so the first
-  `sync-authentik --apply` afterward is a no-op rather than a silent
-  widening -- and then the `requires_auth` column itself is dropped. Once
+  one tuned to match any particular operator's prior Authentik state --
+  which is `authentik Admins` in the default ladder -- and then the
+  `requires_auth` column itself is dropped. Once
   it's gone, the `PRAGMA table_info` guard that triggers the migration is
   false forever after, so it never re-runs, and a database created fresh
   by current code never has the column to migrate at all. This is
@@ -476,7 +474,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   the way it used to be: for each gated entry's Application, `--apply`
   binds it to the entry's named rung and every rung above it
   (`AUTHENTIK_GROUP_LADDER`, comma-separated ordered low-to-high, defaulting
-  to `homelab-app-users-open,homelab-app-users,homelab-users,authentik
+  to `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik
   Admins` -- `src/lib/authentik-config.ts`'s `rungsAtOrAbove`), creating
   whichever of those bindings are missing and deleting any existing binding
   whose group is on the ladder but no longer wanted. A binding to a group
