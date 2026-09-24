@@ -8,6 +8,7 @@ import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
+import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import type { OperationDeps } from '../../src/operations/types.ts';
 
@@ -72,4 +73,72 @@ test('runEditGuest rejects a duplicate subdomain without saving', async () => {
 
 test('runEditGuest reports an unknown guest', async () => {
   await assert.rejects(runEditGuest({ name: 'nope' }, deps()), /Unknown guest: nope/);
+});
+
+// Native OIDC gating (issue #1, unit U6): authMode/oidcRedirectUris parsing
+// and the write-level "OIDC needs a callback URL" rule.
+
+test('applyGuestEdits parses authMode and oidcRedirectUris from form strings and typed arrays alike', () => {
+  const current = inventory.guests[1];
+  const fromForm = applyGuestEdits(current, {
+    authMode: 'oidc',
+    oidcRedirectUris: 'https://app.example.com/cb1; https://app.example.com/cb2',
+  });
+  const typed = applyGuestEdits(current, {
+    authMode: 'oidc',
+    oidcRedirectUris: ['https://app.example.com/cb1', 'https://app.example.com/cb2'],
+  });
+  assert.equal(fromForm.authMode, 'oidc');
+  assert.deepEqual(fromForm.oidcRedirectUris, ['https://app.example.com/cb1', 'https://app.example.com/cb2']);
+  assert.deepEqual(typed, fromForm);
+});
+
+test('applyGuestEdits clears authMode to forward on null/empty', () => {
+  const updated = applyGuestEdits({ ...inventory.guests[1], authMode: 'oidc' }, { authMode: null });
+  assert.equal(updated.authMode, undefined);
+});
+
+test('runEditGuest rejects an OIDC-effective edit with subdomains and no redirect URIs, naming the field', async () => {
+  const d = deps();
+  await assert.rejects(
+    runEditGuest({ name: 'other-lxc', authGroup: 'bellhop-users', authMode: 'oidc' }, d),
+    (err: unknown) => err instanceof GuestEditValidationError && /oidcRedirectUris/.test((err as Error).message)
+  );
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'other-lxc')?.authMode, undefined);
+});
+
+test('runEditGuest accepts an OIDC-effective edit once a redirect URI is set', async () => {
+  const d = { ...deps(), authentik: new FakeAuthentikClient() };
+  const result = await runEditGuest(
+    { name: 'other-lxc', authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://taken.example.com/cb'] },
+    d
+  );
+  assert.equal(result.guest.authMode, 'oidc');
+  assert.deepEqual(result.guest.oidcRedirectUris, ['https://taken.example.com/cb']);
+});
+
+// runEditGuest's OperationDeps.fetchImpl reaches syncCaddyLive's post-apply
+// OIDC discovery check (same plumbing proven for deps.cloudflare above), and
+// the result is scoped to the edited guest only, omitted when empty.
+test('runEditGuest carries oidcDiscoveryFailures scoped to the edited guest, omitted when empty', async () => {
+  const failFetch = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
+  const d = { ...deps(), authentik: new FakeAuthentikClient(), fetchImpl: failFetch };
+  const result = await runEditGuest(
+    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
+    d
+  );
+  assert.equal(result.caddySynced, true);
+  assert.ok('oidcDiscoveryFailures' in result);
+  assert.deepEqual((result as { oidcDiscoveryFailures?: { slug: string }[] }).oidcDiscoveryFailures?.map((f) => f.slug), ['app']);
+});
+
+test('runEditGuest omits oidcDiscoveryFailures when the discovery check passes', async () => {
+  const okFetch = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+  const d = { ...deps(), authentik: new FakeAuthentikClient(), fetchImpl: okFetch };
+  const result = await runEditGuest(
+    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
+    d
+  );
+  assert.equal(result.caddySynced, true);
+  assert.equal('oidcDiscoveryFailures' in result, false);
 });

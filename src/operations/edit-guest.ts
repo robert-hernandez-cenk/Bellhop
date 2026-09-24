@@ -6,6 +6,9 @@ import {
   parsePort,
   parseAuthGroup,
   parseUnauthenticatedPaths,
+  parseAuthMode,
+  parseOidcRedirectUris,
+  oidcConfigErrors,
   validateInventory,
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
@@ -29,6 +32,10 @@ export type EditGuestResult =
       authentikConflicts?: string[];
       authentikOffLadder?: OffLadderEntry[];
       authentikMissingRungs?: string[];
+      // Native OIDC gating (issue #1): the post-apply issuer discovery check
+      // for this guest's own OpenID client, scoped and omitted-when-empty the
+      // same way authentikConflicts is -- see commitGuestEdit.
+      oidcDiscoveryFailures?: { slug: string; issuer: string; error: string }[];
     }
   | { guest: GuestEntry; caddySynced: false; caddyError: string };
 
@@ -44,6 +51,8 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   if ('insecureBackendTls' in body) updated.insecureBackendTls = !!body.insecureBackendTls;
   if ('authGroup' in body) updated.authGroup = parseAuthGroup(body.authGroup);
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
+  if ('authMode' in body) updated.authMode = parseAuthMode(body.authMode);
+  if ('oidcRedirectUris' in body) updated.oidcRedirectUris = parseOidcRedirectUris(asDelimited(body.oidcRedirectUris));
   return updated;
 }
 
@@ -67,6 +76,14 @@ export async function commitGuestEdit(
 
   const errors = validateInventory({ ...inventory, guests });
   if (errors.length > 0) throw new GuestEditValidationError(errors.join('\n'));
+
+  // Write-level OIDC rule (research R7): an OIDC-effective entry (authMode
+  // 'oidc' plus an authGroup) with subdomains must carry at least one
+  // callback URL, or Authentik has nowhere to send a sign-in token back to.
+  // Deliberately not part of validateInventory() -- see oidcConfigErrors's
+  // own doc comment -- so this is the one write path that enforces it.
+  const oidcErrors = oidcConfigErrors(updated);
+  if (oidcErrors.length > 0) throw new GuestEditValidationError(oidcErrors.join('\n'));
 
   // Only when this edit actually touched subdomains or port (an
   // insecureBackendTls/caddyManual/authGroup-only edit never
@@ -95,11 +112,12 @@ export async function commitGuestEdit(
   inventory.guests = guests;
 
   try {
-    const { authentikConflicts, authentikOffLadder, authentikMissingRungs } = await syncCaddyLive({
+    const { authentikConflicts, authentikOffLadder, authentikMissingRungs, authentikOidcDiscoveryFailures } = await syncCaddyLive({
       ssh: deps.ssh,
       inventory,
       authentik: deps.authentik,
       cloudflare: deps.cloudflare,
+      fetchImpl: deps.fetchImpl,
     });
     // Conflicts are computed inventory-wide, but this response belongs to
     // one guest -- surfacing another entry's conflict here would render a
@@ -113,6 +131,10 @@ export async function commitGuestEdit(
     // Scoped to this guest for the same reason ownConflicts is: another
     // entry's misconfiguration must not render a banner on this row.
     const ownOffLadder = ownConflict ? authentikOffLadder.filter((o) => o.slug === ownConflict) : [];
+    // Same scoping again: the post-apply discovery check runs for every
+    // owned OIDC client on each sync, so another entry's stale/unreachable
+    // issuer must not surface as a warning on this guest's own edit.
+    const ownOidcDiscoveryFailures = ownConflict ? authentikOidcDiscoveryFailures.filter((f) => f.slug === ownConflict) : [];
     return {
       guest: updated,
       caddySynced: true,
@@ -125,6 +147,8 @@ export async function commitGuestEdit(
       // itself, not about any one entry. Same conditional-spread
       // convention as authentikConflicts above.
       ...(authentikMissingRungs.length > 0 ? { authentikMissingRungs } : {}),
+      // Same conditional-spread convention as authentikConflicts above.
+      ...(ownOidcDiscoveryFailures.length > 0 ? { oidcDiscoveryFailures: ownOidcDiscoveryFailures } : {}),
     };
   } catch (err) {
     return { guest: updated, caddySynced: false, caddyError: err instanceof Error ? err.message : String(err) };
@@ -142,6 +166,15 @@ export const EDIT_GUEST_SHAPE = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe("Caddy path globs exempt from forward-auth (array or ';'-separated)"),
+  authMode: z
+    .enum(['forward', 'oidc'])
+    .nullable()
+    .optional()
+    .describe("Auth mode when authGroup is set: 'forward' (Caddy forward-auth, default) or 'oidc' (native OIDC); null or empty clears to forward. Admin only."),
+  oidcRedirectUris: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .describe("OIDC callback URLs (array or ';'-separated absolute http(s) URLs); required when authMode is 'oidc' and the entry has subdomains. Admin only."),
 };
 
 export async function runEditGuest(input: { name: string } & Record<string, unknown>, deps: OperationDeps): Promise<EditGuestResult> {

@@ -99,7 +99,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'edit_guest',
     {
       description:
-        "Edit a guest's inventory routing fields (subdomains, port, caddyManual, insecureBackendTls, authGroup, unauthenticatedPaths), then push Caddy, the status page, and Authentik live. Applies immediately. Only the fields you pass are changed.",
+        "Edit a guest's inventory routing fields (subdomains, port, caddyManual, insecureBackendTls, authGroup, unauthenticatedPaths, authMode, oidcRedirectUris), then push Caddy, the status page, and Authentik live. Applies immediately. Only the fields you pass are changed. This server runs as the local admin operator, so authMode/oidcRedirectUris changes are always permitted here.",
       inputSchema: EDIT_GUEST_SHAPE,
     },
     async (args: Record<string, unknown>) => {

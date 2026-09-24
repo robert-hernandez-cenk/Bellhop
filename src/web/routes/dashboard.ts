@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Inventory } from '../../lib/inventory.ts';
+import type { GuestEntry, Inventory } from '../../lib/inventory.ts';
 import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
@@ -86,12 +86,43 @@ function unauthenticatedPathsChangeError(
   };
 }
 
+// authMode/oidcRedirectUris are unconditionally admin-only in both
+// directions (FR-018) -- unlike authGroup's raise/lower asymmetry above,
+// there is no "raise" a non-admin may make unassisted here: switching to
+// OIDC removes the forward-auth gate Caddy would otherwise put in front of
+// the app, and the callback URL decides where Authentik sends a sign-in
+// token after a successful login, so getting either wrong has a bigger
+// blast radius than widening an authGroup rung. Compared against the
+// *parsed* values (already resolved by applyGuestEdits) rather than the raw
+// body, so re-submitting the current value unchanged -- which the Dashboard
+// does whenever it PATCHes the full object -- is never treated as a change.
+// Arrays are compared in order, matching parseOidcRedirectUris's own
+// order-preserving output.
+function sameOidcRedirectUris(a: string[] | undefined, b: string[] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+function oidcEditChangeError(current: GuestEntry, updated: GuestEntry, isAdmin: boolean): { status: number; error: string } | null {
+  if (isAdmin) return null;
+  const changed = current.authMode !== updated.authMode || !sameOidcRedirectUris(current.oidcRedirectUris, updated.oidcRedirectUris);
+  if (!changed) return null;
+  return { status: 403, error: "Only an admin may change an app's auth mode or callback URLs" };
+}
+
 export function dashboardRoutes(
   inventory: Inventory,
   inventoryPath: string,
   ssh: SSHClient,
   authentik: AuthentikClient,
-  cloudflare: CloudflareClient
+  cloudflare: CloudflareClient,
+  // Test-only injection point for the post-apply OIDC issuer discovery
+  // check (syncCaddyLive -> runSyncAuthentik), same convention as every
+  // other fetchImpl threaded through AppDeps -- unset in production, so
+  // commitGuestEdit falls back to the real global fetch exactly as it
+  // always has.
+  fetchImpl?: typeof fetch
 ): Router {
   const router = Router();
   router.get('/inventory', (req, res) => {
@@ -167,6 +198,14 @@ export function dashboardRoutes(
         return;
       }
 
+      if ('authMode' in req.body || 'oidcRedirectUris' in req.body) {
+        const problem = oidcEditChangeError(current, updated, isAdminUser(req.user?.groups ?? []));
+        if (problem) {
+          res.status(problem.status).json({ error: problem.error });
+          return;
+        }
+      }
+
       if ('authGroup' in req.body) {
         const problem = authGroupChangeError(
           current.authGroup,
@@ -204,7 +243,7 @@ export function dashboardRoutes(
 
       try {
         const result = await commitGuestEdit(
-          { ssh, inventory, inventoryPath, authentik, cloudflare },
+          { ssh, inventory, inventoryPath, authentik, cloudflare, fetchImpl },
           req.params.name as string,
           updated,
           'subdomains' in req.body || 'port' in req.body
