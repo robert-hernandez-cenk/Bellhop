@@ -540,17 +540,29 @@ export class RealAuthentikClient implements AuthentikClient {
   // -- a real deployment has one OAuth2 provider per OIDC-gated app, nowhere
   // near this limit today, but a missed provider here would read as "not
   // owned yet" and sync-authentik would try to create a duplicate.
+  //
+  // T044 live-verification fix: Authentik 2026.8's `GET /api/v3/providers/oauth2/`
+  // also returns every proxy provider (ProxyProvider subclasses
+  // OAuth2Provider in Authentik's own model, and `meta_model_name`/
+  // `component` on the raw response report the OAuth2 values for all of
+  // them, so the list response itself can't tell them apart). Every caller
+  // in this codebase (ownedProviderKind, planProviderName, adopt-oidc-client,
+  // oidc-credentials) trusts "present in listOAuth2Providers" to mean "is
+  // really an OAuth2 provider," so a proxy provider's pk must be excluded
+  // here -- the one place that can actually tell, via membership in
+  // listProxyProviders -- rather than left for every caller to re-check.
   async listOAuth2Providers(): Promise<AuthentikOAuth2Provider[]> {
-    const res = await this.request<{ count: number; results: RawOAuth2Provider[] }>(
-      'GET',
-      '/api/v3/providers/oauth2/?page_size=500'
-    );
+    const [res, proxyProviders] = await Promise.all([
+      this.request<{ count: number; results: RawOAuth2Provider[] }>('GET', '/api/v3/providers/oauth2/?page_size=500'),
+      this.listProxyProviders(),
+    ]);
     if (res.count > res.results.length) {
       throw new Error(
         `Authentik returned ${res.results.length} of ${res.count} OAuth2 providers; pagination is not implemented`
       );
     }
-    return res.results.map((r) => this.toOAuth2Provider(r));
+    const proxyProviderIds = new Set(proxyProviders.map((p) => p.id));
+    return res.results.filter((r) => !proxyProviderIds.has(String(r.pk))).map((r) => this.toOAuth2Provider(r));
   }
 
   async createOAuth2Provider(input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider> {

@@ -605,7 +605,17 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   OpenID client sharing an entry's slug is therefore never a false match,
   unlike a Proxy Provider, which stays owned by slug alone regardless of
   marker (the unchanged #154 rule, kept so an Application created before
-  the marker existed is still recognized). It lists OAuth2 Providers on
+  the marker existed is still recognized). `ownedProviderKind`'s
+  `proxyProviderIds`/`oauth2ProviderIds` sets are safe to build straight from
+  `listProxyProviders()`/`listOAuth2Providers()` and check independently
+  (proxy first) despite a live quirk verified against Authentik 2026.8: a
+  Proxy Provider is a subclass of OAuth2Provider in Authentik's own model, so
+  `GET /api/v3/providers/oauth2/` itself returns every proxy provider too --
+  `RealAuthentikClient.listOAuth2Providers` (`src/lib/authentik-client.ts`)
+  is what filters those back out before this command ever sees them, by
+  cross-referencing the proxy list, so `oauth2ProviderIds` here is always
+  genuinely OAuth2-only and this file's own provider-kind logic never has to
+  account for the overlap itself. It lists OAuth2 Providers on
   every run (to compute ownership even for a run with no OIDC entries), so
   once any entry is in OIDC mode the Authentik API token in
   `data/authentik.env` needs a few scopes forward-auth-only gating never
@@ -1530,11 +1540,26 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `AUTHENTIK_API_URL`/`AUTHENTIK_API_TOKEN` are configured. `AuthentikClient`
   (`src/lib/authentik-client.ts`) wraps
   Authentik's REST API v3, modeled on the `SSHClient` injection pattern:
-  `RealAuthentikClient` (no automated test, verified manually, same
-  precedent as `Ssh2SSHClient`) is used when `AUTHENTIK_API_URL`/
+  `RealAuthentikClient` is used when `AUTHENTIK_API_URL`/
   `AUTHENTIK_API_TOKEN` are both set; otherwise `UnconfiguredAuthentikClient`
   is injected instead, so every route call fails the same clear
   "not configured" way rather than needing a null check at each call site.
+  `RealAuthentikClient` has no live-instance test (same precedent as
+  `Ssh2SSHClient`, verify manually against real infrastructure), but since
+  the request bodies it builds and the responses it maps are pure functions
+  of global `fetch`, `test/lib/authentik-client.test.ts` pins a growing set
+  of them with a stubbed `fetch` (`withStubbedFetch`) -- unlike every other
+  `AuthentikClient` method, `listOAuth2Providers()` is genuinely stubbed-fetch-
+  tested precisely *because* Authentik's raw response needs filtering: a
+  proxy provider is a subclass of OAuth2Provider in Authentik's own model, so
+  `GET /api/v3/providers/oauth2/` returns every proxy provider too (2026.8,
+  verified live), with `meta_model_name`/`component` reporting the OAuth2
+  values for all of them -- the response alone can't tell them apart, only
+  membership in `GET /api/v3/providers/proxy/` can. `listOAuth2Providers`
+  fetches that list too and drops any pk present in it, so every caller that
+  trusts "in the OAuth2 list" to mean "really an OAuth2 provider"
+  (`ownedProviderKind`, `planProviderName`, `adopt-oidc-client.ts`,
+  `oidc-credentials.ts`) never has to re-check.
   Those two vars are read via plain `process.env`, same as everything
   else, but `src/web/server.ts` populates them at startup the same way it
   populates the VPN gateway credentials (see "VPN gateway deploy

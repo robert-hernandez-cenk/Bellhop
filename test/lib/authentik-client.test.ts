@@ -361,3 +361,41 @@ test('RealAuthentikClient.getOAuth2Credentials throws, naming the provider, when
     }
   );
 });
+
+// T044 live-verification fix: Authentik 2026.8's `GET /api/v3/providers/oauth2/`
+// returns every proxy provider as well as real OAuth2 providers, because
+// ProxyProvider subclasses OAuth2Provider -- meta_model_name/component report
+// the OAuth2 values for all of them, so the list response itself can't tell
+// the two apart; only membership in `GET /api/v3/providers/proxy/` can.
+// listOAuth2Providers must filter out any pk that also shows up there, so
+// every other caller (ownedProviderKind, planProviderName, ...) can keep
+// trusting "in the OAuth2 list" to mean "really an OAuth2 provider."
+test('RealAuthentikClient.listOAuth2Providers excludes a proxy provider pk present in the raw oauth2 response', async () => {
+  await withStubbedFetch(
+    (url) => {
+      if (url.includes('/providers/proxy/?')) {
+        return json({ results: [{ pk: 5, name: 'media', external_host: 'https://media.example.com', mode: 'forward_single', internal_host: '' }] });
+      }
+      if (url.includes('/providers/oauth2/?')) {
+        // Authentik includes provider 5 (the proxy provider above) here too,
+        // alongside the one genuine OAuth2 provider (pk 9).
+        return json({
+          count: 2,
+          results: [
+            { pk: 5, name: 'media', client_type: 'confidential', grant_types: ['authorization_code'] },
+            { pk: 9, name: 'books', client_type: 'confidential', grant_types: ['authorization_code'] },
+          ],
+        });
+      }
+      return new Response(null, { status: 204 });
+    },
+    async (client) => {
+      const providers = await client.listOAuth2Providers();
+      assert.deepEqual(
+        providers.map((p) => p.id),
+        ['9'],
+        'the proxy provider (pk 5) must not be reported as an OAuth2 provider'
+      );
+    }
+  );
+});

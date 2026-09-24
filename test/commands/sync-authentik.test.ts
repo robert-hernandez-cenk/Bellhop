@@ -1446,6 +1446,17 @@ test('a switch is skipped as provider-name-taken when the "<slug> (replaced)" na
   assert.deepEqual(await authentik.listProxyProviders(), [proxy]);
 });
 
+// T044 live-verification: this is the test that would catch a regression in
+// RealAuthentikClient.listOAuth2Providers' proxy-exclusion filter (see its
+// comment in authentik-client.ts). FakeAuthentikClient already keeps its
+// proxy and OAuth2 provider lists disjoint -- it models the *corrected* real-
+// client contract sync-authentik is written against, not Authentik's raw
+// `/providers/oauth2/` response shape -- so this test only stays meaningful
+// as a regression guard as long as that contract holds; a stubbed-fetch unit
+// test on RealAuthentikClient itself (test/lib/authentik-client.test.ts) is
+// what actually pins the filter. Here, `used: false` is the exact scenario:
+// an unassigned proxy provider named after the OIDC entry's slug must never
+// be picked up by planOidc/planProviderName as a reusable OpenID client.
 test('a new OIDC client is skipped as provider-name-taken when a proxy provider already holds the slug name, whether or not an Application uses it', async () => {
   for (const used of [true, false]) {
     const authentik = new FakeAuthentikClient();
