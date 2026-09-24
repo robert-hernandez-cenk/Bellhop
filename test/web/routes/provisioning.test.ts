@@ -4,6 +4,7 @@ import request from 'supertest';
 import { buildApp } from '../../../src/web/app.ts';
 import { checkAppUrl, parseAppDefaults, parsePromptHints, parseSubdomains } from '../../../src/web/routes/provisioning.ts';
 import { resolveInstallScriptUrl } from '../../../src/commands/provisioning/install-app.ts';
+import { UPSTREAM_STABLE_BASE } from '../../../src/lib/app-source.ts';
 import { JobStore } from '../../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../../src/web/jobs/job-log.ts';
 import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
@@ -493,6 +494,32 @@ test('GET /api/provisioning/install-app/check-app resolves through the custom sc
   assert.equal(res.body.url, customCtUrl('myapp'));
   assert.deepEqual(res.body.custom, { label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: CUSTOM_SHA });
   assert.equal(res.body.shadows, undefined);
+});
+
+// Same as customScriptFetch, but the ProxmoxVE shadow probe hits -- used to
+// prove check-app's `shadows` field (research R6) reflects a real upstream
+// collision rather than always being empty/undefined the way the test above
+// exercises.
+function customScriptFetchWithStableShadow(slug: string): typeof fetch {
+  return (async (url: unknown) => {
+    const href = String(url);
+    if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/${slug}.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    // The ProxmoxVED shadow probe -- "not present" for this test.
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('GET /api/provisioning/install-app/check-app reports shadows for a slug present upstream', async () => {
+  const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
+  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), {
+    fetchImpl: customScriptFetchWithStableShadow('myapp'),
+  });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.exists, true);
+  assert.deepEqual(res.body.shadows, ['ProxmoxVE']);
 });
 
 test('GET /api/provisioning/install-app/check-app reports error and exists=false when the custom settings are half-configured', async () => {

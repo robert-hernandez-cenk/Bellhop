@@ -117,6 +117,21 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 /* Informational, not a warning (issue #160) -- an app with its own read prompts is ordinary, it just means the operator has to stay on the page. */
 .app-prompts-notice { margin-top: 6px; font-size: 13px; color: var(--text-secondary); }
 .app-prompts-notice-list { margin: 4px 0 0; padding-left: 20px; }
+/* issue #11: a resolved custom-script-repository app -- informational, same
+   treatment as .app-prompts-notice (neutral, not a warning: installing from
+   a configured custom repository is expected behavior, not a surprise). */
+.app-custom-notice { margin-top: 6px; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+/* issue #11 (research R6): a custom-repository install that shadows an
+   upstream copy of the same slug -- same warning treatment as
+   .dev-app-warning (--warning is unchanged in dark mode, see :root[data-theme='dark']
+   above, so this already reads correctly in both themes with no extra rule),
+   plus overflow-wrap so a long repo label + shadow list wraps instead of
+   overflowing the field at mobile widths (<=640px). */
+.custom-override-warning { background: var(--warning); color: #1d1d1f; padding: 8px 12px; border-radius: 6px; margin-top: 6px; font-size: 13px; overflow-wrap: anywhere; }
+/* A resolution failure (bad customScriptsRepo/Branch, GitHub unreachable) --
+   colored like the status badge's own check-missing (var(--error)), shown
+   as its own line under the field rather than only the red ✗ badge. */
+.app-check-error { margin-top: 6px; font-size: 13px; color: var(--error); overflow-wrap: anywhere; }
 .prompt-banner { background: var(--warning); color: #1d1d1f; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
 .prompt-banner-text { font-weight: 600; margin-bottom: 4px; }
 .prompt-banner-hint { font-size: 13px; opacity: 0.8; margin-bottom: 10px; }

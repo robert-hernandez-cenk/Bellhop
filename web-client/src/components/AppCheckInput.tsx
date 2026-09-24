@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiGet } from '../api/client';
-import type { AppDefaults } from '../api/types';
+import type { AppCheckResponse, AppDefaults } from '../api/types';
 
 export type CheckStatus = 'idle' | 'checking' | 'ok' | 'missing';
 
@@ -63,6 +63,20 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
   // babysitting before they click Apply, rather than discovering it when the
   // job pauses several minutes in.
   const [scriptPrompts, setScriptPrompts] = useState<string[]>([]);
+  // Set when the resolved source is the operator-configured custom script
+  // repository (issue #11, research R5/R8) -- the repo@branch label and the
+  // pinned commit's short SHA, shown so the operator knows exactly what
+  // Apply will install from.
+  const [custom, setCustom] = useState<{ label: string; sha: string } | undefined>(undefined);
+  // Non-empty only for a custom resolution that also shadows an upstream
+  // copy of the same slug (research R6) -- the ProxmoxVE/ProxmoxVED names
+  // whose install this overrides.
+  const [shadows, setShadows] = useState<string[]>([]);
+  // Set when resolving --app itself threw (a misconfigured
+  // customScriptsRepo/customScriptsBranch, or GitHub unreachable) -- shown
+  // under the field, with the status left 'missing' the same as any other
+  // non-existent app.
+  const [checkError, setCheckError] = useState<string | undefined>(undefined);
   const [catalog, setCatalog] = useState<Catalog>({ stable: [], dev: [] });
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -95,6 +109,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       onStatusChange('idle');
       setDevWarning(false);
       setScriptPrompts([]);
+      setCustom(undefined);
+      setShadows([]);
+      setCheckError(undefined);
       return;
     }
     // Mirror resolveAppUrl's own bare-slug-vs-URL split: a bare slug gets
@@ -108,18 +125,22 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
     lastCheckedRef.current = normalized;
     onStatusChange('checking');
     try {
-      const res = await apiGet<{ exists: boolean; defaults?: AppDefaults; dev?: boolean; prompts?: string[] }>(
-        `${checkEndpoint}?value=${encodeURIComponent(normalized)}`
-      );
+      const res = await apiGet<AppCheckResponse>(`${checkEndpoint}?value=${encodeURIComponent(normalized)}`);
       onStatusChange(res.exists ? 'ok' : 'missing');
       setDevWarning(!!res.dev);
       setScriptPrompts(res.exists ? res.prompts ?? [] : []);
+      setCustom(res.exists ? res.custom : undefined);
+      setShadows(res.exists ? res.shadows ?? [] : []);
+      setCheckError(res.error);
       if (res.exists && res.defaults) onDefaults?.(res.defaults);
       if (res.exists && !normalized.includes('://')) onExists?.(normalized);
     } catch {
       onStatusChange('missing');
       setDevWarning(false);
       setScriptPrompts([]);
+      setCustom(undefined);
+      setShadows([]);
+      setCheckError(undefined);
     }
   };
 
@@ -201,6 +222,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
           onStatusChange('idle');
           setDevWarning(false);
           setScriptPrompts([]);
+          setCustom(undefined);
+          setShadows([]);
+          setCheckError(undefined);
           setOpen(true);
           setActiveIndex(-1);
         }}
@@ -241,6 +265,17 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
             </li>
           )}
         </ul>
+      )}
+      {checkError && <div className="app-check-error">{checkError}</div>}
+      {custom && (
+        <div className="app-custom-notice">
+          Installing from the custom script repository {custom.label} (commit {custom.sha.slice(0, 7)}).
+        </div>
+      )}
+      {shadows.length > 0 && custom && (
+        <div className="custom-override-warning">
+          This installs your custom copy from {custom.label}, overriding the upstream copy in {shadows.join(', ')}.
+        </div>
       )}
       {devWarning && (
         <div className="dev-app-warning">

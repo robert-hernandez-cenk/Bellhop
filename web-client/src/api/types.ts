@@ -24,6 +24,26 @@ export interface AppDefaults {
   port?: number;
 }
 
+// GET /api/provisioning/install-app/check-app's (and the same-shaped
+// update-app check's) full response -- issue #11's custom/shadows/error
+// fields (see checkAppUrl, src/operations/app-check.ts) alongside the
+// fields AppCheckInput already read before this feature existed.
+// `custom`/`shadows` are only ever present on a resolution that hit the
+// operator-configured custom script repository; `error` is only ever
+// present when resolving --app itself threw (a misconfigured
+// customScriptsRepo/customScriptsBranch, or GitHub unreachable), in which
+// case `exists` is false and there is no url/defaults/prompts to show.
+export interface AppCheckResponse {
+  exists: boolean;
+  url: string;
+  dev?: boolean;
+  defaults?: AppDefaults;
+  prompts?: string[];
+  custom?: { label: string; sha: string };
+  shadows?: string[];
+  error?: string;
+}
+
 export interface FieldDef {
   name: string;
   label: string;

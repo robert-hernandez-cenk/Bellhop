@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PROVISIONING_OPERATIONS } from '../../src/operations/provisioning.ts';
+import { UPSTREAM_STABLE_BASE } from '../../src/lib/app-source.ts';
 import { PROVISIONING_COMMANDS } from '../../src/web/commands-meta.ts';
 import { parseOperationInput, previewAndEnqueue } from '../../src/operations/core.ts';
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
@@ -156,7 +157,10 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
     }
     if (href === customCtUrl('myapp')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     if (href === customInstallUrl('myapp')) return new Response('no prompts here\n', { status: 200 });
-    // Upstream shadow probes -- "not present" for this test.
+    // T016 (US2): the ProxmoxVE shadow probe hits, so the resolved source
+    // shadows an upstream copy and the R6 override warning is emitted --
+    // the ProxmoxVED shadow probe still "not present" (falls through below).
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/myapp.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
 
@@ -170,8 +174,23 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   };
 
   const op = PROVISIONING_OPERATIONS['install-app'];
-  const { jobId } = await previewAndEnqueue(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }, d, jobRunner, {});
+  const { jobId, preview } = await previewAndEnqueue(
+    op,
+    { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' },
+    d,
+    jobRunner,
+    {}
+  );
   assert.equal(headShaCalls, 1, 'resolveHeadSha should run exactly once, during preview');
+
+  // T016 (US2): the R6 override warning is logged before anything else
+  // runInstallApp prints during preview, so it must lead the preview text
+  // previewAndEnqueue returns -- which is also what enqueue() logs first
+  // into the job log under its own "----- dry-run preview -----" header.
+  assert.match(
+    preview,
+    /^\[WARN\s+\S+ \S+\] "myapp" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\./
+  );
 
   await waitForJobFinished(jobStore, jobId);
   assert.equal(jobStore.get(jobId)!.status, 'success');

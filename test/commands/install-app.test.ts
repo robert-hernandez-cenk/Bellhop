@@ -714,6 +714,42 @@ test('runInstallApp throws a resolution failure before any pct/install exec is r
   assert.equal(ssh.history.length, 0, 'no pct/install exec should have been recorded');
 });
 
+// T016 (US2): the R6 override warning must be the first thing a dry run
+// prints -- runInstallApp logs it via logWarn before resolveMid/
+// checkVmidAvailable/anything else, so it must be the very first captured
+// console line when the resolved source shadows an upstream copy.
+test('runInstallApp logs the R6 override warning as the first console line when the custom source shadows an upstream copy', async () => {
+  const slug = 'myapp';
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === shadowUrl(UPSTREAM_DEV_BASE, slug)) return new Response(null, { status: 404 });
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+  console.error = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+  try {
+    await runInstallApp(
+      { host: 'pve1', mid: 4, app: slug, hostname: slug, fetchImpl },
+      { ssh: new FakeSSHClient(defaultResponder), inventory: inventoryWithCustomSource }
+    );
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+  assert.ok(lines.length > 0, 'expected the override warning to be logged');
+  assert.match(
+    lines[0],
+    /^\[WARN\s+\S+ \S+\] "myapp" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\.$/
+  );
+});
+
 test('runInstallApp uses a passed-in opts.source without ever calling fetch', async () => {
   const ssh = new FakeSSHClient(defaultResponder);
   const throwingFetch = (async () => {
