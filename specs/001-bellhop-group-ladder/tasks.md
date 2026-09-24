@@ -75,7 +75,7 @@ None. The change has no shared prerequisite beyond Setup.
 
 **Independent Test**: `authentikConfig({ AUTHENTIK_GROUP_LADDER: '<old ladder>' }).groupLadder` returns the old names in order.
 
-- [ ] T012 [US2] In `test/lib/authentik-config.test.ts`, add a test that `authentikConfig({ AUTHENTIK_GROUP_LADDER: 'homelab-app-users-open,homelab-app-users,homelab-users,authentik Admins' }).groupLadder` deep-equals those four names in that order, with a one-line comment that this is the documented upgrade path for a deployment on the pre-rename default. No source change is expected; run `npm test` and confirm it passes.
+- [x] T012 [US2] In `test/lib/authentik-config.test.ts`, add a test that `authentikConfig({ AUTHENTIK_GROUP_LADDER: 'homelab-app-users-open,homelab-app-users,homelab-users,authentik Admins' }).groupLadder` deep-equals those four names in that order, with a one-line comment that this is the documented upgrade path for a deployment on the pre-rename default. No source change is expected; run `npm test` and confirm it passes.
 
 **Checkpoint**: The keep-old-names upgrade path is pinned by a test.
 
@@ -87,8 +87,8 @@ None. The change has no shared prerequisite beyond Setup.
 
 **Independent Test**: The new test below passes without any source change beyond T003.
 
-- [ ] T013 [US3] In `test/commands/sync-authentik.test.ts`, add a test next to "runSyncAuthentik never deletes an existing Application whose authGroup went off-ladder" (line ~491), modeled on it, that uses the default ladder (no `AUTHENTIK_GROUP_LADDER` override) and a guest with `authGroup: 'homelab-users'` plus an existing proxy-backed Application for its slug. Run with `apply: true` and assert: `result.offLadder` equals `[{ slug: '<slug>', authGroup: 'homelab-users' }]`; no Application, Provider, or binding delete call is made; no binding create call is made for that Application. Name it so it reads as the upgrade case, e.g. "an entry still on a pre-rename default rung is reported off-ladder and its Application is kept".
-- [ ] T014 [US3] In `test/lib/inventory.test.ts`, add a test that `saveInventory` then `loadInventory` round-trips a guest with `authGroup: 'homelab-users'` unchanged with `AUTHENTIK_GROUP_LADDER` unset, proving the inventory still loads and the stored tier is not rewritten (FR-004, FR-005). Place it next to the existing authGroup round-trip test (line ~438).
+- [x] T013 [US3] In `test/commands/sync-authentik.test.ts`, add a test next to "runSyncAuthentik never deletes an existing Application whose authGroup went off-ladder" (line ~491), modeled on it, that uses the default ladder (no `AUTHENTIK_GROUP_LADDER` override) and a guest with `authGroup: 'homelab-users'` plus an existing proxy-backed Application for its slug. Run with `apply: true` and assert: `result.offLadder` equals `[{ slug: '<slug>', authGroup: 'homelab-users' }]`; no Application, Provider, or binding delete call is made; no binding create call is made for that Application. Name it so it reads as the upgrade case, e.g. "an entry still on a pre-rename default rung is reported off-ladder and its Application is kept".
+- [x] T014 [US3] In `test/lib/inventory.test.ts`, add a test that `saveInventory` then `loadInventory` round-trips a guest with `authGroup: 'homelab-users'` unchanged with `AUTHENTIK_GROUP_LADDER` unset, proving the inventory still loads and the stored tier is not rewritten (FR-004, FR-005). Place it next to the existing authGroup round-trip test (line ~438).
 
 **Checkpoint**: The skipped-upgrade-step behavior is pinned by tests.
 

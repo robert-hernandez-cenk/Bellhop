@@ -509,6 +509,47 @@ test('runSyncAuthentik never deletes an existing Application whose authGroup wen
   assert.deepEqual(authentik.listPolicyBindingsForTest(), beforeBindings, 'its bindings must be untouched too');
 });
 
+// Upgrade path (issue #8): an operator who skipped the documented upgrade
+// step still has an entry gated at a pre-rename default rung name
+// ('homelab-users'), with a real proxy-backed Application already created
+// under the old default. The current default ladder no longer has that
+// name on it (no AUTHENTIK_GROUP_LADDER override here), so this must be
+// reported off-ladder and left exactly as it was, the same way any other
+// off-ladder entry's existing Application is left alone.
+test('an entry still on a pre-rename default rung is reported off-ladder and its Application is kept', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const provider = await authentik.createProxyProvider({
+    name: 'sonarr',
+    externalHost: 'https://sonarr.example.com',
+    authorizationFlowId: 'flow-1',
+    invalidationFlowId: 'flow-2',
+  });
+  const app = await authentik.createApplication({ name: 'sonarr', slug: 'sonarr', providerId: provider.id });
+  authentik.seedPolicyBindingForTest({ targetId: app.pk, groupId: 'pre-rename-homelab-users-group-id' });
+
+  const beforeApps = await authentik.listApplications();
+  const beforeProviders = await authentik.listProxyProviders();
+  const beforeBindings = authentik.listPolicyBindingsForTest();
+
+  const preRename: Inventory = {
+    ...gatedInventory,
+    guests: gatedInventory.guests.map((g) => (g.name === 'sonarr' ? { ...g, authGroup: 'homelab-users' } : g)),
+  };
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: preRename });
+
+  assert.deepEqual(result.offLadder, [{ slug: 'sonarr', authGroup: 'homelab-users' }]);
+  assert.deepEqual(result.toCreate, [], 'an off-ladder entry is never created');
+  assert.deepEqual(result.toRemove, [], "an off-ladder entry's existing Application is not a removal candidate");
+  assert.deepEqual(await authentik.listApplications(), beforeApps, 'the pre-rename Application must be kept, not deleted');
+  assert.deepEqual(await authentik.listProxyProviders(), beforeProviders, 'its Provider must be kept too');
+  assert.deepEqual(
+    authentik.listPolicyBindingsForTest(),
+    beforeBindings,
+    'no binding create or delete call is made for it'
+  );
+});
+
 test('runSyncAuthentik dry-run reports missing rungs and off-ladder entries without writing anything', async () => {
   const authentik = new FakeAuthentikClient();
   await authentik.createGroup(USERS_RUNG);

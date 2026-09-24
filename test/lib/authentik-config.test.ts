@@ -66,6 +66,18 @@ test('authentikConfig defaults groupLadder to the four-rung bellhop ladder', () 
   ]);
 });
 
+test('authentikConfig honors an explicit pre-rename ladder unchanged (documented upgrade path)', () => {
+  const config = authentikConfig({
+    AUTHENTIK_GROUP_LADDER: 'homelab-app-users-open,homelab-app-users,homelab-users,authentik Admins',
+  });
+  assert.deepEqual(config.groupLadder, [
+    'homelab-app-users-open',
+    'homelab-app-users',
+    'homelab-users',
+    'authentik Admins',
+  ]);
+});
+
 test('authentikConfig parses AUTHENTIK_GROUP_LADDER, trimming and preserving order', () => {
   const config = authentikConfig({ AUTHENTIK_GROUP_LADDER: ' low , mid ,high ' });
   assert.deepEqual(config.groupLadder, ['low', 'mid', 'high']);

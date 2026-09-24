@@ -449,6 +449,26 @@ test('saveInventory/loadInventory round-trips authGroup and authentik on a host 
   assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.authGroup, 'bellhop-users');
 });
 
+// Upgrade path (issue #8): a guest stored under a pre-rename default rung
+// name ('homelab-users') must still round-trip unchanged with no
+// AUTHENTIK_GROUP_LADDER override -- the rename never rewrites, migrates,
+// or otherwise touches an already-stored authGroup value (FR-004), and the
+// inventory must still load successfully even though that name is no
+// longer on the active default ladder (FR-005).
+test('saveInventory/loadInventory round-trips a pre-rename authGroup unchanged with no ladder override', () => {
+  const dest = tempInventoryDb();
+  const inv = loadInventory(dest);
+  const updated: Inventory = {
+    ...inv,
+    hosts: inv.hosts.map((h) => (h.name === 'pve1' ? { ...h, authentik: true, ip: '192.168.1.5' } : h)),
+    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, authGroup: 'homelab-users' } : g)),
+  };
+  saveInventory(dest, updated);
+
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.authGroup, 'homelab-users');
+});
+
 test('saveInventory/loadInventory round-trips unauthenticatedPaths on a host, a guest, and an external site', () => {
   const dest = tempInventoryDb();
   const inv = loadInventory(dest);
