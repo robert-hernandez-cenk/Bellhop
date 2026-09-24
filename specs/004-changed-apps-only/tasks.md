@@ -10,7 +10,7 @@
 
 ## Phase 1: Setup
 
-- [x] T001 Confirm the worktree builds before changes: run `npm run typecheck` and `npm test` from `C:\Users\rcher\Dev\Bellhop-Worktrees\issue-15-changed-apps-only` and record the baseline pass count
+- [x] T001 Confirm the worktree builds before changes: run `npm run typecheck` and `npm test` from the worktree root and record the baseline pass count
 
 ## Phase 2: Foundational (blocks all stories)
 
