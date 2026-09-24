@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet, apiPost } from '../api/client';
-import type { HostEntry, GuestEntry, GuestStatusResponse } from '../api/types';
+import type { HostEntry, GuestEntry, GuestStatusResponse, CustomScripts } from '../api/types';
 import { ExternalLink } from '../components/ExternalLink';
 import { PageDescription } from '../components/PageDescription';
 import { IconPackage, IconUpdate } from '../components/icons';
@@ -12,16 +12,20 @@ export function UpdatePage() {
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [guests, setGuests] = useState<GuestEntry[]>([]);
   const [domain, setDomain] = useState('');
+  const [customScripts, setCustomScripts] = useState<CustomScripts | null>(null);
   const [filter, setFilter] = useState('');
   const [statuses, setStatuses] = useState<Record<string, 'running' | 'stopped'>>({});
   const [triggering, setTriggering] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string }>('/inventory').then((data) => {
+    apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string; customScripts: CustomScripts | null }>(
+      '/inventory'
+    ).then((data) => {
       setHosts(data.hosts);
       setGuests(data.guests);
       setDomain(data.domain);
+      setCustomScripts(data.customScripts);
     });
     apiGet<GuestStatusResponse>('/guests/status').then((data) => {
       setStatuses(data.statuses);
@@ -118,7 +122,9 @@ export function UpdatePage() {
       <div className="update-card-grid">
         {filtered.map((g) => {
           const service = caddyUrl(g, domain);
-          const app = communityScriptsUrl(g);
+          const app = communityScriptsUrl(g, customScripts);
+          const appLinkLabel =
+            g.appSource === 'custom' && customScripts ? `Open ${g.app} in ${customScripts.repo}` : `Open ${g.app} on community-scripts`;
           const stopped = statuses[g.name] !== 'running';
           const busy = triggering === g.name;
           return (
@@ -131,7 +137,7 @@ export function UpdatePage() {
                 {g.app && (
                   <span className="app-cell">
                     {g.app}
-                    {app && <ExternalLink href={app} label={`Open ${g.app} on community-scripts`} />}
+                    {app && <ExternalLink href={app} label={appLinkLabel} />}
                   </span>
                 )}
               </div>

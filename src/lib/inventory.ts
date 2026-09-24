@@ -124,6 +124,17 @@ export const GuestEntrySchema = z.object({
   // an `app` key at all. Drives the Dashboard's community-scripts quick-open
   // link; undefined for any guest not created via install-app.
   app: z.string().optional(),
+  // Set only by the web/MCP install-app apply path (never the CLI, which
+  // never touches inventory at all -- see the `app` comment above) when the
+  // resolved AppSource.kind was 'custom' (src/lib/app-source.ts) -- i.e. this
+  // guest's `app` slug was actually installed from the operator-configured
+  // customScriptsRepo/customScriptsBranch, not from upstream
+  // ProxmoxVE/ProxmoxVED. Preserved across a repeat apply for the same
+  // host+vmid the same way `app` is (upsertGuestEntry in
+  // src/operations/provisioning.ts), and never touched by sync-inventory's
+  // merge. Drives the Dashboard/Update page's "open on GitHub" link instead
+  // of the plain community-scripts.org one -- see research R8.
+  appSource: z.literal('custom').optional(),
   // Marks this guest as a VPN gateway for a provider -- any number of
   // guests may share the same value (e.g. two 'nordvpn' gateways in
   // different regions). Set by deploy-vpn-gateway --apply on the guest it
@@ -341,6 +352,7 @@ function openInventoryDb(path: string): Database.Database {
   ensureColumn(db, 'external_sites', 'unauthenticated_paths_json', 'unauthenticated_paths_json TEXT');
   ensureColumn(db, 'hosts', 'ssh_port', 'ssh_port INTEGER');
   ensureColumn(db, 'hosts', 'ssh_identity_file', 'ssh_identity_file TEXT');
+  ensureColumn(db, 'guests', 'app_source', 'app_source TEXT');
   // Must run after the auth_group ensureColumn calls above -- it writes
   // into that column before dropping the one it read from.
   for (const table of ['hosts', 'guests', 'external_sites']) {
@@ -548,6 +560,7 @@ interface GuestRow {
   caddy_manual: number | null;
   unprivileged: number | null;
   app: string | null;
+  app_source: string | null;
   vpn_gateway: string | null;
   vpn: string | null;
   unauthenticated_paths_json: string | null;
@@ -627,6 +640,7 @@ export function loadInventory(path: string): Inventory {
       caddyManual: row.caddy_manual ? true : undefined,
       unprivileged: row.unprivileged === null ? undefined : !!row.unprivileged,
       app: row.app ?? undefined,
+      appSource: (row.app_source ?? undefined) as 'custom' | undefined,
       vpnGateway: (row.vpn_gateway ?? undefined) as 'nordvpn' | 'pia' | undefined,
       vpn: row.vpn ?? undefined,
       unauthenticatedPaths: row.unauthenticated_paths_json ? JSON.parse(row.unauthenticated_paths_json) : undefined,
@@ -832,8 +846,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, caddy, caddy_manual, unprivileged, app, vpn_gateway, vpn, auth_group, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @caddy, @caddy_manual, @unprivileged, @app, @vpn_gateway, @vpn, @auth_group, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, caddy, caddy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, authentik, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @caddy, @caddy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @authentik, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -848,6 +862,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           caddy_manual: guest.caddyManual ? 1 : null,
           unprivileged: guest.unprivileged === undefined ? null : guest.unprivileged ? 1 : 0,
           app: guest.app ?? null,
+          app_source: guest.appSource ?? null,
           vpn_gateway: guest.vpnGateway ?? null,
           vpn: guest.vpn ?? null,
           auth_group: guest.authGroup ?? null,

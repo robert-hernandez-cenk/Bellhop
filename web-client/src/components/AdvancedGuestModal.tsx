@@ -6,19 +6,22 @@ import { EditableSubdomains } from './EditableSubdomains';
 import { EditableUnauthenticatedPaths } from './EditableUnauthenticatedPaths';
 import { EditableVpn } from './EditableVpn';
 import { ExternalLink } from './ExternalLink';
-import type { GuestEntry, HostEntry } from '../api/types';
+import type { GuestEntry, HostEntry, CustomScripts } from '../api/types';
 import { communityScriptsUrl } from '../lib/guest-display';
 
 interface Props {
   guest: GuestEntry;
   hosts: HostEntry[];
   guests: GuestEntry[];
+  customScripts: CustomScripts | null;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function AdvancedGuestModal({ guest, hosts, guests, onClose, onSaved }: Props) {
-  const appUrl = communityScriptsUrl(guest);
+export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClose, onSaved }: Props) {
+  const appUrl = communityScriptsUrl(guest, customScripts);
+  const appLinkLabel =
+    guest.appSource === 'custom' && customScripts ? `Open ${guest.app} in ${customScripts.repo}` : `Open ${guest.app} on community-scripts`;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -89,7 +92,7 @@ export function AdvancedGuestModal({ guest, hosts, guests, onClose, onSaved }: P
               {guest.app ? (
                 <span className="app-cell">
                   {guest.app}
-                  {appUrl && <ExternalLink href={appUrl} label={`Open ${guest.app} on community-scripts`} />}
+                  {appUrl && <ExternalLink href={appUrl} label={appLinkLabel} />}
                 </span>
               ) : (
                 '—'

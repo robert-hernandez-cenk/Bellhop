@@ -128,8 +128,21 @@ export interface GuestEntry {
   unauthenticatedPaths?: string[];
   caddy?: boolean;
   app?: string;
+  // 'custom' when this guest's `app` slug was actually installed from the
+  // operator-configured custom script repository (see CustomScripts below),
+  // not upstream ProxmoxVE/ProxmoxVED -- mirrors the server's appSource
+  // (src/lib/inventory.ts). Drives communityScriptsUrl's GitHub-blob link
+  // instead of the plain community-scripts.org one.
+  appSource?: 'custom';
   vpnGateway?: 'nordvpn' | 'pia';
   vpn?: string;
+}
+
+// GET /api/inventory's customScripts field -- null unless both
+// customScriptsRepo/customScriptsBranch settings are set (research R8).
+export interface CustomScripts {
+  repo: string;
+  branch: string;
 }
 
 export interface GuestStatusResponse {

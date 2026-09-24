@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PROVISIONING_OPERATIONS } from '../../src/operations/provisioning.ts';
-import { UPSTREAM_STABLE_BASE } from '../../src/lib/app-source.ts';
+import { UPSTREAM_STABLE_BASE, type AppSource } from '../../src/lib/app-source.ts';
 import { PROVISIONING_COMMANDS } from '../../src/web/commands-meta.ts';
 import { parseOperationInput, previewAndEnqueue } from '../../src/operations/core.ts';
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
@@ -205,5 +205,47 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   assert.ok(
     installCall!.command.includes(`export COMMUNITY_SCRIPTS_URL='${customScriptsBaseUrl}'`),
     `expected COMMUNITY_SCRIPTS_URL at the pinned SHA in: ${installCall!.command}`
+  );
+});
+
+// T025/T027: install-app's apply passes appSource: 'custom' into
+// recordProvisionedGuest only when the pinned resolution was actually
+// 'custom' (never for 'upstream'/'url'), and upsertGuestEntry must carry a
+// previously-recorded 'custom' provenance forward the same way it already
+// does for `app`/`port` -- a repeat apply for the same host+vmid that
+// happens to resolve upstream this time (e.g. the operator unset
+// customScriptsRepo/Branch) must not silently erase that history. appSource
+// is set directly on the parsed input here (mirroring what
+// previewAndEnqueue's own pin-once step does, covered end-to-end by the
+// test above) so this test can focus purely on op.apply's own upsert logic.
+test("install-app apply records appSource: 'custom' on the guest, and a repeat upstream apply for the same host+vmid keeps it", async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['install-app'];
+
+  const customSource: AppSource = {
+    kind: 'custom',
+    slug: 'myapp',
+    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA },
+    ctUrl: customCtUrl('myapp'),
+    scriptsBaseUrl: customScriptsBaseUrl,
+    shadows: [],
+  };
+  const firstInput = parseOperationInput(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }) as Record<string, any>;
+  firstInput.appSource = customSource;
+  await withCapturedConsole(() => op.apply(firstInput, d));
+
+  const afterFirst = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
+  assert.equal(afterFirst?.appSource, 'custom');
+
+  const upstreamSource: AppSource = { kind: 'upstream', slug: 'myapp', shadows: [] };
+  const secondInput = parseOperationInput(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }) as Record<string, any>;
+  secondInput.appSource = upstreamSource;
+  await withCapturedConsole(() => op.apply(secondInput, d));
+
+  const afterSecond = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
+  assert.equal(
+    afterSecond?.appSource,
+    'custom',
+    'a repeat upstream apply must not clobber the previously-recorded custom provenance'
   );
 });

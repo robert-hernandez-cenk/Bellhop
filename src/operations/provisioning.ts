@@ -37,13 +37,20 @@ function upsertGuestEntry(guests: GuestEntry[], entry: GuestEntry): GuestEntry[]
   // a repeat apply for the same host+vmid doesn't silently clobber a
   // previously-good app slug with undefined.
   const app = entry.app !== undefined ? entry.app : existing.app;
+  // Same reasoning as app: entry.appSource is undefined on every apply that
+  // isn't install-app itself (create-lxc/create-vm never set it) and on a
+  // repeat install-app apply for the same host+vmid that resolved upstream
+  // this time -- fall back to the existing recorded value so a guest that
+  // was previously recorded as custom-installed doesn't silently lose that
+  // provenance just because this particular apply didn't resolve custom.
+  const appSource = entry.appSource !== undefined ? entry.appSource : existing.appSource;
   // Same reasoning as port/app: entry.insecureBackendTls is undefined
   // whenever the create/install form's checkbox was left unchecked (or its
   // key omitted entirely, since an untouched checkbox never enters the
   // generic form's values object) -- fall back to whatever the existing
   // entry already had rather than silently clearing it on a repeat apply.
   const insecureBackendTls = entry.insecureBackendTls !== undefined ? entry.insecureBackendTls : existing.insecureBackendTls;
-  const merged: GuestEntry = { ...existing, ...entry, subdomains, port, app, insecureBackendTls };
+  const merged: GuestEntry = { ...existing, ...entry, subdomains, port, app, appSource, insecureBackendTls };
   return guests.map((g, i) => (i === idx ? merged : g));
 }
 
@@ -214,6 +221,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
         subdomains: parseSubdomains(i.subdomains),
         port: i.port ? parsePort(i.port) : undefined,
         app: appSlugFor(i.app),
+        appSource: i.appSource?.kind === 'custom' ? 'custom' : undefined,
         insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
       });
     },

@@ -153,6 +153,29 @@ test('saveInventory/loadInventory round-trip vpnGateway and vpn fields', () => {
   assert.equal(media?.vpn, 'nordvpn-gateway-lxc');
 });
 
+// issue #11: appSource round-trips through saveInventory/loadInventory the
+// same way `app` does -- set only by the web/MCP install-app apply path
+// (never by anything in src/lib/inventory.ts itself), but must survive a
+// plain save/load cycle like every other guest field.
+test('saveInventory/loadInventory round-trips appSource on a guest', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      { name: 'myapp-lxc', type: 'lxc', vmid: 4020, host: 'pve1', app: 'myapp', appSource: 'custom' },
+      { name: 'plex-lxc', type: 'lxc', vmid: 4021, host: 'pve1', app: 'plex' },
+    ],
+  };
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  const custom = loaded.guests.find((g) => g.name === 'myapp-lxc');
+  const upstream = loaded.guests.find((g) => g.name === 'plex-lxc');
+  assert.equal(custom?.appSource, 'custom');
+  assert.equal(upstream?.appSource, undefined, 'a guest with no appSource must round-trip as undefined, not null/custom');
+});
+
 test('saveInventory/loadInventory round-trips insecureBackendTls: false (not just true/unset) for hosts, guests, and external_sites', () => {
   const inv: Inventory = {
     domain: 'example.com',
@@ -634,6 +657,48 @@ test('opening a pre-existing database without the caddy_manual/ssh_port/ssh_iden
     '~/.ssh/pve_key',
     'the migrated ssh_identity_file column must actually be writable/readable'
   );
+});
+
+test('opening a pre-existing database without the app_source column migrates it in place', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  const legacyDb = new Database(dest);
+  legacyDb.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE hosts (
+      name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
+      caddy INTEGER NOT NULL DEFAULT 0,
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
+    );
+    CREATE TABLE guests (
+      name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
+      host TEXT NOT NULL REFERENCES hosts(name),
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      UNIQUE (host, vmid)
+    );
+    CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
+    CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+  `);
+  legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
+  legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
+  legacyDb
+    .prepare("INSERT INTO guests (name, type, vmid, host, app) VALUES ('myapp-lxc', 'lxc', 4020, 'pve1', 'myapp')")
+    .run();
+  legacyDb.close();
+
+  const inv = loadInventory(dest);
+  assert.equal(inv.guests[0].appSource, undefined, 'a pre-migration row has no app_source value');
+
+  const updated: Inventory = {
+    ...inv,
+    guests: inv.guests.map((g) => ({ ...g, appSource: 'custom' as const })),
+  };
+  saveInventory(dest, updated);
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.guests[0].appSource, 'custom', 'the migrated app_source column must actually be writable/readable');
 });
 
 test('sortInventoryForFile groups guests by host name, then type, then name', () => {

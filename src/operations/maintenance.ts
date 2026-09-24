@@ -74,12 +74,15 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
     shape: { guest: reqStr('Guest name'), app: reqStr('community-scripts app slug') },
     target: (i) => i.guest,
     targetType: 'guest',
+    resolvesApp: true,
     preview: async (i, deps) => {
-      const { text, result } = await withCapturedConsole(() => runUpdateApp({ ...(i as any), apply: false }, deps));
+      const { text, result } = await withCapturedConsole(() =>
+        runUpdateApp({ ...(i as any), apply: false, source: i.appSource, fetchImpl: deps.fetchImpl }, deps)
+      );
       return [text, result.script].filter(Boolean).join('\n');
     },
     apply: async (i, deps) => {
-      await runUpdateApp({ ...(i as any), apply: true }, deps);
+      await runUpdateApp({ ...(i as any), apply: true, source: i.appSource, fetchImpl: deps.fetchImpl }, deps);
     },
   },
   'sync-ssh-keys': {
