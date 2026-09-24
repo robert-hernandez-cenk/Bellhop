@@ -22,6 +22,7 @@ export interface AuthentikConfig {
   outpostPort: number;
   authorizationFlowSlug: string;
   invalidationFlowSlug: string;
+  oidcSigningKeyName: string;
 }
 
 const DEFAULT_ADMIN_GROUP = 'bellhop-admins';
@@ -30,6 +31,12 @@ const DEFAULT_OUTPOST_NAME = 'authentik Embedded Outpost';
 const DEFAULT_OUTPOST_PORT = 9000;
 const DEFAULT_AUTHORIZATION_FLOW_SLUG = 'default-provider-authorization-implicit-consent';
 const DEFAULT_INVALIDATION_FLOW_SLUG = 'default-invalidation-flow';
+
+// The Authentik certificate-keypair used to sign OIDC provider tokens
+// (native OIDC gating, issue #1). A stock Authentik install always has this
+// self-signed cert, so it's a safe default an operator overrides only when
+// they've deliberately set up their own signing key.
+const DEFAULT_OIDC_SIGNING_KEY_NAME = 'authentik Self-signed Certificate';
 
 // Ordered low (broadest audience) to high (narrowest). An entry's authGroup
 // names one rung; sync-authentik binds its Application to that rung and
@@ -74,6 +81,7 @@ export function authentikConfig(env: NodeJS.ProcessEnv = process.env): Authentik
     outpostPort: outpostPort(env),
     authorizationFlowSlug: str(env, 'AUTHENTIK_AUTHORIZATION_FLOW_SLUG', DEFAULT_AUTHORIZATION_FLOW_SLUG),
     invalidationFlowSlug: str(env, 'AUTHENTIK_INVALIDATION_FLOW_SLUG', DEFAULT_INVALIDATION_FLOW_SLUG),
+    oidcSigningKeyName: str(env, 'AUTHENTIK_OIDC_SIGNING_KEY_NAME', DEFAULT_OIDC_SIGNING_KEY_NAME),
   };
 }
 

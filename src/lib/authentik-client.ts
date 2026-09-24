@@ -44,6 +44,44 @@ export interface AuthentikApplication {
   name: string;
   slug: string;
   providerId?: string;
+  // Free-text field, set to 'bellhop' by sync-authentik/adopt-oidc-client to
+  // mark an OAuth2-provider-backed Application as Bellhop-owned (R1 in
+  // research.md) -- proxy-backed ownership keeps its older slug-plus-
+  // proxy-backing rule (issue #154) unchanged. Undefined for '' or absent,
+  // same convention as every other optional-string mapping in this file.
+  metaPublisher?: string;
+}
+
+// An OpenID Connect (OAuth2) provider -- native OIDC gating's counterpart to
+// AuthentikProxyProvider, issue #1. Deliberately WITHOUT client_id/
+// client_secret: the secret must only ever flow through
+// getOAuth2Credentials(), never sit on an object callers might log or cache.
+export interface AuthentikOAuth2Provider {
+  id: string;
+  name: string;
+  // Undefined when no Application points at this provider yet, or when
+  // Authentik reports it as '' -- same normalization every other optional
+  // slug/string field in this file gets.
+  assignedApplicationSlug?: string;
+  clientType: 'confidential' | 'public';
+  grantTypes: string[];
+  signingKeyId?: string;
+  propertyMappingIds: string[];
+  redirectUris: { matchingMode: 'strict' | 'regex'; url: string }[];
+}
+
+// The subset of AuthentikOAuth2Provider's fields Bellhop actually sets --
+// shared by createOAuth2Provider (plus `name`) and updateOAuth2Provider
+// (as a Partial), so create and reconcile-drift (research.md R4) build their
+// request bodies from the same shape.
+export interface OAuth2ProviderSettings {
+  clientType: 'confidential' | 'public';
+  grantTypes: string[];
+  signingKeyId?: string;
+  propertyMappingIds: string[];
+  redirectUris: { matchingMode: 'strict' | 'regex'; url: string }[];
+  authorizationFlowId: string;
+  invalidationFlowId: string;
 }
 
 export interface AuthentikOutpost {
@@ -89,7 +127,12 @@ export interface AuthentikClient {
   }): Promise<AuthentikProxyProvider>;
   deleteProxyProvider(id: string): Promise<void>;
   listApplications(): Promise<AuthentikApplication[]>;
-  createApplication(input: { name: string; slug: string; providerId: string }): Promise<AuthentikApplication>;
+  createApplication(input: {
+    name: string;
+    slug: string;
+    providerId: string;
+    metaPublisher?: string;
+  }): Promise<AuthentikApplication>;
   deleteApplication(id: string): Promise<void>;
   createPolicyBinding(input: { targetId: string; groupId: string }): Promise<void>;
   listPolicyBindings(): Promise<AuthentikPolicyBinding[]>;
@@ -98,6 +141,18 @@ export interface AuthentikClient {
   setOutpostProviders(outpostId: string, providerIds: string[]): Promise<void>;
   getDefaultAuthorizationFlowId(): Promise<string>;
   getDefaultInvalidationFlowId(): Promise<string>;
+  listOAuth2Providers(): Promise<AuthentikOAuth2Provider[]>;
+  createOAuth2Provider(input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider>;
+  updateOAuth2Provider(id: string, input: Partial<OAuth2ProviderSettings>): Promise<void>;
+  deleteOAuth2Provider(id: string): Promise<void>;
+  getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }>;
+  updateApplication(slug: string, input: { providerId?: string; metaPublisher?: string }): Promise<void>;
+  // Throws naming AUTHENTIK_OIDC_SIGNING_KEY_NAME when no key with that name
+  // and a private key exists (research.md R3).
+  getSigningKeyId(name: string): Promise<string>;
+  // Returns ids in the same order as the input `managed` list; throws naming
+  // the first missing managed id.
+  getScopeMappingIds(managed: string[]): Promise<string[]>;
 }
 
 interface RawUser {
@@ -128,6 +183,20 @@ interface RawApplication {
   slug: string;
   name: string;
   provider?: number | string | null;
+  meta_publisher?: string | null;
+}
+
+interface RawOAuth2Provider {
+  pk: number | string;
+  name: string;
+  assigned_application_slug?: string | null;
+  client_type: 'confidential' | 'public';
+  grant_types?: string[];
+  client_id?: string;
+  client_secret?: string;
+  signing_key?: string | null;
+  property_mappings?: string[];
+  redirect_uris?: Array<{ matching_mode: 'strict' | 'regex'; url: string }>;
 }
 
 interface RawOutpost {
@@ -287,16 +356,27 @@ export class RealAuthentikClient implements AuthentikClient {
       name: r.name,
       slug: r.slug,
       providerId: r.provider != null ? String(r.provider) : undefined,
+      metaPublisher: r.meta_publisher ? r.meta_publisher : undefined,
     }));
   }
 
-  async createApplication(input: { name: string; slug: string; providerId: string }): Promise<AuthentikApplication> {
-    const raw = await this.request<RawApplication>('POST', '/api/v3/core/applications/', {
-      name: input.name,
-      slug: input.slug,
-      provider: input.providerId,
-    });
-    return { id: raw.slug, pk: raw.pk, name: raw.name, slug: raw.slug, providerId: input.providerId };
+  async createApplication(input: {
+    name: string;
+    slug: string;
+    providerId: string;
+    metaPublisher?: string;
+  }): Promise<AuthentikApplication> {
+    const body: Record<string, unknown> = { name: input.name, slug: input.slug, provider: input.providerId };
+    if (input.metaPublisher !== undefined) body.meta_publisher = input.metaPublisher;
+    const raw = await this.request<RawApplication>('POST', '/api/v3/core/applications/', body);
+    return {
+      id: raw.slug,
+      pk: raw.pk,
+      name: raw.name,
+      slug: raw.slug,
+      providerId: input.providerId,
+      metaPublisher: input.metaPublisher,
+    };
   }
 
   async deleteApplication(id: string): Promise<void> {
@@ -393,6 +473,132 @@ export class RealAuthentikClient implements AuthentikClient {
     }
     return String(flow.pk);
   }
+
+  private toOAuth2Provider(raw: RawOAuth2Provider): AuthentikOAuth2Provider {
+    return {
+      id: String(raw.pk),
+      name: raw.name,
+      assignedApplicationSlug: raw.assigned_application_slug ? raw.assigned_application_slug : undefined,
+      clientType: raw.client_type,
+      grantTypes: raw.grant_types ?? [],
+      signingKeyId: raw.signing_key ?? undefined,
+      propertyMappingIds: (raw.property_mappings ?? []).map(String),
+      redirectUris: (raw.redirect_uris ?? []).map((r) => ({ matchingMode: r.matching_mode, url: r.url })),
+    };
+  }
+
+  // Same "don't silently ignore a truncated page" guard as listPolicyBindings
+  // -- a real deployment has one OAuth2 provider per OIDC-gated app, nowhere
+  // near this limit today, but a missed provider here would read as "not
+  // owned yet" and sync-authentik would try to create a duplicate.
+  async listOAuth2Providers(): Promise<AuthentikOAuth2Provider[]> {
+    const res = await this.request<{ count: number; results: RawOAuth2Provider[] }>(
+      'GET',
+      '/api/v3/providers/oauth2/?page_size=500'
+    );
+    if (res.count > res.results.length) {
+      throw new Error(
+        `Authentik returned ${res.results.length} of ${res.count} OAuth2 providers; pagination is not implemented`
+      );
+    }
+    return res.results.map((r) => this.toOAuth2Provider(r));
+  }
+
+  async createOAuth2Provider(input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider> {
+    const raw = await this.request<RawOAuth2Provider>('POST', '/api/v3/providers/oauth2/', {
+      name: input.name,
+      client_type: input.clientType,
+      grant_types: input.grantTypes,
+      signing_key: input.signingKeyId ?? null,
+      property_mappings: input.propertyMappingIds,
+      redirect_uris: input.redirectUris.map((r) => ({ matching_mode: r.matchingMode, url: r.url })),
+      authorization_flow: input.authorizationFlowId,
+      invalidation_flow: input.invalidationFlowId,
+    });
+    return this.toOAuth2Provider(raw);
+  }
+
+  // Sends only the fields actually given -- client_id/client_secret are
+  // never part of OAuth2ProviderSettings, so they can never be sent here
+  // even by mistake, which is what keeps a reconcile-drift PATCH (research.md
+  // R4) from ever rotating a client's credentials (FR-009).
+  async updateOAuth2Provider(id: string, input: Partial<OAuth2ProviderSettings>): Promise<void> {
+    const body: Record<string, unknown> = {};
+    if (input.clientType !== undefined) body.client_type = input.clientType;
+    if (input.grantTypes !== undefined) body.grant_types = input.grantTypes;
+    if (input.signingKeyId !== undefined) body.signing_key = input.signingKeyId;
+    if (input.propertyMappingIds !== undefined) body.property_mappings = input.propertyMappingIds;
+    if (input.redirectUris !== undefined) {
+      body.redirect_uris = input.redirectUris.map((r) => ({ matching_mode: r.matchingMode, url: r.url }));
+    }
+    if (input.authorizationFlowId !== undefined) body.authorization_flow = input.authorizationFlowId;
+    if (input.invalidationFlowId !== undefined) body.invalidation_flow = input.invalidationFlowId;
+    await this.request<void>('PATCH', `/api/v3/providers/oauth2/${id}/`, body);
+  }
+
+  async deleteOAuth2Provider(id: string): Promise<void> {
+    await this.request<void>('DELETE', `/api/v3/providers/oauth2/${id}/`);
+  }
+
+  // The only place a client secret is ever read -- callers must not cache
+  // this beyond the single request that needed it (FR-004).
+  async getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {
+    const [provider, setupUrls] = await Promise.all([
+      this.request<RawOAuth2Provider>('GET', `/api/v3/providers/oauth2/${id}/`),
+      this.request<{ issuer: string }>('GET', `/api/v3/providers/oauth2/${id}/setup_urls/`),
+    ]);
+    return {
+      clientId: provider.client_id ?? '',
+      clientSecret: provider.client_secret ?? '',
+      issuer: setupUrls.issuer,
+    };
+  }
+
+  async updateApplication(slug: string, input: { providerId?: string; metaPublisher?: string }): Promise<void> {
+    const body: Record<string, unknown> = {};
+    if (input.providerId !== undefined) body.provider = input.providerId;
+    if (input.metaPublisher !== undefined) body.meta_publisher = input.metaPublisher;
+    await this.request<void>('PATCH', `/api/v3/core/applications/${slug}/`, body);
+  }
+
+  async getSigningKeyId(name: string): Promise<string> {
+    const res = await this.request<{ results: Array<{ pk: string; name: string }> }>(
+      'GET',
+      `/api/v3/crypto/certificatekeypairs/?name=${encodeURIComponent(name)}&has_key=true`
+    );
+    const key = res.results[0];
+    if (!key) {
+      throw new Error(
+        `No Authentik signing key named '${name}' with a private key found ` +
+          '(set AUTHENTIK_OIDC_SIGNING_KEY_NAME to match your instance)'
+      );
+    }
+    return key.pk;
+  }
+
+  // Fetches every scope property mapping once and filters client-side by
+  // `managed` id, rather than one request per requested id -- research.md R2
+  // notes the three managed ids are looked up together on every sync run.
+  // Same truncated-page guard as listPolicyBindings/listOAuth2Providers:
+  // a mapping that fell past page 1 must not read as "missing" and abort
+  // an otherwise-healthy sync run.
+  async getScopeMappingIds(managed: string[]): Promise<string[]> {
+    const res = await this.request<{
+      count: number;
+      results: Array<{ pk: string; managed: string | null; scope_name: string }>;
+    }>('GET', '/api/v3/propertymappings/provider/scope/?page_size=100');
+    if (res.count > res.results.length) {
+      throw new Error(
+        `Authentik returned ${res.results.length} of ${res.count} scope property mappings; pagination is not implemented`
+      );
+    }
+    const byManaged = new Map(res.results.filter((r) => r.managed != null).map((r) => [r.managed as string, r.pk]));
+    return managed.map((m) => {
+      const id = byManaged.get(m);
+      if (!id) throw new Error(`No Authentik scope property mapping found for managed id '${m}'`);
+      return id;
+    });
+  }
 }
 
 export const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
@@ -455,7 +661,12 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
   listApplications(): Promise<AuthentikApplication[]> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
-  createApplication(_input: { name: string; slug: string; providerId: string }): Promise<AuthentikApplication> {
+  createApplication(_input: {
+    name: string;
+    slug: string;
+    providerId: string;
+    metaPublisher?: string;
+  }): Promise<AuthentikApplication> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   deleteApplication(_id: string): Promise<void> {
@@ -480,6 +691,30 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   getDefaultInvalidationFlowId(): Promise<string> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  listOAuth2Providers(): Promise<AuthentikOAuth2Provider[]> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  createOAuth2Provider(_input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  updateOAuth2Provider(_id: string, _input: Partial<OAuth2ProviderSettings>): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  deleteOAuth2Provider(_id: string): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  getOAuth2Credentials(_id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  updateApplication(_slug: string, _input: { providerId?: string; metaPublisher?: string }): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  getSigningKeyId(_name: string): Promise<string> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  getScopeMappingIds(_managed: string[]): Promise<string[]> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
 }

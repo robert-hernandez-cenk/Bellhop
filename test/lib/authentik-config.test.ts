@@ -10,6 +10,7 @@ test('authentikConfig defaults to the values this toolkit hardcoded before issue
   assert.equal(config.outpostPort, 9000);
   assert.equal(config.authorizationFlowSlug, 'default-provider-authorization-implicit-consent');
   assert.equal(config.invalidationFlowSlug, 'default-invalidation-flow');
+  assert.equal(config.oidcSigningKeyName, 'authentik Self-signed Certificate');
 });
 
 test('authentikConfig honors every override', () => {
@@ -20,6 +21,7 @@ test('authentikConfig honors every override', () => {
     AUTHENTIK_OUTPOST_PORT: '9100',
     AUTHENTIK_AUTHORIZATION_FLOW_SLUG: 'my-auth-flow',
     AUTHENTIK_INVALIDATION_FLOW_SLUG: 'my-invalidation-flow',
+    AUTHENTIK_OIDC_SIGNING_KEY_NAME: 'my-signing-key',
   });
   assert.equal(config.adminGroup, 'my-admins');
   assert.equal(config.builtinAdminGroup, 'superusers');
@@ -27,12 +29,18 @@ test('authentikConfig honors every override', () => {
   assert.equal(config.outpostPort, 9100);
   assert.equal(config.authorizationFlowSlug, 'my-auth-flow');
   assert.equal(config.invalidationFlowSlug, 'my-invalidation-flow');
+  assert.equal(config.oidcSigningKeyName, 'my-signing-key');
 });
 
 test('authentikConfig treats an empty string as unset', () => {
-  const config = authentikConfig({ AUTHENTIK_ADMIN_GROUP: '', AUTHENTIK_OUTPOST_PORT: '' });
+  const config = authentikConfig({
+    AUTHENTIK_ADMIN_GROUP: '',
+    AUTHENTIK_OUTPOST_PORT: '',
+    AUTHENTIK_OIDC_SIGNING_KEY_NAME: '',
+  });
   assert.equal(config.adminGroup, 'bellhop-admins');
   assert.equal(config.outpostPort, 9000);
+  assert.equal(config.oidcSigningKeyName, 'authentik Self-signed Certificate');
 });
 
 test('authentikConfig rejects a non-numeric outpost port, naming the variable', () => {
