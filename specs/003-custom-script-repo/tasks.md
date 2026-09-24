@@ -104,9 +104,9 @@
 
 - [x] T030 [P] Update `README.md`: the settings, resolution order, override warning, commit pinning, the `/usr/bin/update` pinning and community-scripts.org helper limitations (research R1), and that the fork must be public and VED-shaped
 - [x] T031 [P] Update `CLAUDE.md`: extend the `meta` settings list, the install-app/update-app bullet (custom source, `COMMUNITY_SCRIPTS_URL` export, pin-once in `previewAndEnqueue` via `resolvesApp`), the catalog paragraph (custom group, in-memory 5-minute TTL, why it isn't persisted), and the guest `app` field paragraph (`appSource`). Check `CONTRIBUTING.md` and change it only if a restated convention changed (none expected).
-- [ ] T032 Run `npm run typecheck`, `npm test`, and `npm run web:build`, and fix any failures
-- [ ] T033 Browser verification (constitution IV): run the web UI against a temp inventory with the settings on, and check at desktop width and at ≤640px, in light and dark theme: the Settings fields, the custom catalog group and override tag, the override banner, the custom notice, the error text, and the Dashboard/Update custom link
-- [ ] T034 Review the full branch diff for real operational data (constitution workflow gate): no real hostnames, IPs, fork names or tokens in code, tests, specs or commit messages
+- [x] T032 Run `npm run typecheck`, `npm test`, and `npm run web:build`, and fix any failures
+- [x] T033 Browser verification (constitution IV): run the web UI against a temp inventory with the settings on, and check at desktop width and at ≤640px, in light and dark theme: the Settings fields, the custom catalog group and override tag, the override banner, the custom notice, the error text, and the Dashboard/Update custom link
+- [x] T034 Review the full branch diff for real operational data (constitution workflow gate): no real hostnames, IPs, fork names or tokens in code, tests, specs or commit messages
 - [ ] T035 Live check (operator-approved, results recorded only in the PR description): a CLI dry run against the operator's real fork and branch shows the pinned commit and export line; if the operator approves, one `--apply` install of a fork-only app confirms the container ran the fork's install script
 
 ## Dependencies & Execution Order
