@@ -246,6 +246,54 @@ test('buildCaddyBlock throws when an authGroup entry exists but no authentik:tru
   assert.throws(() => buildCaddyBlock(inv), /'sonarr' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set/);
 });
 
+test('buildCaddyBlock emits a plain reverse proxy for an OIDC-mode entry, with no forward_auth/outpost/matcher even with unauthenticatedPaths set', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    guests: [
+      {
+        name: 'whisparr',
+        type: 'lxc',
+        vmid: 121,
+        host: 'pve1',
+        ip: '192.168.1.21',
+        subdomains: ['whisparr'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+        unauthenticatedPaths: ['/api/*'],
+      },
+    ],
+  };
+  const block = buildCaddyBlock(inv);
+  assert.match(
+    block,
+    /whisparr\.example\.com \{\n {4}reverse_proxy 192\.168\.1\.21:80 \{\n {8}header_up X-Forwarded-Port 443\n {4}\}\n {4}tls \{/
+  );
+  assert.doesNotMatch(block, /forward_auth/);
+  assert.doesNotMatch(block, /outpost\.goauthentik\.io/);
+  assert.doesNotMatch(block, /@auth_required/);
+});
+
+test('buildCaddyBlock does not require an authentik: true entry when the only gated entry is OIDC-mode', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    guests: [
+      {
+        name: 'sonarr',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.168.1.20',
+        subdomains: ['sonarr'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+      },
+    ],
+  };
+  assert.doesNotThrow(() => buildCaddyBlock(inv));
+});
+
 test('sync-caddy emits the configured Authentik outpost port', async () => {
   const original = process.env.AUTHENTIK_OUTPOST_PORT;
   process.env.AUTHENTIK_OUTPOST_PORT = '9100';

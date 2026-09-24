@@ -1,5 +1,6 @@
 import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
+import { effectiveAuth } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { authentikConfig } from '../../lib/authentik-config.ts';
 
@@ -29,6 +30,7 @@ interface CaddyTarget {
   insecureBackendTls?: boolean;
   caddyManual?: boolean;
   authGroup?: string;
+  authMode?: 'forward' | 'oidc';
   unauthenticatedPaths?: string[];
 }
 
@@ -45,7 +47,8 @@ export function buildCaddyBlock(inventory: Inventory): string {
     const subdomains = entry.subdomains ?? [];
     if (subdomains.length === 0) continue;
     const port = entry.port ?? 80;
-    if (entry.authGroup && !authentikEntry?.ip) {
+    const gatedForward = effectiveAuth(entry) === 'forward';
+    if (gatedForward && !authentikEntry?.ip) {
       throw new Error(
         `Entry '${entry.name}' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set`
       );
@@ -64,7 +67,7 @@ export function buildCaddyBlock(inventory: Inventory): string {
       lines.push('        }');
     }
     lines.push('    }');
-    if (entry.authGroup) {
+    if (gatedForward) {
       const outpostAddr = `${authentikEntry!.ip}:${outpostPort}`;
       const exemptPaths = entry.unauthenticatedPaths ?? [];
       if (exemptPaths.length > 0) {
