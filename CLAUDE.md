@@ -101,7 +101,32 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   rung of an ordered Authentik group ladder (`AUTHENTIK_GROUP_LADDER`, see
   the `sync-authentik` bullet below) and gates that entry's subdomain(s)
   behind Authentik forward-auth at that tier; absent means ungated, the
-  same semantics `requiresAuth: false` used to have. `sync-authentik`
+  same semantics `requiresAuth: false` used to have.
+  `authMode` (optional, hosts/guests/external_sites, issue #1) names *how*
+  a gated entry's tier is enforced: `forward` (absent means this, the
+  original behavior) puts Caddy's `forward_auth` in front of it, addressed
+  at whichever entry has `authentik: true`; `oidc` instead gives the entry
+  its own Authentik OpenID Connect client, so the app itself checks the
+  login rather than Caddy. Every consumer (`buildCaddyBlock`,
+  `sync-authentik`, the Dashboard's edit-confirmation rule) reads
+  `effectiveAuth(entry)` (returns `'ungated' | 'forward' | 'oidc'`) rather
+  than `authMode` directly, since `authMode` is meaningless without
+  `authGroup` -- an unset `authGroup` is always `'ungated'` regardless of
+  what `authMode` holds, and `effectiveAuth()` is the one place that
+  fold-in happens, so no two consumers can disagree about which mode an
+  entry is actually in. `oidcRedirectUris` (optional,
+  same three entry types) is the list of absolute `http://`/`https://`
+  callback addresses Authentik's OpenID client is allowed to send a
+  signed-in user back to; required once `effectiveAuth()` is `'oidc'` and
+  the entry has `subdomains` (`oidcConfigErrors`, enforced only from
+  `commitGuestEdit` -- `src/operations/edit-guest.ts`, shared by the
+  Dashboard's guest-PATCH route and the MCP server's `edit_guest` tool --
+  rather than from `validateInventory()` itself, so an unrelated load of an
+  already-saved inventory, or a host/external-site row hand-edited straight
+  into `bellhop.db`, never fails over it). Neither field is synced away
+  when the other changes: switching `authMode` back to `forward` leaves
+  `oidcRedirectUris` in place, inert, in case the entry switches back.
+  `sync-authentik`
   creates/deletes the matching Authentik Proxy Provider and Application,
   and binds it to the named rung **and every rung above it** (Authentik's
   Applications default to `policy_engine_mode: any`, so the bindings OR
@@ -110,7 +135,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   not via a separate check. The old auto-created `homelaboratory-app-users`
   group and the separate builtin-admin OR-check (which had mirrored this
   app's own admin-gating OR-check from issue #86) are both gone, replaced
-  by the top rung. `sync-caddy` emits
+  by the top rung. This description covers `authMode: 'forward'` (or
+  unset) -- see the `sync-authentik` bullet below for what an entry in
+  `authMode: 'oidc'` gets instead of a Proxy Provider. `sync-caddy` emits
   the `forward_auth` directive addressed at
   whichever entry has `authentik: true` (mirrors `caddy: true`'s
   single-entry role, marking which host/guest actually runs the Authentik
@@ -450,7 +477,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   gated entry is otherwise byte-identical to before issue #158 introduced
   the group ladder -- which *tier* an entry sits at is enforced entirely by
   Authentik's policy bindings (see `sync-authentik` below), never by Caddy,
-  so `forward_auth` itself doesn't vary by rung.
+  so `forward_auth` itself doesn't vary by rung. That whole
+  `forward_auth`/`@auth_required`/outpost-passthrough stanza is gated on
+  `effectiveAuth(entry) === 'forward'` (`gatedForward`, from
+  `src/lib/inventory.ts` -- native OIDC gating, issue #1): an entry whose
+  `authMode` is `'oidc'` gets the same unconditional `reverse_proxy` block
+  every entry gets and nothing else -- no `forward_auth` check, no outpost
+  passthrough, and no `@auth_required` path-exemption matcher at all.
+  `unauthenticatedPaths` on an OIDC-mode entry is therefore inert the same
+  way it already is on an ungated one, since there is no `forward_auth` to
+  exempt anything from -- the app's own login is the only check in front of
+  it. `buildCaddyBlock`'s `authentikEntry?.ip` guard (the error thrown
+  when a gated entry has no `authentik: true` host/guest to address) only
+  fires for a forward-mode entry too, for the same reason: an OIDC-mode
+  entry never needs the outpost's address at all.
 - **`sync-authentik`**
   (`src/commands/networking/sync-authentik.ts`) is `sync-caddy`'s
   counterpart for the Authentik side of issue #80's per-app forward-auth:
@@ -549,6 +589,128 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   ownership rule and is left behind while a new one is created under the
   new slug -- delete the old Provider/Application in Authentik by hand.
   See `candidateEntries`'s comment in `sync-authentik.ts`.
+
+  **Native OIDC gating** (issue #1) extends this same command to the other
+  `authMode`: for an entry where `effectiveAuth()` is `'oidc'`,
+  `sync-authentik` creates/maintains an Authentik OAuth2/OpenID Provider
+  and Application in place of the Proxy Provider/Application a forward-mode
+  entry gets, bound to the same rung-and-above rule via the same
+  `planBindingChanges` (exported, and shared with `adopt-oidc-client.ts` --
+  see below) -- but never added to the forward-auth outpost, since an OIDC
+  entry's app is reached directly, not through Caddy's `forward_auth`.
+  Ownership of an OAuth2-backed Application needs more than the #154
+  slug-match rule a Proxy-backed one needs: `ownedProviderKind` (exported)
+  only recognizes it as Bellhop's when its provider also carries
+  `meta_publisher: 'bellhop'` (`BELLHOP_META_PUBLISHER`) -- a hand-made
+  OpenID client sharing an entry's slug is therefore never a false match,
+  unlike a Proxy Provider, which stays owned by slug alone regardless of
+  marker (the unchanged #154 rule, kept so an Application created before
+  the marker existed is still recognized). Because it now lists OAuth2
+  Providers on every run (to compute ownership even for a run with no OIDC
+  entries), the Authentik API token in `data/authentik.env` needs a few
+  scopes forward-auth-only gating never required: read/write on OAuth2/
+  OpenID Providers, read on certificate-keypairs and scope/property
+  mappings, and update on Applications -- see README's "OIDC mode" section.
+  The OpenID client itself is confidential, explicitly permits the
+  authorization-code + refresh-token grant types (`OIDC_GRANT_TYPES` --
+  Authentik silently stores `[]` and rejects every authorize request if
+  this isn't sent explicitly on create, research.md R2), signs tokens with
+  the certificate-keypair named `AUTHENTIK_OIDC_SIGNING_KEY_NAME`
+  (`authentik-config.ts`, default `'authentik Self-signed Certificate'` --
+  a stock Authentik install always has this self-signed cert, so it's a
+  safe single-operator default an operator overrides only after
+  deliberately setting up their own signing key), and releases the fixed
+  `openid`/`profile`/`email` scope mappings (`OIDC_SCOPE_MAPPINGS`, looked
+  up by Authentik's stable `managed` identifier rather than display name,
+  since names are editable). Both the signing key and the scope mappings
+  are resolved once per run, only when some entry actually has redirect
+  URIs to act on, and either failing skips every such entry
+  (`missing-signing-key`/`missing-scope-mapping`, in `oidcSkipped`) with a
+  named, actionable reason while forward-mode entries in the same run carry
+  on (FR-015) -- an entry with no `oidcRedirectUris` at all is skipped the
+  same way (`missing-redirect-uris`), and is never PATCHed down to an empty
+  callback list even if it once had one, since that would lock a working
+  login out rather than merely leave it incomplete. `diffOAuth2Settings`
+  compares an existing Provider's redirect URIs (as a set of
+  `(matchingMode, url)` pairs), grant types, scope-mapping ids, signing
+  key, and client type against the desired shape (research.md R4) and
+  returns only the drifted Authentik field names plus a patch carrying just
+  those fields -- credentials are structurally absent from
+  `DesiredOAuth2Settings`, so neither a routine drift fix nor
+  `adopt-oidc-client` (below) can ever rotate `client_id`/`client_secret`
+  (FR-009/FR-011), whatever else changed. `oidcUpdates` in the result
+  reports drift fixed in place this run (e.g. `~ slug: redirect_uris,
+  signing_key`).
+
+  **Mode switches** (`ModeSwitch`, Story 3/research R5) keep the
+  Application itself -- its pk, slug, and every existing binding -- and
+  only swap which provider it points at, so a tier change survives a mode
+  switch untouched. Authentik's provider names are unique **across every
+  provider kind** (confirmed live against Authentik 2026.8), and both
+  providers in a switch are named after the slug (issue #156), so the
+  outgoing provider can't simply be deleted and a same-named one created in
+  its place without a moment where neither holds that name; instead
+  `planProviderName` renames the outgoing provider to `'<slug> (replaced)'`
+  (`REPLACED_PROVIDER_SUFFIX`) first, creates the new provider under the
+  bare slug name, repoints the Application at it (clearing `meta_publisher`
+  on an oidc -> forward switch, since a Proxy-backed Application is owned
+  without it; setting it on a forward -> oidc switch), and only then
+  deletes the renamed-away outgoing provider -- so the Application is never
+  left pointing at nothing. If a mode switch fails partway *after* the
+  outgoing provider has been renamed but *before* the Application is
+  repointed, the renamed `'<slug> (replaced)'` provider is left behind
+  holding that name; a later attempt to switch the entry back to the same
+  mode is then skipped as `provider-name-taken` (naming the stranded
+  provider, in `forwardSkipped`/`oidcSkipped`) until the operator deletes
+  it by hand in Authentik. An unused, correctly-*named* provider left
+  behind by any other partial failure self-heals instead: the next run's
+  `planProviderName` reuses it (`reuseId`/`orphan`) rather than colliding
+  with it on Authentik's duplicate-name rejection -- it's specifically the
+  renamed-away, differently-named provider from a switch that has no
+  self-heal path today.
+
+  **Outpost membership is now fully reconciled on every `--apply`**, not
+  just written at Application creation: every owned, desired,
+  Proxy-backed Application's provider belongs on the embedded outpost, and
+  a retired one (removed, or switched to OIDC) does not -- so an
+  Application left off the outpost by an earlier partial failure self-heals
+  on the next run, and the dry run previews that repair too
+  (`outpostChanges`, FR-014). Only providers this command owns are ever
+  added or removed from it; a hand-added one is untouched.
+
+  `forwardSkipped` mirrors `oidcSkipped` for the other direction: a new
+  forward-auth Application, or an oidc -> forward switch, that can't get
+  its Proxy Provider because the name it needs is already taken by an
+  unrelated provider (`provider-name-taken`) is left alone and reported,
+  rather than failing the whole apply on Authentik's duplicate-name
+  rejection.
+
+  **`adoptableConflicts`** narrows `conflicts` to the ones with a path
+  forward: a conflicting entry whose existing, unowned Application is
+  backed by *any* OAuth2 provider (marked or not -- a marked one is never
+  actually a conflict, since it would already be owned) can be adopted; one
+  backed by a Proxy Provider or by nothing is not, and stays a plain,
+  unresolvable conflict (`resolve-by-hand`). `formatSyncAuthentik` and the
+  Dashboard's own conflict banners print a different message for the two
+  cases, the adoptable one pointing at `adopt-oidc-client`.
+
+  **Post-apply discovery check** (FR-013, research.md R6): after every real
+  `--apply`, each OIDC entry that still has a Bellhop-owned client gets its
+  `<issuer>/.well-known/openid-configuration` fetched (10s timeout,
+  `DISCOVERY_TIMEOUT_MS`) and checked for a 200 JSON response
+  (`checkOidcDiscovery`) -- never rolled back on failure, since the client
+  itself is correct in Authentik and the usual cause is network-shaped
+  (Authentik unreachable from here, a proxy in front of it). `syncAuthentikFailed`
+  is what turns a failed discovery check (or an instance-wide
+  `missing-signing-key`/`missing-scope-mapping` skip) into the CLI's
+  non-zero exit code -- only on `--apply`, never on a dry run, and never
+  over a merely incomplete entry (`missing-redirect-uris`,
+  `provider-name-taken`), since those are one entry's own unfinished
+  configuration rather than something the sync itself got wrong.
+  `syncCaddyLive` surfaces the same failures as a Dashboard warning
+  (`oidcDiscoveryFailures`, see `edit-guest.ts` below) instead of failing
+  the save (FR-013).
+
   The web UI's Dashboard auth-group dropdown
   (`EditableAuthGroup.tsx`, replacing the old "requires auth" checkbox,
   backed by `GET /api/auth-groups` -- authenticated but deliberately not
@@ -557,6 +719,80 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   reach `sync-caddy`: via `syncCaddyLive`, which now runs `sync-caddy`,
   `render-status-page`, and `sync-authentik` back to back, then
   `prune-acme-challenges` (below), as one combined push-live step.
+
+  Changing `authMode`/`oidcRedirectUris` through the Dashboard's guest PATCH
+  (`EditableAuthMode.tsx`/`EditableOidcRedirectUris.tsx`) is admin-only in
+  both directions with no raise/lower exception (FR-018, unlike
+  `authGroup`'s own asymmetry) -- switching *to* OIDC removes the
+  forward-auth gate Caddy would otherwise enforce, and the callback URL
+  decides where a completed login is sent, so getting either wrong is never
+  a purely narrowing edit. `editDeletesOidcClient`/
+  `OIDC_CLIENT_DELETION_CONFIRMATION_ERROR` (`src/operations/edit-guest.ts`)
+  is the FR-022a confirmation rule: an edit that takes an entry from
+  `effectiveAuth() === 'oidc'` to anything else (switching to forward-auth,
+  or clearing `authGroup` while still in OIDC mode) is rejected (400)
+  unless the request carries `confirmOidcClientDeletion: true`, decided
+  from inventory state alone rather than whether the sync ever actually
+  created a client for it. `commitGuestEdit` (extracted from the
+  Dashboard's guest-PATCH handler so it's shared, unchanged, by the MCP
+  server's `edit_guest` tool via `runEditGuest`) checks this before
+  anything is validated or written, so an unconfirmed edit leaves the entry
+  and its client exactly as they were. The Dashboard's `EditableAuthMode`
+  shows a `ConfirmDeleteModal` naming the app before resending with that
+  flag set; if the server still rejects a confirmed save (a concurrent edit
+  changed something first), it reopens the same modal rather than
+  surfacing a raw error. A successful guest-PATCH save runs the same
+  combined `syncCaddyLive` push-live step every subdomain/`authGroup` edit
+  already triggers, so an OIDC entry's client is created/updated/deleted
+  live in the same request; any post-apply discovery-check failures for the
+  caller's own guest are echoed back as `oidcDiscoveryFailures` and
+  rendered as a warning banner, the OIDC counterpart to the existing
+  `authentikConflicts` banner.
+- **OIDC credentials and adoption**
+  (`src/commands/networking/oidc-credentials.ts`, `adopt-oidc-client.ts`,
+  `src/web/routes/oidc.ts`, issue #1) are `sync-authentik`'s companion
+  read/adopt commands, both admin-gated everywhere they're exposed.
+  `oidc-credentials <entry>` (CLI, read-only, no `--apply`) and
+  `GET /api/oidc/:entry/credentials` (web, behind the whole router's
+  `requireAdminGroup`, `Cache-Control: no-store` since the response carries
+  a secret) look up an OIDC-effective entry's Bellhop-owned OpenID client
+  the same way `sync-authentik` computes ownership (`ownedProviderKind`)
+  and return its issuer, client ID, and client secret read live from
+  Authentik (`getOAuth2Credentials`) -- never from `inventory/bellhop.db`,
+  which never holds a secret at all (FR-004/FR-021: not in the inventory,
+  not in job history/logs/the jobs database, and not in any MCP tool
+  response). `runOidcClientInfo` is the MCP-safe wrapper (FR-019b): it
+  calls the same lookup and drops the secret from its own return value
+  before anything in the MCP layer ever holds it, rather than trusting
+  every call site to remember to omit it -- the `get_oidc_client` tool
+  (`src/mcp/build-server.ts`) calls only this, never the secret-carrying
+  function directly, and its response's `secretAvailableFrom` field points
+  at the Dashboard or the `oidc-credentials` CLI command instead. The
+  Dashboard's `OidcCredentials.tsx` (the guest Advanced modal's reveal
+  button) calls the web route directly; a non-admin sees a plain "OIDC
+  (credentials visible to admins)" note instead of a disabled control,
+  since there's nothing for them to reveal at all (FR-020, including under
+  impersonation -- `isAdminUser` reads the same overlaid `req.user.groups`
+  every other admin check does).
+  `adopt-oidc-client <entry> [--apply]` (CLI), `POST
+  /api/oidc/:entry/adopt/preview`/`/apply` (web, same router, surfaced by
+  `AdoptOidcClientButton` next to the conflict banner on
+  `EditableAuthMode`/`EditableOidcRedirectUris`), and the MCP tool
+  `adopt_oidc_client` (registered like every other `MCP_OPERATIONS` entry,
+  `fleetWide: true` rather than `targetType: 'guest'` since `entry` can
+  also name a host or external site) all go through the one
+  `runAdoptOidcClient` function, so the three front ends can never disagree
+  about what adoption does or refuses: it sets `meta_publisher: 'bellhop'`,
+  PATCHes any settings drift via the same `diffOAuth2Settings`
+  `sync-authentik` uses (so it can never touch `client_id`/`client_secret`
+  either), and reconciles the entry's ladder bindings via the same exported
+  `planBindingChanges` -- the same three steps a routine sync performs for
+  an owned OIDC entry, just against one entry instead of every candidate.
+  Same dry-run/`--apply` convention as every other command
+  (`formatAdoptOidcClient` mirrors `formatSyncAuthentik`'s own
+  OpenID-settings/binding-change layout). Refuses an entry that isn't
+  OIDC-effective, an Application that's already owned (either kind), or one
+  that isn't OAuth2-backed at all.
 - **`prune-acme-challenges`**
   (`src/commands/networking/prune-acme-challenges.ts`, issue #162) deletes
   `_acme-challenge` TXT records left behind in the inventory `domain`'s
@@ -1177,6 +1413,23 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   protocol channel, so `src/mcp/server.ts` redirects `console.log` to
   stderr at startup. On stdin close it cancels its jobs and exits; a job
   still running when the client session ends is therefore interrupted.
+  **Native OIDC gating** (issue #1) adds three surfaces here:
+  `adopt-oidc-client` is registered like every other `MCP_OPERATIONS` entry
+  (`adopt_oidc_client`, preview/apply, `fleetWide: true`); `edit_guest`'s
+  existing input shape (`EDIT_GUEST_SHAPE`) already covered
+  `authMode`/`oidcRedirectUris`, so no new tool was needed for those, but it
+  now also accepts `confirmOidcClientDeletion: true` -- required for the
+  same edit the Dashboard's confirmation dialog gates (FR-022a), and its
+  description tells the model to ask the user first, since this server has
+  no dialog of its own to show one in; unlike the Dashboard,
+  `authMode`/`oidcRedirectUris` changes need no admin check here at all,
+  because this server always runs with CLI-level trust (FR-018 is a
+  web-UI-only restriction). A standalone `get_oidc_client` tool
+  (`src/mcp/build-server.ts`) wraps `oidc-credentials`'s lookup logic
+  (`runOidcClientInfo`, `commands/networking/oidc-credentials.ts`) to
+  return an OIDC-gated entry's issuer and client ID -- and only those two,
+  never the secret (FR-019b) -- with a `secretAvailableFrom` field pointing
+  at the Dashboard or the `oidc-credentials` CLI command instead.
 - **Web UI authentication** (`src/web/auth.ts`): the entire web UI is
   gated behind a global `requireAuth` Express middleware, mounted in
   `src/web/app.ts` ahead of every route mount, that trusts the

@@ -6,6 +6,11 @@ import path from 'node:path';
 import { runImportYamlInventory } from '../../src/commands/maintenance/import-yaml-inventory.ts';
 import { loadInventory } from '../../src/lib/inventory.ts';
 
+// Repo-root-relative, matching every documented `--yaml-path
+// inventory/hosts.yaml.example` invocation (README, CLAUDE.md,
+// CONTRIBUTING.md) -- `npm test` runs from the repo/worktree root.
+const EXAMPLE_YAML_PATH = path.join(process.cwd(), 'inventory', 'hosts.yaml.example');
+
 function tempYamlFile(content: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'import-yaml-test-'));
   const dest = path.join(dir, 'hosts.yaml');
@@ -59,6 +64,20 @@ test('runImportYamlInventory rejects invalid YAML content', async () => {
   const yamlPath = tempYamlFile('domain: example.com\nhosts:\n  - name: pve1\ / bad yaml\n');
   const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
   await assert.rejects(() => runImportYamlInventory({ yamlPath, dbPath }));
+});
+
+test('runImportYamlInventory accepts the tracked example file, including its OIDC entry (T043)', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'import-yaml-test-'));
+  const dbPath = path.join(dir, 'bellhop.db');
+  const result = await runImportYamlInventory({ yamlPath: EXAMPLE_YAML_PATH, dbPath, apply: true });
+  assert.equal(result.applied, true);
+
+  const reloaded = loadInventory(dbPath);
+  const oidcGuest = reloaded.guests.find((g) => g.name === 'bookstack');
+  assert.ok(oidcGuest, 'expected hosts.yaml.example to contain a "bookstack" OIDC-gated guest');
+  assert.equal(oidcGuest!.authGroup, 'bellhop-app-users');
+  assert.equal(oidcGuest!.authMode, 'oidc');
+  assert.deepEqual(oidcGuest!.oidcRedirectUris, ['https://bookstack.example.com/oidc/callback']);
 });
 
 test('runImportYamlInventory rejects YAML that fails validateInventory', async () => {
