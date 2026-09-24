@@ -102,8 +102,8 @@
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T030 [P] Update `README.md`: the settings, resolution order, override warning, commit pinning, the `/usr/bin/update` pinning and community-scripts.org helper limitations (research R1), and that the fork must be public and VED-shaped
-- [ ] T031 [P] Update `CLAUDE.md`: extend the `meta` settings list, the install-app/update-app bullet (custom source, `COMMUNITY_SCRIPTS_URL` export, pin-once in `previewAndEnqueue` via `resolvesApp`), the catalog paragraph (custom group, in-memory 5-minute TTL, why it isn't persisted), and the guest `app` field paragraph (`appSource`). Check `CONTRIBUTING.md` and change it only if a restated convention changed (none expected).
+- [x] T030 [P] Update `README.md`: the settings, resolution order, override warning, commit pinning, the `/usr/bin/update` pinning and community-scripts.org helper limitations (research R1), and that the fork must be public and VED-shaped
+- [x] T031 [P] Update `CLAUDE.md`: extend the `meta` settings list, the install-app/update-app bullet (custom source, `COMMUNITY_SCRIPTS_URL` export, pin-once in `previewAndEnqueue` via `resolvesApp`), the catalog paragraph (custom group, in-memory 5-minute TTL, why it isn't persisted), and the guest `app` field paragraph (`appSource`). Check `CONTRIBUTING.md` and change it only if a restated convention changed (none expected).
 - [ ] T032 Run `npm run typecheck`, `npm test`, and `npm run web:build`, and fix any failures
 - [ ] T033 Browser verification (constitution IV): run the web UI against a temp inventory with the settings on, and check at desktop width and at ≤640px, in light and dark theme: the Settings fields, the custom catalog group and override tag, the override banner, the custom notice, the error text, and the Dashboard/Update custom link
 - [ ] T034 Review the full branch diff for real operational data (constitution workflow gate): no real hostnames, IPs, fork names or tokens in code, tests, specs or commit messages

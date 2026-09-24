@@ -148,7 +148,21 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   records the community-scripts slug the guest was installed from — drives
   the Dashboard's community-scripts quick-open link, preserved across
   `sync-inventory` runs and repeat `upsertGuestEntry` merges the same way
-  `port` is; `caddy: true`
+  `port` is; `appSource: 'custom'` (optional, `lxc`/`vm` guests only,
+  issue #11 -- a `guests.app_source` column added by `ensureColumn`) sits
+  alongside `app` and records that this particular slug was actually
+  installed from the operator's configured `customScriptsRepo`/
+  `customScriptsBranch` rather than from upstream ProxmoxVE/ProxmoxVED --
+  set only by the web/MCP `install-app` apply path (never the CLI, which
+  doesn't touch inventory at all) when `resolveAppSource`
+  (`src/lib/app-source.ts`) returned `kind: 'custom'`, and preserved across
+  `sync-inventory`/repeat `upsertGuestEntry` merges the exact same way
+  `app` is. Drives the Dashboard/Update page's link to the app's script on
+  GitHub in the configured custom repository/branch instead of the plain
+  community-scripts.org one (research R8 in
+  `specs/003-custom-script-repo/research.md`); falls back to no link at
+  all if the custom settings are later unset, since there's no repository
+  left to point at. `caddy: true`
   on exactly one entry marks where Caddy runs — this
   cross-field rule (along with "every guest's `host` resolves to a real
   entry", "non-empty `subdomains` requires `ip` unless `caddyManual` is
@@ -194,16 +208,25 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   which one entry has `caddy: true`; written by `saveInventory` but not
   currently read back by `loadInventory`, which instead reads the `caddy`
   boolean column already present directly on the owning `hosts`/`guests`
-  row), and `meta` (`domain` plus four optional operator-specific scalars,
-  issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`
+  row), and `meta` (`domain` plus six optional operator-specific scalars,
+  issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`,
+  plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch`
   — see `SettingsSchema`/`SETTINGS_KEYS` in
   `src/lib/inventory.ts`, spread into `InventorySchema` rather than nested
   under their own key, same flat placement as `domain`). Each used to be a
-  hardcoded literal specific to this operator's own network; each is now
-  optional, and all four have the one or two commands that read them fail
-  with a named error pointing at `set-config` rather than silently falling
-  back to this repo author's values, since a wrong IP is worse than a
-  missing one for any other operator. A fifth setting, `vpnCredentialsFile`,
+  hardcoded literal specific to this operator's own network (or, for the
+  #11 pair, simply didn't exist before); each is now optional, and the one
+  or two commands that read the first four fail with a named error
+  pointing at `set-config` rather than silently falling back to this repo
+  author's values, since a wrong IP is worse than a missing one for any
+  other operator. `customScriptsRepo`/`customScriptsBranch` are validated
+  individually by `SettingsSchema` (owner/repo shape; git branch-name
+  shape) but their both-or-neither cross-field rule is deliberately *not*
+  in the schema — `set-config` writes one key at a time, so a schema-level
+  check would make it impossible to ever set the first of the pair — and
+  is instead enforced where the pair is actually read, by
+  `customScriptSource()` in `src/lib/app-source.ts` (see the `install-app`/
+  `update-app` bullet below). A fifth setting, `vpnCredentialsFile`,
   existed briefly on this same branch (issue #124) but was dropped before
   merge once the file mechanism it named was removed as redundant — see
   "VPN gateway deploy credentials" below. The only writers are `set-config <key> [value] [--unset]
@@ -1022,6 +1045,96 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   and refreshes on read whenever the stored copy is older than
   `CATALOG_MAX_AGE_MS` (24h). There is no manual refresh control and no
   background timer, and the CLI's `install-app --app` is unaffected.
+  When `customScriptsRepo`/`customScriptsBranch` (issue #11) are configured,
+  `getScriptCatalog` (`src/lib/script-catalog.ts`) also fetches the custom
+  repository's own `ct/` listing and adds it as a third group, ordered
+  first, labelled with the source's own `owner/repo@branch` string; any
+  slug it shares with `stable`/`dev` is removed from those and annotated
+  with which upstream repo(s) it shadows (`withCustomGroup`). Unlike the
+  persisted upstream catalog, the custom group's cache
+  (`customCatalogCache`, keyed by that same `owner/repo@branch` label so a
+  settings change never serves a stale listing under the old key) is
+  **in-memory only, never written to `script_catalog`**, and its own TTL
+  (`CUSTOM_CATALOG_MAX_AGE_MS`, 5 minutes) is far shorter than the upstream
+  table's 24h — an operator pushing to their own branch should see the new
+  app soon, not up to a day later, and at a 5-minute TTL a persisted copy
+  would gain nothing while also needing a `script_catalog.repo`
+  `CHECK`-constraint table rebuild to add a third value (research R4). A
+  failed custom-repository fetch (network error, private/missing repo,
+  half-configured settings) never fails the whole catalog — it just omits
+  the custom group for that call, logs a warning, and starts the same
+  short failure cooldown `getUpstreamCatalog` already uses, so the
+  suggestion list still shows `stable`/`dev` while a fork stays
+  unreachable.
+  Resolving a bare `--app` slug for either command goes through
+  `resolveAppSource(app, inventory, fetchImpl)`
+  (`src/lib/app-source.ts`, issue #11): with no custom settings configured
+  it's a same-as-always upstream resolution with no extra network call; with
+  both set, it first calls `resolveHeadSha` to pin the configured branch to
+  its current head commit (a bare-SHA GitHub API request,
+  `Accept: application/vnd.github.sha`, chosen over the branches endpoint
+  because it needs no JSON parsing and handles a branch name containing
+  `/`), then probes `<custom-base>/ct/<slug>.sh` at that pinned commit --
+  a hit resolves `kind: 'custom'`; a 404 falls back to upstream exactly as
+  today. Only on a custom hit does it also probe both upstream `ct/`
+  scripts for the same slug (`detectShadows`) to populate `shadows`
+  (`ShadowedRepo[]`) for the override warning below -- a failed probe there
+  is swallowed and logged, since it's purely informational and must never
+  block an install that already resolved successfully. Every failure that
+  *does* throw (unknown/private repo, unknown branch, a GitHub error
+  status, an unreachable network) names the configured
+  `customScriptsRepo`/`customScriptsBranch` and points at `set-config`,
+  and — per FR-008 — never silently falls back to upstream, since
+  custom-first precedence means upstream can't be assumed correct once the
+  operator has opted in. `buildInstallAppScript`/`buildUpdateAppScript`
+  branch on `source.kind === 'custom'`: the generated script curls
+  `source.ctUrl` directly (no upstream fallback -- resolution already
+  confirmed the script exists at that commit) and, critically, exports
+  `COMMUNITY_SCRIPTS_URL=<source.scriptsBaseUrl>` (the pinned commit's raw
+  root, never the branch name) before that curl runs. This one export is
+  the whole mechanism (research R1): both upstream repos' `ct/` scripts
+  now run on a shared engine, `community-scripts/core`'s `core/build.func`,
+  which resolves every non-engine path (`ct/…`, `install/…`) against
+  `COMMUNITY_SCRIPTS_URL` when it's set, and which also exports that same
+  variable into the container so its own baked-in `/usr/bin/update`
+  helper stays pinned to the commit an app was last installed/updated from
+  -- without the export, a fork-installed app's own
+  `install/<slug>-install.sh` would still be pulled from upstream
+  ProxmoxVED, or 404 if upstream never had that app. `install-app`'s
+  in-container `/usr/bin/update` helper also asks community-scripts.org
+  whether an app can be updated, which has no knowledge of a fork-only
+  app; both limitations are inherent to reusing community-scripts' own
+  engine rather than bugs in this toolkit, and are recorded as known
+  limitations in README rather than worked around. When the resolved
+  source shadows an upstream copy of the same slug,
+  `formatOverrideWarning(source)` builds the one warning line both
+  `runInstallApp`/`runUpdateApp` `logWarn` before doing anything else
+  (before `resolveMid`/`checkVmidAvailable` for install, before the
+  update's own `runRemote` call), so it's the first line of a dry run, a
+  captured preview, and the job log alike.
+  Because the web/MCP apply path used to resolve up to three times for one
+  operation (preview, the prompt pre-scan, and apply itself, which runs
+  inside a job that can start much later), `previewAndEnqueue`
+  (`src/operations/core.ts`) now resolves a custom source **once per
+  operation**, before preview, for any `Operation` flagged
+  `resolvesApp: true` (`install-app`, `update-app` -- `src/operations/
+  provisioning.ts`/`maintenance.ts`) -- storing the result on the parsed
+  input's own internal `appSource` field, which is never part of the
+  operation's zod `shape` (so it's never accepted from a request body) and
+  never serialized into the job's persisted `argsJson` (`enqueue()`
+  stringifies the original `raw` input, not the mutated one). `op.preview`,
+  the `watchForPrompts` prompt pre-scan (`promptsForSource` for a `'custom'`
+  resolution, `checkAppUrl` otherwise -- unchanged for every non-`resolvesApp`
+  operation and for a pasted URL, which has no `scriptsBaseUrl` to scan),
+  and the job's own `apply()` (which receives `input.appSource` as
+  `InstallAppOptions.source`/`UpdateAppOptions.source`) therefore all read
+  the exact same pinned commit (SC-004) -- a branch push between preview
+  and apply can never make what the operator saw diverge from what actually
+  ran. The CLI has no such shared pin: it runs a dry run and a separate
+  `--apply` invocation, each resolving independently, matching how it
+  already treats every other live lookup (authorized_keys, NFS storage
+  paths) rather than introducing a CLI-only caching layer for this one
+  case.
 - **Live TLS-backend probing** (`src/lib/tls-probe.ts`, issue #100) augments
   the previously fully-manual `insecureBackendTls` checkbox with a live
   probe of the guest's actual running app on two web-UI paths -- the
@@ -1117,7 +1230,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   logged at the top" -- the ordering that avoids the `withCapturedConsole`
   deadlock. A new web form field must also be added to its operation's
   `shape`, or schema parsing strips it (`test/operations/provisioning.test.ts`
-  checks this for every `PROVISIONING_COMMANDS` field). The CLI does not use
+  checks this for every `PROVISIONING_COMMANDS` field). An `Operation` may
+  also set `resolvesApp: true` (`install-app`/`update-app`, issue #11):
+  `previewAndEnqueue` resolves a custom-script-repository source exactly
+  once for such an operation, before `preview()` runs, and stashes it on
+  the parsed input's internal `appSource` field so `preview()`, the
+  prompt pre-scan, and the job's `apply()` all read the one pinned commit
+  instead of each independently re-resolving -- see the `install-app`/
+  `update-app` bullet above for the full mechanism. The CLI does not use
   this layer.
 - **MCP server** (`src/mcp/server.ts`, `src/mcp/build-server.ts`, issue
   #16): a stdio MCP server (`npm run mcp`) exposing one tool per

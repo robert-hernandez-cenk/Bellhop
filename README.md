@@ -189,7 +189,10 @@ successful install, run `sync-inventory --apply` to add the new guest to
 `bellhop update-app --guest <name> --app <script-name> --apply`, which
 re-runs the same community-script from inside the guest — that's how these
 scripts' own update path is triggered (re-running the installer, not a
-separate update command).
+separate update command). If you've configured `customScriptsRepo`/
+`customScriptsBranch` (see "Inventory-wide settings" below), both commands
+resolve `--app <slug>` against your own fork branch first, before falling
+back to ProxmoxVE/ProxmoxVED.
 
 > **Caveat:** the unattended `install-app` mechanism (the `var_*` env
 > vars) is verified against community-scripts' actual `misc/build.func`
@@ -355,7 +358,7 @@ claude mcp add --scope user bellhop -- npm --prefix /path/to/bellhop run --silen
 
 ## Inventory-wide settings
 
-Four values live in the inventory database rather than in code, because
+Six values live in the inventory database rather than in code, because
 they are specific to your network. Set them with `set-config`:
 
 ```bash
@@ -373,11 +376,64 @@ nothing. Admins can set the same values from the web UI's Settings page.
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
+| `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
+| `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 
 `statusPagePath` unset is a hard failure only for the standalone
 `render-status-page` command; the web UI's combined push-live step and
 `migrate-guest` both treat it as opt-in and silently skip regenerating the
 status page instead of failing the rest of the job.
+
+### Custom script repository
+
+`customScriptsRepo` (`owner/repo`) and `customScriptsBranch` name a
+**public** GitHub repository laid out exactly like
+[ProxmoxVED](https://github.com/community-scripts/ProxmoxVED) — `ct/<slug>.sh`
+and `install/<slug>-install.sh` at its root — plus the branch on it to
+install from. A personal fork branch is the intended use case:
+
+```bash
+bellhop set-config customScriptsRepo example-user/ProxmoxVED --apply
+bellhop set-config customScriptsBranch my-apps --apply
+bellhop set-config customScriptsRepo --unset --apply   # (and the branch) turns it back off
+```
+
+The two settings must be set together — setting only one fails any
+command that resolves an `--app` slug with a named error pointing back at
+`set-config`. With both set, `install-app --app <slug>` and `update-app
+--app <slug>` resolve `<slug>` in this order: your custom repository
+first, then ProxmoxVE, then ProxmoxVED. A slug that exists in your
+repository *and* upstream always installs from your copy — every front
+end (CLI output, the web App check/install/update previews, job logs, and
+the MCP check result) prints a warning naming which upstream repository
+it's overriding, so a forgotten fork copy never silently shadows an
+upstream fix. A pasted full script URL is unaffected — it's used exactly
+as given, never resolved against the custom repository, and never
+triggers an override warning.
+
+Resolving a slug against the custom repository pins the configured
+branch to its current head commit before anything else happens; every
+later step of that same install or update — the preview, the web UI's
+expected-prompt pre-scan, and the apply itself — reads that exact commit,
+so a push to the branch mid-operation can never make the preview and the
+applied script diverge. The app catalog (the web UI's Install App
+suggestion list, and the MCP `list_install_apps` tool) gets a third group
+for the custom repository, listed first and refreshed roughly every 5
+minutes rather than upstream's 24 hours, so an app you just pushed shows
+up within minutes.
+
+Two limitations are inherited from how community-scripts' own installer
+engine resolves script locations, and can't be fixed from Bellhop's side:
+a custom-installed container's own built-in `/usr/bin/update` helper is
+baked with the commit it was installed from, so it stays pinned there
+until the guest is updated again through Bellhop's `update-app` (which
+re-resolves and re-exports the current head commit on every run, moving
+the helper forward); and that same in-container helper separately asks
+community-scripts.org whether an update is available, and that site has
+no knowledge of a fork-only app — it may report one as already current,
+or not found, regardless of what your branch actually has. Update a
+custom-sourced app through Bellhop's `update-app`, not the container's
+own `update` command, for a result that reflects your branch.
 
 Two related values are *derived*, not configured: `set-guest-vpn --vpn
 none` restores the guest's parent host's `midScheme.gateway`, and the
