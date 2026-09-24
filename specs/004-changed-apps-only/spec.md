@@ -135,4 +135,4 @@ The web UI's App suggestion list, and the MCP catalog listing, show the custom g
 - Script contents for the conflict check come from GitHub's raw content host, which is not subject to the API rate limit; the comparison and the head-commit pin are the only rate-limited requests.
 - Unauthenticated GitHub API access (60 requests per hour) remains the only mode; adding a token is out of scope.
 - The catalog's custom group keeps its existing short freshness window and in-memory cache.
-- Test fixtures come from a real comparison response captured on 2026-09-24 and redacted to example values per the constitution, plus a behind-and-conflicting variant derived from the same shape.
+- Test fixtures are two real comparison responses captured on 2026-09-24 and redacted to example values per the constitution: the operator's own branch (8 ahead, 0 behind, 3 apps) and a public third-party fork that is diverged (1 ahead, 251 behind) and adds an app upstream later added too.
