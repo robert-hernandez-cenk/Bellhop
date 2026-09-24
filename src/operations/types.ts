@@ -48,6 +48,14 @@ export interface Operation {
   internalFields?: string[];
   // install-app only: its job watches for interactive prompts (#57/#160).
   watchForPrompts?: boolean;
+  // install-app/update-app only (issue #11): previewAndEnqueue resolves an
+  // AppSource once per operation via resolveAppSource, stores it on the
+  // parsed input as the internal field `appSource` (never part of any
+  // operation's `shape`, so it can never be accepted from a request body),
+  // and derives the watchForPrompts pre-scan from that same resolution
+  // (src/operations/app-check.ts's promptsForSource) instead of a second
+  // checkAppUrl(input.app, ...) call. See research R5.
+  resolvesApp?: boolean;
   preview(input: Record<string, any>, deps: OperationDeps): Promise<string>;
   // Runs inside a job; deps.ssh is that job's JobSSHClient.
   apply(input: Record<string, any>, deps: OperationDeps): Promise<void>;

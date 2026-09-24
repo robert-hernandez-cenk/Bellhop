@@ -33,6 +33,18 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
     placeholder: '/usr/share/caddy/index.html',
     help: 'Absolute path on the Caddy host where the status page is written. Unset: the status page is never rendered.',
   },
+  {
+    key: 'customScriptsRepo',
+    label: 'Custom script repository',
+    placeholder: 'owner/repo',
+    help: 'Public GitHub repository laid out like ProxmoxVED (e.g. a fork branch) that Install App/Update App resolve apps from before falling back to the upstream community-scripts repos. Apps found there override any upstream copy of the same slug. Must be set together with Custom script branch below -- unset either one and the feature is off.',
+  },
+  {
+    key: 'customScriptsBranch',
+    label: 'Custom script branch',
+    placeholder: 'branch',
+    help: 'Branch on that repository to resolve apps from. Must be set together with Custom script repository above.',
+  },
 ];
 
 export function SettingsPage() {

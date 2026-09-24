@@ -1,4 +1,4 @@
-import type { GuestEntry } from '../api/types';
+import type { GuestEntry, CustomScripts } from '../api/types';
 
 // Numeric per-octet comparison so '192.168.1.2' sorts before '192.168.1.10'
 // -- a plain string compare would put '.10' first. A missing ip sorts after
@@ -41,8 +41,31 @@ export function caddyUrl(entry: { subdomains?: string[] }, domain: string): stri
   return subdomain ? `https://${subdomain}.${domain}` : undefined;
 }
 
-export function communityScriptsUrl(guest: GuestEntry): string | undefined {
-  return guest.app ? `https://community-scripts.org/scripts/${guest.app}` : undefined;
+// research R8: a custom-installed guest (appSource === 'custom') links
+// straight to its ct/<slug>.sh in the configured repository/branch on
+// GitHub instead of the plain community-scripts.org page, which only ever
+// documents the upstream catalog and would 404/mislead for a fork-only app.
+// Returns undefined for a custom guest when customScripts is null (the
+// operator has since unset customScriptsRepo/customScriptsBranch) -- there
+// is nothing to link to, rather than falling back to a wrong upstream URL.
+export function communityScriptsUrl(guest: GuestEntry, customScripts?: CustomScripts | null): string | undefined {
+  if (!guest.app) return undefined;
+  if (guest.appSource === 'custom') {
+    return customScripts ? `https://github.com/${customScripts.repo}/blob/${customScripts.branch}/ct/${guest.app}.sh` : undefined;
+  }
+  return `https://community-scripts.org/scripts/${guest.app}`;
+}
+
+// The label for communityScriptsUrl's link -- pulled out so
+// AdvancedGuestModal.tsx and UpdatePage.tsx don't each hand-roll the same
+// appSource === 'custom' ternary (review fix round 1, Unit E). Callers
+// still guard rendering on communityScriptsUrl's own return value (this
+// returns a label even when that URL is undefined, e.g. a custom guest with
+// customScripts null).
+export function communityScriptsLinkLabel(guest: GuestEntry, customScripts?: CustomScripts | null): string {
+  return guest.appSource === 'custom' && customScripts
+    ? `Open ${guest.app} in ${customScripts.repo}`
+    : `Open ${guest.app} on community-scripts`;
 }
 
 // Direct ip:port link, bypassing Caddy/subdomains entirely -- https only for

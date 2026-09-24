@@ -51,6 +51,24 @@ test('GET /api/inventory returns hosts, guests, and domain from the loaded inven
   assert.equal(res.body.hosts.length, 1);
   assert.equal(res.body.guests[0].name, 'plex-lxc');
   assert.equal(res.body.domain, 'example.com');
+  assert.equal(res.body.customScripts, null, 'customScripts must be null when the feature is off');
+});
+
+// issue #11: GET /api/inventory's customScripts field mirrors
+// customScriptsRepo/customScriptsBranch, both-or-neither -- see
+// data-model.md's Inventory API section and the CLAUDE.md Settings bullet.
+test('GET /api/inventory returns customScripts when both settings are set', async () => {
+  const inventory: Inventory = {
+    domain: 'example.com',
+    customScriptsRepo: 'example-user/ProxmoxVED',
+    customScriptsBranch: 'my-apps',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [],
+  };
+  const app = testApp(inventory);
+  const res = await request(app).get('/api/inventory');
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.customScripts, { repo: 'example-user/ProxmoxVED', branch: 'my-apps' });
 });
 
 test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and syncs Caddy', async () => {

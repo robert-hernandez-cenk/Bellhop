@@ -105,6 +105,33 @@ test('PATCH /api/settings rejects a relative statusPagePath', async () => {
   assert.equal(res.status, 400);
 });
 
+test('GET /api/settings includes customScriptsRepo/customScriptsBranch', async () => {
+  const { app } = testApp({
+    ...baseInventory(),
+    customScriptsRepo: 'example-user/ProxmoxVED',
+    customScriptsBranch: 'my-apps',
+  });
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.customScriptsRepo, 'example-user/ProxmoxVED');
+  assert.equal(res.body.settings.customScriptsBranch, 'my-apps');
+});
+
+test('PATCH /api/settings rejects a customScriptsRepo not shaped like owner/repo, with the same message set-config produces', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ customScriptsRepo: 'not-a-repo' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /must be owner\/repo/);
+});
+
+test('PATCH /api/settings clears customScriptsRepo sent as an empty string', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), customScriptsRepo: 'example-user/ProxmoxVED' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ customScriptsRepo: '' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.customScriptsRepo, undefined);
+  assert.equal(loadInventory(inventoryPath).customScriptsRepo, undefined);
+});
+
 test('PATCH /api/settings returns 403 for a non-admin', async () => {
   const { app } = testApp();
   const res = await request(app)

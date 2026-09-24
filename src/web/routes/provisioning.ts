@@ -38,15 +38,21 @@ export function provisioningRoutes(
       res.json({ exists: false, url: '' });
       return;
     }
-    res.json(await checkAppUrl(app, testDeps.fetchImpl));
+    // issue #11: resolves through the configured custom script repository
+    // (see resolveAppSource in src/lib/app-source.ts) when one is set,
+    // falling back to today's plain VE->VED check when it isn't.
+    res.json(await checkAppUrl(app, testDeps.fetchImpl, inventory));
   });
 
   // The community-scripts slug catalog behind the App field's autocomplete.
   // Global requireAuth is the only gate -- no requireResourceAccess, since a
   // script catalog is neither a host nor a guest, matching check-app and
   // GET /provisioning above.
+  // issue #11: the fourth argument surfaces the operator's configured
+  // custom script repository (if any) as its own group -- see
+  // getScriptCatalog/getCustomGroup in src/lib/script-catalog.ts.
   router.get('/install-app/apps', async (_req, res) => {
-    res.json(await getScriptCatalog(inventoryPath, testDeps.fetchImpl ?? fetch));
+    res.json(await getScriptCatalog(inventoryPath, testDeps.fetchImpl ?? fetch, new Date(), inventory));
   });
 
   const deps = (): OperationDeps => ({ ssh, inventory, inventoryPath, authentik, cloudflare, ...testDeps });
