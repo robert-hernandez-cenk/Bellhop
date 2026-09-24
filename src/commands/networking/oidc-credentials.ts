@@ -1,4 +1,4 @@
-import type { AuthentikApplication, AuthentikClient } from '../../lib/authentik-client.ts';
+import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import { effectiveAuth } from '../../lib/inventory.ts';
 import { ownedProviderKind } from './sync-authentik.ts';
@@ -35,19 +35,22 @@ export interface OidcCredentialsResult {
 // Same shape candidateEntries (sync-authentik.ts) reads from -- deliberately
 // not importing that function itself, since it only returns *gated*
 // candidates and this command needs to distinguish "unknown entry" from "not
-// gated" with two different error messages.
-interface LookupEntry {
+// gated" with two different error messages. oidcRedirectUris is exported
+// alongside this (issue #1, U9) so adopt-oidc-client.ts can reuse both
+// rather than a second lookup with its own narrower shape.
+export interface LookupEntry {
   name: string;
   authGroup?: string;
   authMode?: 'forward' | 'oidc';
   subdomains?: string[];
+  oidcRedirectUris?: string[];
 }
 
 // Entry lookup searches hosts, guests, external sites by name (controller
 // ruling) -- the same three arrays candidateEntries iterates, just kept
 // separate so a name collision across types still resolves to *some* entry
 // consistently (hosts first, matching this file's own read order elsewhere).
-function findEntry(inventory: Inventory, name: string): LookupEntry | undefined {
+export function findEntry(inventory: Inventory, name: string): LookupEntry | undefined {
   return (
     inventory.hosts.find((h) => h.name === name) ??
     inventory.guests.find((g) => g.name === name) ??
@@ -106,7 +109,14 @@ export async function runOidcCredentials(entryName: string, deps: OidcCredential
   };
   const kind = ownedProviderKind(application, ownership);
   if (kind !== 'oauth2') {
-    throw new OidcCredentialsError('not-oidc', conflictMessage(entryName, slug, application, kind));
+    // Whether the existing Application is OAuth2-backed at all (marked or
+    // not -- a marked one would already be kind === 'oauth2' above, so this
+    // only ever fires unmarked in practice) decides which conflict message
+    // applies: an OAuth2-backed one is adoptable (adopt-oidc-client), a
+    // non-OAuth2-backed one (a different provider kind, or none) is not
+    // (data-model.md "conflict, not adoptable").
+    const isOAuth2Backed = application.providerId !== undefined && ownership.oauth2ProviderIds.has(application.providerId);
+    throw new OidcCredentialsError('not-oidc', conflictMessage(entryName, slug, kind, isOAuth2Backed));
   }
 
   // Always set once kind === 'oauth2' -- ownedProviderKind requires a
@@ -137,8 +147,8 @@ export async function runOidcClientInfo(entryName: string, deps: OidcCredentials
 function conflictMessage(
   entryName: string,
   slug: string,
-  application: AuthentikApplication,
-  kind: 'proxy' | undefined
+  kind: 'proxy' | undefined,
+  isOAuth2Backed: boolean
 ): string {
   if (kind === 'proxy') {
     return (
@@ -146,9 +156,15 @@ function conflictMessage(
       "not an OpenID client; run sync-authentik --apply after setting authMode: 'oidc'"
     );
   }
+  if (isOAuth2Backed) {
+    return (
+      `${entryName}'s Authentik Application (slug '${slug}') exists but is not a Bellhop-owned OpenID client; ` +
+      'run adopt-oidc-client to adopt it'
+    );
+  }
   return (
-    `${entryName}'s Authentik Application (slug '${slug}') exists but is not a Bellhop-owned OpenID client; ` +
-    'run adopt-oidc-client to adopt it'
+    `${entryName}'s Authentik Application (slug '${slug}') exists but is not backed by an OpenID (OAuth2) client; ` +
+    'it is not adoptable -- resolve by hand'
   );
 }
 

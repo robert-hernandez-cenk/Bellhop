@@ -37,6 +37,19 @@ export interface SyncAuthentikResult {
   // every Dashboard subdomains edit, and an edit elsewhere in the inventory
   // must not fail over a pre-existing clash.
   conflicts: string[];
+  // The subset of `conflicts` whose existing, unowned Application is backed
+  // by an OAuth2 provider (marked or not -- ownership only requires the
+  // meta_publisher marker, so this is broader than "adopted already"). The
+  // data-model.md "conflict, adoptable" ownership state: adopt-oidc-client
+  // can take it over without rotating its client_id/client_secret. A
+  // conflict backed by a proxy provider (handled by the unchanged #154 rule,
+  // so never actually a conflict) or by anything else/nothing is never
+  // listed here -- formatSyncAuthentik uses this to print a different
+  // explanation for the two cases (adopt-oidc-client-adoptable, or
+  // resolve-by-hand). Optional so a hand-built result literal (every
+  // pre-issue-#1 formatSyncAuthentik test) stays valid; runSyncAuthentik
+  // always fills it, with [] when there is nothing adoptable.
+  adoptableConflicts?: string[];
   // Ladder rungs some desired entry needs that do not exist in Authentik.
   // Reported, never auto-created: a rung is deliberate operator
   // configuration, and manufacturing an empty group from a typo in
@@ -172,6 +185,13 @@ export const MISSING_RUNG_EXPLANATION =
 // banner-shortening commit).
 export const CONFLICT_EXPLANATION =
   'an Application with this slug already exists in Authentik and is not managed by this toolkit (no proxy provider behind it, and not an OpenID client marked as Bellhop\'s); resolve by hand';
+
+// The adoptableConflicts-scoped variant: unlike CONFLICT_EXPLANATION above,
+// this conflict has a path forward this toolkit can take (issue #1's
+// adopt-oidc-client), so the message points at it instead of "resolve by
+// hand". See adoptableConflicts for the exact ownership state this covers.
+export const OAUTH2_CONFLICT_EXPLANATION =
+  "an OpenID client with this slug already exists in Authentik and is not marked as Bellhop's; run adopt-oidc-client to adopt it";
 
 // Wording from contracts/interfaces.md's CLI section.
 export const OIDC_DELETION_WARNING = "the app's OIDC login stops working until new credentials are entered in it";
@@ -416,6 +436,19 @@ export async function runSyncAuthentik(
     (a) => ownedKindBySlug.has(a.slug) && !desired.some((d) => d.slug === a.slug)
   );
   const conflictingSlugs = new Set(conflicting.map((d) => d.slug));
+  // adoptableConflicts: OAuth2-backed regardless of marker (a marked one
+  // would be `managedBySlug`-owned and therefore never reach `conflicting`
+  // at all, so this is effectively "unmarked" in practice) -- the
+  // data-model.md "conflict, adoptable" row. Independent of the entry's own
+  // wantedKind: even a forward-auth entry blocked by a hand-made OpenID
+  // client at its slug has adoption as its path forward (set authMode:
+  // 'oidc', then adopt), so the message should say so regardless.
+  const adoptableConflicts = conflicting
+    .filter((d) => {
+      const app = applicationsBySlug.get(d.slug);
+      return app?.providerId !== undefined && oauth2ProvidersById.has(app.providerId);
+    })
+    .map((d) => d.slug);
 
   // Every OIDC entry this run may create, reconcile, or switch to: not
   // blocked by a conflict. One whose slug holds an owned proxy Application
@@ -586,6 +619,7 @@ export async function runSyncAuthentik(
       toCreate: toCreate.map((d) => d.slug),
       toRemove: toRemove.map((a) => a.slug),
       conflicts: conflicting.map((d) => d.slug),
+      adoptableConflicts,
       missingRungs,
       offLadder,
       bindingChanges,
@@ -776,6 +810,7 @@ export async function runSyncAuthentik(
     toCreate: toCreate.map((d) => d.slug),
     toRemove: toRemove.map((a) => a.slug),
     conflicts: conflicting.map((d) => d.slug),
+    adoptableConflicts,
     missingRungs,
     offLadder,
     bindingChanges,
@@ -1084,7 +1119,10 @@ interface BindingPlan {
 // read, so its plan is "add every wanted rung, remove nothing" either way --
 // identical whether the Application already exists or is about to be
 // created with a clean slate.
-function planBindingChanges(
+// Exported for adopt-oidc-client.ts (issue #1, U9): adoption reconciles one
+// entry's bindings exactly the way a sync run would, so it reuses this
+// rather than a second copy of the add/remove diff logic.
+export function planBindingChanges(
   actionable: Array<CandidateEntry & { authGroup: string }>,
   skipSlugs: Set<string>,
   managedBySlug: Map<string, AuthentikApplication>,
@@ -1189,7 +1227,10 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
   // Printed only when non-empty, so ordinary output is unchanged.
   if (result.conflicts.length > 0) {
     lines.push(`Applications in conflict: ${result.conflicts.length}`);
-    for (const name of result.conflicts) lines.push(`  ! ${name} — ${CONFLICT_EXPLANATION}`);
+    const adoptable = new Set(result.adoptableConflicts ?? []);
+    for (const name of result.conflicts) {
+      lines.push(`  ! ${name} — ${adoptable.has(name) ? OAUTH2_CONFLICT_EXPLANATION : CONFLICT_EXPLANATION}`);
+    }
   }
   if (result.offLadder.length > 0) {
     lines.push(`Entries with an unknown authGroup: ${result.offLadder.length}`);

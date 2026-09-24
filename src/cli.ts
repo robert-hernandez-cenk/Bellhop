@@ -20,6 +20,7 @@ import { runSyncCaddy } from './commands/networking/sync-caddy.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
 import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
 import { runOidcCredentials, formatOidcCredentials } from './commands/networking/oidc-credentials.ts';
+import { runAdoptOidcClient, formatAdoptOidcClient } from './commands/networking/adopt-oidc-client.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
@@ -319,6 +320,24 @@ program
       const authentik = buildAuthentikClient();
       const result = await runOidcCredentials(entry, { authentik, inventory });
       console.log(formatOidcCredentials(result));
+    })
+  );
+
+program
+  .command('adopt-oidc-client <entry>')
+  .description(
+    "Adopt a hand-made Authentik OpenID client at an OIDC-gated entry's slug as Bellhop-managed, without rotating its client ID or secret"
+  )
+  .option('--apply', 'adopt the client for real (default: dry run)')
+  .action(
+    action(async (entry: string, opts: { apply?: boolean }) => {
+      const inventory = loadInventory(inventoryPath());
+      const authentik = buildAuthentikClient();
+      const result = await runAdoptOidcClient({ entry, apply: opts.apply }, { authentik, inventory });
+      console.log(formatAdoptOidcClient(result));
+      if (!opts.apply) {
+        logInfo('[DRY RUN] Not modifying Authentik. Pass --apply to adopt this client.');
+      }
     })
   );
 

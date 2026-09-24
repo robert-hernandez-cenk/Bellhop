@@ -129,3 +129,58 @@ test('GET /api/oidc/:entry/credentials never lets the secret reach captured cons
   assert.equal(result.body.clientSecret, 'secret-50');
   assert.ok(!warnings.join('\n').includes('secret-50'));
 });
+
+// T038: adopt-oidc-client's preview/apply routes. Uses a hand-made
+// (unmarked) OAuth2-backed Application at 'media' -- ownedAuthentik()'s own
+// fixture is already Bellhop-owned (metaPublisher: 'bellhop'), so adoption
+// tests need their own fixture without that marker.
+function handMadeAuthentik(): FakeAuthentikClient {
+  return new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'],
+        redirectUris: [{ matchingMode: 'strict', url: 'https://media.example.com/oauth/callback' }],
+      },
+    ],
+  });
+}
+
+test('POST /api/oidc/:entry/adopt/preview returns the preview text for an admin', async () => {
+  const app = testApp(handMadeAuthentik());
+  const res = await asAdmin(request(app).post('/api/oidc/media/adopt/preview'));
+  assert.equal(res.status, 200);
+  assert.match(res.body.preview, /meta_publisher -> bellhop/);
+});
+
+test('POST /api/oidc/:entry/adopt/preview returns 403 for a non-admin', async () => {
+  const app = testApp(handMadeAuthentik());
+  const res = await asNonAdmin(request(app).post('/api/oidc/media/adopt/preview'));
+  assert.equal(res.status, 403);
+});
+
+test('POST /api/oidc/:entry/adopt/preview returns 400 naming why for an entry that cannot be adopted', async () => {
+  const app = testApp(handMadeAuthentik());
+  const res = await asAdmin(request(app).post('/api/oidc/does-not-exist/adopt/preview'));
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /Unknown entry/);
+});
+
+test('POST /api/oidc/:entry/adopt/apply enqueues a job for an admin', async () => {
+  const app = testApp(handMadeAuthentik());
+  const res = await asAdmin(request(app).post('/api/oidc/media/adopt/apply'));
+  assert.equal(res.status, 200);
+  assert.equal(typeof res.body.jobId, 'number');
+});
+
+test('POST /api/oidc/:entry/adopt/apply returns 403 for a non-admin', async () => {
+  const app = testApp(handMadeAuthentik());
+  const res = await asNonAdmin(request(app).post('/api/oidc/media/adopt/apply'));
+  assert.equal(res.status, 403);
+});

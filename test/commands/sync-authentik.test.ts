@@ -1050,11 +1050,138 @@ test('OIDC: an Application at the slug backed by an unmarked OAuth2 provider is 
   const callsBefore = authentik.calls.length;
   const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
   assert.deepEqual(result.conflicts, ['media']);
+  assert.deepEqual(result.adoptableConflicts, ['media'], 'OAuth2-backed, unmarked -- data-model.md "conflict, adoptable"');
   assert.deepEqual(result.oidcToCreate, []);
   assert.deepEqual(result.oidcUpdates, []);
   assert.deepEqual(result.bindingChanges, []);
   assert.deepEqual(result.discovery, [], 'an unowned client is not ours to health-check');
   assert.deepEqual(authentik.calls.slice(callsBefore), []);
+});
+
+// T036: the same conflict-detection/non-mutation property holds regardless
+// of the *candidate* entry's own desired mode -- ownership of the existing
+// Application is what matters, not what the inventory entry at that slug
+// currently wants. Same fixture (an unmarked OAuth2-backed Application at
+// 'media') exercised against a forward-auth entry and an ungated one.
+test('OIDC: an unmarked OAuth2-backed Application at the slug is a conflict when the entry is forward-auth too', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code'],
+        propertyMappingIds: [],
+        redirectUris: [],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ authMode: undefined }) }
+  );
+  assert.deepEqual(result.conflicts, ['media']);
+  assert.deepEqual(result.adoptableConflicts, ['media'], 'still adoptable -- ownership is Application-kind-based, not entry-mode-based');
+  assert.deepEqual(result.toCreate, [], 'the conflicting slug is never created over with a proxy provider either');
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+  assert.deepEqual(await authentik.listApplications(), [
+    { id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' },
+  ]);
+});
+
+test('OIDC: an unmarked OAuth2-backed Application at a candidate slug with no authGroup (ungated) is left untouched', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code'],
+        propertyMappingIds: [],
+        redirectUris: [],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ authGroup: undefined, authMode: undefined }) }
+  );
+  // An ungated entry is a candidate (it has subdomains) but never `desired`,
+  // so it can never land in `conflicts`/`adoptableConflicts` at all -- those
+  // are only ever populated from `actionable` (desired, on-ladder) entries.
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.adoptableConflicts, []);
+  assert.deepEqual(result.toRemove, [], 'an unowned Application is never a removal candidate');
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+  assert.deepEqual(await authentik.listApplications(), [
+    { id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' },
+  ]);
+});
+
+// The "never reused" half of T036 is already covered by
+// "OIDC: an OAuth2 provider named after the slug that already serves
+// another Application is not reused, and the entry is skipped as
+// provider-name-taken" above (planProviderName) -- this test covers the
+// format/reporting side: adoptableConflicts must single out only the
+// OAuth2-backed conflict, and formatSyncAuthentik must point only that one
+// at adopt-oidc-client.
+test('adoptableConflicts flags only the OAuth2-backed conflict, and formatSyncAuthentik points only it at adopt-oidc-client', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [
+      { id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' },
+      // providerId '99' is neither a proxy nor an OAuth2 provider in this
+      // fake -- the plain "conflict, not adoptable" ownership state.
+      { id: 'sonarr', pk: 'pk-sonarr', name: 'sonarr', slug: 'sonarr', providerId: '99' },
+    ],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code'],
+        propertyMappingIds: [],
+        redirectUris: [],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.0.2.5' }],
+    guests: [
+      {
+        name: 'media',
+        type: 'lxc',
+        vmid: 130,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        subdomains: ['media'],
+        authGroup: USERS_RUNG,
+        authMode: 'oidc',
+        oidcRedirectUris: OIDC_URIS,
+      },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: USERS_RUNG },
+    ],
+  };
+
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual([...result.conflicts].sort(), ['media', 'sonarr']);
+  assert.deepEqual(result.adoptableConflicts, ['media']);
+
+  const lines = formatSyncAuthentik(result).split('\n');
+  const mediaLine = lines.find((l) => l.includes('! media'))!;
+  const sonarrLine = lines.find((l) => l.includes('! sonarr'))!;
+  assert.match(mediaLine, /adopt-oidc-client/);
+  assert.doesNotMatch(sonarrLine, /adopt-oidc-client/);
 });
 
 // T031 -- mode switches (research R5) and OIDC deletions. The Application

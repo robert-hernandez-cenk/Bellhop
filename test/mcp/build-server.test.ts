@@ -51,6 +51,7 @@ test('tool list covers the registry, read-only, and job tools, and nothing exclu
   const names = (await client.listTools()).tools.map((t) => t.name);
   for (const expected of [
     'create_lxc', 'install_app', 'delete_guest', 'update_all', 'guest_power', 'set_config', 'sync_authentik',
+    'adopt_oidc_client',
     'edit_guest', 'get_inventory', 'get_guest_status', 'audit_nfs_mounts', 'list_install_apps', 'check_install_app',
     'list_jobs', 'get_job', 'wait_for_job', 'answer_job_prompt', 'dismiss_job_prompt', 'cancel_job',
   ]) {
@@ -224,6 +225,48 @@ test('get_oidc_client\'s serialized result never contains the fake secret string
 
   const editResult = await call('edit_guest', { name: 'media', port: 8080 });
   assert.ok(!editResult.content.map((c) => c.text).join('\n').includes('secret-50'));
+});
+
+// T038: adopt_oidc_client is a plain generated Operation tool (registered
+// from NETWORKING_OPERATIONS via MCP_OPERATIONS, like sync_authentik), so it
+// previews by default and only mutates with apply: true -- same contract
+// every other operation tool tested above already gets, exercised here
+// against an unmarked (hand-made) OpenID client so the preview text has
+// something real to report.
+function handMadeAuthentik(): FakeAuthentikClient {
+  return new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'],
+        redirectUris: [{ matchingMode: 'strict', url: 'https://media.example.com/oauth/callback' }],
+      },
+    ],
+  });
+}
+
+test('adopt_oidc_client previews by default and mutates nothing', async () => {
+  const authentik = handMadeAuthentik();
+  const { call } = await setup({ inventory: oidcInventory(), authentik });
+  const result = await call('adopt_oidc_client', { entry: 'media' });
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /meta_publisher -> bellhop/);
+  assert.equal((await authentik.listApplications())[0].metaPublisher, undefined, 'a preview must not mutate anything');
+});
+
+test('adopt_oidc_client with apply: true enqueues a job that adopts the client', async () => {
+  const authentik = handMadeAuthentik();
+  const { call, jobStore } = await setup({ inventory: oidcInventory(), authentik });
+  const started = JSON.parse((await call('adopt_oidc_client', { entry: 'media', apply: true })).content[0].text);
+  assert.equal(typeof started.jobId, 'number');
+  await waitForFinished(jobStore, started.jobId);
+  assert.equal((await authentik.listApplications())[0].metaPublisher, 'bellhop');
 });
 
 // T032: edit_guest enforces the same OpenID-client-deletion confirmation

@@ -109,6 +109,20 @@ test('runOidcCredentials throws naming adopt-oidc-client for an unowned (conflic
   );
 });
 
+test('runOidcCredentials says a non-OAuth2-backed conflict is not adoptable, not "run adopt-oidc-client"', async () => {
+  // providerId '99' matches neither the fake's (empty) proxyProviders nor
+  // oauth2Providers list -- the data-model.md "conflict, not adoptable"
+  // ownership state (exists, other-or-none provider).
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '99' }],
+  });
+  await assert.rejects(runOidcCredentials('media', { authentik, inventory: oidcInventory() }), (err: Error) => {
+    assert.match(err.message, /not adoptable/);
+    assert.doesNotMatch(err.message, /adopt-oidc-client/);
+    return true;
+  });
+});
+
 test('runOidcCredentials propagates the unconfigured error', async () => {
   const authentik = new UnconfiguredAuthentikClient();
   await assert.rejects(

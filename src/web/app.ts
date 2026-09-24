@@ -92,6 +92,9 @@ export function buildApp(deps: AppDeps): express.Express {
   app.use('/api/settings', settingsRoutes(deps.inventory, deps.inventoryPath));
   app.use('/api/impersonate', impersonationRoutes(deps.authentik, impersonationStore));
   app.use('/api/networking', networkingRoutes(deps.inventory, deps.inventoryPath));
-  app.use('/api/oidc', oidcRoutes(deps.inventory, deps.inventoryPath, deps.authentik, deps.jobRunner));
+  app.use(
+    '/api/oidc',
+    oidcRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.jobRunner)
+  );
   return app;
 }
