@@ -153,6 +153,37 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .inline-input-port { width: auto; max-width: 5.5em; }
 .col-port { width: 5.5em; }
 .save-status { color: var(--text-secondary); font-size: 11px; margin-left: 6px; }
+/* Native OIDC gating (issue #1): a short informational hint below a field --
+   e.g. "auth mode has no effect until an auth group is set" -- never a
+   warning, so it stays plain secondary text rather than .warning-banner's
+   error-colored background. */
+.field-note { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+/* .adopt-oidc-client sits inside a .warning-banner (T042); its own children
+   (.button, .preview-pane) already set their own colors, so nesting it in
+   an error-colored banner doesn't inherit that banner's white text. */
+.adopt-oidc-client { margin-top: 8px; }
+.adopt-oidc-client .preview-pane { margin-bottom: 8px; }
+.oidc-credentials-note { color: var(--text-secondary); font-size: 13px; }
+.oidc-credentials { display: flex; flex-direction: column; gap: 10px; }
+.oidc-credential-row { display: flex; flex-direction: column; gap: 4px; }
+.oidc-credential-label { font-size: 12px; opacity: 0.7; }
+/* Stacked, not a fixed-width row -- at 375px (the mobile breakpoint) a full
+   client secret has no fixed width that reliably fits next to its own Copy
+   button, so the value wraps on its own line and the button sits below it
+   via flex-wrap rather than ever forcing horizontal scroll. */
+.oidc-credential-value-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.oidc-credential-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
 .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 400; }
 .modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 20px; width: 420px; max-width: 90vw; }
 .col-expand { width: 1.5em; text-align: center; color: var(--text-secondary); }

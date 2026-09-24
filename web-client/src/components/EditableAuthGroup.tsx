@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { GuestEntry } from '../api/types';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { AdoptOidcClientButton } from './AdoptOidcClientButton';
+import { isOidcEffective, needsOidcDeletionConfirmation } from '../lib/oidc';
 
 interface Rung {
   name: string;
@@ -47,6 +50,11 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [offLadder, setOffLadder] = useState<OffLadderEntry[]>([]);
   const [missingRungs, setMissingRungs] = useState<string[]>([]);
+  // T035: clearing the tier on an OIDC-effective guest deletes its OpenID
+  // client (FR-022a), so that one transition is confirmed first. Every
+  // other authGroup change (including lowering to a different rung while
+  // staying in OIDC mode) saves straight away, same as before this feature.
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   // Rows are keyed by guest name, not remounted on refresh, so local state
   // must be re-synced whenever a fresh guest.authGroup comes in via props
@@ -65,7 +73,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       .catch((err) => setLadderError(err instanceof Error ? err.message : String(err)));
   }, []);
 
-  const save = async (next: string) => {
+  const save = async (next: string, confirmed: boolean) => {
     const previous = authGroup;
     setAuthGroup(next);
     setStatus('saving');
@@ -76,6 +84,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
     try {
       const res = await apiPatch<PatchResponse>(`/inventory/guests/${encodeURIComponent(guest.name)}`, {
         authGroup: next === NONE ? null : next,
+        ...(confirmed ? { confirmOidcClientDeletion: true } : {}),
       });
       setConflicts(res.authentikConflicts ?? []);
       setOffLadder(res.authentikOffLadder ?? []);
@@ -88,11 +97,36 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       }
       onSaved();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Safety net (U10 controller clarification): the client-side
+      // isOidcEffective check in onSelectChange below should already have
+      // caught this and opened the modal before ever sending -- guarded on
+      // `!confirmed` so a confirmed retry that fails for some other reason
+      // never loops back into the modal.
+      if (!confirmed && needsOidcDeletionConfirmation(message)) {
+        setAuthGroup(previous);
+        setStatus('idle');
+        setConfirmingClear(true);
+        return;
+      }
       setAuthGroup(previous);
       setStatus('error');
-      setError(err instanceof Error ? err.message : String(err));
+      setError(message);
     }
   };
+
+  const onSelectChange = (next: string) => {
+    if (next === NONE && isOidcEffective(guest)) {
+      // Don't touch `authGroup` yet -- the <select> is controlled by it, so
+      // leaving it unset here is what visually reverts the browser's own
+      // optimistic selection while the confirmation modal is open.
+      setConfirmingClear(true);
+      return;
+    }
+    void save(next, false);
+  };
+
+  const confirmClear = () => save(NONE, true);
 
   const rungs = ladder?.rungs ?? [];
   const canLower = ladder?.canLower ?? false;
@@ -115,7 +149,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
         className="field-input"
         value={authGroup}
         disabled={disabled}
-        onChange={(e) => save(e.target.value)}
+        onChange={(e) => onSelectChange(e.target.value)}
         aria-label="Auth group"
         title="Auth group"
       >
@@ -149,6 +183,10 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
         <div className="warning-banner">
           Authentik slug conflict: {conflicts.join(', ')} — the slug is held by an Application this
           toolkit does not manage; logins will fail until it is resolved by hand.
+          {/* T042: canLower is admin-equivalent (auth-groups.ts derives it
+              from the same isAdminUser check GET /whoami's isAdmin uses),
+              so this reuses it rather than a second /whoami fetch. */}
+          {canLower && isOidcEffective(guest) && <AdoptOidcClientButton entryName={guest.name} />}
         </div>
       )}
       {offLadder.length > 0 && (
@@ -162,6 +200,14 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
           Missing in Authentik: {missingRungs.join(', ')} — these ladder rungs do not exist, so no
           bindings were written for them.
         </div>
+      )}
+      {confirmingClear && (
+        <ConfirmDeleteModal
+          message={`Clearing ${guest.name}'s access tier deletes its OpenID client. Its OIDC login stops working until new credentials are entered in the app.`}
+          confirmLabel="Clear access tier"
+          onConfirm={confirmClear}
+          onClose={() => setConfirmingClear(false)}
+        />
       )}
     </div>
   );

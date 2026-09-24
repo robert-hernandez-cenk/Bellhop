@@ -1,4 +1,5 @@
 import { EditableAuthGroup } from './EditableAuthGroup';
+import { EditableAuthMode, EditableOidcRedirectUris } from './EditableAuthMode';
 import { EditableCaddyManual } from './EditableCaddyManual';
 import { EditableInsecureBackendTls } from './EditableInsecureBackendTls';
 import { EditablePort } from './EditablePort';
@@ -6,8 +7,10 @@ import { EditableSubdomains } from './EditableSubdomains';
 import { EditableUnauthenticatedPaths } from './EditableUnauthenticatedPaths';
 import { EditableVpn } from './EditableVpn';
 import { ExternalLink } from './ExternalLink';
+import { OidcCredentials } from './OidcCredentials';
 import type { GuestEntry, HostEntry } from '../api/types';
 import { communityScriptsUrl } from '../lib/guest-display';
+import { isOidcEffective } from '../lib/oidc';
 
 interface Props {
   guest: GuestEntry;
@@ -71,6 +74,26 @@ export function AdvancedGuestModal({ guest, hosts, guests, onClose, onSaved }: P
               <EditableAuthGroup guest={guest} onSaved={onSaved} />
             </div>
           </div>
+          <div className="form-row">
+            <div className="form-row-label">auth mode</div>
+            <div className="form-row-value">
+              <EditableAuthMode guest={guest} onSaved={onSaved} />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-row-label">callback urls</div>
+            <div className="form-row-value">
+              <EditableOidcRedirectUris guest={guest} onSaved={onSaved} />
+            </div>
+          </div>
+          {isOidcEffective(guest) && (
+            <div className="form-row">
+              <div className="form-row-label">oidc client</div>
+              <div className="form-row-value">
+                <OidcCredentials guest={guest} />
+              </div>
+            </div>
+          )}
           <div className="form-row">
             <div className="form-row-label">unauthenticated paths</div>
             <div className="form-row-value">
