@@ -203,3 +203,41 @@ test('getOAuth2Issuer: the unconfigured client rejects, the fake returns the per
   assert.equal(await client.getOAuth2Issuer(provider.id), 'https://auth.example.com/application/o/media/');
   assert.equal(await client.getOAuth2Issuer(provider.id), (await client.getOAuth2Credentials(provider.id)).issuer);
 });
+
+// Authentik provider names are unique across every provider kind (U8 fix
+// round) -- the fake enforces it so a plan that would collide fails in tests.
+test('FakeAuthentikClient rejects a duplicate provider name across proxy and OAuth2 providers, on create and rename', async () => {
+  const oauth2Input = (name: string) => ({
+    name,
+    clientType: 'confidential' as const,
+    grantTypes: ['authorization_code'],
+    propertyMappingIds: [],
+    redirectUris: [],
+    authorizationFlowId: 'f',
+    invalidationFlowId: 'g',
+  });
+  const proxyInput = (name: string) => ({ name, externalHost: 'https://a.example.com', authorizationFlowId: 'f', invalidationFlowId: 'g' });
+
+  const client = new FakeAuthentikClient();
+  const proxy = await client.createProxyProvider(proxyInput('media'));
+  await assert.rejects(client.createOAuth2Provider(oauth2Input('media')), /name already exists/);
+  await assert.rejects(client.createProxyProvider(proxyInput('media')), /name already exists/);
+  const oauth2 = await client.createOAuth2Provider(oauth2Input('books'));
+  await assert.rejects(client.renameOAuth2Provider(oauth2.id, 'media'), /name already exists/);
+  await assert.rejects(client.renameProxyProvider(proxy.id, 'books'), /name already exists/);
+
+  await client.renameProxyProvider(proxy.id, 'media (replaced)');
+  assert.equal((await client.listProxyProviders())[0].name, 'media (replaced)');
+  await client.renameOAuth2Provider(oauth2.id, 'media');
+  assert.equal((await client.listOAuth2Providers())[0].name, 'media');
+  assert.deepEqual(client.calls.filter((x) => x.startsWith('rename')), [
+    `renameProxyProvider ${proxy.id}`,
+    `renameOAuth2Provider ${oauth2.id}`,
+  ]);
+});
+
+test('UnconfiguredAuthentikClient rejects the provider rename methods', async () => {
+  const client = new UnconfiguredAuthentikClient();
+  await assert.rejects(client.renameProxyProvider('1', 'a'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.renameOAuth2Provider('1', 'a'), { message: UNCONFIGURED_MESSAGE });
+});

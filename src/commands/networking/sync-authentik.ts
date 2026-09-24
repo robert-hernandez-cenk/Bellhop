@@ -92,9 +92,10 @@ export interface OidcUpdate {
 // missing callback URL is one entry's incomplete configuration, while a
 // missing signing key or scope mapping is instance-wide misconfiguration
 // that blocks every OIDC entry.
-// 'provider-name-taken' is also one entry's problem: a provider named after
-// its slug already serves some other Application, and Authentik rejects a
-// second provider under the same name, so creating one is never attempted.
+// 'provider-name-taken' is also one entry's problem: a provider of either
+// kind already holds the name a new provider needs (the slug, or a switch's
+// `<slug> (replaced)`), and Authentik rejects a duplicate provider name, so
+// creating one is never attempted.
 export type OidcSkipKind =
   | 'missing-redirect-uris'
   | 'missing-signing-key'
@@ -171,6 +172,13 @@ export const OIDC_SCOPE_MAPPINGS = [
   'goauthentik.io/providers/oauth2/scope-profile',
   'goauthentik.io/providers/oauth2/scope-email',
 ];
+
+// Authentik's provider names are unique across every provider kind, and
+// both providers in a mode switch are named after the slug (issue #156). The
+// outgoing one is renamed to `<slug>${REPLACED_PROVIDER_SUFFIX}` first, so its
+// replacement can be created under the slug name before the Application is
+// repointed -- the Application is never left without a provider.
+export const REPLACED_PROVIDER_SUFFIX = ' (replaced)';
 
 // Same bound as RealCloudflareClient's per-request timeout, so a stalled
 // Authentik cannot hang a Dashboard save that runs this via syncCaddyLive.
@@ -393,11 +401,15 @@ export async function runSyncAuthentik(
   // as to a fresh create, so a skipped switch is never attempted and the
   // proxy Application stays exactly as it is.
   const oidcEntries = actionable.filter((d) => wantedKind(d) === 'oauth2' && !conflictingSlugs.has(d.slug));
+  // Every provider of either kind, and which Application uses it -- the
+  // namespace a new provider's name must be free in (names are unique across
+  // kinds in Authentik).
+  const providerIndex = buildProviderIndex(proxyProviders, oauth2Providers, applications);
   const oidcPlan = await planOidc(
     oidcEntries,
     managedBySlug,
     ownedKindBySlug,
-    oauth2Providers,
+    providerIndex,
     oauth2ProvidersById,
     deps.authentik
   );
@@ -406,8 +418,7 @@ export async function runSyncAuthentik(
   const forwardSwitchPlan = planForwardSwitches(
     actionable.filter((d) => wantedKind(d) === 'proxy' && ownedKindBySlug.get(d.slug) === 'oauth2'),
     managedBySlug,
-    applications,
-    proxyProviders
+    providerIndex
   );
   const oidcSkipped = [...oidcPlan.skipped, ...forwardSwitchPlan.skipped];
   // A skipped entry with no Application yet gets nothing, bindings
@@ -557,6 +568,10 @@ export async function runSyncAuthentik(
   // repointed with its Bellhop OAuth2 marker cleared (a proxy-backed
   // Application is owned without it), then onto the outpost below.
   for (const change of forwardSwitchPlan.switches) {
+    const outgoingId = change.application.providerId!;
+    if (change.renameOutgoing) {
+      await deps.authentik.renameOAuth2Provider(outgoingId, `${change.slug}${REPLACED_PROVIDER_SUFFIX}`);
+    }
     const providerId =
       change.orphanProxyProviderId ??
       (
@@ -570,11 +585,14 @@ export async function runSyncAuthentik(
     managedBySlug.set(change.slug, { ...change.application, providerId, metaPublisher: undefined });
     ownedKindBySlug.set(change.slug, 'proxy');
     outpostAdds.push(providerId);
-    switchedAwayOAuth2Ids.push(change.application.providerId!);
+    switchedAwayOAuth2Ids.push(outgoingId);
   }
 
   // OIDC creates, forward -> oidc switches, and drift fixes.
   for (const create of oidcPlan.creates) {
+    if (create.switchFrom && create.renameOutgoing) {
+      await deps.authentik.renameProxyProvider(create.switchFrom.providerId!, `${create.slug}${REPLACED_PROVIDER_SUFFIX}`);
+    }
     let providerId: string;
     if (create.orphan) {
       // Self-heal of a prior partial failure (provider created, Application
@@ -699,6 +717,9 @@ interface OidcCreatePlan {
   // that gets repointed at the new client instead of a new Application
   // being created (research R5).
   switchFrom?: AuthentikApplication;
+  // The switch's outgoing proxy provider holds the slug name and must be
+  // renamed out of the way first (REPLACED_PROVIDER_SUFFIX).
+  renameOutgoing?: boolean;
 }
 
 interface OidcUpdatePlan {
@@ -730,7 +751,7 @@ async function planOidc(
   entries: CandidateEntry[],
   managedBySlug: Map<string, AuthentikApplication>,
   ownedKindBySlug: Map<string, OwnedProviderKind>,
-  oauth2Providers: AuthentikOAuth2Provider[],
+  providerIndex: ProviderIndex,
   oauth2ProvidersById: Map<string, AuthentikOAuth2Provider>,
   authentik: AuthentikClient
 ): Promise<OidcPlan> {
@@ -778,26 +799,17 @@ async function planOidc(
       continue;
     }
     // A new client is needed (a fresh entry, or a forward -> oidc switch).
-    // Same name-based self-heal as the proxy path, restricted to a provider
-    // with no assigned Application so it can never adopt a client some other
-    // Application is using. A same-named provider that *is* assigned
-    // elsewhere blocks the create outright -- Authentik rejects a duplicate
-    // provider name -- so it is caught here, where dry run and apply both
-    // see it, instead of failing mid-apply.
-    const named = oauth2Providers.find((p) => p.name === entry.slug);
-    if (named?.assignedApplicationSlug !== undefined) {
-      plan.skipped.push({
-        slug: entry.slug,
-        kind: 'provider-name-taken',
-        reason: providerNameTakenReason('OAuth2', entry.slug, named.assignedApplicationSlug),
-      });
+    const naming = planProviderName(entry.slug, 'oauth2', application?.providerId, providerIndex);
+    if ('skip' in naming) {
+      plan.skipped.push({ slug: entry.slug, kind: 'provider-name-taken', reason: naming.skip });
       continue;
     }
+    const orphan = naming.reuseId ? oauth2ProvidersById.get(naming.reuseId)! : undefined;
     plan.creates.push({
       slug: entry.slug,
       settings,
-      ...(named ? { orphan: { id: named.id, ...diffOAuth2Settings(named, settings) } } : {}),
-      ...(application ? { switchFrom: application } : {}),
+      ...(orphan ? { orphan: { id: orphan.id, ...diffOAuth2Settings(orphan, settings) } } : {}),
+      ...(application ? { switchFrom: application, renameOutgoing: naming.renameOutgoing } : {}),
     });
   }
   return plan;
@@ -812,37 +824,102 @@ interface ForwardSwitch {
   // points at, reused instead of creating a duplicate (the same self-heal
   // as the proxy create path).
   orphanProxyProviderId?: string;
+  // The outgoing OAuth2 client holds the slug name and must be renamed out
+  // of the way first (REPLACED_PROVIDER_SUFFIX).
+  renameOutgoing: boolean;
 }
 
 // The oidc -> forward half of research R5, planned before any mutation like
 // everything else. `entries` are forward entries whose slug holds a
-// Bellhop-owned OAuth2 Application. A proxy provider already named after
-// the slug and serving some other Application blocks the switch (Authentik
-// rejects a duplicate name, and repointing at it would take that provider
-// from its Application): the entry is reported and its OpenID client kept.
+// Bellhop-owned OAuth2 Application. When the name the new proxy provider
+// needs is not free (planProviderName), the switch is not attempted: the
+// entry is reported and its OpenID client kept.
 function planForwardSwitches(
   entries: CandidateEntry[],
   managedBySlug: Map<string, AuthentikApplication>,
-  applications: AuthentikApplication[],
-  proxyProviders: AuthentikProxyProvider[]
+  providerIndex: ProviderIndex
 ): { switches: ForwardSwitch[]; skipped: OidcSkip[] } {
   const switches: ForwardSwitch[] = [];
   const skipped: OidcSkip[] = [];
   for (const entry of entries) {
-    const named = proxyProviders.find((p) => p.name === entry.slug);
-    const user = named ? applications.find((a) => a.providerId === named.id) : undefined;
-    if (user) {
-      skipped.push({ slug: entry.slug, kind: 'provider-name-taken', reason: providerNameTakenReason('proxy', entry.slug, user.slug) });
+    const application = managedBySlug.get(entry.slug)!;
+    const naming = planProviderName(entry.slug, 'proxy', application.providerId, providerIndex);
+    if ('skip' in naming) {
+      skipped.push({ slug: entry.slug, kind: 'provider-name-taken', reason: naming.skip });
       continue;
     }
     switches.push({
       slug: entry.slug,
       externalHost: entry.externalHost,
-      application: managedBySlug.get(entry.slug)!,
-      ...(named ? { orphanProxyProviderId: named.id } : {}),
+      application,
+      renameOutgoing: naming.renameOutgoing,
+      ...(naming.reuseId ? { orphanProxyProviderId: naming.reuseId } : {}),
     });
   }
   return { switches, skipped };
+}
+
+interface ProviderRef {
+  id: string;
+  name: string;
+  kind: OwnedProviderKind;
+}
+
+interface ProviderIndex {
+  providers: ProviderRef[];
+  // providerId -> slug of the Application using it.
+  usedBy: Map<string, string>;
+}
+
+function buildProviderIndex(
+  proxyProviders: AuthentikProxyProvider[],
+  oauth2Providers: AuthentikOAuth2Provider[],
+  applications: AuthentikApplication[]
+): ProviderIndex {
+  const usedBy = new Map<string, string>();
+  for (const a of applications) if (a.providerId != null) usedBy.set(a.providerId, a.slug);
+  // Authentik's own reverse lookup, for an Application the listing missed.
+  for (const p of oauth2Providers) {
+    if (p.assignedApplicationSlug !== undefined && !usedBy.has(p.id)) usedBy.set(p.id, p.assignedApplicationSlug);
+  }
+  return {
+    providers: [
+      ...proxyProviders.map((p) => ({ id: p.id, name: p.name, kind: 'proxy' as const })),
+      ...oauth2Providers.map((p) => ({ id: p.id, name: p.name, kind: 'oauth2' as const })),
+    ],
+    usedBy,
+  };
+}
+
+// Where a new provider named after `slug` comes from, decided before any
+// mutation so dry run and apply agree. Provider names are unique across every
+// kind in Authentik, so:
+//   - A switch's outgoing provider (`outgoingId`) that holds the slug name is
+//     renamed to `<slug> (replaced)` first; that name must itself be free.
+//   - Any *other* provider already holding the slug name blocks the create,
+//     except an unused provider of the wanted kind, which is reused (the
+//     partial-failure self-heal -- it can never steal a provider some other
+//     Application relies on). A provider of the other kind, or one serving
+//     another Application, is never touched: the entry is skipped with a
+//     reason instead of failing mid-apply on a duplicate name.
+function planProviderName(
+  slug: string,
+  wantKind: OwnedProviderKind,
+  outgoingId: string | undefined,
+  index: ProviderIndex
+): { reuseId?: string; renameOutgoing: boolean } | { skip: string } {
+  const outgoing = outgoingId === undefined ? undefined : index.providers.find((p) => p.id === outgoingId);
+  const renameOutgoing = outgoing?.name === slug;
+  if (renameOutgoing) {
+    const replacedName = `${slug}${REPLACED_PROVIDER_SUFFIX}`;
+    const holder = index.providers.find((p) => p.name === replacedName && p.id !== outgoingId);
+    if (holder) return { skip: providerNameTakenReason(holder, index.usedBy.get(holder.id)) };
+  }
+  const named = index.providers.find((p) => p.name === slug && p.id !== outgoingId);
+  if (!named) return { renameOutgoing };
+  const user = index.usedBy.get(named.id);
+  if (user !== undefined || named.kind !== wantKind) return { skip: providerNameTakenReason(named, user) };
+  return { reuseId: named.id, renameOutgoing };
 }
 
 // research.md R6: fetch `<issuer>.well-known/openid-configuration` and
@@ -891,8 +968,10 @@ function timeoutError(url: string): string {
   return `timeout: no response from ${url} within ${DISCOVERY_TIMEOUT_MS / 1000}s`;
 }
 
-function providerNameTakenReason(kind: 'OAuth2' | 'proxy', name: string, applicationSlug: string): string {
-  return `${kind === 'OAuth2' ? 'an OAuth2' : 'a proxy'} provider named '${name}' already exists and serves the Application '${applicationSlug}'; rename or delete that provider in Authentik`;
+function providerNameTakenReason(provider: ProviderRef, applicationSlug: string | undefined): string {
+  const kind = provider.kind === 'oauth2' ? 'an OAuth2' : 'a proxy';
+  const use = applicationSlug === undefined ? 'no Application uses it' : `it serves the Application '${applicationSlug}'`;
+  return `${kind} provider named '${provider.name}' already exists (${use}); Authentik provider names are unique, so rename or delete that provider in Authentik`;
 }
 
 function errorMessage(err: unknown): string {

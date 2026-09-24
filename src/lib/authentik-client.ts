@@ -126,6 +126,11 @@ export interface AuthentikClient {
     invalidationFlowId: string;
   }): Promise<AuthentikProxyProvider>;
   deleteProxyProvider(id: string): Promise<void>;
+  // Provider names are unique across every provider kind in Authentik, so a
+  // mode switch renames the outgoing provider out of the way before creating
+  // its replacement under the slug name (sync-authentik). Name only -- never
+  // settings or credentials.
+  renameProxyProvider(id: string, name: string): Promise<void>;
   listApplications(): Promise<AuthentikApplication[]>;
   createApplication(input: {
     name: string;
@@ -145,6 +150,10 @@ export interface AuthentikClient {
   createOAuth2Provider(input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider>;
   updateOAuth2Provider(id: string, input: Partial<OAuth2ProviderSettings>): Promise<void>;
   deleteOAuth2Provider(id: string): Promise<void>;
+  // Kept separate from updateOAuth2Provider so OAuth2ProviderSettings (and
+  // the drift diff built from it) never grows a name field. See
+  // renameProxyProvider.
+  renameOAuth2Provider(id: string, name: string): Promise<void>;
   getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }>;
   // The issuer URL alone (setup_urls only) -- for callers that need the
   // issuer but must never have the client secret flow through them, e.g.
@@ -352,6 +361,10 @@ export class RealAuthentikClient implements AuthentikClient {
     await this.request<void>('DELETE', `/api/v3/providers/proxy/${id}/`);
   }
 
+  async renameProxyProvider(id: string, name: string): Promise<void> {
+    await this.request<void>('PATCH', `/api/v3/providers/proxy/${id}/`, { name });
+  }
+
   async listApplications(): Promise<AuthentikApplication[]> {
     const res = await this.request<{ results: RawApplication[] }>('GET', '/api/v3/core/applications/?page_size=500');
     return res.results.map((r) => ({
@@ -544,6 +557,10 @@ export class RealAuthentikClient implements AuthentikClient {
     await this.request<void>('DELETE', `/api/v3/providers/oauth2/${id}/`);
   }
 
+  async renameOAuth2Provider(id: string, name: string): Promise<void> {
+    await this.request<void>('PATCH', `/api/v3/providers/oauth2/${id}/`, { name });
+  }
+
   // The only place a client secret is ever read -- callers must not cache
   // this beyond the single request that needed it (FR-004).
   async getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {
@@ -671,6 +688,9 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
   deleteProxyProvider(_id: string): Promise<void> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
+  renameProxyProvider(_id: string, _name: string): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
   listApplications(): Promise<AuthentikApplication[]> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
@@ -716,6 +736,9 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   deleteOAuth2Provider(_id: string): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  renameOAuth2Provider(_id: string, _name: string): Promise<void> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   getOAuth2Credentials(_id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {

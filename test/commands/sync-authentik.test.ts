@@ -7,6 +7,7 @@ import {
   syncAuthentikFailed,
   ownedProviderKind,
   diffOAuth2Settings,
+  desiredOAuth2Settings,
 } from '../../src/commands/networking/sync-authentik.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
@@ -1121,7 +1122,10 @@ test('mode switch forward -> oidc: the dry run reports the switch and no binding
   assert.deepEqual(await authentik.listProxyProviders(), [], 'the proxy provider is deleted');
   assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [], 'and removed from the outpost');
   assert.deepEqual(boundGroupNames(authentik, app.pk, ids), bindingsBefore, 'bindings untouched');
+  // Provider names are unique across every provider kind, so the outgoing
+  // proxy provider (named 'media') is renamed out of the way first.
   assert.deepEqual(authentik.calls.slice(callsBefore), [
+    `renameProxyProvider ${proxy.id}`,
     'createOAuth2Provider media',
     'updateApplication media',
     'setOutpostProviders outpost-1',
@@ -1176,6 +1180,7 @@ test('mode switch oidc -> forward: the dry run warns about the OpenID client del
   assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [proxies[0].id], 'the proxy provider joins the outpost');
   assert.deepEqual(boundGroupNames(authentik, app.pk, ids), bindingsBefore, 'bindings untouched');
   assert.deepEqual(authentik.calls.slice(callsBefore), [
+    `renameOAuth2Provider ${oauth2.id}`,
     'createProxyProvider media',
     'updateApplication media',
     'setOutpostProviders outpost-1',
@@ -1244,8 +1249,11 @@ test('mode switch forward -> oidc is not attempted when the OIDC entry is skippe
   }
 });
 
-test('mode switch oidc -> forward reuses an orphaned proxy provider named after the slug', async () => {
-  const { authentik, app } = await oidcOwned();
+test('mode switch oidc -> forward self-heals a prior partial run: an already-renamed client and an orphaned proxy provider named after the slug', async () => {
+  const { authentik, app, oauth2 } = await oidcOwned();
+  // A previous run renamed the outgoing client and created the proxy
+  // provider, then failed before repointing the Application.
+  await authentik.renameOAuth2Provider(oauth2.id, 'media (replaced)');
   const orphan = await authentik.createProxyProvider({
     name: 'media',
     externalHost: 'https://media.example.com',
@@ -1255,15 +1263,87 @@ test('mode switch oidc -> forward reuses an orphaned proxy provider named after 
   const callsBefore = authentik.calls.length;
   const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authMode: 'forward' }) });
   assert.deepEqual(result.modeSwitches, [{ slug: 'media', from: 'oidc', to: 'forward' }]);
-  assert.ok(!authentik.calls.slice(callsBefore).some((c) => c.startsWith('createProxyProvider')));
+  assert.deepEqual(authentik.calls.slice(callsBefore), [
+    'updateApplication media',
+    'setOutpostProviders outpost-1',
+    `deleteOAuth2Provider ${oauth2.id}`,
+  ], 'no second rename, no duplicate create');
   const apps = await authentik.listApplications();
   assert.equal(apps[0].pk, app.pk);
   assert.equal(apps[0].providerId, orphan.id);
   assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [orphan.id]);
 });
 
+test('mode switch forward -> oidc self-heals a prior partial run: an already-renamed proxy provider and an orphaned OAuth2 provider', async () => {
+  const { authentik, app, proxy } = await forwardOwned();
+  await authentik.renameProxyProvider(proxy.id, 'media (replaced)');
+  const orphan = await authentik.createOAuth2Provider({
+    name: 'media',
+    ...desiredOAuth2Settings(OIDC_URIS, 'key-1', SCOPE_IDS),
+    authorizationFlowId: 'default-flow',
+    invalidationFlowId: 'default-invalidation-flow',
+  });
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(result.modeSwitches, [{ slug: 'media', from: 'forward', to: 'oidc' }]);
+  assert.deepEqual(authentik.calls.slice(callsBefore), [
+    'updateApplication media',
+    'setOutpostProviders outpost-1',
+    `deleteProxyProvider ${proxy.id}`,
+  ]);
+  const apps = await authentik.listApplications();
+  assert.equal(apps[0].pk, app.pk);
+  assert.equal(apps[0].providerId, orphan.id);
+});
+
+test('a switch is skipped as provider-name-taken when the "<slug> (replaced)" name is already in use', async () => {
+  const { authentik, app, proxy } = await forwardOwned();
+  await authentik.createOAuth2Provider({
+    name: 'media (replaced)',
+    ...desiredOAuth2Settings(OIDC_URIS, 'key-1', SCOPE_IDS),
+    authorizationFlowId: 'default-flow',
+    invalidationFlowId: 'default-invalidation-flow',
+  });
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(planOf(result), planOf(dry));
+  assert.deepEqual(result.modeSwitches, []);
+  assert.deepEqual(result.oidcSkipped?.map((s) => s.kind), ['provider-name-taken']);
+  assert.match(result.oidcSkipped![0].reason, /'media \(replaced\)'/);
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+  assert.deepEqual(await authentik.listApplications(), [app]);
+  assert.deepEqual(await authentik.listProxyProviders(), [proxy]);
+});
+
+test('a new OIDC client is skipped as provider-name-taken when a proxy provider already holds the slug name, whether or not an Application uses it', async () => {
+  for (const used of [true, false]) {
+    const authentik = new FakeAuthentikClient();
+    await seedLadderGroups(authentik);
+    const taken = await authentik.createProxyProvider({
+      name: 'media',
+      externalHost: 'https://other.example.com',
+      authorizationFlowId: 'default-flow',
+      invalidationFlowId: 'default-invalidation-flow',
+    });
+    if (used) await authentik.createApplication({ name: 'other', slug: 'other', providerId: taken.id });
+    const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+    const callsBefore = authentik.calls.length;
+    const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+    assert.deepEqual(planOf(result), planOf(dry), String(used));
+    assert.deepEqual(result.oidcToCreate, [], String(used));
+    assert.deepEqual(result.oidcSkipped?.map((s) => s.kind), ['provider-name-taken'], String(used));
+    assert.match(result.oidcSkipped![0].reason, /proxy provider named 'media'/, String(used));
+    if (used) assert.match(result.oidcSkipped![0].reason, /'other'/);
+    assert.deepEqual(authentik.calls.slice(callsBefore), [], String(used));
+  }
+});
+
 test('mode switch oidc -> forward is skipped as provider-name-taken when a proxy provider named after the slug serves another Application', async () => {
   const { authentik, app, oauth2 } = await oidcOwned();
+  // Names are unique across kinds, so this only arises when the outgoing
+  // client is not itself named after the slug.
+  await authentik.renameOAuth2Provider(oauth2.id, 'media-client');
   const taken = await authentik.createProxyProvider({
     name: 'media',
     externalHost: 'https://other.example.com',

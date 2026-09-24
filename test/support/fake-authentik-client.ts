@@ -128,6 +128,17 @@ export class FakeAuthentikClient implements AuthentikClient {
     return provider;
   }
 
+  // Authentik's Provider.name is unique across every provider kind (proxy,
+  // OAuth2, ...), and a duplicate is a 400 on create or rename. Enforced here
+  // so a plan that would collide fails in tests instead of only in
+  // production (U5 review finding 1, U8 fix round).
+  private requireUniqueProviderName(name: string, exceptId?: string): void {
+    const taken = [...this.proxyProviders.values(), ...this.oauth2Providers.values()].some(
+      (p) => p.name === name && p.id !== exceptId
+    );
+    if (taken) throw new Error(`Authentik API failed: 400 provider with this name already exists (${name})`);
+  }
+
   private requireApplication(id: string): AuthentikApplication {
     const app = this.applications.get(id);
     if (!app) throw new Error(`Unknown application: ${id}`);
@@ -239,6 +250,7 @@ export class FakeAuthentikClient implements AuthentikClient {
     authorizationFlowId: string;
     invalidationFlowId: string;
   }): Promise<AuthentikProxyProvider> {
+    this.requireUniqueProviderName(input.name);
     const provider: AuthentikProxyProvider = { id: this.newId(), name: input.name, externalHost: input.externalHost };
     this.proxyProviders.set(provider.id, provider);
     this.calls.push(`createProxyProvider ${input.name}`);
@@ -249,6 +261,13 @@ export class FakeAuthentikClient implements AuthentikClient {
     this.requireProxyProvider(id);
     this.proxyProviders.delete(id);
     this.calls.push(`deleteProxyProvider ${id}`);
+  }
+
+  async renameProxyProvider(id: string, name: string): Promise<void> {
+    const existing = this.requireProxyProvider(id);
+    this.requireUniqueProviderName(name, id);
+    this.proxyProviders.set(id, { ...existing, name });
+    this.calls.push(`renameProxyProvider ${id}`);
   }
 
   async listApplications(): Promise<AuthentikApplication[]> {
@@ -373,12 +392,7 @@ export class FakeAuthentikClient implements AuthentikClient {
   }
 
   async createOAuth2Provider(input: OAuth2ProviderSettings & { name: string }): Promise<AuthentikOAuth2Provider> {
-    // Real Authentik rejects a provider whose name is already taken, so a
-    // plan that would POST a duplicate must fail here too rather than pass
-    // silently (U5 review finding 1).
-    if ([...this.oauth2Providers.values()].some((p) => p.name === input.name)) {
-      throw new Error(`Authentik API POST /providers/oauth2/ failed: 400 provider with this name already exists (${input.name})`);
-    }
+    this.requireUniqueProviderName(input.name);
     const id = this.newId();
     const record: FakeOAuth2ProviderRecord = {
       id,
@@ -415,6 +429,13 @@ export class FakeAuthentikClient implements AuthentikClient {
     this.requireOAuth2Provider(id);
     this.oauth2Providers.delete(id);
     this.calls.push(`deleteOAuth2Provider ${id}`);
+  }
+
+  async renameOAuth2Provider(id: string, name: string): Promise<void> {
+    const existing = this.requireOAuth2Provider(id);
+    this.requireUniqueProviderName(name, id);
+    this.oauth2Providers.set(id, { ...existing, name });
+    this.calls.push(`renameOAuth2Provider ${id}`);
   }
 
   async getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {
