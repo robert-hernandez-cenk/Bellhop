@@ -460,14 +460,16 @@ there is no LAN gateway to restore '<guest>' to`) if it doesn't.
   **Upgrading from a deployment that relied on the previous default**
   (`homelab-app-users-open,homelab-app-users,homelab-users,authentik
   Admins`, before the project's rename to Bellhop): stored `authGroup`
-  values are never rewritten by an upgrade, so take one of these two
-  recovery paths before or after upgrading, at your convenience:
-  - Set `AUTHENTIK_GROUP_LADDER` explicitly to the old value above in
-    `data/authentik.env`, keeping every gated app on its current groups
-    unchanged; or
-  - Rename those groups in Authentik to the new default names and
-    re-tier each gated entry (clear and re-set its access tier) so its
-    stored `authGroup` matches a rung on the new default ladder.
+  values are never rewritten by an upgrade, so set
+  `AUTHENTIK_GROUP_LADDER` explicitly to the old value above in
+  `data/authentik.env` **before** upgrading, keeping every gated app on
+  its current groups unchanged. If you upgrade first without doing this,
+  every entry still gated at an old-default rung is left untouched, not
+  reconciled, until you either set `AUTHENTIK_GROUP_LADDER` to the old
+  value as above, or rename those groups in Authentik to the new default
+  names and re-tier each affected entry (clear and re-set its access
+  tier) so its stored `authGroup` matches a rung on the new default
+  ladder.
 
   Until one of these is done, `sync-authentik` reports every affected
   entry under "Entries with an unknown authGroup" and leaves its existing

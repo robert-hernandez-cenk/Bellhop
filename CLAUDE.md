@@ -270,9 +270,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `hosts`/`guests`/`external_sites` are opened while they still carry a
   `requires_auth` column: every row with `requires_auth = 1` gets
   `auth_group` set to the configured `AUTHENTIK_GROUP_LADDER`'s *top*
-  rung -- a deliberate fail-closed choice (the narrowest audience), not
-  one tuned to match any particular operator's prior Authentik state --
-  which is `authentik Admins` in the default ladder -- and then the
+  rung -- `authentik Admins` in the default ladder -- a deliberate
+  fail-closed choice (the narrowest audience), not one tuned to match any
+  particular operator's prior Authentik state -- and then the
   `requires_auth` column itself is dropped. Once
   it's gone, the `PRAGMA table_info` guard that triggers the migration is
   false forever after, so it never re-runs, and a database created fresh
