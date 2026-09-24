@@ -167,11 +167,46 @@ export const ExternalSiteSchema = z.object({
 // the point of use rather than falling back to this repo author's own
 // network, since a wrong IP is worse than a missing one for any other
 // operator. Persisted as rows in the `meta` table alongside `domain`.
+// `customScriptsRepo`/`customScriptsBranch` (issue #11) are a related pair
+// naming a public GitHub repository laid out like ProxmoxVED (a fork
+// branch) that install-app/update-app resolve apps from before falling
+// back to the upstream community-scripts repos -- see src/lib/app-source.ts.
+// Both unset means the feature is off. Unlike every other setting here,
+// these two have a cross-field rule (set together or not at all), but that
+// rule is deliberately NOT enforced by this schema: set-config writes one
+// key at a time, so a schema-level both-or-neither check would make it
+// impossible to ever set the first of the pair. The rule is instead
+// enforced at the point of use, by customScriptSource() in
+// src/lib/app-source.ts.
 export const SettingsSchema = z.object({
   nfsServer: z.string().min(1).optional(),
   backupStorage: z.string().min(1).optional(),
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
+  // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
+  // the repo name (research R7).
+  customScriptsRepo: z
+    .string()
+    .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/, 'must be owner/repo')
+    .optional(),
+  // A git branch name -- the character class alone doesn't rule out every
+  // invalid ref (git also forbids "..", a leading "/" or "-", and a
+  // trailing "/" or ".lock"), so those are checked explicitly rather than
+  // relied on to fall out of the regex.
+  customScriptsBranch: z
+    .string()
+    .refine(
+      (value) =>
+        /^[A-Za-z0-9._/-]+$/.test(value) &&
+        !value.includes('..') &&
+        !value.startsWith('/') &&
+        !value.startsWith('-') &&
+        !value.endsWith('/') &&
+        !value.endsWith('.lock'),
+      'must be a valid git branch name'
+    )
+    .optional(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

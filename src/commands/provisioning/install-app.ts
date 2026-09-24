@@ -6,16 +6,21 @@ import { logInfo, logWarn } from '../../lib/log.ts';
 import { pickStorage } from '../../lib/storage.ts';
 import { resolveNfsMountPath, buildNfsAttachScript } from '../../lib/nfs.ts';
 import { readHostAuthorizedKeys } from '../../lib/authorized-keys.ts';
+import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE } from '../../lib/app-source.ts';
 export { pickStorage } from '../../lib/storage.ts';
 
-const COMMUNITY_SCRIPTS_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct';
+// The /ct-scoped bases resolveAppUrl/resolveDevAppUrl build URLs from,
+// derived from app-source.ts's raw repo-root constants (shared with that
+// module's own custom-repository resolution) rather than hardcoded here a
+// second time.
+const COMMUNITY_SCRIPTS_BASE = `${UPSTREAM_STABLE_BASE}/ct`;
 // Apps still under active development (e.g. budget-board) live in a
 // separate repo -- same owner, same ct/<slug>.sh layout, "ProxmoxVED"
 // (dev) instead of "ProxmoxVE" -- until they graduate to the main one.
 // Never assumed up front: resolveAppUrl always targets the main repo, and
 // this is only ever tried as a fallback once that 404s (see
 // buildInstallAppScript's curl fallback and provisioning.ts's checkAppUrl).
-const COMMUNITY_SCRIPTS_DEV_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct';
+const COMMUNITY_SCRIPTS_DEV_BASE = `${UPSTREAM_DEV_BASE}/ct`;
 
 // --app accepts either a bare community-scripts slug ("plex") or a full script
 // URL pasted verbatim -- the latter is used as-is, with no reformatting, so

@@ -61,3 +61,49 @@ test('runSetConfig requires a value when not unsetting', () => {
     /requires a value/
   );
 });
+
+test('runSetConfig round-trips customScriptsRepo through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'customScriptsRepo', value: 'example-user/ProxmoxVED', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/ProxmoxVED');
+  runSetConfig({ key: 'customScriptsRepo', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).customScriptsRepo, undefined);
+});
+
+test('runSetConfig round-trips customScriptsBranch through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'customScriptsBranch', value: 'my-apps', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).customScriptsBranch, 'my-apps');
+  runSetConfig({ key: 'customScriptsBranch', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).customScriptsBranch, undefined);
+});
+
+test('runSetConfig rejects a customScriptsRepo not shaped like owner/repo', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'customScriptsRepo', value: 'not-a-repo', apply: true }, { inventoryPath }),
+    /must be owner\/repo/
+  );
+});
+
+test('runSetConfig rejects a customScriptsBranch that looks like a path traversal', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'customScriptsBranch', value: '../x', apply: true }, { inventoryPath }),
+    /must be a valid git branch name/
+  );
+});
+
+test('runSetConfig allows setting only customScriptsRepo without customScriptsBranch', () => {
+  // The both-or-neither rule is enforced at the point of use
+  // (customScriptSource), not by SettingsSchema -- set-config writes one
+  // key at a time, so this must succeed on its own.
+  const inventoryPath = tempInventoryPath();
+  const result = runSetConfig(
+    { key: 'customScriptsRepo', value: 'example-user/ProxmoxVED', apply: true },
+    { inventoryPath }
+  );
+  assert.equal(result.applied, true);
+  assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/ProxmoxVED');
+  assert.equal(loadInventory(inventoryPath).customScriptsBranch, undefined);
+});
