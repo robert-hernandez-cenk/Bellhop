@@ -146,7 +146,7 @@ description: "Task list for native OIDC gating (issue #1)"
 - [x] T046 [P] Update CLAUDE.md: the `authMode`/`oidcRedirectUris` fields in the Inventory bullet, OIDC ownership (`meta_publisher`) and mode switches in the `sync-authentik` bullet, `sync-caddy`'s OIDC exception, the new web route and MCP tool, and the single-operator note on the signing-key default; check CONTRIBUTING.md for any restated rule that changed
 - [x] T047 Run `npm run typecheck`, `npm test`, `npm run web:build`; all must pass
 - [x] T048 Browser verification per quickstart.md §4 at desktop width and at ≤640px (375px), light and dark theme, as admin and as a non-admin (`WEB_UI_DEV_GROUPS`); kill the dev server by PID afterward
-- [ ] T049 Review the full branch diff for real operational data (constitution Principle I), then push and open the PR against `main`
+- [x] T049 Review the full branch diff for real operational data (constitution Principle I), then push and open the PR against `main`
 
 ---
 
