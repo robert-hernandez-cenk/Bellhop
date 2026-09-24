@@ -37,7 +37,7 @@ test('applyGuestEdits accepts form strings and typed arrays/numbers alike', () =
 });
 
 test('applyGuestEdits leaves untouched fields alone and clears authGroup on null', () => {
-  const updated = applyGuestEdits({ ...inventory.guests[1], authGroup: 'homelab-users', port: 80 }, { authGroup: null });
+  const updated = applyGuestEdits({ ...inventory.guests[1], authGroup: 'bellhop-users', port: 80 }, { authGroup: null });
   assert.equal(updated.authGroup, undefined);
   assert.equal(updated.port, 80);
 });

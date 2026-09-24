@@ -186,14 +186,14 @@ test('PATCH /api/inventory/guests/:name updates authGroup independently, leaving
     ],
   };
   const app = testApp(inventory);
-  const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'homelab-users' });
+  const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'bellhop-users' });
   assert.equal(res.status, 200);
-  assert.equal(res.body.guest.authGroup, 'homelab-users');
+  assert.equal(res.body.guest.authGroup, 'bellhop-users');
   assert.deepEqual(res.body.guest.subdomains, ['sonarr'], 'an authGroup-only PATCH must not touch subdomains');
   assert.equal(res.body.caddySynced, true);
 
   const invRes = await request(app).get('/api/inventory');
-  assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').authGroup, 'homelab-users');
+  assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').authGroup, 'bellhop-users');
 });
 
 test('PATCH /api/inventory/guests/:name updates unauthenticatedPaths independently, leaving subdomains untouched', async () => {
@@ -202,7 +202,7 @@ test('PATCH /api/inventory/guests/:name updates unauthenticatedPaths independent
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const app = testApp(inventory);
@@ -226,7 +226,7 @@ test('PATCH /api/inventory/guests/:name rejects an unauthenticatedPaths pattern 
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'homelab-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
   };
   const app = testApp(inventory);
@@ -244,7 +244,7 @@ test('PATCH /api/inventory/guests/:name clears unauthenticatedPaths when given a
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'homelab-users', unauthenticatedPaths: ['/api/*'] },
+      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users', unauthenticatedPaths: ['/api/*'] },
     ],
   };
   const app = testApp(inventory);
@@ -266,7 +266,7 @@ test('PATCH /api/inventory/guests/:name updates port independently, leaving an e
         host: 'pve1',
         ip: '192.168.1.10',
         subdomains: ['sonarr'],
-        authGroup: 'homelab-users',
+        authGroup: 'bellhop-users',
         unauthenticatedPaths: ['/api/*'],
       },
     ],
@@ -704,7 +704,7 @@ test('PATCH /api/inventory/guests/:name reports an Authentik slug conflict in th
   });
   const app = testApp(inventory, () => ({ stdout: '', stderr: '', code: 0 }), authentik);
 
-  const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'homelab-users' });
+  const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'bellhop-users' });
   assert.equal(res.status, 200);
   assert.equal(res.body.caddySynced, true, 'the edit still succeeds -- a conflict never fails the request');
   assert.deepEqual(res.body.authentikConflicts, ['sonarr']);
@@ -734,7 +734,7 @@ test('PATCH /api/inventory/guests/:name reports only its own Authentik conflict,
       { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'] },
       // Already gated and already in conflict -- its conflict is in the
       // inventory-wide list on every run, including this PATCH of 'sonarr'.
-      { name: 'radarr', type: 'lxc', vmid: 4011, host: 'pve1', ip: '192.168.1.11', subdomains: ['radarr'], authGroup: 'homelab-users' },
+      { name: 'radarr', type: 'lxc', vmid: 4011, host: 'pve1', ip: '192.168.1.11', subdomains: ['radarr'], authGroup: 'bellhop-users' },
     ],
   };
   // Provider id '99' is absent from the fake's proxyProviders, which is how
@@ -748,7 +748,7 @@ test('PATCH /api/inventory/guests/:name reports only its own Authentik conflict,
   });
   const app = testApp(inventory, () => ({ stdout: '', stderr: '', code: 0 }), authentik);
 
-  const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'homelab-users' });
+  const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'bellhop-users' });
   assert.equal(res.status, 200);
   assert.deepEqual(
     res.body.authentikConflicts,
@@ -802,7 +802,7 @@ function gatedInventory(authGroup?: string): Inventory {
 }
 
 function asUser(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'homelab-app-users');
+  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'bellhop-app-users');
 }
 
 test('PATCH guest authGroup lets a non-admin gate an ungated guest', async () => {

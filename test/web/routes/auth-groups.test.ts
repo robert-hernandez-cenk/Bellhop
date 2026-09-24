@@ -38,7 +38,7 @@ function asAdmin(req: request.Test): request.Test {
 }
 
 function asUser(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'homelab-app-users');
+  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'bellhop-app-users');
 }
 
 test('GET /api/auth-groups returns every ladder rung in order, marking which exist in Authentik', async () => {

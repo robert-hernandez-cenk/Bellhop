@@ -35,9 +35,10 @@ const DEFAULT_INVALIDATION_FLOW_SLUG = 'default-invalidation-flow';
 // names one rung; sync-authentik binds its Application to that rung and
 // every rung above it, so the top rung is effectively "admin only" and the
 // old "admins always get in" special case is just a rung like any other.
-// This default names one deployment's own Authentik groups; any other operator sets
-// AUTHENTIK_GROUP_LADDER to their own rungs.
-const DEFAULT_GROUP_LADDER = 'homelab-app-users-open,homelab-app-users,homelab-users,authentik Admins';
+// The default rungs are product-named groups an operator creates in
+// Authentik; the top rung is Authentik's own built-in admin group.
+// AUTHENTIK_GROUP_LADDER overrides the whole list.
+const DEFAULT_GROUP_LADDER = 'bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins';
 
 // An empty string counts as unset -- a KEY= line in data/authentik.env is a
 // far likelier way to express "I did not set this" than an intentional

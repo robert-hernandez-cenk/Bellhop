@@ -454,8 +454,27 @@ there is no LAN gateway to restore '<guest>' to`) if it doesn't.
   inventory entry's `authGroup` names one rung; `sync-authentik` binds its
   Application to that rung and every rung above it, so the top rung is
   effectively "admin only" with no separate admin OR-check needed. Defaults
-  to `homelab-app-users-open,homelab-app-users,homelab-users,authentik
+  to `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik
   Admins`.
+
+  **Upgrading from a deployment that relied on the previous default**
+  (`homelab-app-users-open,homelab-app-users,homelab-users,authentik
+  Admins`, before the project's rename to Bellhop): stored `authGroup`
+  values are never rewritten by an upgrade, so set
+  `AUTHENTIK_GROUP_LADDER` explicitly to the old value above in
+  `data/authentik.env` **before** upgrading, keeping every gated app on
+  its current groups unchanged. If you upgrade first without doing this,
+  every entry still gated at an old-default rung is left untouched, not
+  reconciled, until you either set `AUTHENTIK_GROUP_LADDER` to the old
+  value as above, or rename those groups in Authentik to the new default
+  names and re-tier each affected entry (clear and re-set its access
+  tier) so its stored `authGroup` matches a rung on the new default
+  ladder.
+
+  Until one of these is done, `sync-authentik` reports every affected
+  entry under "Entries with an unknown authGroup" and leaves its existing
+  Authentik Application and bindings alone — it is never deleted or
+  silently rebound.
 - `AUTHENTIK_OUTPOST_NAME` — the exact name of the Authentik outpost whose
   provider list `sync-authentik` maintains. Defaults to
   `authentik Embedded Outpost`. A mismatch fails `sync-authentik --apply`
