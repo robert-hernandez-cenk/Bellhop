@@ -588,6 +588,12 @@ const CUSTOM_REPO = 'ProxmoxVED';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+// issue #15: every custom-configured resolution also compares the pinned
+// commit against upstream ProxmoxVED main -- the captured ahead fixture
+// (8 ahead / 0 behind) changes demo-shop, demo-shop-storefront, demo-books.
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
+const MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
 const customScriptsBaseUrl = `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}`;
 const shadowUrl = (base: string, slug: string) => `${base}/ct/${slug}.sh`;
@@ -598,16 +604,16 @@ const inventoryWithCustomSource: Inventory = {
   customScriptsBranch: CUSTOM_BRANCH,
 };
 
-// Routes a full custom-repository resolution: head-SHA lookup, the custom
-// ct/<slug>.sh script itself (always a hit), and both upstream shadow probes
-// (always "not present" -- a plain 404) -- mirrors app-source.test.ts's own
+// Routes a full custom-repository resolution: head-SHA lookup, the compare
+// call (ahead fixture -- pass one of its changed slugs), and both upstream
+// shadow probes (always "not present" -- a plain 404) -- mirrors app-source.test.ts's own
 // customFetch, kept local to this file rather than shared/exported since
 // each test file in this suite owns its own fixtures.
 function customFetch(slug: string): typeof fetch {
   return (async (url: unknown) => {
     const href = String(url);
     if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
-    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
     if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response(null, { status: 404 });
     if (href === shadowUrl(UPSTREAM_DEV_BASE, slug)) return new Response(null, { status: 404 });
     throw new Error(`unexpected fetch: ${href}`);
@@ -657,14 +663,16 @@ test('buildInstallAppScript with an upstream (or omitted) source produces byte-i
 test('buildInstallAppScript exports COMMUNITY_SCRIPTS_URL immediately before the curl line and has no upstream fallback for a custom source', () => {
   const source: AppSource = {
     kind: 'custom',
-    slug: 'myapp',
-    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: CUSTOM_LABEL, sha: SHA },
-    ctUrl: customCtUrl('myapp'),
+    slug: 'demo-shop',
+    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: CUSTOM_LABEL, sha: SHA, mergeBase: MERGE_BASE },
+    changed: true,
+    conflict: false,
+    ctUrl: customCtUrl('demo-shop'),
     scriptsBaseUrl: customScriptsBaseUrl,
     shadows: [],
   };
   const script = buildInstallAppScript(
-    { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp' },
+    { host: 'pve1', mid: 4, app: 'demo-shop', hostname: 'demo-shop' },
     { vmid: 4004, ip: '192.168.1.4/16', gateway: '192.168.3.1' },
     storage,
     undefined,
@@ -672,16 +680,16 @@ test('buildInstallAppScript exports COMMUNITY_SCRIPTS_URL immediately before the
   );
   const lines = script.split('\n');
   const exportLine = `export COMMUNITY_SCRIPTS_URL=${shellQuote(customScriptsBaseUrl)}`;
-  const curlLine = `bash -c "$(curl -fsSL ${shellQuote(customCtUrl('myapp'))})"`;
+  const curlLine = `bash -c "$(curl -fsSL ${shellQuote(customCtUrl('demo-shop'))})"`;
   assert.equal(lines[lines.length - 2], exportLine);
   assert.equal(lines[lines.length - 1], curlLine);
   assert.doesNotMatch(script, /\|\|/);
 });
 
 test('runInstallApp resolves a custom source via fetchImpl and produces the same script for dry run and apply', async () => {
-  const fetchImpl = customFetch('myapp');
+  const fetchImpl = customFetch('demo-shop');
   const dryRun = await runInstallApp(
-    { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp', fetchImpl },
+    { host: 'pve1', mid: 4, app: 'demo-shop', hostname: 'demo-shop', fetchImpl },
     { ssh: new FakeSSHClient(defaultResponder), inventory: inventoryWithCustomSource }
   );
   assert.equal(dryRun.applied, false);
@@ -690,7 +698,7 @@ test('runInstallApp resolves a custom source via fetchImpl and produces the same
 
   const applySsh = new FakeSSHClient(defaultResponder);
   const applied = await runInstallApp(
-    { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp', apply: true, fetchImpl },
+    { host: 'pve1', mid: 4, app: 'demo-shop', hostname: 'demo-shop', apply: true, fetchImpl },
     { ssh: applySsh, inventory: inventoryWithCustomSource }
   );
   assert.equal(applied.applied, true);
@@ -706,7 +714,7 @@ test('runInstallApp throws a resolution failure before any pct/install exec is r
   await assert.rejects(
     () =>
       runInstallApp(
-        { host: 'pve1', mid: 4, app: 'myapp', hostname: 'myapp', fetchImpl: failingFetch },
+        { host: 'pve1', mid: 4, app: 'demo-shop', hostname: 'demo-shop', fetchImpl: failingFetch },
         { ssh, inventory: inventoryWithCustomSource }
       ),
     /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub returned 403/
@@ -719,11 +727,11 @@ test('runInstallApp throws a resolution failure before any pct/install exec is r
 // checkVmidAvailable/anything else, so it must be the very first captured
 // console line when the resolved source shadows an upstream copy.
 test('runInstallApp logs the R6 override warning as the first console line when the custom source shadows an upstream copy', async () => {
-  const slug = 'myapp';
+  const slug = 'demo-shop';
   const fetchImpl = (async (url: unknown) => {
     const href = String(url);
     if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
-    if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
     if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     if (href === shadowUrl(UPSTREAM_DEV_BASE, slug)) return new Response(null, { status: 404 });
     throw new Error(`unexpected fetch: ${href}`);
@@ -746,8 +754,42 @@ test('runInstallApp logs the R6 override warning as the first console line when 
   assert.ok(lines.length > 0, 'expected the override warning to be logged');
   assert.match(
     lines[0],
-    /^\[WARN\s+\S+ \S+\] "myapp" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\.$/
+    /^\[WARN\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\.$/
   );
+});
+
+// issue #15 US1: an app the branch doesn't change, and that upstream has,
+// installs from upstream exactly as with the feature off, with no warning.
+test('runInstallApp resolves an unchanged upstream app to upstream with the feature on, script identical to feature-off, no warning', async () => {
+  const slug = 'plex';
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === shadowUrl(UPSTREAM_DEV_BASE, slug)) return new Response(null, { status: 404 });
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+
+  const lines: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+  let featureOn: Awaited<ReturnType<typeof runInstallApp>>;
+  try {
+    featureOn = await runInstallApp(
+      { host: 'pve1', mid: 4, app: slug, hostname: slug, fetchImpl },
+      { ssh: new FakeSSHClient(defaultResponder), inventory: inventoryWithCustomSource }
+    );
+  } finally {
+    console.error = originalError;
+  }
+  const featureOff = await runInstallApp(
+    { host: 'pve1', mid: 4, app: slug, hostname: slug },
+    { ssh: new FakeSSHClient(defaultResponder), inventory }
+  );
+  assert.deepEqual(featureOn.source, { kind: 'upstream', slug, shadows: [] });
+  assert.equal(featureOn.script, featureOff.script);
+  assert.deepEqual(lines, [], 'no warning expected for an unchanged upstream app');
 });
 
 test('runInstallApp uses a passed-in opts.source without ever calling fetch', async () => {

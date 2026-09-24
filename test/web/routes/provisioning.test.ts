@@ -473,12 +473,18 @@ const CUSTOM_OWNER = 'example-user';
 const CUSTOM_REPO = 'ProxmoxVED';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+// issue #15: every custom-configured resolution also compares the pinned
+// commit against upstream ProxmoxVED main; the captured ahead fixture
+// changes demo-shop (among others), so demo-shop resolves to the fork.
+const CUSTOM_COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${CUSTOM_SHA}`;
+const CUSTOM_COMPARE_AHEAD_BODY = readFileSync(path.join(customFixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${CUSTOM_SHA}/ct/${slug}.sh`;
 
 function customScriptFetch(slug: string): typeof fetch {
   return (async (url: unknown) => {
     const href = String(url);
     if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === CUSTOM_COMPARE_URL) return new Response(CUSTOM_COMPARE_AHEAD_BODY, { status: 200 });
     if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     // Both upstream shadow probes -- always "not present" for this test.
     return new Response(null, { status: 404 });
@@ -487,11 +493,11 @@ function customScriptFetch(slug: string): typeof fetch {
 
 test('GET /api/provisioning/install-app/check-app resolves through the custom script repository, returning custom.sha', async () => {
   const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
-  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl: customScriptFetch('myapp') });
-  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl: customScriptFetch('demo-shop') });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'demo-shop' });
   assert.equal(res.status, 200);
   assert.equal(res.body.exists, true);
-  assert.equal(res.body.url, customCtUrl('myapp'));
+  assert.equal(res.body.url, customCtUrl('demo-shop'));
   assert.deepEqual(res.body.custom, { label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: CUSTOM_SHA });
   assert.equal(res.body.shadows, undefined);
 });
@@ -504,6 +510,7 @@ function customScriptFetchWithStableShadow(slug: string): typeof fetch {
   return (async (url: unknown) => {
     const href = String(url);
     if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === CUSTOM_COMPARE_URL) return new Response(CUSTOM_COMPARE_AHEAD_BODY, { status: 200 });
     if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     if (href === `${UPSTREAM_STABLE_BASE}/ct/${slug}.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     // The ProxmoxVED shadow probe -- "not present" for this test.
@@ -514,18 +521,39 @@ function customScriptFetchWithStableShadow(slug: string): typeof fetch {
 test('GET /api/provisioning/install-app/check-app reports shadows for a slug present upstream', async () => {
   const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
   const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), {
-    fetchImpl: customScriptFetchWithStableShadow('myapp'),
+    fetchImpl: customScriptFetchWithStableShadow('demo-shop'),
   });
-  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'demo-shop' });
   assert.equal(res.status, 200);
   assert.equal(res.body.exists, true);
   assert.deepEqual(res.body.shadows, ['ProxmoxVE']);
 });
 
+// issue #15 US1: an app the branch doesn't change resolves to upstream even
+// with the custom repository configured -- no `custom`, no `shadows`.
+test('GET /api/provisioning/install-app/check-app resolves an unchanged upstream app to upstream with the feature on', async () => {
+  const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === CUSTOM_COMPARE_URL) return new Response(CUSTOM_COMPARE_AHEAD_BODY, { status: 200 });
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/plex.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href.startsWith(`https://raw.githubusercontent.com/${CUSTOM_OWNER}/`)) throw new Error(`fork fetched: ${href}`);
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'plex' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.exists, true);
+  assert.equal(res.body.url, `${UPSTREAM_STABLE_BASE}/ct/plex.sh`);
+  assert.equal(res.body.custom, undefined);
+  assert.equal(res.body.shadows, undefined);
+});
+
 test('GET /api/provisioning/install-app/check-app reports error and exists=false when the custom settings are half-configured', async () => {
   const halfConfiguredInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
   const { app } = isolatedApp(halfConfiguredInventory, () => ({ stdout: '', stderr: '', code: 0 }));
-  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'myapp' });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'demo-shop' });
   assert.equal(res.status, 200);
   assert.equal(res.body.exists, false);
   assert.equal(res.body.url, '');

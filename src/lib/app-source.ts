@@ -1,9 +1,10 @@
+import { z } from 'zod';
 import type { Inventory } from './inventory.ts';
 import { logWarn } from './log.ts';
 
-// The two upstream community-scripts repos install-app/update-app fall back
-// to when an app isn't found in a configured custom repository (or when no
-// custom repository is configured at all) -- raw repo roots, not yet scoped
+// The two upstream community-scripts repos install-app/update-app resolve
+// to for every app a configured custom branch doesn't change (or for every
+// app, when no custom repository is configured at all) -- raw repo roots, not yet scoped
 // to ct/. install-app.ts derives its own COMMUNITY_SCRIPTS_BASE/
 // COMMUNITY_SCRIPTS_DEV_BASE (the /ct-scoped bases resolveAppUrl/
 // resolveDevAppUrl actually build URLs from) from these, so the two files
@@ -13,10 +14,11 @@ export const UPSTREAM_DEV_BASE = 'https://raw.githubusercontent.com/community-sc
 
 const GITHUB_FETCH_TIMEOUT_MS = 5000;
 
-// Appended to every error this module throws, naming the fix -- both
-// resolveHeadSha and resolveAppSource's own custom ct/<slug>.sh fetch throw
-// through this same suffix, so any resolution failure (bad settings,
-// GitHub down, a typo'd branch) points the operator at the same command.
+// Appended to every error this module throws, naming the fix --
+// resolveHeadSha, compareBranch and resolveAppSource's own fork ct/<slug>.sh
+// fetch all throw through this same suffix, so any resolution failure (bad
+// settings, GitHub down, a typo'd branch, a repo that isn't a ProxmoxVED
+// fork) points the operator at the same command.
 const ERROR_SUFFIX = ' -- check customScriptsRepo/customScriptsBranch with "bellhop set-config"';
 
 // A validated, split-apart customScriptsRepo/customScriptsBranch pair, with
@@ -35,14 +37,20 @@ export type ShadowedRepo = 'ProxmoxVE' | 'ProxmoxVED';
 // curl from. `slug` is absent only for kind 'url' (a pasted full script URL
 // has no community-scripts slug). `custom`/`ctUrl`/`scriptsBaseUrl` are set
 // only for kind 'custom'; `shadows` is always present but only ever
-// non-empty for kind 'custom' (see data-model.md).
+// non-empty for kind 'custom' (see data-model.md). `changed`/`conflict` are
+// set only for kind 'custom' (issue #15): `changed` is true when the branch
+// changes this app, false for a fork-only resolution; `conflict` is true
+// only when upstream also changed a changed app since the branch point.
+// `custom.mergeBase` is where the branch left upstream ProxmoxVED main.
 export interface AppSource {
   kind: 'url' | 'upstream' | 'custom';
   slug?: string;
-  custom?: CustomScriptSource & { sha: string };
+  custom?: CustomScriptSource & { sha: string; mergeBase: string };
   ctUrl?: string;
   scriptsBaseUrl?: string;
   shadows: ShadowedRepo[];
+  changed?: boolean;
+  conflict?: boolean;
 }
 
 // Reads the two related settings off the loaded inventory and validates
@@ -136,14 +144,139 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
   return body;
 }
 
-// Probes one upstream repo for the same slug a custom-repository app just
-// resolved to, so an operator installing a fork's copy of an app that also
-// exists upstream gets told their custom repository is the one actually
-// winning. Unlike resolveHeadSha/resolveAppSource's own ct fetch, a failed
-// probe (network error, timeout) is never fatal to the install -- it's
-// purely informational, so it's logged and treated as "not shadowed" rather
-// than thrown.
-async function probeShadow(name: ShadowedRepo, base: string, slug: string, fetchImpl: typeof fetch): Promise<boolean> {
+// The upstream repository a custom branch is compared against (issue #15,
+// research R1): a fork of ProxmoxVED, compared to its `main`. Fixed rather
+// than configurable -- #11 already assumed a VED-shaped fork, and a fork of
+// ProxmoxVE (stable) is out of scope (spec Assumptions).
+const COMPARE_UPSTREAM = 'community-scripts/ProxmoxVED';
+
+// GitHub's compare endpoint stops listing files at 300 (research R4); the
+// file list isn't pageable, so a list that long can't be trusted to be
+// complete.
+const COMPARE_FILE_CAP = 300;
+
+// The parsed result of comparing a pinned custom-branch commit against
+// upstream ProxmoxVED main (data-model.md BranchComparison).
+export interface BranchComparison {
+  sha: string;
+  mergeBase: string;
+  aheadBy: number;
+  behindBy: number;
+  changedSlugs: Set<string>;
+}
+
+const CompareFileSchema = z.object({
+  filename: z.string(),
+  previous_filename: z.string().optional(),
+  status: z.string(),
+});
+
+// Only the fields compareBranch reads -- zod strips the rest (commits,
+// patches, URLs), so an unrelated addition to GitHub's response never
+// breaks parsing.
+const CompareResponseSchema = z.object({
+  merge_base_commit: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }),
+  ahead_by: z.number().int().nonnegative(),
+  behind_by: z.number().int().nonnegative(),
+  files: z.array(CompareFileSchema),
+});
+
+const CT_SCRIPT_PATTERN = /^ct\/([^/]+)\.sh$/;
+const INSTALL_SCRIPT_PATTERN = /^install\/([^/]+)-install\.sh$/;
+
+function slugFromScriptPath(path: string): string | undefined {
+  return (CT_SCRIPT_PATTERN.exec(path) ?? INSTALL_SCRIPT_PATTERN.exec(path))?.[1];
+}
+
+// research R3: an app is changed when its ct/<slug>.sh or
+// install/<slug>-install.sh is added, modified or renamed on the branch --
+// only those two scripts decide what gets installed. A deletion leaves
+// nothing in the fork to install, so it never makes an app changed; a
+// rename counts both the old and new names.
+export function changedSlugsFromFiles(
+  files: { filename: string; previous_filename?: string; status: string }[]
+): Set<string> {
+  const slugs = new Set<string>();
+  for (const file of files) {
+    if (file.status === 'removed') continue;
+    for (const path of [file.filename, file.previous_filename]) {
+      const slug = path === undefined ? undefined : slugFromScriptPath(path);
+      if (slug) slugs.add(slug);
+    }
+  }
+  return slugs;
+}
+
+// One rate-limited request (research R1/R2): upstream ProxmoxVED main
+// compared, three-dot, against the branch's pinned head commit. The head is
+// addressed as <owner>:<repo>:<sha> rather than a branch name because a
+// branch-name head can be silently answered from a different fork in the
+// same network; a commit either exists in upstream's fork network or 404s.
+// Every failure is a named error -- never a fallback to upstream (FR-006).
+export async function compareBranch(
+  source: CustomScriptSource,
+  sha: string,
+  fetchImpl: typeof fetch
+): Promise<BranchComparison> {
+  const prefix = `Custom script repository ${source.label}:`;
+  const url = `https://api.github.com/repos/${COMPARE_UPSTREAM}/compare/main...${source.owner}:${source.repo}:${sha}`;
+  // Body read inside the timeout, for the same reason as resolveHeadSha.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GITHUB_FETCH_TIMEOUT_MS);
+  let response: Response;
+  let body: string;
+  try {
+    response = await fetchImpl(url, { signal: controller.signal, headers: { 'User-Agent': 'bellhop' } });
+    body = await response.text();
+  } catch (err) {
+    throw new Error(`${prefix} could not reach GitHub (${err instanceof Error ? err.message : String(err)})${ERROR_SUFFIX}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    if (response.status === 404)
+      throw new Error(
+        `${prefix} commit ${sha.slice(0, 7)} not found in ${COMPARE_UPSTREAM}'s fork network (is ${source.owner}/${source.repo} a fork of ProxmoxVED?)${ERROR_SUFFIX}`
+      );
+    if (response.status === 403 || response.status === 429)
+      throw new Error(`${prefix} GitHub rate limit reached (try again later)${ERROR_SUFFIX}`);
+    throw new Error(`${prefix} GitHub returned ${response.status}${ERROR_SUFFIX}`);
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    throw new Error(`${prefix} unexpected compare response${ERROR_SUFFIX}`);
+  }
+  const parsed = CompareResponseSchema.safeParse(json);
+  if (!parsed.success) throw new Error(`${prefix} unexpected compare response${ERROR_SUFFIX}`);
+  if (parsed.data.files.length >= COMPARE_FILE_CAP)
+    throw new Error(
+      `${prefix} the branch changes ${COMPARE_FILE_CAP} or more files, too many to tell which apps it changes${ERROR_SUFFIX}`
+    );
+  return {
+    sha,
+    mergeBase: parsed.data.merge_base_commit.sha,
+    aheadBy: parsed.data.ahead_by,
+    behindBy: parsed.data.behind_by,
+    changedSlugs: changedSlugsFromFiles(parsed.data.files),
+  };
+}
+
+type UpstreamPresence = 'present' | 'absent' | 'error';
+
+// Probes one upstream repo's ct/<slug>.sh (a raw request -- no API quota).
+// Tri-state because the two resolveAppSource paths read it differently
+// (research R6): for a changed slug it only feeds `shadows`, so an error is
+// informational and reads as "not shadowed"; for an unchanged slug an error
+// means "can't tell", which resolves to upstream rather than to a possibly
+// stale inherited fork copy. Never throws -- a thrown fetch is logged.
+async function probeUpstream(
+  name: ShadowedRepo,
+  base: string,
+  slug: string,
+  fetchImpl: typeof fetch
+): Promise<UpstreamPresence> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GITHUB_FETCH_TIMEOUT_MS);
   try {
@@ -151,31 +284,46 @@ async function probeShadow(name: ShadowedRepo, base: string, slug: string, fetch
       signal: controller.signal,
       headers: { 'User-Agent': 'bellhop' },
     });
-    return response.ok;
+    if (response.ok) return 'present';
+    return response.status === 404 ? 'absent' : 'error';
   } catch (err) {
-    logWarn(`Failed to probe ${name} for a shadowed "${slug}" script: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
+    logWarn(`Failed to probe ${name} for a "${slug}" script: ${err instanceof Error ? err.message : String(err)}`);
+    return 'error';
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function detectShadows(slug: string, fetchImpl: typeof fetch): Promise<ShadowedRepo[]> {
-  const [stable, dev] = await Promise.all([
-    probeShadow('ProxmoxVE', UPSTREAM_STABLE_BASE, slug, fetchImpl),
-    probeShadow('ProxmoxVED', UPSTREAM_DEV_BASE, slug, fetchImpl),
+async function probeBothUpstreams(slug: string, fetchImpl: typeof fetch): Promise<[UpstreamPresence, UpstreamPresence]> {
+  return Promise.all([
+    probeUpstream('ProxmoxVE', UPSTREAM_STABLE_BASE, slug, fetchImpl),
+    probeUpstream('ProxmoxVED', UPSTREAM_DEV_BASE, slug, fetchImpl),
   ]);
+}
+
+// The upstream repos a changed slug overrides, for the override notice.
+function shadowsFrom([stable, dev]: [UpstreamPresence, UpstreamPresence]): ShadowedRepo[] {
   const shadows: ShadowedRepo[] = [];
-  if (stable) shadows.push('ProxmoxVE');
-  if (dev) shadows.push('ProxmoxVED');
+  if (stable === 'present') shadows.push('ProxmoxVE');
+  if (dev === 'present') shadows.push('ProxmoxVED');
   return shadows;
 }
 
-// The single entry point install-app/update-app (a later unit) will call to
-// decide where an --app value actually comes from. Resolves at most once
-// per call -- no caching here, see research R5 for why the caller
-// (previewAndEnqueue) is what's responsible for resolving once per
-// operation rather than once per fetch site.
+// The single entry point install-app/update-app, checkAppUrl and
+// previewAndEnqueue call to decide where an --app value actually comes
+// from. Resolves at most once per call -- no caching here; previewAndEnqueue
+// is what resolves once per operation rather than once per fetch site.
+//
+// Issue #15 (research R6): with a custom repository configured, only the
+// apps the branch actually changes come from the fork --
+//   1. changed on the branch -> the fork at the pinned commit;
+//   2. otherwise, upstream VE/VED has it (or a probe can't tell) -> upstream,
+//      identical to the feature being off;
+//   3. otherwise, the fork has it at the pinned commit -> the fork
+//      (fork-only, nowhere else to get it);
+//   4. otherwise -> upstream, which then fails the same way feature-off does.
+// The only rate-limited requests are the head-SHA pin and the compare
+// (spec SC-006); every probe is a raw-content request.
 export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: typeof fetch): Promise<AppSource> {
   // A pasted full script URL is used verbatim, exactly like
   // resolveAppUrl/resolveDevAppUrl already treat it -- no custom-repository
@@ -187,16 +335,27 @@ export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: t
   if (!source) return { kind: 'upstream', slug, shadows: [] };
 
   const sha = await resolveHeadSha(source, fetchImpl);
+  const comparison = await compareBranch(source, sha, fetchImpl);
   const prefix = `Custom script repository ${source.label}:`;
   const scriptsBaseUrl = `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${sha}`;
   const ctUrl = `${scriptsBaseUrl}/ct/${slug}.sh`;
+  const custom = { ...source, sha, mergeBase: comparison.mergeBase };
+  const upstream = await probeBothUpstreams(slug, fetchImpl);
+
+  // The compare already proved ct/ or install/ exists on the branch for a
+  // changed slug, so the fork's ct/ script isn't probed here. conflict is
+  // filled in by the conflict check (issue #15 US2).
+  if (comparison.changedSlugs.has(slug)) {
+    const shadows = shadowsFrom(upstream);
+    return { kind: 'custom', slug, custom, ctUrl, scriptsBaseUrl, shadows, changed: true, conflict: false };
+  }
+
+  if (upstream.some((presence) => presence !== 'absent')) return { kind: 'upstream', slug, shadows: [] };
 
   const response = await fetchWithTimeout(ctUrl, fetchImpl, prefix);
   if (response.status === 404) return { kind: 'upstream', slug, shadows: [] };
   if (!response.ok) throw new Error(`${prefix} GitHub returned ${response.status}${ERROR_SUFFIX}`);
-
-  const shadows = await detectShadows(slug, fetchImpl);
-  return { kind: 'custom', slug, custom: { ...source, sha }, ctUrl, scriptsBaseUrl, shadows };
+  return { kind: 'custom', slug, custom, ctUrl, scriptsBaseUrl, shadows: [], changed: false, conflict: false };
 }
 
 // The one logWarn line runInstallApp/runUpdateApp (a later unit) emit
@@ -204,7 +363,9 @@ export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: t
 // shadows an upstream copy -- see research R6 for the exact wording and
 // placement rationale. Returns undefined for every other case (no shadows,
 // or not a custom resolution at all) so callers can `if (warning) logWarn(warning)`
-// unconditionally.
+// unconditionally. Issue #15: only a changed slug can carry shadows (a
+// fork-only resolution always has none); US2 replaces this with
+// formatSourceNotice.
 export function formatOverrideWarning(source: AppSource): string | undefined {
   if (source.kind !== 'custom' || !source.custom || !source.slug || source.shadows.length === 0) return undefined;
   const shortSha = source.custom.sha.slice(0, 7);

@@ -177,12 +177,18 @@ const CUSTOM_OWNER = 'example-user';
 const CUSTOM_REPO = 'ProxmoxVED';
 const CUSTOM_BRANCH = 'my-apps';
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
+// issue #15: every custom-configured resolution also compares the pinned
+// commit against upstream ProxmoxVED main; the captured ahead fixture
+// changes demo-shop (among others), so demo-shop resolves to the fork.
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
 
 function customScriptFetch(slug: string): typeof fetch {
   return (async (url: unknown) => {
     const href = String(url);
     if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
     if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     // Both upstream shadow probes -- always "not present" for this test.
     return new Response(null, { status: 404 });
@@ -195,18 +201,42 @@ test('check_install_app resolves through the custom script repository and return
     customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`,
     customScriptsBranch: CUSTOM_BRANCH,
   };
-  const { call } = await setup({ inventory, fetchImpl: customScriptFetch('myapp') });
-  const result = parse(await call('check_install_app', { app: 'myapp' }));
+  const { call } = await setup({ inventory, fetchImpl: customScriptFetch('demo-shop') });
+  const result = parse(await call('check_install_app', { app: 'demo-shop' }));
   assert.equal(result.exists, true);
-  assert.equal(result.url, customCtUrl('myapp'));
+  assert.equal(result.url, customCtUrl('demo-shop'));
   assert.deepEqual(result.custom, { label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA });
   assert.equal(result.shadows, undefined);
+});
+
+// issue #15 US1: an app the branch doesn't change resolves to upstream even
+// with the custom repository configured -- no `custom` in the result.
+test('check_install_app resolves an unchanged upstream app to upstream with the feature on', async () => {
+  const inventory: Inventory = {
+    ...MCP_TEST_INVENTORY,
+    customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`,
+    customScriptsBranch: CUSTOM_BRANCH,
+  };
+  const stableCt = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh';
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    if (href === stableCt) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href.startsWith(`https://raw.githubusercontent.com/${CUSTOM_OWNER}/`)) throw new Error(`fork fetched: ${href}`);
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+  const { call } = await setup({ inventory, fetchImpl });
+  const result = parse(await call('check_install_app', { app: 'plex' }));
+  assert.equal(result.exists, true);
+  assert.equal(result.url, stableCt);
+  assert.equal(result.custom, undefined);
 });
 
 test('check_install_app reports error and exists=false when the custom settings are half-configured', async () => {
   const inventory: Inventory = { ...MCP_TEST_INVENTORY, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
   const { call } = await setup({ inventory });
-  const result = parse(await call('check_install_app', { app: 'myapp' }));
+  const result = parse(await call('check_install_app', { app: 'demo-shop' }));
   assert.equal(result.exists, false);
   assert.equal(result.url, '');
   assert.match(result.error, /customScriptsBranch is not set \(customScriptsRepo is\)/);

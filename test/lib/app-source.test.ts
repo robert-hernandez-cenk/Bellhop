@@ -8,6 +8,8 @@ import {
   resolveHeadSha,
   resolveAppSource,
   formatOverrideWarning,
+  compareBranch,
+  changedSlugsFromFiles,
   UPSTREAM_STABLE_BASE,
   UPSTREAM_DEV_BASE,
   type CustomScriptSource,
@@ -24,6 +26,13 @@ const HEAD_SHA_RAW = fixtureText('branch-head-sha.txt');
 const SHA = HEAD_SHA_RAW.trim();
 const MISSING_BRANCH_BODY = fixtureText('branch-head-missing-branch-422.json');
 const MISSING_REPO_BODY = fixtureText('branch-head-missing-repo-404.json');
+// Captured compare responses (redacted, research R1/R5): 8 ahead / 0 behind
+// changing demo-shop, demo-shop-storefront, demo-books; and 1 ahead / 251
+// behind adding demo-wiki.
+const COMPARE_AHEAD_BODY = fixtureText('compare-ahead-3-apps.json');
+const COMPARE_DIVERGED_BODY = fixtureText('compare-diverged-conflict.json');
+const AHEAD_MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
+const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
 
 const BASE_INVENTORY: Inventory = {
   domain: 'example.com',
@@ -70,18 +79,48 @@ const throwingFetch: typeof fetch = (async () => {
   throw new Error('resolveAppSource should not have called fetch here');
 }) as unknown as typeof fetch;
 
-// Routes a full custom-repository resolution: head-SHA lookup, the custom
-// ct/<slug>.sh script itself (always a hit), and both upstream shadow
-// probes (each defaulting to "not present" -- a plain 404).
-function customFetch(slug: string, opts: { shadowStable?: boolean; shadowDev?: boolean } = {}): typeof fetch {
-  return fakeFetch({
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${SOURCE.owner}:${SOURCE.repo}:${SHA}`;
+
+type Probe = 200 | 404 | 500 | 'throw';
+
+function probeResponse(probe: Probe): Response {
+  if (probe === 'throw') throw new Error('ETIMEDOUT');
+  return probe === 200 ? new Response('#!/usr/bin/env bash\n', { status: 200 }) : new Response(null, { status: probe });
+}
+
+// Routes a full custom-repository resolution (issue #15, research R6): the
+// head-SHA pin, the compare call (default: the captured ahead fixture,
+// changing demo-shop/demo-shop-storefront/demo-books), both upstream ct/
+// probes (default 404), and -- only when `fork` is given -- the fork's own
+// ct/<slug>.sh at the pinned commit. Leaving `fork` unset means the test
+// asserts that probe is never made: fakeFetch throws on an unrouted URL.
+function customFetch(
+  slug: string,
+  opts: { stable?: Probe; dev?: Probe; fork?: Probe; compareBody?: string } = {}
+): typeof fetch {
+  const routes: Record<string, Handler> = {
     [HEAD_SHA_URL]: () => new Response(HEAD_SHA_RAW, { status: 200 }),
-    [CT_URL(slug)]: () => new Response('#!/usr/bin/env bash\n', { status: 200 }),
-    [SHADOW_URL(UPSTREAM_STABLE_BASE, slug)]: () =>
-      opts.shadowStable ? new Response('#!/usr/bin/env bash\n', { status: 200 }) : new Response(null, { status: 404 }),
-    [SHADOW_URL(UPSTREAM_DEV_BASE, slug)]: () =>
-      opts.shadowDev ? new Response('#!/usr/bin/env bash\n', { status: 200 }) : new Response(null, { status: 404 }),
-  });
+    [COMPARE_URL]: () => new Response(opts.compareBody ?? COMPARE_AHEAD_BODY, { status: 200 }),
+    [SHADOW_URL(UPSTREAM_STABLE_BASE, slug)]: () => probeResponse(opts.stable ?? 404),
+    [SHADOW_URL(UPSTREAM_DEV_BASE, slug)]: () => probeResponse(opts.dev ?? 404),
+  };
+  const fork = opts.fork;
+  if (fork !== undefined) routes[CT_URL(slug)] = () => probeResponse(fork);
+  return fakeFetch(routes);
+}
+
+async function captureWarnings<T>(fn: () => Promise<T>): Promise<{ result: T; warnings: string[] }> {
+  const originalError = console.error;
+  const warnings: string[] = [];
+  // logWarn (src/lib/log.ts) writes through console.error, not console.warn.
+  console.error = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  try {
+    return { result: await fn(), warnings };
+  } finally {
+    console.error = originalError;
+  }
 }
 
 // --- customScriptSource ---
@@ -193,6 +232,154 @@ test('resolveHeadSha wraps a failure from reading the response body the same as 
   await assert.rejects(() => resolveHeadSha(SOURCE, fetchImpl), /could not reach GitHub \(aborted\)/);
 });
 
+// --- changedSlugsFromFiles (research R3) ---
+
+function fixtureFiles(body: string): { filename: string; previous_filename?: string; status: string }[] {
+  return (JSON.parse(body) as { files: { filename: string; previous_filename?: string; status: string }[] }).files;
+}
+
+test('changedSlugsFromFiles yields exactly the three changed apps from the ahead fixture', () => {
+  assert.deepEqual([...changedSlugsFromFiles(fixtureFiles(COMPARE_AHEAD_BODY))].sort(), AHEAD_CHANGED);
+});
+
+test('changedSlugsFromFiles ignores json/ and other non-script files', () => {
+  const files = [
+    { filename: 'json/demo-notes.json', status: 'modified' },
+    { filename: 'misc/build.func', status: 'modified' },
+    { filename: 'ct/headers/demo-notes', status: 'added' },
+  ];
+  assert.deepEqual([...changedSlugsFromFiles(files)], []);
+});
+
+test('changedSlugsFromFiles does not count a removed script', () => {
+  assert.deepEqual([...changedSlugsFromFiles([{ filename: 'ct/demo-notes.sh', status: 'removed' }])], []);
+});
+
+test('changedSlugsFromFiles counts both names of a renamed script', () => {
+  const files = [{ filename: 'ct/demo-new.sh', previous_filename: 'ct/demo-old.sh', status: 'renamed' }];
+  assert.deepEqual([...changedSlugsFromFiles(files)].sort(), ['demo-new', 'demo-old']);
+});
+
+test('changedSlugsFromFiles counts an install-script-only change', () => {
+  assert.deepEqual([...changedSlugsFromFiles([{ filename: 'install/demo-notes-install.sh', status: 'modified' }])], [
+    'demo-notes',
+  ]);
+});
+
+// --- compareBranch (contracts/interfaces.md) ---
+
+const COMPARE_ERROR_SUFFIX = ' -- check customScriptsRepo/customScriptsBranch with "bellhop set-config"';
+
+function compareFetch(handler: Handler): typeof fetch {
+  return fakeFetch({ [COMPARE_URL]: handler });
+}
+
+test('compareBranch requests the pinned three-dot compare URL with a bellhop User-Agent', async () => {
+  let seenUrl = '';
+  let seenHeaders: Record<string, string> = {};
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    seenUrl = String(url);
+    seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+    return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+  }) as unknown as typeof fetch;
+  await compareBranch(SOURCE, SHA, fetchImpl);
+  assert.equal(seenUrl, COMPARE_URL);
+  assert.equal(seenHeaders['User-Agent'], 'bellhop');
+});
+
+test('compareBranch parses the ahead fixture', async () => {
+  const result = await compareBranch(SOURCE, SHA, compareFetch(() => new Response(COMPARE_AHEAD_BODY, { status: 200 })));
+  assert.equal(result.sha, SHA);
+  assert.equal(result.mergeBase, AHEAD_MERGE_BASE);
+  assert.equal(result.aheadBy, 8);
+  assert.equal(result.behindBy, 0);
+  assert.deepEqual([...result.changedSlugs].sort(), AHEAD_CHANGED);
+});
+
+test('compareBranch parses the diverged fixture', async () => {
+  const result = await compareBranch(SOURCE, SHA, compareFetch(() => new Response(COMPARE_DIVERGED_BODY, { status: 200 })));
+  assert.equal(result.aheadBy, 1);
+  assert.equal(result.behindBy, 251);
+  assert.deepEqual([...result.changedSlugs], ['demo-wiki']);
+});
+
+function assertCompareError(pattern: string) {
+  return (err: unknown) => {
+    assert.ok(err instanceof Error);
+    assert.ok(err.message.startsWith(`Custom script repository ${SOURCE.label}: `), err.message);
+    assert.ok(err.message.includes(pattern), `expected "${pattern}" in: ${err.message}`);
+    assert.ok(err.message.endsWith(COMPARE_ERROR_SUFFIX), err.message);
+    return true;
+  };
+}
+
+test('compareBranch names the fork network on 404', async () => {
+  await assert.rejects(
+    () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('{"message":"Not Found"}', { status: 404 }))),
+    assertCompareError(`commit ${SHA.slice(0, 7)} not found in community-scripts/ProxmoxVED's fork network`)
+  );
+});
+
+for (const status of [403, 429]) {
+  test(`compareBranch reports a rate limit on ${status}`, async () => {
+    await assert.rejects(
+      () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('{}', { status }))),
+      assertCompareError('rate limit')
+    );
+  });
+}
+
+test('compareBranch names any other non-OK status', async () => {
+  await assert.rejects(
+    () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('oops', { status: 500 }))),
+    assertCompareError('GitHub returned 500')
+  );
+});
+
+test('compareBranch reports "could not reach GitHub" when the fetch throws', async () => {
+  const fetchImpl = (async () => {
+    throw new Error('ENOTFOUND api.github.com');
+  }) as unknown as typeof fetch;
+  await assert.rejects(() => compareBranch(SOURCE, SHA, fetchImpl), assertCompareError('could not reach GitHub (ENOTFOUND'));
+});
+
+test('compareBranch reports "could not reach GitHub" when reading the body fails', async () => {
+  const fetchImpl = (async () => ({
+    ok: true,
+    status: 200,
+    text: () => {
+      throw new Error('aborted');
+    },
+  })) as unknown as typeof fetch;
+  await assert.rejects(() => compareBranch(SOURCE, SHA, fetchImpl), assertCompareError('could not reach GitHub (aborted)'));
+});
+
+test('compareBranch rejects a response missing merge_base_commit', async () => {
+  const body = JSON.parse(COMPARE_AHEAD_BODY) as Record<string, unknown>;
+  delete body.merge_base_commit;
+  await assert.rejects(
+    () => compareBranch(SOURCE, SHA, compareFetch(() => new Response(JSON.stringify(body), { status: 200 }))),
+    assertCompareError('unexpected compare response')
+  );
+});
+
+test('compareBranch rejects a non-JSON body as an unexpected compare response', async () => {
+  await assert.rejects(
+    () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('<html>', { status: 200 }))),
+    assertCompareError('unexpected compare response')
+  );
+});
+
+test('compareBranch refuses a file list at the 300-file cap', async () => {
+  const body = JSON.parse(COMPARE_AHEAD_BODY) as { files: unknown[] };
+  const template = body.files[body.files.length - 1];
+  while (body.files.length < 300) body.files.push(template);
+  await assert.rejects(
+    () => compareBranch(SOURCE, SHA, compareFetch(() => new Response(JSON.stringify(body), { status: 200 }))),
+    assertCompareError('300 or more files')
+  );
+});
+
 // --- resolveAppSource ---
 
 test('resolveAppSource makes no fetch calls when the feature is off', async () => {
@@ -215,103 +402,157 @@ test('resolveAppSource lowercases a mixed-case bare slug', async () => {
   assert.equal(result.slug, 'plex');
 });
 
-test('resolveAppSource returns a custom hit with no shadows', async () => {
-  const result = await resolveAppSource('myapp', withCustomSource(), customFetch('myapp'));
-  assert.equal(result.kind, 'custom');
-  assert.equal(result.slug, 'myapp');
-  assert.deepEqual(result.shadows, []);
-  assert.deepEqual(result.custom, { ...SOURCE, sha: SHA });
-  assert.equal(result.ctUrl, CT_URL('myapp'));
-  assert.equal(result.scriptsBaseUrl, SCRIPTS_BASE_URL);
+// (a) research R6: a slug the branch changes resolves to the fork at the
+// pinned commit without probing the fork's ct/ script at all.
+test('resolveAppSource resolves a changed slug to the fork at the pinned commit', async () => {
+  const result = await resolveAppSource('demo-shop', withCustomSource(), customFetch('demo-shop'));
+  assert.deepEqual(result, {
+    kind: 'custom',
+    slug: 'demo-shop',
+    custom: { ...SOURCE, sha: SHA, mergeBase: AHEAD_MERGE_BASE },
+    ctUrl: CT_URL('demo-shop'),
+    scriptsBaseUrl: SCRIPTS_BASE_URL,
+    shadows: [],
+    changed: true,
+    conflict: false,
+  });
 });
 
-test('resolveAppSource reports a shadow of ProxmoxVE only', async () => {
-  const result = await resolveAppSource('myapp', withCustomSource(), customFetch('myapp', { shadowStable: true }));
+test('resolveAppSource matches a mixed-case changed slug', async () => {
+  const result = await resolveAppSource('Demo-Books', withCustomSource(), customFetch('demo-books'));
+  assert.equal(result.kind, 'custom');
+  assert.equal(result.changed, true);
+});
+
+// (i) a changed slug that also exists upstream reports what it overrides.
+test('resolveAppSource reports a changed slug shadowing ProxmoxVE only', async () => {
+  const result = await resolveAppSource('demo-shop', withCustomSource(), customFetch('demo-shop', { stable: 200 }));
   assert.equal(result.kind, 'custom');
   assert.deepEqual(result.shadows, ['ProxmoxVE']);
 });
 
-test('resolveAppSource reports a shadow of ProxmoxVED only', async () => {
-  const result = await resolveAppSource('myapp', withCustomSource(), customFetch('myapp', { shadowDev: true }));
+test('resolveAppSource reports a changed slug shadowing ProxmoxVED only', async () => {
+  const result = await resolveAppSource('demo-shop', withCustomSource(), customFetch('demo-shop', { dev: 200 }));
   assert.equal(result.kind, 'custom');
   assert.deepEqual(result.shadows, ['ProxmoxVED']);
 });
 
-test('resolveAppSource reports shadows of both upstream repos', async () => {
+test('resolveAppSource reports a changed slug shadowing both upstream repos', async () => {
   const result = await resolveAppSource(
-    'myapp',
+    'demo-shop',
     withCustomSource(),
-    customFetch('myapp', { shadowStable: true, shadowDev: true })
+    customFetch('demo-shop', { stable: 200, dev: 200 })
   );
   assert.equal(result.kind, 'custom');
   assert.deepEqual(result.shadows, ['ProxmoxVE', 'ProxmoxVED']);
 });
 
-test('resolveAppSource falls back to upstream when the custom ct script 404s', async () => {
-  const result = await resolveAppSource(
-    'myapp',
-    withCustomSource(),
-    fakeFetch({
-      [HEAD_SHA_URL]: () => new Response(HEAD_SHA_RAW, { status: 200 }),
-      [CT_URL('myapp')]: () => new Response(null, { status: 404 }),
-    })
+test('resolveAppSource treats a thrown shadow probe for a changed slug as absent and logs a warning', async () => {
+  const { result, warnings } = await captureWarnings(() =>
+    resolveAppSource('demo-shop', withCustomSource(), customFetch('demo-shop', { stable: 'throw' }))
   );
-  assert.deepEqual(result, { kind: 'upstream', slug: 'myapp', shadows: [] });
+  assert.equal(result.kind, 'custom');
+  assert.deepEqual(result.shadows, []);
+  assert.ok(
+    warnings.some((w) => w.includes('ProxmoxVE') && w.includes('demo-shop') && w.includes('ETIMEDOUT')),
+    `expected a shadow-probe warning naming ProxmoxVE/demo-shop/ETIMEDOUT, got: ${JSON.stringify(warnings)}`
+  );
 });
 
-test('resolveAppSource throws when the custom ct fetch returns a non-404 non-OK status', async () => {
+// (b) an unchanged slug upstream has resolves exactly as with the feature
+// off, and the fork is never probed (no fork route: fakeFetch would throw).
+const UPSTREAM_PRESENCE: [string, { stable?: Probe; dev?: Probe }][] = [
+  ['ProxmoxVE', { stable: 200 }],
+  ['ProxmoxVED', { dev: 200 }],
+  ['both upstream repos', { stable: 200, dev: 200 }],
+];
+for (const [label, opts] of UPSTREAM_PRESENCE) {
+  test(`resolveAppSource resolves an unchanged slug present in ${label} to upstream`, async () => {
+    const result = await resolveAppSource('plex', withCustomSource(), customFetch('plex', opts));
+    assert.deepEqual(result, { kind: 'upstream', slug: 'plex', shadows: [] });
+  });
+}
+
+// (c) when an upstream probe can't tell, prefer upstream over a possibly
+// stale inherited fork copy.
+test('resolveAppSource resolves an unchanged slug to upstream when an upstream probe throws', async () => {
+  const { result } = await captureWarnings(() =>
+    resolveAppSource('plex', withCustomSource(), customFetch('plex', { stable: 'throw' }))
+  );
+  assert.deepEqual(result, { kind: 'upstream', slug: 'plex', shadows: [] });
+});
+
+test('resolveAppSource resolves an unchanged slug to upstream when an upstream probe returns a server error', async () => {
+  const { result } = await captureWarnings(() =>
+    resolveAppSource('plex', withCustomSource(), customFetch('plex', { dev: 500 }))
+  );
+  assert.deepEqual(result, { kind: 'upstream', slug: 'plex', shadows: [] });
+});
+
+// (d) fork-only: absent upstream, present in the fork at the pinned commit.
+test('resolveAppSource resolves a fork-only unchanged slug to the fork with no shadows', async () => {
+  const result = await resolveAppSource('demo-legacy', withCustomSource(), customFetch('demo-legacy', { fork: 200 }));
+  assert.deepEqual(result, {
+    kind: 'custom',
+    slug: 'demo-legacy',
+    custom: { ...SOURCE, sha: SHA, mergeBase: AHEAD_MERGE_BASE },
+    ctUrl: CT_URL('demo-legacy'),
+    scriptsBaseUrl: SCRIPTS_BASE_URL,
+    shadows: [],
+    changed: false,
+    conflict: false,
+  });
+});
+
+// (e) absent everywhere: upstream, so it fails later exactly as feature-off does.
+test('resolveAppSource resolves a slug absent everywhere to upstream', async () => {
+  const result = await resolveAppSource('nope', withCustomSource(), customFetch('nope', { fork: 404 }));
+  assert.deepEqual(result, { kind: 'upstream', slug: 'nope', shadows: [] });
+});
+
+// (f) the fork probe failing any other way is a named error.
+test('resolveAppSource throws when the fork ct probe returns a non-404 non-OK status', async () => {
   await assert.rejects(
-    () =>
-      resolveAppSource(
-        'myapp',
-        withCustomSource(),
-        fakeFetch({
-          [HEAD_SHA_URL]: () => new Response(HEAD_SHA_RAW, { status: 200 }),
-          [CT_URL('myapp')]: () => new Response('server error', { status: 500 }),
-        })
-      ),
+    () => resolveAppSource('demo-legacy', withCustomSource(), customFetch('demo-legacy', { fork: 500 })),
     /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub returned 500 -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
-test('resolveAppSource throws "could not reach GitHub" when the custom ct fetch itself throws', async () => {
-  const fetchImpl = (async (url: unknown) => {
-    const href = String(url);
-    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
-    throw new Error('ECONNRESET');
-  }) as unknown as typeof fetch;
+test('resolveAppSource throws "could not reach GitHub" when the fork ct probe itself throws', async () => {
   await assert.rejects(
-    () => resolveAppSource('myapp', withCustomSource(), fetchImpl),
-    /could not reach GitHub \(ECONNRESET\)/
+    () => resolveAppSource('demo-legacy', withCustomSource(), customFetch('demo-legacy', { fork: 'throw' })),
+    /could not reach GitHub \(ETIMEDOUT\)/
   );
 });
 
-test('resolveAppSource treats a thrown shadow probe as absent and logs a warning via logWarn', async () => {
-  const originalError = console.error;
-  const warnings: string[] = [];
-  console.error = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(' '));
-  };
-  try {
-    const fetchImpl = (async (url: unknown) => {
-      const href = String(url);
-      if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
-      if (href === CT_URL('myapp')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-      if (href === SHADOW_URL(UPSTREAM_STABLE_BASE, 'myapp')) throw new Error('ETIMEDOUT');
-      if (href === SHADOW_URL(UPSTREAM_DEV_BASE, 'myapp')) return new Response(null, { status: 404 });
-      throw new Error(`unexpected fetch: ${href}`);
-    }) as unknown as typeof fetch;
+// (g) a compare failure is a named error, never a fallback to upstream.
+test('resolveAppSource throws a named error when the compare call fails, never falling back to upstream', async () => {
+  await assert.rejects(
+    () =>
+      resolveAppSource(
+        'plex',
+        withCustomSource(),
+        fakeFetch({
+          [HEAD_SHA_URL]: () => new Response(HEAD_SHA_RAW, { status: 200 }),
+          [COMPARE_URL]: () => new Response('{"message":"Not Found"}', { status: 404 }),
+        })
+      ),
+    /Custom script repository example-user\/ProxmoxVED@my-apps: commit [0-9a-f]{7} not found in community-scripts\/ProxmoxVED's fork network.* -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+  );
+});
 
-    const result = await resolveAppSource('myapp', withCustomSource(), fetchImpl);
-    assert.deepEqual(result.shadows, []);
-    assert.ok(
-      // logWarn (src/lib/log.ts) writes through console.error, not console.warn.
-      warnings.some((w) => w.includes('ProxmoxVE') && w.includes('myapp') && w.includes('ETIMEDOUT')),
-      `expected a shadow-probe warning naming ProxmoxVE/myapp/ETIMEDOUT, got: ${JSON.stringify(warnings)}`
-    );
-  } finally {
-    console.error = originalError;
-  }
+test('resolveAppSource carries the diverged fixture merge base on a changed slug', async () => {
+  const result = await resolveAppSource(
+    'demo-wiki',
+    withCustomSource(),
+    customFetch('demo-wiki', { compareBody: COMPARE_DIVERGED_BODY })
+  );
+  assert.equal(result.kind, 'custom');
+  assert.equal(result.changed, true);
+  assert.equal(
+    result.custom?.mergeBase,
+    (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha
+  );
 });
 
 // --- formatOverrideWarning ---
@@ -325,7 +566,9 @@ test('formatOverrideWarning returns undefined when shadows is empty', () => {
   const source: AppSource = {
     kind: 'custom',
     slug: 'myapp',
-    custom: { ...SOURCE, sha: SHA },
+    custom: { ...SOURCE, sha: SHA, mergeBase: AHEAD_MERGE_BASE },
+    changed: true,
+    conflict: false,
     ctUrl: CT_URL('myapp'),
     scriptsBaseUrl: SCRIPTS_BASE_URL,
     shadows: [],
@@ -337,7 +580,9 @@ test('formatOverrideWarning formats the exact research R6 text with a 7-characte
   const source: AppSource = {
     kind: 'custom',
     slug: 'myapp',
-    custom: { ...SOURCE, sha: SHA },
+    custom: { ...SOURCE, sha: SHA, mergeBase: AHEAD_MERGE_BASE },
+    changed: true,
+    conflict: false,
     ctUrl: CT_URL('myapp'),
     scriptsBaseUrl: SCRIPTS_BASE_URL,
     shadows: ['ProxmoxVE', 'ProxmoxVED'],
