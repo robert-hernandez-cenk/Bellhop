@@ -48,8 +48,11 @@ export function provisioningRoutes(
   // Global requireAuth is the only gate -- no requireResourceAccess, since a
   // script catalog is neither a host nor a guest, matching check-app and
   // GET /provisioning above.
+  // issue #11: the fourth argument surfaces the operator's configured
+  // custom script repository (if any) as its own group -- see
+  // getScriptCatalog/getCustomGroup in src/lib/script-catalog.ts.
   router.get('/install-app/apps', async (_req, res) => {
-    res.json(await getScriptCatalog(inventoryPath, testDeps.fetchImpl ?? fetch));
+    res.json(await getScriptCatalog(inventoryPath, testDeps.fetchImpl ?? fetch, new Date(), inventory));
   });
 
   const deps = (): OperationDeps => ({ ssh, inventory, inventoryPath, authentik, cloudflare, ...testDeps });

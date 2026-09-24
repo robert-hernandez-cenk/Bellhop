@@ -226,6 +226,8 @@ export interface SettingsValues {
   backupStorage?: string;
   dnsServer?: string;
   statusPagePath?: string;
+  customScriptsRepo?: string;
+  customScriptsBranch?: string;
 }
 
 export interface SettingsResponse {

@@ -127,8 +127,17 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     }
   );
 
-  server.registerTool('list_install_apps', { description: 'The cached community-scripts app catalog usable with install_app.', inputSchema: {} }, async () =>
-    json(await getScriptCatalog(deps.inventoryPath, deps.fetchImpl ?? fetch))
+  server.registerTool(
+    'list_install_apps',
+    {
+      description:
+        'The cached community-scripts app catalog usable with install_app. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), the response also carries a custom group listing that fork branch\'s own ct/ scripts -- already removed from stable/dev -- plus which upstream repo(s) each overrides.',
+      inputSchema: {},
+    },
+    async () => {
+      refresh();
+      return json(await getScriptCatalog(deps.inventoryPath, deps.fetchImpl ?? fetch, new Date(), deps.inventory));
+    }
   );
 
   server.registerTool(

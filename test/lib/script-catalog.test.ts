@@ -3,13 +3,15 @@ import assert from 'node:assert/strict';
 import {
   fetchCatalog,
   CATALOG_MAX_AGE_MS,
+  CUSTOM_CATALOG_MAX_AGE_MS,
   loadCatalog,
   saveCatalog,
   getScriptCatalog,
   resetCatalogFetchState,
 } from '../../src/lib/script-catalog.ts';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { saveInventory, loadInventory, type Inventory } from '../../src/lib/inventory.ts';
 
@@ -368,4 +370,242 @@ test('getScriptCatalog skips refetching within the post-failure cooldown', async
   const muchLater = new Date(later.getTime() + 61 * 1000);
   await getScriptCatalog(dbPath, countingFetch, muchLater);
   assert.equal(fetchCalls, 2);
+});
+
+// --- custom script repository group (issue #11) ---------------------------
+
+const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'github');
+const CUSTOM_LISTING_RAW = readFileSync(path.join(fixtureDir, 'contents-ct-listing.json'), 'utf8');
+const CUSTOM_LISTING: Array<{ name: string; type: string }> = JSON.parse(CUSTOM_LISTING_RAW);
+// Mirrors fetchRepoSlugs' own filtering (dirs dropped, .sh stripped,
+// lowercased, sorted) so this stays correct if the fixture is ever
+// recaptured -- 65 .sh files, 2 directories (deferred, headers) as of the
+// 2026-09-24 capture (research.md R4).
+const CUSTOM_SLUGS = CUSTOM_LISTING.filter((e) => e.type === 'file' && e.name.endsWith('.sh'))
+  .map((e) => e.name.slice(0, -'.sh'.length).toLowerCase())
+  .sort();
+
+// Example values only (constitution Principle I) -- same example the
+// spec/plan/data-model/app-source tests use.
+const CUSTOM_OWNER = 'example-user';
+const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_BRANCH = 'my-apps';
+const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
+
+function baseInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [],
+  };
+}
+
+function withCustomSource(inv: Inventory, branch: string = CUSTOM_BRANCH): Inventory {
+  return { ...inv, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: branch };
+}
+
+// A combined fetch stub covering both the upstream community-scripts
+// listings (fetchCatalog's own two calls) and the custom repository's own
+// contents/ct listing -- matched by owner/repo prefix only (ignoring the
+// ?ref= query), so a test that changes the configured branch doesn't need a
+// second stub. Defaults `stable` to a non-empty list since getUpstreamCatalog
+// treats an empty stable listing as a failure (see the test above).
+function buildFetch(
+  opts: {
+    stable?: string[];
+    dev?: string[];
+    customOwner?: string;
+    customRepo?: string;
+    customResponse?: 'fixture' | 'error' | { status: number } | string[];
+    onCustomCall?: () => void;
+  } = {}
+): typeof fetch {
+  const stable = opts.stable ?? ['plex'];
+  const dev = opts.dev ?? [];
+  const customPrefix = `https://api.github.com/repos/${opts.customOwner ?? CUSTOM_OWNER}/${opts.customRepo ?? CUSTOM_REPO}/contents/ct`;
+  return (async (url: unknown) => {
+    const href = String(url);
+    if (href.startsWith(customPrefix)) {
+      opts.onCustomCall?.();
+      const response = opts.customResponse ?? 'fixture';
+      if (response === 'error') throw new Error('ENOTFOUND api.github.com');
+      if (response === 'fixture') {
+        return new Response(CUSTOM_LISTING_RAW, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (Array.isArray(response)) {
+        return new Response(JSON.stringify(response.map((name) => ({ name: `${name}.sh`, type: 'file' }))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(null, { status: response.status });
+    }
+    if (href.startsWith('https://api.github.com/repos/community-scripts/ProxmoxVED/contents/ct')) {
+      return new Response(JSON.stringify(dev.map((name) => ({ name: `${name}.sh`, type: 'file' }))), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (href.startsWith('https://api.github.com/repos/community-scripts/ProxmoxVE/contents/ct')) {
+      return new Response(JSON.stringify(stable.map((name) => ({ name: `${name}.sh`, type: 'file' }))), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+test('getScriptCatalog returns a custom group whose slugs come from the fixture, directories dropped', async () => {
+  resetCatalogFetchState();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  const result = await getScriptCatalog(tempDbPath(), buildFetch(), now, withCustomSource(baseInventory()));
+  assert.ok(result.custom, 'expected a custom group');
+  assert.equal(result.custom?.label, CUSTOM_LABEL);
+  assert.deepEqual(result.custom?.slugs, CUSTOM_SLUGS);
+});
+
+test('getScriptCatalog removes a custom-group slug from stable and records the shadow', async () => {
+  resetCatalogFetchState();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  // 'aliasvault' is one of the fixture's .sh files -- seed it into the
+  // upstream stable listing too so it shadows ProxmoxVE.
+  const result = await getScriptCatalog(
+    tempDbPath(),
+    buildFetch({ stable: ['plex', 'aliasvault'] }),
+    now,
+    withCustomSource(baseInventory())
+  );
+  assert.ok(!result.stable.includes('aliasvault'), 'expected aliasvault to be removed from stable');
+  assert.deepEqual(result.custom?.shadows.aliasvault, ['ProxmoxVE']);
+});
+
+test('getScriptCatalog does not refetch the custom listing again within 5 minutes', async () => {
+  resetCatalogFetchState();
+  const dbPath = tempDbPath();
+  const inv = withCustomSource(baseInventory());
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  let customCalls = 0;
+  const fetchImpl = buildFetch({
+    onCustomCall: () => {
+      customCalls += 1;
+    },
+  });
+
+  await getScriptCatalog(dbPath, fetchImpl, now, inv);
+  assert.equal(customCalls, 1);
+  await getScriptCatalog(dbPath, fetchImpl, new Date(now.getTime() + CUSTOM_CATALOG_MAX_AGE_MS - 1000), inv);
+  assert.equal(customCalls, 1);
+});
+
+test('getScriptCatalog refetches the custom listing once 5 minutes pass', async () => {
+  resetCatalogFetchState();
+  const dbPath = tempDbPath();
+  const inv = withCustomSource(baseInventory());
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  let customCalls = 0;
+  const fetchImpl = buildFetch({
+    onCustomCall: () => {
+      customCalls += 1;
+    },
+  });
+
+  await getScriptCatalog(dbPath, fetchImpl, now, inv);
+  await getScriptCatalog(dbPath, fetchImpl, new Date(now.getTime() + CUSTOM_CATALOG_MAX_AGE_MS + 1000), inv);
+  assert.equal(customCalls, 2);
+});
+
+test('getScriptCatalog fetches again under a new cache key when the branch setting changes', async () => {
+  resetCatalogFetchState();
+  const dbPath = tempDbPath();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  let customCalls = 0;
+  const fetchImpl = buildFetch({
+    onCustomCall: () => {
+      customCalls += 1;
+    },
+  });
+
+  await getScriptCatalog(dbPath, fetchImpl, now, withCustomSource(baseInventory(), CUSTOM_BRANCH));
+  assert.equal(customCalls, 1);
+  // Same `now` (well within the 5-minute TTL of the first fetch) but a
+  // different branch -- must not be served from the my-apps cache entry.
+  await getScriptCatalog(dbPath, fetchImpl, now, withCustomSource(baseInventory(), 'other-branch'));
+  assert.equal(customCalls, 2);
+});
+
+test('a custom listing failure returns the upstream groups unchanged, omits custom, and logs a warning', async () => {
+  resetCatalogFetchState();
+  // logWarn (src/lib/log.ts) writes through console.error, not console.warn.
+  const originalError = console.error;
+  const warnings: string[] = [];
+  console.error = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  try {
+    const now = new Date('2026-09-24T00:00:00.000Z');
+    const result = await getScriptCatalog(
+      tempDbPath(),
+      buildFetch({ stable: ['plex'], customResponse: 'error' }),
+      now,
+      withCustomSource(baseInventory())
+    );
+    assert.equal(result.custom, undefined);
+    assert.deepEqual(result.stable, ['plex']);
+    assert.ok(
+      warnings.some((w) => w.includes(CUSTOM_LABEL)),
+      `expected a warning naming ${CUSTOM_LABEL}, got: ${JSON.stringify(warnings)}`
+    );
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('half-configured custom settings omit the group without throwing', async () => {
+  resetCatalogFetchState();
+  const originalError = console.error;
+  const warnings: string[] = [];
+  console.error = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  try {
+    const now = new Date('2026-09-24T00:00:00.000Z');
+    // customScriptsBranch is deliberately left unset -- customScriptSource
+    // throws its both-or-neither error, which getCustomGroup must catch.
+    const inv: Inventory = { ...baseInventory(), customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
+    const result = await getScriptCatalog(tempDbPath(), buildFetch({ stable: ['plex'] }), now, inv);
+    assert.equal(result.custom, undefined);
+    assert.deepEqual(result.stable, ['plex']);
+    assert.ok(warnings.length > 0, 'expected a warning to be logged');
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('getScriptCatalog makes no custom fetch when the feature is off', async () => {
+  resetCatalogFetchState();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  let customCalls = 0;
+  const fetchImpl = buildFetch({
+    onCustomCall: () => {
+      customCalls += 1;
+    },
+  });
+  const result = await getScriptCatalog(tempDbPath(), fetchImpl, now, baseInventory());
+  assert.equal(customCalls, 0);
+  assert.equal(result.custom, undefined);
+});
+
+test('getScriptCatalog makes no custom fetch when no inventory is passed at all', async () => {
+  resetCatalogFetchState();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  let customCalls = 0;
+  const fetchImpl = buildFetch({
+    onCustomCall: () => {
+      customCalls += 1;
+    },
+  });
+  const result = await getScriptCatalog(tempDbPath(), fetchImpl, now);
+  assert.equal(customCalls, 0);
+  assert.equal(result.custom, undefined);
 });

@@ -110,8 +110,17 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .app-suggestions { position: absolute; z-index: 20; left: 0; right: 0; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 40vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); }
 .app-suggestions-group { padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .app-suggestions-group-dev { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
+/* issue #11: the operator's own custom-repository group, always the first
+   group when present -- colored with --accent (unlike the neutral
+   .app-suggestions-group text) so it reads as "yours", and a bottom border
+   instead of .app-suggestions-group-dev's top border since it never sits
+   below another group. */
+.app-suggestions-group-custom { color: var(--accent); padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .app-suggestion { padding: 8px 12px; font-size: 14px; color: var(--text-primary); cursor: pointer; }
 .app-suggestion:hover, .app-suggestion-active { background: var(--selected-bg); }
+/* A custom-group row that also exists upstream (research R6) -- small and
+   muted so it reads as metadata next to the slug, not a second warning. */
+.app-suggestion-override-tag { margin-left: 8px; padding: 1px 6px; font-size: 11px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
 .app-suggestions-more { padding: 6px 12px; font-size: 12px; color: var(--text-secondary); }
 .dev-app-warning { background: var(--warning); color: #1d1d1f; padding: 8px 12px; border-radius: 6px; margin-top: 6px; font-size: 13px; }
 /* Informational, not a warning (issue #160) -- an app with its own read prompts is ordinary, it just means the operator has to stay on the page. */
