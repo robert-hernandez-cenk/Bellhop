@@ -98,8 +98,8 @@ None. The change has no shared prerequisite beyond Setup.
 
 - [x] T015 [P] In `README.md`, in the `AUTHENTIK_GROUP_LADDER` entry (line ~452-458), change the stated default to `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins`, and add an upgrade note: a deployment that relied on the previous default (`homelab-app-users-open,homelab-app-users,homelab-users,authentik Admins`) either sets `AUTHENTIK_GROUP_LADDER` to that old value in `data/authentik.env` before upgrading, or renames those groups in Authentik and re-tiers each gated entry; stored `authGroup` values are never rewritten, and until one of these is done `sync-authentik` reports affected entries under "Entries with an unknown authGroup" and leaves their Applications alone.
 - [x] T016 [P] In `CLAUDE.md`, update the `sync-authentik` bullet (line ~478-480) to state the new default ladder. In the `requires_auth` migration paragraph (search "happens to match"), remove the sentence about "this operator's own database" and the "four gated Applications", keeping only the product-level point that the migration assigns the top rung, which is `authentik Admins` in the default ladder. Leave the historical `homelaboratory-app-users` mentions and the `homelab.example.com` example as they are.
-- [ ] T017 Review the full branch diff (`git -C <worktree> diff origin/main`) for real operational data per constitution Principle I: no real hostnames, domains, IPs, usernames, or tokens in code, tests, docs, or specs.
-- [ ] T018 Run the validation in `specs/001-bellhop-group-ladder/quickstart.md` steps 1-4: `npm run typecheck`, `npm test`, `npm run web:build`, the grep, and the two `authentikConfig` checks. All pass.
+- [x] T017 Review the full branch diff (`git -C <worktree> diff origin/main`) for real operational data per constitution Principle I: no real hostnames, domains, IPs, usernames, or tokens in code, tests, docs, or specs.
+- [x] T018 Run the validation in `specs/001-bellhop-group-ladder/quickstart.md` steps 1-4: `npm run typecheck`, `npm test`, `npm run web:build`, the grep, and the two `authentikConfig` checks. All pass.
 
 ---
 
