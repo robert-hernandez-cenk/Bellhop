@@ -413,12 +413,20 @@ export class FakeAuthentikClient implements AuthentikClient {
 
   async getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {
     const provider = this.requireOAuth2Provider(id);
-    const slug = provider.assignedApplicationSlug ?? id;
     return {
       clientId: provider.clientId,
       clientSecret: provider.clientSecret,
-      issuer: `https://auth.example.com/application/o/${slug}/`,
+      issuer: this.issuerFor(provider),
     };
+  }
+
+  async getOAuth2Issuer(id: string): Promise<string> {
+    return this.issuerFor(this.requireOAuth2Provider(id));
+  }
+
+  // Same shape as a real Authentik issuer: per-Application, trailing slash.
+  private issuerFor(provider: FakeOAuth2ProviderRecord): string {
+    return `https://auth.example.com/application/o/${provider.assignedApplicationSlug ?? provider.id}/`;
   }
 
   async getSigningKeyId(name: string): Promise<string> {

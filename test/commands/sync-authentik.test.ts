@@ -1,7 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
-import { runSyncAuthentik, formatSyncAuthentik } from '../../src/commands/networking/sync-authentik.ts';
+import {
+  runSyncAuthentik,
+  formatSyncAuthentik,
+  syncAuthentikFailed,
+  ownedProviderKind,
+  diffOAuth2Settings,
+} from '../../src/commands/networking/sync-authentik.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 
@@ -681,4 +687,714 @@ test('--apply over the same pure tier change reports the same binding changes it
   const radarr = apps.find((a) => a.slug === 'radarr')!;
   assert.deepEqual(boundGroupNames(authentik, sonarr.pk, ids), [...LADDER].sort(), 'sonarr widened to every rung');
   assert.deepEqual(boundGroupNames(authentik, radarr.pk, ids), [USERS_RUNG, ADMIN_RUNG].sort(), 'radarr narrowed to just its own tier and above');
+});
+
+// ---------------------------------------------------------------------------
+// Native OIDC gating (issue #1): an entry with authMode 'oidc' gets an
+// Authentik OAuth2/OpenID provider and a meta_publisher-marked Application
+// instead of a proxy provider on the embedded outpost.
+// ---------------------------------------------------------------------------
+
+const OIDC_URIS = ['https://media.example.com/oauth/callback'];
+const SCOPE_IDS = ['scope-openid-1', 'scope-profile-1', 'scope-email-1'];
+
+function oidcInventory(overrides: Partial<Inventory['guests'][number]> = {}): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.0.2.5' }],
+    guests: [
+      {
+        name: 'media',
+        type: 'lxc',
+        vmid: 130,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        subdomains: ['media'],
+        authGroup: USERS_RUNG,
+        authMode: 'oidc',
+        oidcRedirectUris: OIDC_URIS,
+        ...overrides,
+      },
+    ],
+  };
+}
+
+// A fetch stand-in that answers every discovery request with a valid
+// OpenID configuration and records each requested URL.
+function okFetch(requested: string[] = []): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    requested.push(String(input));
+    assert.ok(init?.signal instanceof AbortSignal, 'every discovery fetch carries a timeout signal');
+    return new Response(JSON.stringify({ issuer: 'x' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+}
+
+// T009
+test('OIDC: dry run reports the client to create and its ladder bindings, and makes no mutating call', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const callsBefore = authentik.calls.length;
+
+  const result = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.equal(result.applied, false);
+  assert.deepEqual(result.oidcToCreate, ['media']);
+  assert.deepEqual(result.toCreate, [], 'toCreate keeps meaning forward-auth Applications');
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.oidcSkipped, []);
+  assert.deepEqual(result.discovery, [], 'a dry run never runs the discovery check');
+  assert.deepEqual(
+    sortChanges(result.bindingChanges),
+    sortChanges([
+      { slug: 'media', group: USERS_RUNG, action: 'add' },
+      { slug: 'media', group: ADMIN_RUNG, action: 'add' },
+    ])
+  );
+  assert.deepEqual(authentik.calls.slice(callsBefore), [], 'a dry run makes no mutating call');
+});
+
+test('OIDC: apply creates a confidential OAuth2 provider, a bellhop-marked Application, and ladder bindings, never touching the outpost', async () => {
+  const authentik = new FakeAuthentikClient();
+  const ids = await seedLadderGroups(authentik);
+  const inventory = oidcInventory({
+    oidcRedirectUris: ['https://media.example.com/oauth/callback', 'https://media.example.com/alt/callback'],
+  });
+
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.equal(result.applied, true);
+  assert.deepEqual(result.oidcToCreate, ['media']);
+  assert.deepEqual(result.toCreate, []);
+
+  const providers = await authentik.listOAuth2Providers();
+  assert.equal(providers.length, 1);
+  const provider = providers[0];
+  assert.equal(provider.name, 'media');
+  assert.equal(provider.clientType, 'confidential');
+  assert.deepEqual(provider.grantTypes, ['authorization_code', 'refresh_token']);
+  assert.equal(provider.signingKeyId, 'key-1');
+  assert.deepEqual([...provider.propertyMappingIds].sort(), [...SCOPE_IDS].sort());
+  assert.deepEqual(provider.redirectUris, [
+    { matchingMode: 'strict', url: 'https://media.example.com/oauth/callback' },
+    { matchingMode: 'strict', url: 'https://media.example.com/alt/callback' },
+  ]);
+  assert.deepEqual(await authentik.listProxyProviders(), [], 'no proxy provider for an OIDC entry');
+
+  const apps = await authentik.listApplications();
+  assert.equal(apps.length, 1);
+  assert.equal(apps[0].slug, 'media');
+  assert.equal(apps[0].name, 'media');
+  assert.equal(apps[0].providerId, provider.id);
+  assert.equal(apps[0].metaPublisher, 'bellhop');
+
+  assert.deepEqual((await authentik.getEmbeddedOutpost()).providerIds, [], 'the OAuth2 provider is not added to the outpost');
+  assert.ok(!authentik.calls.some((c) => c.startsWith('setOutpostProviders')), 'the outpost is never written for OIDC');
+  assert.deepEqual(boundGroupNames(authentik, apps[0].pk, ids), [USERS_RUNG, ADMIN_RUNG].sort());
+});
+
+test('OIDC: a second apply is a no-op and the client credentials are unchanged', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const inventory = oidcInventory();
+
+  await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  const providerId = (await authentik.listOAuth2Providers())[0].id;
+  const first = await authentik.getOAuth2Credentials(providerId);
+  const callsBefore = authentik.calls.length;
+
+  const second = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.deepEqual(second.oidcToCreate, []);
+  assert.deepEqual(second.oidcUpdates, []);
+  assert.deepEqual(second.bindingChanges, []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), [], 'nothing is written on an unchanged second run');
+
+  const again = await authentik.getOAuth2Credentials(providerId);
+  assert.equal(again.clientId, first.clientId);
+  assert.equal(again.clientSecret, first.clientSecret);
+});
+
+// T010
+test('OIDC: a changed callback URL is reported as a redirect_uris update and PATCHed in place without rotating credentials', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const providerId = (await authentik.listOAuth2Providers())[0].id;
+  const before = await authentik.getOAuth2Credentials(providerId);
+
+  const edited = oidcInventory({ oidcRedirectUris: ['https://media.example.com/new/callback'] });
+  const callsBeforeDry = authentik.calls.length;
+  const dry = await runSyncAuthentik({}, { authentik, inventory: edited, fetchImpl: okFetch() });
+  assert.deepEqual(dry.oidcUpdates, [{ slug: 'media', changes: ['redirect_uris'] }]);
+  assert.deepEqual(dry.oidcToCreate, []);
+  assert.deepEqual(dry.bindingChanges, []);
+  assert.deepEqual(authentik.calls.slice(callsBeforeDry), [], 'the dry run writes nothing');
+
+  const callsBeforeApply = authentik.calls.length;
+  const applied = await runSyncAuthentik({ apply: true }, { authentik, inventory: edited, fetchImpl: okFetch() });
+  assert.deepEqual(applied.oidcUpdates, [{ slug: 'media', changes: ['redirect_uris'] }]);
+  assert.deepEqual(authentik.calls.slice(callsBeforeApply), [`updateOAuth2Provider ${providerId}`]);
+
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.redirectUris, [{ matchingMode: 'strict', url: 'https://media.example.com/new/callback' }]);
+  const after = await authentik.getOAuth2Credentials(providerId);
+  assert.equal(after.clientId, before.clientId);
+  assert.equal(after.clientSecret, before.clientSecret);
+});
+
+test('OIDC: the drift PATCH carries only the drifted fields, never credential fields', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+
+  const patches: Array<Record<string, unknown>> = [];
+  const original = authentik.updateOAuth2Provider.bind(authentik);
+  authentik.updateOAuth2Provider = async (id, input) => {
+    patches.push({ ...input });
+    return original(id, input);
+  };
+  await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ oidcRedirectUris: ['https://media.example.com/new/callback'] }), fetchImpl: okFetch() }
+  );
+  assert.equal(patches.length, 1);
+  assert.deepEqual(Object.keys(patches[0]), ['redirectUris']);
+  for (const key of Object.keys(patches[0])) assert.doesNotMatch(key, /client_?(id|secret)/i);
+});
+
+test('OIDC: grant-type and scope-mapping drift is reported and fixed; set comparison ignores order', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [
+      { id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50', metaPublisher: 'bellhop' },
+    ],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['refresh_token', 'authorization_code', 'implicit'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-email-1', 'scope-openid-1'],
+        redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(dry.oidcUpdates, [{ slug: 'media', changes: ['grant_types', 'property_mappings'] }]);
+  assert.deepEqual(dry.oidcToCreate, []);
+
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.grantTypes, ['authorization_code', 'refresh_token']);
+  assert.deepEqual([...provider.propertyMappingIds].sort(), [...SCOPE_IDS].sort());
+
+  const clean = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(clean.oidcUpdates, [], 'drift is gone after apply');
+});
+
+test('OIDC: a redirect URI differing only in matching mode is drift', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50', metaPublisher: 'bellhop' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: SCOPE_IDS,
+        redirectUris: [{ matchingMode: 'regex', url: OIDC_URIS[0] }],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(dry.oidcUpdates, [{ slug: 'media', changes: ['redirect_uris'] }]);
+});
+
+test('OIDC: raising authGroup changes bindings only', async () => {
+  const authentik = new FakeAuthentikClient();
+  const ids = await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+
+  const raised = oidcInventory({ authGroup: ADMIN_RUNG });
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: raised, fetchImpl: okFetch() });
+  assert.deepEqual(result.oidcToCreate, []);
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.bindingChanges, [{ slug: 'media', group: USERS_RUNG, action: 'remove' }]);
+  const app = (await authentik.listApplications())[0];
+  assert.deepEqual(boundGroupNames(authentik, app.pk, ids), [ADMIN_RUNG]);
+  assert.ok(!authentik.calls.some((c) => c.startsWith('updateOAuth2Provider')));
+});
+
+test('OIDC: apply self-heals by reusing an orphaned OAuth2 provider named after the slug with no Application', async () => {
+  const authentik = new FakeAuthentikClient({
+    oauth2Providers: [
+      {
+        id: '60',
+        name: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: SCOPE_IDS,
+        redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(result.oidcToCreate, ['media']);
+  const providers = await authentik.listOAuth2Providers();
+  assert.equal(providers.length, 1, 'the orphan is reused, not duplicated');
+  assert.equal(providers[0].id, '60');
+  assert.equal((await authentik.listApplications())[0].providerId, '60');
+});
+
+test('OIDC: a reused orphan with stale settings is brought to the desired settings', async () => {
+  const authentik = new FakeAuthentikClient({
+    oauth2Providers: [
+      {
+        id: '60',
+        name: 'media',
+        clientType: 'confidential',
+        grantTypes: [],
+        signingKeyId: 'key-1',
+        propertyMappingIds: SCOPE_IDS,
+        redirectUris: [{ matchingMode: 'strict', url: 'https://media.example.com/old' }],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.equal(provider.id, '60');
+  assert.deepEqual(provider.grantTypes, ['authorization_code', 'refresh_token']);
+  assert.deepEqual(provider.redirectUris, [{ matchingMode: 'strict', url: OIDC_URIS[0] }]);
+});
+
+test('OIDC: an OAuth2 provider named after the slug that already serves another Application is not reused', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'other', pk: 'pk-other', name: 'other', slug: 'other', providerId: '60' }],
+    oauth2Providers: [
+      {
+        id: '60',
+        name: 'media',
+        assignedApplicationSlug: 'other',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code'],
+        propertyMappingIds: [],
+        redirectUris: [],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const media = (await authentik.listApplications()).find((a) => a.slug === 'media')!;
+  assert.notEqual(media.providerId, '60');
+  assert.equal((await authentik.listOAuth2Providers()).length, 2);
+});
+
+test('OIDC: an Application at the slug backed by an unmarked OAuth2 provider is a conflict, not touched', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code'],
+        propertyMappingIds: [],
+        redirectUris: [],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(result.conflicts, ['media']);
+  assert.deepEqual(result.oidcToCreate, []);
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.bindingChanges, []);
+  assert.deepEqual(result.discovery, [], 'an unowned client is not ours to health-check');
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+});
+
+test('OIDC: a proxy-owned Application for an OIDC entry (a mode switch) is left untouched in this release', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authMode: undefined }) });
+  const callsBefore = authentik.calls.length;
+
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ authGroup: ADMIN_RUNG }), fetchImpl: okFetch() }
+  );
+  assert.deepEqual(result.oidcToCreate, []);
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.oidcSkipped, []);
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.toRemove, []);
+  assert.deepEqual(result.bindingChanges, []);
+  assert.deepEqual(result.discovery, []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+});
+
+test('OIDC: a forward entry whose slug holds a Bellhop-owned OAuth2 Application is left untouched in this release', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const callsBefore = authentik.calls.length;
+
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ authMode: 'forward', authGroup: ADMIN_RUNG }) }
+  );
+  assert.deepEqual(result.toCreate, []);
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.bindingChanges, []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+});
+
+test('OIDC: a Bellhop-owned OAuth2 Application whose gate was cleared is left in place and not listed in toRemove', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const callsBefore = authentik.calls.length;
+
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory({ authGroup: undefined }) });
+  assert.deepEqual(result.toRemove, []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+  assert.equal((await authentik.listApplications()).length, 1);
+});
+
+// T011
+test('OIDC: an entry with no callback URLs is skipped with a reason naming oidcRedirectUris and nothing is created', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const inventory = oidcInventory({ oidcRedirectUris: undefined });
+
+  const dry = await runSyncAuthentik({}, { authentik, inventory, fetchImpl: okFetch() });
+  assert.equal(dry.oidcSkipped!.length, 1);
+  assert.equal(dry.oidcSkipped![0].slug, 'media');
+  assert.equal(dry.oidcSkipped![0].kind, 'missing-redirect-uris');
+  assert.match(dry.oidcSkipped![0].reason, /oidcRedirectUris/);
+  assert.deepEqual(dry.oidcToCreate, []);
+  assert.deepEqual(dry.bindingChanges, [], 'no bindings planned for an Application that will not exist');
+
+  const applied = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.deepEqual(applied.oidcSkipped, dry.oidcSkipped);
+  assert.deepEqual(await authentik.listApplications(), []);
+  assert.deepEqual(await authentik.listOAuth2Providers(), []);
+});
+
+test('OIDC: an owned client whose callback URLs were cleared is skipped (not PATCHed to none) but its bindings still reconcile', async () => {
+  const authentik = new FakeAuthentikClient();
+  const ids = await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ oidcRedirectUris: undefined, authGroup: ADMIN_RUNG }), fetchImpl: okFetch() }
+  );
+  assert.deepEqual(result.oidcSkipped!.map((s) => s.kind), ['missing-redirect-uris']);
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.bindingChanges, [{ slug: 'media', group: USERS_RUNG, action: 'remove' }]);
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.redirectUris, [{ matchingMode: 'strict', url: OIDC_URIS[0] }], 'the client keeps its callback');
+  const app = (await authentik.listApplications())[0];
+  assert.deepEqual(boundGroupNames(authentik, app.pk, ids), [ADMIN_RUNG]);
+});
+
+test('OIDC: a missing signing key skips every OIDC entry, naming AUTHENTIK_OIDC_SIGNING_KEY_NAME, while forward-auth entries still reconcile', async () => {
+  const authentik = new FakeAuthentikClient({ signingKeys: {} });
+  await seedLadderGroups(authentik);
+  const base = oidcInventory();
+  const inventory: Inventory = {
+    ...base,
+    guests: [
+      ...base.guests,
+      {
+        name: 'books',
+        type: 'lxc',
+        vmid: 131,
+        host: 'pve1',
+        ip: '192.0.2.31',
+        subdomains: ['books'],
+        authGroup: USERS_RUNG,
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://books.example.com/cb'],
+      },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['sonarr'], authGroup: USERS_RUNG },
+    ],
+  };
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.deepEqual(
+    result.oidcSkipped!.map((s) => [s.slug, s.kind]).sort(),
+    [
+      ['books', 'missing-signing-key'],
+      ['media', 'missing-signing-key'],
+    ]
+  );
+  for (const s of result.oidcSkipped!) assert.match(s.reason, /AUTHENTIK_OIDC_SIGNING_KEY_NAME/);
+  assert.deepEqual(result.oidcToCreate, []);
+  assert.deepEqual(result.toCreate, ['sonarr'], 'the forward-auth entry is still created');
+  assert.deepEqual((await authentik.listApplications()).map((a) => a.slug), ['sonarr']);
+  assert.deepEqual(await authentik.listOAuth2Providers(), []);
+});
+
+test('OIDC: a missing scope mapping skips every OIDC entry with kind missing-scope-mapping', async () => {
+  const authentik = new FakeAuthentikClient({
+    scopeMappings: {
+      'goauthentik.io/providers/oauth2/scope-openid': 'scope-openid-1',
+      'goauthentik.io/providers/oauth2/scope-profile': 'scope-profile-1',
+    },
+  });
+  await seedLadderGroups(authentik);
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.equal(result.oidcSkipped!.length, 1);
+  assert.equal(result.oidcSkipped![0].kind, 'missing-scope-mapping');
+  assert.match(result.oidcSkipped![0].reason, /scope-email/);
+  assert.deepEqual(await authentik.listOAuth2Providers(), []);
+});
+
+test('OIDC: authMode oidc without authGroup is inert', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const callsBefore = authentik.calls.length;
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ authGroup: undefined }), fetchImpl: okFetch() }
+  );
+  assert.deepEqual(result.oidcToCreate, []);
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.oidcSkipped, []);
+  assert.deepEqual(result.discovery, []);
+  assert.deepEqual(result.toCreate, []);
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), []);
+});
+
+test('OIDC: a caddyManual OIDC entry is still reconciled', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory({ caddyManual: true }), fetchImpl: okFetch() }
+  );
+  assert.deepEqual(result.oidcToCreate, ['media']);
+  assert.equal((await authentik.listOAuth2Providers()).length, 1);
+});
+
+// T012
+test('OIDC discovery: apply records ok for a 200 JSON document at <issuer>.well-known/openid-configuration', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const requested: string[] = [];
+  const result = await runSyncAuthentik(
+    { apply: true },
+    { authentik, inventory: oidcInventory(), fetchImpl: okFetch(requested) }
+  );
+  assert.deepEqual(result.discovery, [{ slug: 'media', issuer: 'https://auth.example.com/application/o/media/', ok: true }]);
+  assert.deepEqual(requested, ['https://auth.example.com/application/o/media/.well-known/openid-configuration']);
+});
+
+test('OIDC discovery: an unchanged, already-owned client is checked on every apply', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const second = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.equal(second.discovery!.length, 1);
+  assert.equal(second.discovery![0].ok, true);
+});
+
+test('OIDC discovery: non-200, a thrown error, a timeout, and a non-JSON body are recorded as failures and nothing is rolled back', async () => {
+  const cases: Array<[string, typeof fetch, RegExp]> = [
+    ['non-200', (async () => new Response('nope', { status: 404 })) as typeof fetch, /404/],
+    [
+      'throw',
+      (async () => {
+        throw new Error('connect ECONNREFUSED 192.0.2.9:443');
+      }) as typeof fetch,
+      /ECONNREFUSED/,
+    ],
+    [
+      'timeout',
+      (async () => {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      }) as typeof fetch,
+      /timeout/i,
+    ],
+    ['non-JSON 200', (async () => new Response('<html></html>', { status: 200 })) as typeof fetch, /JSON/],
+  ];
+  for (const [label, fetchImpl, pattern] of cases) {
+    const authentik = new FakeAuthentikClient();
+    await seedLadderGroups(authentik);
+    const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl });
+    assert.equal(result.discovery!.length, 1, label);
+    const entry = result.discovery![0];
+    assert.equal(entry.ok, false, label);
+    assert.equal(entry.issuer, 'https://auth.example.com/application/o/media/', label);
+    assert.match(entry.error ?? '', pattern, label);
+    assert.equal((await authentik.listApplications()).length, 1, `${label}: the Application is kept`);
+    assert.equal((await authentik.listOAuth2Providers()).length, 1, `${label}: the provider is kept`);
+    assert.ok(!authentik.calls.some((c) => c.startsWith('delete')), `${label}: nothing is rolled back`);
+  }
+});
+
+test('OIDC discovery: an issuer lookup failure is recorded, not thrown', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  authentik.getOAuth2Issuer = async () => {
+    throw new Error('Authentik API GET setup_urls failed: 500');
+  };
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.equal(result.discovery![0].ok, false);
+  assert.match(result.discovery![0].error ?? '', /setup_urls/);
+});
+
+test('OIDC discovery: an issuer without a trailing slash still resolves to <issuer>/.well-known/openid-configuration', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  authentik.getOAuth2Issuer = async () => 'https://auth.example.com/application/o/media';
+  const requested: string[] = [];
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch(requested) });
+  assert.deepEqual(requested, ['https://auth.example.com/application/o/media/.well-known/openid-configuration']);
+});
+
+test('OIDC discovery: the check never reads client credentials', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  authentik.getOAuth2Credentials = async () => {
+    throw new Error('sync-authentik must not read the client secret');
+  };
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.equal(result.discovery![0].ok, true);
+});
+
+test('OIDC discovery: a dry run records no discovery entries and never fetches', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const requested: string[] = [];
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch(requested) });
+  assert.deepEqual(dry.discovery, []);
+  assert.deepEqual(requested, []);
+});
+
+test('formatSyncAuthentik prints each OIDC section only when non-empty', () => {
+  const base = {
+    toCreate: [],
+    toRemove: [],
+    conflicts: [],
+    missingRungs: [],
+    offLadder: [],
+    bindingChanges: [],
+    applied: true,
+  };
+  const none = formatSyncAuthentik({ ...base, oidcToCreate: [], oidcUpdates: [], oidcSkipped: [], discovery: [] });
+  assert.doesNotMatch(none, /OpenID|OIDC/, 'ordinary output is unchanged');
+  assert.equal(none, formatSyncAuthentik(base), 'absent and empty OIDC fields print identically');
+
+  const full = formatSyncAuthentik({
+    ...base,
+    oidcToCreate: ['media'],
+    oidcUpdates: [{ slug: 'books', changes: ['redirect_uris', 'grant_types'] }],
+    oidcSkipped: [{ slug: 'notes', kind: 'missing-redirect-uris', reason: 'no callback URL set' }],
+    discovery: [
+      { slug: 'media', issuer: 'https://auth.example.com/application/o/media/', ok: true },
+      { slug: 'books', issuer: 'https://auth.example.com/application/o/books/', ok: false, error: 'HTTP 502' },
+    ],
+  });
+  assert.match(full, /OpenID clients to create: 1\n {2}\+ media/);
+  assert.match(full, /OpenID client settings to update: 1\n {2}~ books: redirect_uris, grant_types/);
+  assert.match(full, /OIDC entries skipped: 1\n {2}! notes — no callback URL set/);
+  assert.match(
+    full,
+    /OIDC discovery: 2\n {2}✓ media https:\/\/auth\.example\.com\/application\/o\/media\/\n {2}✗ books https:\/\/auth\.example\.com\/application\/o\/books\/ — HTTP 502/
+  );
+});
+
+test('the missing-callback skip reason matches the CLI contract wording', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory({ oidcRedirectUris: undefined }) });
+  assert.equal(
+    dry.oidcSkipped![0].reason,
+    'no callback URL set (set oidcRedirectUris, or Callback URLs on the Dashboard)'
+  );
+});
+
+// T016
+test('syncAuthentikFailed: apply fails on a failed discovery or a signing-key/scope-mapping skip; dry run and callback skips never fail', () => {
+  const base = {
+    toCreate: [],
+    toRemove: [],
+    conflicts: [],
+    missingRungs: [],
+    offLadder: [],
+    bindingChanges: [],
+  };
+  const skip = (kind: 'missing-redirect-uris' | 'missing-signing-key' | 'missing-scope-mapping') => ({
+    ...base,
+    oidcSkipped: [{ slug: 'media', kind, reason: 'x' }],
+  });
+  assert.equal(syncAuthentikFailed({ ...base, applied: true }), false);
+  assert.equal(syncAuthentikFailed({ ...skip('missing-redirect-uris'), applied: true }), false);
+  assert.equal(syncAuthentikFailed({ ...skip('missing-signing-key'), applied: true }), true);
+  assert.equal(syncAuthentikFailed({ ...skip('missing-scope-mapping'), applied: true }), true);
+  assert.equal(syncAuthentikFailed({ ...skip('missing-signing-key'), applied: false }), false, 'a dry run never fails on a skip');
+  assert.equal(
+    syncAuthentikFailed({ ...base, applied: true, discovery: [{ slug: 'media', issuer: 'i', ok: false, error: 'e' }] }),
+    true
+  );
+  assert.equal(syncAuthentikFailed({ ...base, applied: true, discovery: [{ slug: 'media', issuer: 'i', ok: true }] }), false);
+});
+
+test('ownedProviderKind: proxy backing is owned regardless of marker; OAuth2 backing only with meta_publisher bellhop', () => {
+  const sets = { proxyProviderIds: new Set(['1']), oauth2ProviderIds: new Set(['2']) };
+  const app = (providerId: string | undefined, metaPublisher?: string) => ({
+    id: 's',
+    pk: 'p',
+    name: 's',
+    slug: 's',
+    providerId,
+    metaPublisher,
+  });
+  assert.equal(ownedProviderKind(app('1'), sets), 'proxy');
+  assert.equal(ownedProviderKind(app('1', 'someone'), sets), 'proxy');
+  assert.equal(ownedProviderKind(app('2', 'bellhop'), sets), 'oauth2');
+  assert.equal(ownedProviderKind(app('2'), sets), undefined);
+  assert.equal(ownedProviderKind(app('2', 'other'), sets), undefined);
+  assert.equal(ownedProviderKind(app('3', 'bellhop'), sets), undefined);
+  assert.equal(ownedProviderKind(app(undefined, 'bellhop'), sets), undefined);
+});
+
+test('diffOAuth2Settings: reports each drifted field and a patch holding only those fields', () => {
+  const desired = {
+    clientType: 'confidential' as const,
+    grantTypes: ['authorization_code', 'refresh_token'],
+    signingKeyId: 'key-1',
+    propertyMappingIds: SCOPE_IDS,
+    redirectUris: [{ matchingMode: 'strict' as const, url: OIDC_URIS[0] }],
+  };
+  const same = diffOAuth2Settings(
+    {
+      id: '1',
+      name: 'media',
+      ...desired,
+      grantTypes: ['refresh_token', 'authorization_code'],
+      propertyMappingIds: [...SCOPE_IDS].reverse(),
+    },
+    desired
+  );
+  assert.deepEqual(same, { changes: [], patch: {} });
+
+  const drifted = diffOAuth2Settings(
+    { id: '1', name: 'media', clientType: 'public', grantTypes: [], signingKeyId: undefined, propertyMappingIds: [], redirectUris: [] },
+    desired
+  );
+  assert.deepEqual(drifted.changes, ['redirect_uris', 'grant_types', 'property_mappings', 'signing_key', 'client_type']);
+  assert.deepEqual(drifted.patch, desired);
 });

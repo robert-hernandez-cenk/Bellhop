@@ -185,3 +185,21 @@ test('FakeAuthentikClient returns a stable default invalidation flow id', async 
   const client = new FakeAuthentikClient();
   assert.equal(await client.getDefaultInvalidationFlowId(), 'default-invalidation-flow');
 });
+
+test('getOAuth2Issuer: the unconfigured client rejects, the fake returns the per-Application issuer', async () => {
+  await assert.rejects(new UnconfiguredAuthentikClient().getOAuth2Issuer('1'), { message: UNCONFIGURED_MESSAGE });
+
+  const client = new FakeAuthentikClient();
+  const provider = await client.createOAuth2Provider({
+    name: 'media',
+    clientType: 'confidential',
+    grantTypes: ['authorization_code'],
+    propertyMappingIds: [],
+    redirectUris: [],
+    authorizationFlowId: 'f',
+    invalidationFlowId: 'g',
+  });
+  await client.createApplication({ name: 'media', slug: 'media', providerId: provider.id });
+  assert.equal(await client.getOAuth2Issuer(provider.id), 'https://auth.example.com/application/o/media/');
+  assert.equal(await client.getOAuth2Issuer(provider.id), (await client.getOAuth2Credentials(provider.id)).issuer);
+});

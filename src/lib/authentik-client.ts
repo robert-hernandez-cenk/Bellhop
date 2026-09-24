@@ -146,6 +146,10 @@ export interface AuthentikClient {
   updateOAuth2Provider(id: string, input: Partial<OAuth2ProviderSettings>): Promise<void>;
   deleteOAuth2Provider(id: string): Promise<void>;
   getOAuth2Credentials(id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }>;
+  // The issuer URL alone (setup_urls only) -- for callers that need the
+  // issuer but must never have the client secret flow through them, e.g.
+  // sync-authentik's post-apply discovery check (research.md R6, FR-004).
+  getOAuth2Issuer(id: string): Promise<string>;
   updateApplication(slug: string, input: { providerId?: string; metaPublisher?: string }): Promise<void>;
   // Throws naming AUTHENTIK_OIDC_SIGNING_KEY_NAME when no key with that name
   // and a private key exists (research.md R3).
@@ -554,6 +558,15 @@ export class RealAuthentikClient implements AuthentikClient {
     };
   }
 
+  // Deliberately a separate request from getOAuth2Credentials rather than a
+  // subset of it: this path never fetches the provider record, so the
+  // secret is never even in this process's memory for a caller that only
+  // needs the issuer.
+  async getOAuth2Issuer(id: string): Promise<string> {
+    const setupUrls = await this.request<{ issuer: string }>('GET', `/api/v3/providers/oauth2/${id}/setup_urls/`);
+    return setupUrls.issuer;
+  }
+
   async updateApplication(slug: string, input: { providerId?: string; metaPublisher?: string }): Promise<void> {
     const body: Record<string, unknown> = {};
     if (input.providerId !== undefined) body.provider = input.providerId;
@@ -706,6 +719,9 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   getOAuth2Credentials(_id: string): Promise<{ clientId: string; clientSecret: string; issuer: string }> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  getOAuth2Issuer(_id: string): Promise<string> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   updateApplication(_slug: string, _input: { providerId?: string; metaPublisher?: string }): Promise<void> {

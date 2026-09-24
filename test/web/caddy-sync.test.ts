@@ -245,7 +245,13 @@ test('syncCaddyLive still resolves, with a warning, when the Cloudflare prune th
   const logs = await captureLogs(async () => {
     result = await syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare });
   });
-  assert.deepEqual(result, { authentikConflicts: [], authentikOffLadder: [], authentikMissingRungs: [] });
+  assert.deepEqual(result, {
+    authentikConflicts: [],
+    authentikOffLadder: [],
+    authentikMissingRungs: [],
+    authentikOidcSkipped: [],
+    authentikOidcDiscoveryFailures: [],
+  });
   assert.ok(logs.warn.some((l) => l.includes('prune-acme-challenges: skipped — Cloudflare API 403: Authentication error')));
 });
 
@@ -275,4 +281,61 @@ test('syncCaddyLive never reaches the prune when sync-caddy fails', async () => 
     /No inventory entry has 'caddy: true'/
   );
   assert.deepEqual(cloudflare.history, []);
+});
+
+// Native OIDC gating (issue #1): sync-authentik's OIDC skips and failed
+// discovery checks are warned and returned, and never fail the push.
+function oidcGated(overrides: Partial<Inventory['guests'][number]> = {}): Inventory {
+  return {
+    ...inventory,
+    guests: [
+      {
+        ...inventory.guests[0],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://plex.example.com/oauth/callback'],
+        ...overrides,
+      },
+    ],
+  };
+}
+
+test('syncCaddyLive warns and returns each failed OIDC discovery check, and still resolves', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  const fetchImpl = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
+  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  const logs = await captureLogs(async () => {
+    result = await syncCaddyLive({ ssh, inventory: oidcGated(), authentik: new FakeAuthentikClient(), fetchImpl });
+  });
+  assert.equal(result!.authentikOidcDiscoveryFailures.length, 1);
+  const failure = result!.authentikOidcDiscoveryFailures[0];
+  assert.equal(failure.slug, 'plex');
+  assert.equal(failure.issuer, 'https://auth.example.com/application/o/plex/');
+  assert.match(failure.error, /502/);
+  assert.ok(logs.warn.some((l) => l.includes('sync-authentik: plex — OIDC discovery failed') && l.includes('502')));
+});
+
+test('syncCaddyLive returns no discovery failures when the check passes', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  const fetchImpl = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+  const result = await syncCaddyLive({ ssh, inventory: oidcGated(), authentik: new FakeAuthentikClient(), fetchImpl });
+  assert.deepEqual(result.authentikOidcDiscoveryFailures, []);
+  assert.deepEqual(result.authentikOidcSkipped, []);
+});
+
+test('syncCaddyLive warns and returns each OIDC skip', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  const logs = await captureLogs(async () => {
+    result = await syncCaddyLive({
+      ssh,
+      inventory: oidcGated({ oidcRedirectUris: undefined }),
+      authentik: new FakeAuthentikClient(),
+    });
+  });
+  assert.deepEqual(
+    result!.authentikOidcSkipped.map((s) => [s.slug, s.kind]),
+    [['plex', 'missing-redirect-uris']]
+  );
+  assert.ok(logs.warn.some((l) => l.includes('sync-authentik: plex — OIDC skipped') && l.includes('oidcRedirectUris')));
 });

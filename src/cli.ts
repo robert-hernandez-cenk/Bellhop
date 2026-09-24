@@ -18,7 +18,7 @@ import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/pu
 import { runSetConfig } from './commands/maintenance/set-config.ts';
 import { runSyncCaddy } from './commands/networking/sync-caddy.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
-import { runSyncAuthentik, formatSyncAuthentik } from './commands/networking/sync-authentik.ts';
+import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
@@ -300,6 +300,11 @@ program
       console.log(formatSyncAuthentik(result));
       if (!opts.apply) {
         logInfo('[DRY RUN] Not modifying Authentik. Pass --apply to create/update/delete these objects.');
+      }
+      // Same partial-failure pattern as prune-acme-challenges: everything
+      // that could be applied was, and the report above says what was not.
+      if (syncAuthentikFailed(result)) {
+        process.exitCode = 1;
       }
     })
   );
