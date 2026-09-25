@@ -1,26 +1,12 @@
 import { NavLink } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { apiGet, apiPost, apiDelete } from '../api/client';
-import type { AuthentikGroupEntry } from '../api/types';
+import type { AuthentikGroupEntry, WhoAmI } from '../api/types';
 import { ThemeToggle } from './ThemeToggle';
 
 interface NavItem {
   id: string;
   label: string;
-}
-
-// Mirrors GET /api/whoami (src/web/routes/dashboard.ts). isAdmin and
-// adminGroups are computed server-side so this build does not have to
-// hardcode the admin group names it cannot import.
-export interface WhoAmI {
-  username: string;
-  email?: string;
-  groups: string[];
-  impersonating?: string;
-  localOperator: boolean;
-  isAdmin: boolean;
-  adminGroups: { app: string; authentikBuiltin: string };
-  capabilities: { userDirectory: boolean };
 }
 
 export function Sidebar() {

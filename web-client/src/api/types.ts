@@ -246,6 +246,20 @@ export interface GroupPermissionEntry {
   resources: ResourceRef[];
 }
 
+// Mirrors GET /api/whoami (src/web/routes/dashboard.ts). isAdmin and
+// adminGroups are computed server-side so this build does not have to
+// hardcode the admin group names it cannot import.
+export interface WhoAmI {
+  username: string;
+  email?: string;
+  groups: string[];
+  impersonating?: string;
+  localOperator: boolean;
+  isAdmin: boolean;
+  adminGroups: { app: string; authentikBuiltin: string };
+  capabilities: { userDirectory: boolean };
+}
+
 export interface SettingsValues {
   nfsServer?: string;
   backupStorage?: string;

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
-import type { GuestEntry } from '../api/types';
-import type { WhoAmI } from './Sidebar';
+import type { GuestEntry, WhoAmI } from '../api/types';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { AuthentikConflictBanner, AuthentikSkipBanner, type AuthentikSkip } from './AuthentikSyncBanners';
 import { isOidcEffective, needsOidcDeletionConfirmation } from '../lib/oidc';

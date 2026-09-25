@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../api/client';
-import type { AuthentikGroupEntry, AuthentikUserEntry } from '../api/types';
+import type { AuthentikGroupEntry, AuthentikUserEntry, WhoAmI } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
 import { UsersSection } from '../components/UsersSection';
 import { GroupsSection } from '../components/GroupsSection';
-import type { WhoAmI } from '../components/Sidebar';
 
 export function UsersPage() {
   const [users, setUsers] = useState<AuthentikUserEntry[]>([]);

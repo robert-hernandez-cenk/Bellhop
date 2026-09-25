@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../api/client';
-import type { GuestEntry } from '../api/types';
-import type { WhoAmI } from './Sidebar';
+import type { GuestEntry, WhoAmI } from '../api/types';
 
 interface Props {
   guest: GuestEntry;
