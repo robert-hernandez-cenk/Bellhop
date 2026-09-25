@@ -1963,11 +1963,18 @@ the same rigor as any other correctness bug.
   otherwise-tracked `inventory/` directory (see "Inventory" above). Copy
   `inventory/bellhop.db` (plus its `-wal`/`-shm` sidecar files, for a
   consistent snapshot), `data/authentik.env` and, when present,
-  `data/cloudflare-api.env` across from an existing checkout, `mkdir -p`-ing
-  the worktree's `data/` first. Without them the new worktree's CLI commands
-  and web UI can't reach real infrastructure or a real Authentik instance —
-  commands would operate on stale/wrong hosts, and `AuthentikClient` would
-  fall back to `UnconfiguredAuthentikClient`.
+  `data/cloudflare-api.env` across from the operator's deployment checkout
+  (the one the web service actually runs from), `mkdir -p`-ing the
+  worktree's `data/` first. Never seed from the main checkout: main holds
+  no real data at all — no `inventory/bellhop.db`, no `data/` — so running
+  it shows exactly what a fresh clone would. The deployment checkout is the
+  only authoritative copy; any other checkout's database is a snapshot that
+  drifts from it. Where the deployment checkout lives is operator-specific
+  and deliberately not recorded in this repository — it belongs in the
+  operator's own private notes. Without these files the new worktree's CLI
+  commands and web UI can't reach real infrastructure or a real Authentik
+  instance — commands would operate on stale/wrong hosts, and
+  `AuthentikClient` would fall back to `UnconfiguredAuthentikClient`.
 - **Anytime superpowers is invoked on an issue, make sure the issue is
   assigned to the person doing the work before proceeding.** Check the
   issue's assignee (`gh issue view <number> --json assignees`) and assign
