@@ -120,13 +120,13 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .app-suggestion:hover, .app-suggestion-active { background: var(--selected-bg); }
 /* A custom-group row that also exists upstream (research R6) -- small and
    muted so it reads as metadata next to the slug, not a second warning. */
-.app-suggestion-override-tag { margin-left: 8px; padding: 1px 6px; font-size: 11px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
+.app-suggestion-override-tag { margin-left: 8px; padding: 1px 6px; font-size: 11px; border-radius: 4px; display: inline-block; white-space: nowrap; background: var(--bg-tertiary); color: var(--text-secondary); }
 /* issue #15 (research R8): a custom-group row upstream ProxmoxVED also
    changed since the branch point -- same pill as the override tag, but
    tinted with --warning so it reads as something to act on (rebase). The
    dark-brown text only has contrast on the light tint, so dark mode swaps
    it for the plain warning color on a slightly stronger tint. */
-.app-suggestion-conflict-tag { margin-left: 8px; padding: 1px 6px; font-size: 11px; border-radius: 4px; background: rgba(255, 159, 10, 0.18); color: #8a4b00; }
+.app-suggestion-conflict-tag { margin-left: 8px; padding: 1px 6px; font-size: 11px; border-radius: 4px; display: inline-block; white-space: nowrap; background: rgba(255, 159, 10, 0.18); color: #8a4b00; }
 :root[data-theme='dark'] .app-suggestion-conflict-tag { background: rgba(255, 159, 10, 0.22); color: var(--warning); }
 .app-suggestions-more { padding: 6px 12px; font-size: 12px; color: var(--text-secondary); }
 .dev-app-warning { background: var(--warning); color: #1d1d1f; padding: 8px 12px; border-radius: 6px; margin-top: 6px; font-size: 13px; }
