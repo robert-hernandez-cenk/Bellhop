@@ -141,8 +141,11 @@ const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 
 const PINNED_SHA = HEAD_SHA_RAW.trim();
 const OTHER_SHA = '0'.repeat(40);
 const HEAD_SHA_URL = 'https://api.github.com/repos/example-user/ProxmoxVED/commits/my-apps';
-const CT_URL = `https://raw.githubusercontent.com/example-user/ProxmoxVED/${PINNED_SHA}/ct/myapp.sh`;
-const INSTALL_URL = `https://raw.githubusercontent.com/example-user/ProxmoxVED/${PINNED_SHA}/install/myapp-install.sh`;
+// issue #15: the captured ahead compare fixture changes demo-shop (among
+// others), so demo-shop resolves to the fork without a fork ct/ probe.
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...example-user:ProxmoxVED:${PINNED_SHA}`;
+const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
+const INSTALL_URL = `https://raw.githubusercontent.com/example-user/ProxmoxVED/${PINNED_SHA}/install/demo-shop-install.sh`;
 
 const capturedApplySources: unknown[] = [];
 const resolvingOp: Operation = {
@@ -172,15 +175,19 @@ test('previewAndEnqueue pins a resolvesApp operation\'s custom-repository resolu
   saveInventory(deps.inventoryPath, customInventory);
 
   let headShaCalls = 0;
+  let compareCalls = 0;
   const fetchImpl = (async (url: unknown) => {
     const href = String(url);
     if (href === HEAD_SHA_URL) {
       headShaCalls++;
       return new Response(HEAD_SHA_RAW, { status: 200 });
     }
-    if (href === CT_URL) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === COMPARE_URL) {
+      compareCalls++;
+      return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    }
     if (href === INSTALL_URL) return new Response('read -rp "Enter something: " x\n', { status: 200 });
-    if (href === `${UPSTREAM_STABLE_BASE}/ct/myapp.sh` || href === `${UPSTREAM_DEV_BASE}/ct/myapp.sh`) {
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/demo-shop.sh` || href === `${UPSTREAM_DEV_BASE}/ct/demo-shop.sh`) {
       return new Response(null, { status: 404 });
     }
     // A re-resolution against a moved branch (a different sha in the URL) or
@@ -193,12 +200,13 @@ test('previewAndEnqueue pins a resolvesApp operation\'s custom-repository resolu
 
   const { jobId } = await previewAndEnqueue(
     resolvingOp,
-    { app: 'myapp', appSource: { kind: 'upstream', slug: 'someone-elses-value', shadows: [] } },
+    { app: 'demo-shop', appSource: { kind: 'upstream', slug: 'someone-elses-value', shadows: [] } },
     deps,
     runner,
     {}
   );
   assert.equal(headShaCalls, 1, 'resolveHeadSha should have been called exactly once, by previewAndEnqueue itself');
+  assert.equal(compareCalls, 1, 'the branch compare should be made exactly once, together with the pin (FR-018)');
 
   const row = store.get(jobId)!;
   assert.deepEqual(JSON.parse(row.expectedPromptsJson!), ['Enter something: ']);
@@ -206,11 +214,47 @@ test('previewAndEnqueue pins a resolvesApp operation\'s custom-repository resolu
   await waitForFinished(store, jobId);
   assert.equal(store.get(jobId)!.status, 'success');
   assert.equal(headShaCalls, 1, "apply must not re-resolve -- it reads previewAndEnqueue's already-pinned appSource");
+  assert.equal(compareCalls, 1, 'apply must not re-compare either');
   assert.equal(capturedApplySources.length, 1);
   const applied = capturedApplySources[0] as { kind: string; custom?: { sha: string } };
   assert.equal(applied.kind, 'custom', 'the caller-supplied raw appSource must have been overwritten by the real resolution');
   assert.equal(applied.custom?.sha, PINNED_SHA);
   assert.notEqual(applied.custom?.sha, OTHER_SHA);
+});
+
+// issue #15 US1: with the custom repository configured, an app the branch
+// doesn't change (and upstream has) resolves to upstream, so its prompts come
+// from checkAppUrl's VE->VED path rather than from the fork.
+test('previewAndEnqueue resolves an unchanged upstream app to upstream with the feature on and reads its prompts from upstream', async () => {
+  const { store, runner, deps } = setup();
+  const customInventory: Inventory = {
+    ...deps.inventory,
+    customScriptsRepo: 'example-user/ProxmoxVED',
+    customScriptsBranch: 'my-apps',
+  };
+  deps.inventory = customInventory;
+  saveInventory(deps.inventoryPath, customInventory);
+
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/plex.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === `${UPSTREAM_DEV_BASE}/ct/plex.sh`) return new Response(null, { status: 404 });
+    if (href === `${UPSTREAM_STABLE_BASE}/install/plex-install.sh`) {
+      return new Response('read -rp "Upstream question: " x\n', { status: 200 });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+  deps.fetchImpl = fetchImpl;
+  capturedApplySources.length = 0;
+
+  const { jobId } = await previewAndEnqueue(resolvingOp, { app: 'plex' }, deps, runner, {});
+  assert.deepEqual(JSON.parse(store.get(jobId)!.expectedPromptsJson!), ['Upstream question: ']);
+
+  await waitForFinished(store, jobId);
+  assert.equal(store.get(jobId)!.status, 'success');
+  assert.deepEqual(capturedApplySources, [{ kind: 'upstream', slug: 'plex', shadows: [] }]);
 });
 
 // Regression (fix round 1): previewAndEnqueue used to call promptsForSource

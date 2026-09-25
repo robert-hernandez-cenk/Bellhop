@@ -191,8 +191,8 @@ re-runs the same community-script from inside the guest — that's how these
 scripts' own update path is triggered (re-running the installer, not a
 separate update command). If you've configured `customScriptsRepo`/
 `customScriptsBranch` (see "Inventory-wide settings" below), both commands
-resolve `--app <slug>` against your own fork branch first, before falling
-back to ProxmoxVE/ProxmoxVED.
+install the apps your fork branch actually changes from that branch, and
+every other app from ProxmoxVE/ProxmoxVED exactly as before.
 
 > **Caveat:** the unattended `install-app` mechanism (the `var_*` env
 > vars) is verified against community-scripts' actual `misc/build.func`
@@ -498,13 +498,13 @@ status page instead of failing the rest of the job.
 **public** GitHub repository laid out exactly like
 [ProxmoxVED](https://github.com/community-scripts/ProxmoxVED) — `ct/<slug>.sh`
 and `install/<slug>-install.sh` at its root — plus the branch on it to
-install from. A personal fork branch is the intended use case. Because a
-fork branch carrying every one of upstream ProxmoxVED's `ct/` scripts
-overrides essentially all of them once configured (any slug your branch
-also happens to carry, not just the ones you actually changed), keep it
-rebased on upstream — a stale fork branch silently shadows upstream fixes
-for every app it happens to still carry, not just the ones you meant to
-override.
+install from. The repository must be a fork of
+`community-scripts/ProxmoxVED`: Bellhop compares your branch against
+upstream ProxmoxVED's `main` to learn which apps the branch actually
+changes, and only those apps come from your branch. A personal fork branch
+where you develop a few apps before upstreaming them is the intended use
+case — the hundreds of upstream scripts the branch merely carries along
+keep installing from upstream.
 
 ```bash
 bellhop set-config customScriptsRepo example-user/ProxmoxVED --apply
@@ -515,15 +515,35 @@ bellhop set-config customScriptsRepo --unset --apply   # (and the branch) turns 
 The two settings must be set together — setting only one fails any
 command that resolves an `--app` slug with a named error pointing back at
 `set-config`. With both set, `install-app --app <slug>` and `update-app
---app <slug>` resolve `<slug>` in this order: your custom repository
-first, then ProxmoxVE, then ProxmoxVED. A slug that exists in your
-repository *and* upstream always installs from your copy — every front
-end (CLI output, the web App check/install/update previews, job logs, and
-the MCP check result) prints a warning naming which upstream repository
-it's overriding, so a forgotten fork copy never silently shadows an
-upstream fix. A pasted full script URL is unaffected — it's used exactly
-as given, never resolved against the custom repository, and never
-triggers an override warning.
+--app <slug>` resolve `<slug>` like this:
+
+- **The branch changes the app** (its `ct/<slug>.sh` or
+  `install/<slug>-install.sh` was added, modified or renamed since the
+  branch left upstream `main`): installs from your branch. If upstream also
+  has the app, one informational line says your copy replaces it.
+- **The branch doesn't change the app** and ProxmoxVE or ProxmoxVED has it:
+  installs from upstream exactly as if the feature were off, with no
+  notice.
+- **Only your fork has the app** (e.g. inherited from an older upstream
+  state and since removed there): installs from your branch, since there
+  is nowhere else to get it.
+
+When your branch is behind upstream and upstream *also* changed one of the
+apps your branch changes since the branch point, every front end (CLI
+output, the web App check/install/update previews, job logs, and the MCP
+check result) prints a warning telling you to rebase the branch. The
+install still uses your copy — the warning never blocks it. A pasted full
+script URL is unaffected — it's used exactly as given, never resolved
+against the custom repository.
+
+Working out which apps changed takes one GitHub API request on top of the
+head-commit pin, so each resolution uses two of GitHub's 60 unauthenticated
+requests per hour. The web UI resolves separately for the App check, a
+Preview and an Apply, and each refresh of the custom catalog group (at most
+every 5 minutes) spends the same two, so one web install uses roughly 6 to 8. If the comparison can't be made — the repository isn't a
+ProxmoxVED fork, GitHub rate-limits or is unreachable, or the branch
+changes 300 or more files (GitHub stops listing files there) — the command
+fails with an error naming the settings, rather than guessing.
 
 Resolving a slug against the custom repository pins the configured
 branch to its current head commit. One commit is pinned per apply
@@ -539,7 +559,9 @@ exactly which one. The app catalog (the web UI's Install App
 suggestion list, and the MCP `list_install_apps` tool) gets a third group
 for the custom repository, listed first and refreshed roughly every 5
 minutes rather than upstream's 24 hours, so an app you just pushed shows
-up within minutes.
+up within minutes. It lists only the apps your branch changes, and tags
+any that upstream also changed (`conflicts upstream`). A fork-only app
+isn't listed there, but typing its name still installs it.
 
 Two limitations are inherited from how community-scripts' own installer
 engine resolves script locations, and can't be fixed from Bellhop's side:

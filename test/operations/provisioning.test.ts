@@ -123,6 +123,12 @@ const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
 const customScriptsBaseUrl = `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}`;
 const customInstallUrl = (slug: string) => `${customScriptsBaseUrl}/install/${slug}-install.sh`;
+// issue #15: every custom-configured resolution also compares the pinned
+// commit against upstream ProxmoxVED main; the captured ahead fixture
+// changes demo-shop (among others), so demo-shop resolves to the fork.
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
+const MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
 
 function waitForJobFinished(store: JobStore, id: number): Promise<void> {
   return new Promise((resolve) => {
@@ -156,12 +162,12 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
       headShaCalls++;
       return new Response(HEAD_SHA_RAW, { status: 200 });
     }
-    if (href === customCtUrl('myapp')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === customInstallUrl('myapp')) return new Response('no prompts here\n', { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    if (href === customInstallUrl('demo-shop')) return new Response('no prompts here\n', { status: 200 });
     // T016 (US2): the ProxmoxVE shadow probe hits, so the resolved source
-    // shadows an upstream copy and the R6 override warning is emitted --
+    // shadows an upstream copy and the R7 override notice is emitted --
     // the ProxmoxVED shadow probe still "not present" (falls through below).
-    if (href === `${UPSTREAM_STABLE_BASE}/ct/myapp.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === `${UPSTREAM_STABLE_BASE}/ct/demo-shop.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
 
@@ -177,20 +183,20 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   const op = PROVISIONING_OPERATIONS['install-app'];
   const { jobId, preview } = await previewAndEnqueue(
     op,
-    { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' },
+    { app: 'demo-shop', host: 'pve1', mid: 5, hostname: 'demo-shop-lxc' },
     d,
     jobRunner,
     {}
   );
   assert.equal(headShaCalls, 1, 'resolveHeadSha should run exactly once, during preview');
 
-  // T016 (US2): the R6 override warning is logged before anything else
+  // T016 (US2): the R7 override notice is logged before anything else
   // runInstallApp prints during preview, so it must lead the preview text
   // previewAndEnqueue returns -- which is also what enqueue() logs first
   // into the job log under its own "----- dry-run preview -----" header.
   assert.match(
     preview,
-    /^\[WARN\s+\S+ \S+\] "myapp" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\./
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
   );
 
   await waitForJobFinished(jobStore, jobId);
@@ -236,8 +242,8 @@ test("previewAndEnqueue on the real update-app operation pins one custom-reposit
       headShaCalls++;
       return new Response(HEAD_SHA_RAW, { status: 200 });
     }
-    if (href === customCtUrl('myapp')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === customInstallUrl('myapp')) return new Response('no prompts here\n', { status: 200 });
+    if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    if (href === customInstallUrl('demo-shop')) return new Response('no prompts here\n', { status: 200 });
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
 
@@ -251,7 +257,7 @@ test("previewAndEnqueue on the real update-app operation pins one custom-reposit
   };
 
   const op = MAINTENANCE_OPERATIONS['update-app'];
-  const { jobId } = await previewAndEnqueue(op, { guest: 'caddy-lxc', app: 'myapp' }, d, jobRunner, {});
+  const { jobId } = await previewAndEnqueue(op, { guest: 'caddy-lxc', app: 'demo-shop' }, d, jobRunner, {});
   assert.equal(headShaCalls, 1, 'resolveHeadSha should run exactly once, during preview');
 
   await waitForJobFinished(jobStore, jobId);
@@ -297,21 +303,23 @@ test("install-app apply records appSource: 'custom' on the guest, and a repeat u
 
   const customSource: AppSource = {
     kind: 'custom',
-    slug: 'myapp',
-    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA },
-    ctUrl: customCtUrl('myapp'),
+    slug: 'demo-shop',
+    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA, mergeBase: MERGE_BASE },
+    changed: true,
+    conflict: false,
+    ctUrl: customCtUrl('demo-shop'),
     scriptsBaseUrl: customScriptsBaseUrl,
     shadows: [],
   };
-  const firstInput = parseOperationInput(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }) as Record<string, any>;
+  const firstInput = parseOperationInput(op, { app: 'demo-shop', host: 'pve1', mid: 5, hostname: 'demo-shop-lxc' }) as Record<string, any>;
   firstInput.appSource = customSource;
   await withCapturedConsole(() => op.apply(firstInput, d));
 
   const afterFirst = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
   assert.equal(afterFirst?.appSource, 'custom');
 
-  const upstreamSource: AppSource = { kind: 'upstream', slug: 'myapp', shadows: [] };
-  const secondInput = parseOperationInput(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }) as Record<string, any>;
+  const upstreamSource: AppSource = { kind: 'upstream', slug: 'demo-shop', shadows: [] };
+  const secondInput = parseOperationInput(op, { app: 'demo-shop', host: 'pve1', mid: 5, hostname: 'demo-shop-lxc' }) as Record<string, any>;
   secondInput.appSource = upstreamSource;
   await withCapturedConsole(() => op.apply(secondInput, d));
 
@@ -335,13 +343,15 @@ test('install-app apply preserves a previously-recorded appSource across a repea
 
   const customSource: AppSource = {
     kind: 'custom',
-    slug: 'myapp',
-    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA },
-    ctUrl: customCtUrl('myapp'),
+    slug: 'demo-shop',
+    custom: { owner: CUSTOM_OWNER, repo: CUSTOM_REPO, branch: CUSTOM_BRANCH, label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: SHA, mergeBase: MERGE_BASE },
+    changed: true,
+    conflict: false,
+    ctUrl: customCtUrl('demo-shop'),
     scriptsBaseUrl: customScriptsBaseUrl,
     shadows: [],
   };
-  const firstInput = parseOperationInput(op, { app: 'myapp', host: 'pve1', mid: 5, hostname: 'myapp-lxc' }) as Record<string, any>;
+  const firstInput = parseOperationInput(op, { app: 'demo-shop', host: 'pve1', mid: 5, hostname: 'demo-shop-lxc' }) as Record<string, any>;
   firstInput.appSource = customSource;
   await withCapturedConsole(() => op.apply(firstInput, d));
 
@@ -350,7 +360,7 @@ test('install-app apply preserves a previously-recorded appSource across a repea
     app: 'https://example.com/myapp-install.sh',
     host: 'pve1',
     mid: 5,
-    hostname: 'myapp-lxc',
+    hostname: 'demo-shop-lxc',
   }) as Record<string, any>;
   secondInput.appSource = urlSource;
   await withCapturedConsole(() => op.apply(secondInput, d));

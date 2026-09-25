@@ -372,18 +372,23 @@ test('getScriptCatalog skips refetching within the post-failure cooldown', async
   assert.equal(fetchCalls, 2);
 });
 
-// --- custom script repository group (issue #11) ---------------------------
+// --- custom script repository group (issues #11, #15) ---------------------
 
 const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'github');
-const CUSTOM_LISTING_RAW = readFileSync(path.join(fixtureDir, 'contents-ct-listing.json'), 'utf8');
-const CUSTOM_LISTING: Array<{ name: string; type: string }> = JSON.parse(CUSTOM_LISTING_RAW);
-// Mirrors fetchRepoSlugs' own filtering (dirs dropped, .sh stripped,
-// lowercased, sorted) so this stays correct if the fixture is ever
-// recaptured -- 65 .sh files, 2 directories (deferred, headers) as of the
-// 2026-09-24 capture (research.md R4).
-const CUSTOM_SLUGS = CUSTOM_LISTING.filter((e) => e.type === 'file' && e.name.endsWith('.sh'))
-  .map((e) => e.name.slice(0, -'.sh'.length).toLowerCase())
-  .sort();
+function fixtureText(name: string): string {
+  return readFileSync(path.join(fixtureDir, name), 'utf8');
+}
+const HEAD_SHA_RAW = fixtureText('branch-head-sha.txt');
+const SHA = HEAD_SHA_RAW.trim();
+// Captured compare responses (redacted, research R1/R5): 8 ahead / 0 behind
+// changing demo-shop, demo-shop-storefront, demo-books; and 1 ahead / 251
+// behind adding demo-wiki.
+const COMPARE_AHEAD_BODY = fixtureText('compare-ahead-3-apps.json');
+const COMPARE_DIVERGED_BODY = fixtureText('compare-diverged-conflict.json');
+const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
+const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit
+  .sha;
+const VED_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
 
 // Example values only (constitution Principle I) -- same example the
 // spec/plan/data-model/app-source tests use.
@@ -404,41 +409,47 @@ function withCustomSource(inv: Inventory, branch: string = CUSTOM_BRANCH): Inven
   return { ...inv, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: branch };
 }
 
-// A combined fetch stub covering both the upstream community-scripts
-// listings (fetchCatalog's own two calls) and the custom repository's own
-// contents/ct listing -- matched by owner/repo prefix only (ignoring the
-// ?ref= query), so a test that changes the configured branch doesn't need a
-// second stub. Defaults `stable` to a non-empty list since getUpstreamCatalog
-// treats an empty stable listing as a failure (see the test above).
+// A combined fetch stub covering the upstream community-scripts listings
+// (fetchCatalog's own two calls) and the custom group's resolution (issue
+// #15, research R8): the fork branch's head-SHA pin, the compare call
+// against upstream ProxmoxVED, and -- only for a diverged branch -- the raw
+// upstream reads detectConflict makes. The head-SHA route matches any
+// branch, so a test that changes the configured branch needs no second
+// stub. Every fetched URL is recorded in `calls` so a test can assert the
+// fork's contents/ct listing is never requested; an unrouted URL throws.
+// Defaults `stable` to a non-empty list since getUpstreamCatalog treats an
+// empty stable listing as a failure (see the test above).
 function buildFetch(
   opts: {
     stable?: string[];
     dev?: string[];
-    customOwner?: string;
-    customRepo?: string;
-    customResponse?: 'fixture' | 'error' | { status: number } | string[];
+    compare?: 'ahead' | 'diverged' | 'error' | { status: number };
+    raw?: Record<string, 200 | 404>;
     onCustomCall?: () => void;
+    calls?: string[];
   } = {}
 ): typeof fetch {
   const stable = opts.stable ?? ['plex'];
   const dev = opts.dev ?? [];
-  const customPrefix = `https://api.github.com/repos/${opts.customOwner ?? CUSTOM_OWNER}/${opts.customRepo ?? CUSTOM_REPO}/contents/ct`;
+  const headShaPrefix = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/`;
+  const compareUrl = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
   return (async (url: unknown) => {
     const href = String(url);
-    if (href.startsWith(customPrefix)) {
+    opts.calls?.push(href);
+    if (href.startsWith(headShaPrefix)) {
       opts.onCustomCall?.();
-      const response = opts.customResponse ?? 'fixture';
-      if (response === 'error') throw new Error('ENOTFOUND api.github.com');
-      if (response === 'fixture') {
-        return new Response(CUSTOM_LISTING_RAW, { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
-      if (Array.isArray(response)) {
-        return new Response(JSON.stringify(response.map((name) => ({ name: `${name}.sh`, type: 'file' }))), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return new Response(null, { status: response.status });
+      return new Response(HEAD_SHA_RAW, { status: 200 });
+    }
+    if (href === compareUrl) {
+      const compare = opts.compare ?? 'ahead';
+      if (compare === 'error') throw new Error('ENOTFOUND api.github.com');
+      if (compare === 'ahead') return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+      if (compare === 'diverged') return new Response(COMPARE_DIVERGED_BODY, { status: 200 });
+      return new Response(null, { status: compare.status });
+    }
+    const raw = opts.raw?.[href];
+    if (raw !== undefined) {
+      return raw === 200 ? new Response('#!/usr/bin/env bash\n', { status: 200 }) : new Response(null, { status: 404 });
     }
     if (href.startsWith('https://api.github.com/repos/community-scripts/ProxmoxVED/contents/ct')) {
       return new Response(JSON.stringify(dev.map((name) => ({ name: `${name}.sh`, type: 'file' }))), {
@@ -452,41 +463,86 @@ function buildFetch(
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    return new Response(null, { status: 404 });
+    throw new Error(`unexpected fetch: ${href}`);
   }) as unknown as typeof fetch;
 }
 
-test('getScriptCatalog returns a custom group whose slugs come from the fixture, directories dropped', async () => {
+// research R5: demo-wiki is absent upstream at the merge base and present
+// on upstream main -- upstream also changed it since the branch point.
+const DIVERGED_CONFLICT_RAW: Record<string, 200 | 404> = {
+  [VED_RAW(DIVERGED_MERGE_BASE, 'ct/demo-wiki.sh')]: 404,
+  [VED_RAW(DIVERGED_MERGE_BASE, 'install/demo-wiki-install.sh')]: 404,
+  [VED_RAW('main', 'ct/demo-wiki.sh')]: 200,
+  [VED_RAW('main', 'install/demo-wiki-install.sh')]: 200,
+};
+
+// logWarn (src/lib/log.ts) writes through console.error, not console.warn.
+async function captureErrors<T>(fn: () => Promise<T>): Promise<{ result: T; warnings: string[] }> {
+  const originalError = console.error;
+  const warnings: string[] = [];
+  console.error = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  try {
+    return { result: await fn(), warnings };
+  } finally {
+    console.error = originalError;
+  }
+}
+
+test('getScriptCatalog returns a custom group of only the changed slugs, sorted, without listing the fork ct/', async () => {
   resetCatalogFetchState();
   const now = new Date('2026-09-24T00:00:00.000Z');
-  const result = await getScriptCatalog(tempDbPath(), buildFetch(), now, withCustomSource(baseInventory()));
+  const calls: string[] = [];
+  const result = await getScriptCatalog(tempDbPath(), buildFetch({ calls }), now, withCustomSource(baseInventory()));
   assert.ok(result.custom, 'expected a custom group');
   assert.equal(result.custom?.label, CUSTOM_LABEL);
-  assert.deepEqual(result.custom?.slugs, CUSTOM_SLUGS);
+  assert.deepEqual(result.custom?.slugs, AHEAD_CHANGED);
+  assert.deepEqual(result.custom?.conflicts, []);
+  assert.ok(
+    !calls.some((href) => href.includes(`/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/contents/`)),
+    `expected no fork contents listing, got: ${JSON.stringify(calls)}`
+  );
+  // behind_by is 0 on the ahead fixture, so no conflict reads are made.
+  assert.ok(!calls.some((href) => href.startsWith('https://raw.githubusercontent.com/')));
 });
 
-test('getScriptCatalog removes a custom-group slug from stable and records the shadow', async () => {
+test('getScriptCatalog lists a changed slug upstream also changed under conflicts', async () => {
   resetCatalogFetchState();
   const now = new Date('2026-09-24T00:00:00.000Z');
-  // 'aliasvault' is one of the fixture's .sh files -- seed it into the
-  // upstream stable listing too so it shadows ProxmoxVE.
   const result = await getScriptCatalog(
     tempDbPath(),
-    buildFetch({ stable: ['plex', 'aliasvault'] }),
+    buildFetch({ compare: 'diverged', raw: DIVERGED_CONFLICT_RAW }),
     now,
     withCustomSource(baseInventory())
   );
-  assert.ok(!result.stable.includes('aliasvault'), 'expected aliasvault to be removed from stable');
-  assert.deepEqual(result.custom?.shadows.aliasvault, ['ProxmoxVE']);
+  assert.deepEqual(result.custom?.slugs, ['demo-wiki']);
+  assert.deepEqual(result.custom?.conflicts, ['demo-wiki']);
 });
 
-test('getScriptCatalog does not refetch the custom listing again within 5 minutes', async () => {
+test('getScriptCatalog removes a changed slug from stable/dev and records the shadow', async () => {
+  resetCatalogFetchState();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  const result = await getScriptCatalog(
+    tempDbPath(),
+    buildFetch({ stable: ['plex', 'demo-shop'], dev: ['demo-books', 'other-dev'] }),
+    now,
+    withCustomSource(baseInventory())
+  );
+  assert.deepEqual(result.stable, ['plex']);
+  assert.deepEqual(result.dev, ['other-dev']);
+  assert.deepEqual(result.custom?.shadows, { 'demo-shop': ['ProxmoxVE'], 'demo-books': ['ProxmoxVED'] });
+});
+
+test('getScriptCatalog does not refetch the custom group again within 5 minutes', async () => {
   resetCatalogFetchState();
   const dbPath = tempDbPath();
   const inv = withCustomSource(baseInventory());
   const now = new Date('2026-09-24T00:00:00.000Z');
   let customCalls = 0;
   const fetchImpl = buildFetch({
+    compare: 'diverged',
+    raw: DIVERGED_CONFLICT_RAW,
     onCustomCall: () => {
       customCalls += 1;
     },
@@ -494,11 +550,14 @@ test('getScriptCatalog does not refetch the custom listing again within 5 minute
 
   await getScriptCatalog(dbPath, fetchImpl, now, inv);
   assert.equal(customCalls, 1);
-  await getScriptCatalog(dbPath, fetchImpl, new Date(now.getTime() + CUSTOM_CATALOG_MAX_AGE_MS - 1000), inv);
+  const again = await getScriptCatalog(dbPath, fetchImpl, new Date(now.getTime() + CUSTOM_CATALOG_MAX_AGE_MS - 1000), inv);
   assert.equal(customCalls, 1);
+  // The cached entry carries conflicts too, not just slugs.
+  assert.deepEqual(again.custom?.slugs, ['demo-wiki']);
+  assert.deepEqual(again.custom?.conflicts, ['demo-wiki']);
 });
 
-test('getScriptCatalog refetches the custom listing once 5 minutes pass', async () => {
+test('getScriptCatalog refetches the custom group once 5 minutes pass', async () => {
   resetCatalogFetchState();
   const dbPath = tempDbPath();
   const inv = withCustomSource(baseInventory());
@@ -534,52 +593,56 @@ test('getScriptCatalog fetches again under a new cache key when the branch setti
   assert.equal(customCalls, 2);
 });
 
-test('a custom listing failure returns the upstream groups unchanged, omits custom, and logs a warning', async () => {
+test('a compare failure returns the upstream groups unchanged, omits custom, logs a warning, and starts the cooldown', async () => {
   resetCatalogFetchState();
-  // logWarn (src/lib/log.ts) writes through console.error, not console.warn.
-  const originalError = console.error;
-  const warnings: string[] = [];
-  console.error = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(' '));
-  };
-  try {
-    const now = new Date('2026-09-24T00:00:00.000Z');
-    const result = await getScriptCatalog(
-      tempDbPath(),
-      buildFetch({ stable: ['plex'], customResponse: 'error' }),
-      now,
-      withCustomSource(baseInventory())
-    );
-    assert.equal(result.custom, undefined);
-    assert.deepEqual(result.stable, ['plex']);
-    assert.ok(
-      warnings.some((w) => w.includes(CUSTOM_LABEL)),
-      `expected a warning naming ${CUSTOM_LABEL}, got: ${JSON.stringify(warnings)}`
-    );
-  } finally {
-    console.error = originalError;
-  }
+  const dbPath = tempDbPath();
+  const inv = withCustomSource(baseInventory());
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  let customCalls = 0;
+  const fetchImpl = buildFetch({
+    stable: ['plex'],
+    compare: { status: 500 },
+    onCustomCall: () => {
+      customCalls += 1;
+    },
+  });
+  const { result, warnings } = await captureErrors(() => getScriptCatalog(dbPath, fetchImpl, now, inv));
+  assert.equal(result.custom, undefined);
+  assert.deepEqual(result.stable, ['plex']);
+  assert.ok(
+    warnings.some((w) => w.includes(CUSTOM_LABEL)),
+    `expected a warning naming ${CUSTOM_LABEL}, got: ${JSON.stringify(warnings)}`
+  );
+  assert.equal(customCalls, 1);
+
+  // Within the cooldown: no retry, and the group stays omitted.
+  const cooling = await getScriptCatalog(dbPath, fetchImpl, new Date(now.getTime() + 1000), inv);
+  assert.equal(cooling.custom, undefined);
+  assert.equal(customCalls, 1);
+});
+
+test('a thrown compare fetch omits the custom group without throwing', async () => {
+  resetCatalogFetchState();
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  const { result, warnings } = await captureErrors(() =>
+    getScriptCatalog(tempDbPath(), buildFetch({ compare: 'error' }), now, withCustomSource(baseInventory()))
+  );
+  assert.equal(result.custom, undefined);
+  assert.ok(warnings.some((w) => w.includes(CUSTOM_LABEL)));
 });
 
 test('half-configured custom settings omit the group without throwing', async () => {
   resetCatalogFetchState();
-  const originalError = console.error;
-  const warnings: string[] = [];
-  console.error = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(' '));
-  };
-  try {
-    const now = new Date('2026-09-24T00:00:00.000Z');
-    // customScriptsBranch is deliberately left unset -- customScriptSource
-    // throws its both-or-neither error, which getCustomGroup must catch.
-    const inv: Inventory = { ...baseInventory(), customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
-    const result = await getScriptCatalog(tempDbPath(), buildFetch({ stable: ['plex'] }), now, inv);
-    assert.equal(result.custom, undefined);
-    assert.deepEqual(result.stable, ['plex']);
-    assert.ok(warnings.length > 0, 'expected a warning to be logged');
-  } finally {
-    console.error = originalError;
-  }
+  const now = new Date('2026-09-24T00:00:00.000Z');
+  // customScriptsBranch is deliberately left unset -- customScriptSource
+  // throws its both-or-neither error, which getCustomGroup must catch.
+  const inv: Inventory = { ...baseInventory(), customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}` };
+  const { result, warnings } = await captureErrors(() =>
+    getScriptCatalog(tempDbPath(), buildFetch({ stable: ['plex'] }), now, inv)
+  );
+  assert.equal(result.custom, undefined);
+  assert.deepEqual(result.stable, ['plex']);
+  assert.ok(warnings.length > 0, 'expected a warning to be logged');
 });
 
 test('getScriptCatalog makes no custom fetch when the feature is off', async () => {

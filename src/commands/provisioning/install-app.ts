@@ -6,7 +6,7 @@ import { logInfo, logWarn } from '../../lib/log.ts';
 import { pickStorage } from '../../lib/storage.ts';
 import { resolveNfsMountPath, buildNfsAttachScript } from '../../lib/nfs.ts';
 import { readHostAuthorizedKeys } from '../../lib/authorized-keys.ts';
-import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE, resolveAppSource, formatOverrideWarning, type AppSource } from '../../lib/app-source.ts';
+import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE, resolveAppSource, formatSourceNotice, type AppSource } from '../../lib/app-source.ts';
 export { pickStorage } from '../../lib/storage.ts';
 
 // The /ct-scoped bases resolveAppUrl/resolveDevAppUrl build URLs from,
@@ -228,13 +228,13 @@ export async function runInstallApp(
   // research R1/R5: resolved (or reused, when the caller already pinned one
   // -- see InstallAppOptions.source) before any Proxmox call, so a
   // resolution failure (bad customScriptsRepo/Branch, GitHub unreachable)
-  // never creates or half-creates a guest. The override warning, when the
-  // resolved source also shadows an upstream copy of the same slug, is
-  // logged here -- before resolveMid/checkVmidAvailable -- so it's the
+  // never creates or half-creates a guest. The source notice (issue #15,
+  // research R7: a rebase warning for a conflicting app, an info line for
+  // one that replaces an upstream copy) is logged here -- before resolveMid/checkVmidAvailable -- so it's the
   // first line of a dry run, a captured preview, and the apply job's log.
   const source = opts.source ?? (await resolveAppSource(opts.app, deps.inventory, opts.fetchImpl ?? fetch));
-  const overrideWarning = formatOverrideWarning(source);
-  if (overrideWarning) logWarn(overrideWarning);
+  const notice = formatSourceNotice(source);
+  if (notice) (notice.level === 'warn' ? logWarn : logInfo)(notice.message);
 
   const mid = resolveMid(deps.inventory, opts.host, opts.mid);
   await checkVmidAvailable(deps.ssh, deps.inventory, opts.host, mid.vmid);
