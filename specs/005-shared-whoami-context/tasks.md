@@ -45,9 +45,9 @@ Paths are relative to the repository root.
 
 **Independent test**: quickstart.md rows 4–6.
 
-- [ ] T011 [US2] `web-client/src/components/Sidebar.tsx`: in `startImpersonating` and `stopImpersonating`, replace `window.location.reload()` with `await refresh()`, then reset `impersonateBusy` (and clear `impersonateTarget` after starting). On a rejected POST/DELETE keep today's error display and send no refresh.
-- [ ] T012 [US2] `web-client/src/components/Sidebar.tsx`: when `useWhoAmI().error` is set, render a `warning-banner` naming the failure ("Couldn't load your sign-in details: <error>") with a Retry button calling `refresh()`, placed outside the impersonating/not-impersonating ternary so it is reachable in both states (FR-008). Match existing banner/button classes; add CSS in `web-client/src/index.css` only if needed, with dark variants under `:root[data-theme='dark']`.
-- [ ] T013 [US2] Check the Sidebar's `/groups` effect still refetches correctly after stopping impersonation (it depends on `whoami?.impersonating`), and that the impersonate picker's selected group is cleared after a successful start.
+- [x] T011 [US2] `web-client/src/components/Sidebar.tsx`: in `startImpersonating` and `stopImpersonating`, replace `window.location.reload()` with `await refresh()`, then reset `impersonateBusy` (and clear `impersonateTarget` after starting). On a rejected POST/DELETE keep today's error display and send no refresh.
+- [x] T012 [US2] `web-client/src/components/Sidebar.tsx`: when `useWhoAmI().error` is set, render a `warning-banner` naming the failure ("Couldn't load your sign-in details: <error>") with a Retry button calling `refresh()`, placed outside the impersonating/not-impersonating ternary so it is reachable in both states (FR-008). Match existing banner/button classes; add CSS in `web-client/src/index.css` only if needed, with dark variants under `:root[data-theme='dark']`.
+- [x] T013 [US2] Check the Sidebar's `/groups` effect still refetches correctly after stopping impersonation (it depends on `whoami?.impersonating`), and that the impersonate picker's selected group is cleared after a successful start.
 
 ## Phase 5: Polish & cross-cutting
 
