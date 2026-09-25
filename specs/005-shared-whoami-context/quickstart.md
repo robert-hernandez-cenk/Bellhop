@@ -6,7 +6,7 @@
 npm run typecheck              # root, includes test/web-client/*.test.ts
 npm test                       # includes the whoami store rules (contracts/whoami-store.md)
 npm run web:build              # web client strict build
-npm --prefix web-client run lint   # no warnings beyond the 3 existing set-state-in-effect ones
+npm --prefix web-client run lint   # existing warnings are the baseline; this branch adds exactly one, react(only-export-components) on whoami.tsx
 ```
 
 ## In a browser

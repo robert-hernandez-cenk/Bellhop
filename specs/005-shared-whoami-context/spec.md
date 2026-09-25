@@ -133,4 +133,4 @@ impersonating and confirm they all revert.
 - A single operator, occasionally with co-users, uses the UI. The server remains the authority for every permission, so a briefly stale view is a usability problem, not a security one.
 - Losing unsaved form input when impersonation changes is acceptable. Today's full reload already loses it.
 - The web client has no component test tooling. Adding it (a browser-like DOM and a component testing library) is out of scope for low-priority cleanup. The shared identity state's logic (single load, refresh, counter, fail-closed errors) is kept free of UI-framework code so it can be tested with the repository's existing Node test runner, per the constitution's testing standard. Rendering behavior is verified in a browser.
-- Existing lint warnings in the web client (three "setState in effect" warnings) are a baseline; this change must not add new ones.
+- Existing lint warnings in the web client are a baseline; this change adds exactly one new one, `react(only-export-components)` on `whoami.tsx`'s combined provider+hook export, the same pattern `theme.tsx` already carries.

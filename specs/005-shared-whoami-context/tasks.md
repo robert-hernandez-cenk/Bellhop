@@ -37,7 +37,7 @@ Paths are relative to the repository root.
 - [x] T007 [P] [US1] `web-client/src/pages/UsersPage.tsx`: replace its `whoami` state and fetch with `useWhoAmI()`; `UsersSection`'s `whoamiUsername` and `GroupsSection`'s `adminGroups` props unchanged in meaning. Leave `GroupsSection.tsx` untouched (FR-011).
 - [x] T008 [P] [US1] `web-client/src/components/EditableAuthMode.tsx`: delete the local `useWhoAmI` helper and its comment; both components use the shared `useWhoAmI().whoami`, keeping `const isAdmin = !!whoami?.isAdmin` (null fails closed). Leave `EditableAuthGroup.tsx` untouched (FR-011).
 - [x] T009 [P] [US1] `web-client/src/components/OidcCredentials.tsx`: replace its `whoami` state and fetch with `useWhoAmI()`; keep `if (whoami === null) return null` (FR-009).
-- [x] T010 [US1] Confirm no `/whoami` fetch remains outside `web-client/src/lib/whoami.tsx` (`grep -rn "'/whoami'" web-client/src`), then run `npm run web:build` and `npm --prefix web-client run lint` (no warnings beyond the 3 existing `set-state-in-effect` ones).
+- [x] T010 [US1] Confirm no `/whoami` fetch remains outside `web-client/src/lib/whoami.tsx` (`grep -rn "'/whoami'" web-client/src`), then run `npm run web:build` and `npm --prefix web-client run lint` (existing warnings are the baseline; this branch adds exactly one, `react(only-export-components)` on `whoami.tsx`, same as `theme.tsx`'s existing one).
 
 ## Phase 4: User Story 2 — Impersonation updates everything together, without a reload (P2)
 
@@ -51,10 +51,10 @@ Paths are relative to the repository root.
 
 ## Phase 5: Polish & cross-cutting
 
-- [ ] T014 [P] Update `CLAUDE.md`: in the "Web UI user/group management" paragraph, replace "both now read `isAdmin`/`adminGroups`/`capabilities` off `GET /api/whoami`" with the shared `WhoAmIProvider`/`useWhoAmI()` (`web-client/src/lib/whoami.tsx`, logic in `whoami-store.ts`); in the "Web UI admin user impersonation" paragraph, note that start/stop refreshes the shared identity and remounts the routed page rather than reloading the browser.
-- [ ] T015 [P] Check `README.md` for any description of impersonation reloading the page or of per-component identity fetches; update if present (constitution IV), otherwise leave it.
-- [ ] T016 Run `npm run typecheck`, `npm test`, `npm run web:build`, `npm --prefix web-client run lint`; all pass, no new lint warnings.
-- [ ] T017 Browser verification per quickstart.md rows 1–6 at desktop width and at 375px; record request counts and results.
+- [x] T014 [P] Update `CLAUDE.md`: in the "Web UI user/group management" paragraph, replace "both now read `isAdmin`/`adminGroups`/`capabilities` off `GET /api/whoami`" with the shared `WhoAmIProvider`/`useWhoAmI()` (`web-client/src/lib/whoami.tsx`, logic in `whoami-store.ts`); in the "Web UI admin user impersonation" paragraph, note that start/stop refreshes the shared identity and remounts the routed page rather than reloading the browser.
+- [x] T015 [P] Check `README.md` for any description of impersonation reloading the page or of per-component identity fetches; update if present (constitution IV), otherwise leave it.
+- [x] T016 Run `npm run typecheck`, `npm test`, `npm run web:build`, `npm --prefix web-client run lint`; all pass, no new lint warnings.
+- [x] T017 Browser verification per quickstart.md rows 1–6 at desktop width and at 375px; record request counts and results.
 
 ## Dependencies & Execution Order
 

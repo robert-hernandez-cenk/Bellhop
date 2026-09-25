@@ -1690,9 +1690,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`src/lib/authentik-config.ts`) values, not hardcoded constants, and have
   exactly one definition each — `Sidebar.tsx`/`GroupsSection.tsx` no longer
   duplicate them at all (issue #86's original duplication, and a second
-  copy `GroupsSection.tsx` had grown since): both now read `isAdmin`/
-  `adminGroups`/`capabilities` off `GET /api/whoami` (`src/web/routes/
-  dashboard.ts`) instead. Also gated behind the directory-capability check
+  copy `GroupsSection.tsx` had grown since): the web client fetches
+  `GET /api/whoami` (`src/web/routes/dashboard.ts`) once per page load
+  through the shared `WhoAmIProvider`/`useWhoAmI()` (`web-client/src/lib/
+  whoami.tsx`, fetch/staleness/generation logic in `whoami-store.ts` --
+  issue #13's polish pass), and `Sidebar`/`UsersPage` read `isAdmin`/
+  `adminGroups`/`capabilities` from that hook rather than fetching it
+  themselves; `GroupsSection` stays a plain prop consumer, getting
+  `adminGroups` passed down from `UsersPage`. Also gated behind the directory-capability check
   (`requireUserDirectory`, `src/web/auth.ts`) on top of `requireAdminGroup` —
   see "Running without Authentik" in `README.md` for what happens when no
   `AUTHENTIK_API_URL`/`AUTHENTIK_API_TOKEN` are configured. `AuthentikClient`
@@ -1835,6 +1840,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   tracking at all before this feature), shown as a "Triggered by" column
   in the Job History table, so the real admin identity stays visible and
   auditable even while their *view* of the app is impersonated.
+  Starting/stopping impersonation from the Sidebar (issue #13's polish
+  pass) `await`s the shared `WhoAmIProvider`'s `refresh()` rather than
+  `window.location.reload()`, which bumps the store's `generation` and
+  remounts the routed page (see the "Web UI user/group management" bullet
+  above) so it refetches under the new identity without a full browser
+  reload; a failed lookup surfaces inline in the Sidebar with a Retry
+  control instead.
 - **Web UI Settings page** (`/settings`,
   `web-client/src/pages/SettingsPage.tsx`, nav link beside Users and
   Permissions — issue #124) is the web-UI half of the `meta` scalars
