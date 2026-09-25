@@ -730,11 +730,9 @@ there is no LAN gateway to restore '<guest>' to`) if it doesn't.
   no-op for the user/group-management REST calls: the app falls back to a
   client that cleanly 503s any Authentik-backed request rather than
   crashing at startup. **Must be created in the checkout the web service
-  actually runs from** — per this repo's worktree conventions (see
-  `CLAUDE.md`), that's the separate, permanent `../Bellhop-live/`
-  worktree the Windows service is installed against, not a feature worktree
-  or this main checkout, unless that's the one you're running the service
-  from. **On that checkout, this file must also
+  actually runs from** — the checkout the Windows service is installed
+  against, which is not necessarily the one you develop in. **On that
+  checkout, this file must also
   set `WEB_UI_AUTH_MODE=authentik`** — see "Running without Authentik"
   below for why.
 - `data/cloudflare-api.env` (optional) — a gitignored file holding

@@ -28,9 +28,10 @@ and no-PR branches untouched.
    - Merged PR + local branch/worktree exists → **prune**
    - No PR, or PR still `OPEN` (spot-check with
      `gh pr list --head <branch> --json number,state`) → **leave alone**
-   - The permanent `live` worktree (`../Bellhop-live/`) →
-     **never touch**, regardless of merge state — it has no PR and is
-     never removed (see CLAUDE.md).
+   - The operator's deployment checkout (the permanent worktree the web
+     service runs from, named in the operator's private notes rather than
+     this repository) → **never touch**, regardless of merge state — it has
+     no PR and is never removed.
 
 4. **Before removing a worktree, confirm it's clean:**
    ```
