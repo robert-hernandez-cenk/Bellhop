@@ -41,6 +41,9 @@ export interface AppCheckResponse {
   prompts?: string[];
   custom?: { label: string; sha: string };
   shadows?: string[];
+  // issue #15: true only on a custom resolution of an app upstream
+  // ProxmoxVED also changed since the branch point (absent otherwise).
+  conflict?: boolean;
   error?: string;
 }
 

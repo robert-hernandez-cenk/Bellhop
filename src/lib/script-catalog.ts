@@ -2,7 +2,14 @@ import Database from 'better-sqlite3';
 import { logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
 import type { Inventory } from './inventory.ts';
-import { customScriptSource, type CustomScriptSource, type ShadowedRepo } from './app-source.ts';
+import {
+  compareBranch,
+  customScriptSource,
+  detectConflict,
+  resolveHeadSha,
+  type CustomScriptSource,
+  type ShadowedRepo,
+} from './app-source.ts';
 
 // How stale a stored catalog may get before getScriptCatalog refetches it.
 // Read-triggered only -- there is no background timer and no manual refresh
@@ -45,24 +52,20 @@ interface ContentsEntry {
 // up in the logs instead of just quietly shrinking the catalog.
 const GITHUB_CONTENTS_LISTING_CEILING = 1000;
 
-// Generalised (issue #11) to take an arbitrary owner/repo/ref rather than a
-// bare community-scripts repo name, so the same listing+filtering logic
-// serves both the persisted upstream catalog (fetchCatalog, below, calls
-// this with owner: GITHUB_OWNER and no ref -- byte-identical URLs/behavior
-// to before this generalisation) and the operator's custom repository
-// (getCustomGroup, further below, which always passes a ref: the
-// configured branch).
+// Lists one community-scripts repo's ct/ directory, for the persisted
+// upstream catalog (fetchCatalog, below) only. The custom group no longer
+// lists the fork's ct/ at all (issue #15, research R8): a fork carries every
+// inherited upstream app, so its whole listing is not what the operator is
+// working on -- getCustomGroup uses the branch's compare result instead.
 async function fetchRepoSlugs(
-  target: { owner: string; repo: string; ref?: string },
+  target: { owner: string; repo: string },
   fetchImpl: typeof fetch
 ): Promise<string[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CATALOG_FETCH_TIMEOUT_MS);
   try {
     const label = `${target.owner}/${target.repo}`;
-    const url = `https://api.github.com/repos/${label}/contents/ct${
-      target.ref === undefined ? '' : `?ref=${encodeURIComponent(target.ref)}`
-    }`;
+    const url = `https://api.github.com/repos/${label}/contents/ct`;
     const response = await fetchImpl(url, {
       signal: controller.signal,
       // GitHub rejects unauthenticated API requests that send no User-Agent.
@@ -182,20 +185,24 @@ export interface ScriptCatalog extends CatalogSlugs {
   // ignores this and renders no banner -- with no manual refresh control
   // there would be no action for one to offer.
   stale: boolean;
-  // The operator's configured custom script repository's own ct/ listing
-  // (issue #11, data-model.md "Catalog response"). Absent when the feature
-  // is off (no inventory passed, or both settings unset), when the settings
-  // are half-configured, or when the custom listing fetch itself failed --
-  // getScriptCatalog must never throw over this, so every one of those
-  // cases just omits the group rather than failing the whole catalog.
-  // `slugs` are also removed from `stable`/`dev` above (in this response
-  // only -- the persisted script_catalog table is untouched). `shadows` is
-  // keyed by slug, present only for a slug that also exists in `stable`/
-  // `dev` before removal.
+  // The apps the operator's configured custom script repository branch
+  // changes relative to upstream ProxmoxVED (issue #15, data-model.md
+  // "Catalog response") -- not the fork's whole ct/ listing. Absent when the
+  // feature is off (no inventory passed, or both settings unset), when the
+  // settings are half-configured, or when the head-SHA pin or compare call
+  // failed -- getScriptCatalog must never throw over this, so every one of
+  // those cases just omits the group rather than failing the whole catalog.
+  // `slugs` (sorted) are also removed from `stable`/`dev` above (in this
+  // response only -- the persisted script_catalog table is untouched).
+  // `shadows` is keyed by slug, present only for a slug that also exists in
+  // `stable`/`dev` before removal. `conflicts` is the subset of `slugs`
+  // upstream ProxmoxVED also changed since the branch point
+  // (detectConflict) -- always empty for a branch that isn't behind.
   custom?: {
     label: string;
     slugs: string[];
     shadows: Record<string, ShadowedRepo[]>;
+    conflicts: string[];
   };
 }
 
@@ -235,7 +242,12 @@ const FETCH_FAILURE_COOLDOWN_MS = 60 * 1000;
 // (FETCH_FAILURE_COOLDOWN_MS), and keeping it a single scalar matches the
 // existing pattern exactly rather than adding a second Map for a rare edge
 // case (a settings change landing within seconds of a prior failure).
-const customCatalogCache = new Map<string, { slugs: string[]; fetchedAt: number }>();
+interface CustomGroup {
+  label: string;
+  slugs: string[];
+  conflicts: string[];
+}
+const customCatalogCache = new Map<string, { group: CustomGroup; fetchedAt: number }>();
 let customLastFailureAt: number | null = null;
 
 // Test-only hook: clears the module-scope state above. Never called from
@@ -296,17 +308,22 @@ async function getUpstreamCatalog(dbPath: string, fetchImpl: typeof fetch, now: 
   }
 }
 
-// Resolves and fetches the operator's custom-repository ct/ listing, memoized
-// by getScriptCatalog's own cache/cooldown below. Returns undefined for
-// every case data-model.md says omits the group: feature off (no inventory,
-// or both settings unset), half-configured (customScriptSource throws), or
-// the fetch itself failing -- every one of those is logged via logWarn
+// Computes the custom group -- the slugs the configured branch changes, and
+// which of those upstream also changed (issue #15, research R8) -- memoized
+// by getScriptCatalog's own cache/cooldown below. Pins the branch head
+// (resolveHeadSha) and compares it against upstream ProxmoxVED
+// (compareBranch), the same two rate-limited requests resolveAppSource
+// makes; the conflict check costs no API quota (detectConflict reads raw
+// content, and only when the branch is behind). Returns undefined for every
+// case data-model.md says omits the group: feature off (no inventory, or
+// both settings unset), half-configured (customScriptSource throws), or
+// either GitHub call failing -- every one of those is logged via logWarn
 // except "feature off", which isn't a problem to warn about at all.
 async function getCustomGroup(
   inventory: Inventory | undefined,
   fetchImpl: typeof fetch,
   now: Date
-): Promise<{ label: string; slugs: string[] } | undefined> {
+): Promise<CustomGroup | undefined> {
   if (!inventory) return undefined;
 
   let source: CustomScriptSource | undefined;
@@ -320,21 +337,27 @@ async function getCustomGroup(
 
   const cached = customCatalogCache.get(source.label);
   if (cached && now.getTime() - cached.fetchedAt < CUSTOM_CATALOG_MAX_AGE_MS) {
-    return { label: source.label, slugs: cached.slugs };
+    return cached.group;
   }
 
   if (customLastFailureAt !== null && now.getTime() - customLastFailureAt < FETCH_FAILURE_COOLDOWN_MS) {
-    // Still cooling down from a recent failure -- skip the network call and
+    // Still cooling down from a recent failure -- skip the network calls and
     // omit the group entirely rather than retry on every single catalog
     // request while the fork (or GitHub itself) is unreachable.
     return undefined;
   }
 
   try {
-    const slugs = await fetchRepoSlugs({ owner: source.owner, repo: source.repo, ref: source.branch }, fetchImpl);
-    customCatalogCache.set(source.label, { slugs, fetchedAt: now.getTime() });
+    const sha = await resolveHeadSha(source, fetchImpl);
+    const comparison = await compareBranch(source, sha, fetchImpl);
+    const slugs = [...comparison.changedSlugs].sort();
+    // detectConflict never throws (a failed read is logged and counts as no
+    // conflict) and makes no fetch at all when the branch isn't behind.
+    const flags = await Promise.all(slugs.map((slug) => detectConflict(slug, comparison, fetchImpl)));
+    const group: CustomGroup = { label: source.label, slugs, conflicts: slugs.filter((_, i) => flags[i]) };
+    customCatalogCache.set(source.label, { group, fetchedAt: now.getTime() });
     customLastFailureAt = null;
-    return { label: source.label, slugs };
+    return group;
   } catch (err) {
     logWarn(`Failed to fetch the custom script catalog (${source.label}): ${err instanceof Error ? err.message : String(err)}`);
     customLastFailureAt = now.getTime();
@@ -345,7 +368,7 @@ async function getCustomGroup(
 // Strips the custom group's slugs out of stable/dev (in this response only
 // -- the persisted script_catalog table this reads from is never touched)
 // and records, per removed slug, which upstream repo(s) it shadowed.
-function withCustomGroup(base: ScriptCatalog, custom: { label: string; slugs: string[] }): ScriptCatalog {
+function withCustomGroup(base: ScriptCatalog, custom: CustomGroup): ScriptCatalog {
   const stableSet = new Set(base.stable);
   const devSet = new Set(base.dev);
   const customSlugs = new Set(custom.slugs);
@@ -360,7 +383,7 @@ function withCustomGroup(base: ScriptCatalog, custom: { label: string; slugs: st
     ...base,
     stable: base.stable.filter((slug) => !customSlugs.has(slug)),
     dev: base.dev.filter((slug) => !customSlugs.has(slug)),
-    custom: { label: custom.label, slugs: custom.slugs, shadows },
+    custom: { label: custom.label, slugs: custom.slugs, shadows, conflicts: custom.conflicts },
   };
 }
 

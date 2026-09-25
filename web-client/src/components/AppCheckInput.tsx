@@ -4,15 +4,25 @@ import type { AppCheckResponse, AppDefaults } from '../api/types';
 
 export type CheckStatus = 'idle' | 'checking' | 'ok' | 'missing';
 
-// issue #11: the operator-configured custom script repository's own ct/
-// listing, already stripped out of `stable`/`dev` server-side (see
+// issue #11/#15: the apps the operator-configured custom script repository
+// branch changes, already stripped out of `stable`/`dev` server-side (see
 // getScriptCatalog/withCustomGroup in src/lib/script-catalog.ts). `shadows`
 // is keyed by slug, present only for a slug that also exists upstream --
 // used to render the "overrides ProxmoxVE"/"ProxmoxVED" tag below.
+// `conflicts` lists the slugs upstream also changed since the branch point
+// (the "conflicts upstream" tag); optional so an older server's response
+// without it still renders.
 interface Catalog {
   stable: string[];
   dev: string[];
-  custom?: { label: string; slugs: string[]; shadows: Record<string, string[]> };
+  custom?: { label: string; slugs: string[]; shadows: Record<string, string[]>; conflicts?: string[] };
+}
+
+// The branch half of a custom source's "<owner>/<repo>@<branch>" label. An
+// owner/repo never contains '@', so the first one is the separator.
+function branchOf(label: string): string | undefined {
+  const at = label.indexOf('@');
+  return at >= 0 && at < label.length - 1 ? label.slice(at + 1) : undefined;
 }
 
 // A one-character filter can match hundreds of the ~671 catalog slugs.
@@ -78,6 +88,11 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
   // copy of the same slug (research R6) -- the ProxmoxVE/ProxmoxVED names
   // whose install this overrides.
   const [shadows, setShadows] = useState<string[]>([]);
+  // Set for a custom resolution of an app upstream ProxmoxVED also changed
+  // since the branch point (issue #15, research R5) -- replaces the plain
+  // overrides line with a rebase warning. The install still proceeds from
+  // the custom copy; this never blocks Apply.
+  const [conflict, setConflict] = useState(false);
   // Set when resolving --app itself threw (a misconfigured
   // customScriptsRepo/customScriptsBranch, or GitHub unreachable) -- shown
   // under the field, with the status left 'missing' the same as any other
@@ -117,6 +132,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       setScriptPrompts([]);
       setCustom(undefined);
       setShadows([]);
+      setConflict(false);
       setCheckError(undefined);
       return;
     }
@@ -145,6 +161,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       setScriptPrompts(res.exists ? res.prompts ?? [] : []);
       setCustom(res.exists ? res.custom : undefined);
       setShadows(res.exists ? res.shadows ?? [] : []);
+      setConflict(res.exists && !!res.conflict);
       setCheckError(res.error);
       if (res.exists && res.defaults) onDefaults?.(res.defaults);
       if (res.exists && !normalized.includes('://')) onExists?.(normalized);
@@ -157,6 +174,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       setScriptPrompts([]);
       setCustom(undefined);
       setShadows([]);
+      setConflict(false);
       setCheckError(undefined);
     }
   };
@@ -214,9 +232,10 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
     }
   };
 
-  // `overrides` is only ever passed for a custom-group row (see the render
-  // below) -- the slug's own shadowed-upstream-repo list, when non-empty.
-  const renderOption = (slug: string, index: number, overrides?: string[]) => (
+  // `overrides`/`conflicts` are only ever passed for a custom-group row (see
+  // the render below) -- the slug's own shadowed-upstream-repo list, when
+  // non-empty, and whether upstream also changed it since the branch point.
+  const renderOption = (slug: string, index: number, overrides?: string[], conflicts?: boolean) => (
     <li
       key={slug}
       data-index={index}
@@ -231,6 +250,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       {overrides && overrides.length > 0 && (
         <span className="app-suggestion-override-tag">overrides {overrides.join(', ')}</span>
       )}
+      {conflicts && <span className="app-suggestion-conflict-tag">conflicts upstream</span>}
     </li>
   );
 
@@ -251,6 +271,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
           setScriptPrompts([]);
           setCustom(undefined);
           setShadows([]);
+          setConflict(false);
           setCheckError(undefined);
           setOpen(true);
           setActiveIndex(-1);
@@ -274,7 +295,9 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
               {catalog.custom!.label} (custom)
             </li>
           )}
-          {shownCustom.map((slug, i) => renderOption(slug, i, catalog.custom?.shadows[slug]))}
+          {shownCustom.map((slug, i) =>
+            renderOption(slug, i, catalog.custom?.shadows[slug], catalog.custom?.conflicts?.includes(slug))
+          )}
           {customMatches.length > shownCustom.length && (
             <li className="app-suggestions-more" role="presentation">
               …and {customMatches.length - shownCustom.length} more — keep typing
@@ -310,7 +333,13 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
           Installing from the custom script repository {custom.label} (commit {custom.sha.slice(0, 7)}).
         </div>
       )}
-      {shadows.length > 0 && custom && (
+      {conflict && custom && (
+        <div className="custom-override-warning">
+          Upstream ProxmoxVED also changed this app since your branch point — rebase{' '}
+          {branchOf(custom.label) ?? 'your branch'} onto upstream main. Installing your custom copy.
+        </div>
+      )}
+      {!conflict && shadows.length > 0 && custom && (
         <div className="custom-override-warning">
           This installs your custom copy from {custom.label}, overriding the upstream copy in {shadows.join(', ')}.
         </div>
