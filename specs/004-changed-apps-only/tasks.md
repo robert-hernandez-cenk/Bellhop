@@ -65,7 +65,7 @@
 - [x] T022 Check `CONTRIBUTING.md` for anything restating the custom-repo behavior and update it if so
 - [x] T023 Browser verification of the App field at desktop width and ≤640px: conflict tag in the popup and conflict warning line render legibly in light and dark themes (use a stubbed catalog/check response or the local dev server with the operator's real settings)
 - [x] T024 Live read-only verification per `quickstart.md`: CLI dry run of `install-app` for one changed app and one unchanged upstream app against the operator's real configured branch (no `--apply`); record results in the PR description with example values only
-- [ ] T025 Review the full diff for real operational data (constitution Principle I) before opening the PR
+- [x] T025 Review the full diff for real operational data (constitution Principle I) before opening the PR
 
 ## Dependencies & Execution Order
 
