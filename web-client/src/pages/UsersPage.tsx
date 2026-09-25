@@ -4,14 +4,14 @@ import type { AuthentikGroupEntry, AuthentikUserEntry } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
 import { UsersSection } from '../components/UsersSection';
 import { GroupsSection } from '../components/GroupsSection';
-import type { WhoAmI } from '../components/Sidebar';
+import { useWhoAmI } from '../lib/whoami';
 
 export function UsersPage() {
   const [users, setUsers] = useState<AuthentikUserEntry[]>([]);
   const [groups, setGroups] = useState<AuthentikGroupEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
+  const { whoami } = useWhoAmI();
 
   const reload = async () => {
     setError(null);
@@ -31,7 +31,6 @@ export function UsersPage() {
 
   useEffect(() => {
     reload();
-    apiGet<WhoAmI>('/whoami').then(setWhoami);
   }, []);
 
   return (

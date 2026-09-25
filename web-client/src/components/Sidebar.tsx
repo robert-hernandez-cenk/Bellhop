@@ -3,31 +3,18 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPost, apiDelete } from '../api/client';
 import type { AuthentikGroupEntry } from '../api/types';
 import { ThemeToggle } from './ThemeToggle';
+import { useWhoAmI } from '../lib/whoami';
 
 interface NavItem {
   id: string;
   label: string;
 }
 
-// Mirrors GET /api/whoami (src/web/routes/dashboard.ts). isAdmin and
-// adminGroups are computed server-side so this build does not have to
-// hardcode the admin group names it cannot import.
-export interface WhoAmI {
-  username: string;
-  email?: string;
-  groups: string[];
-  impersonating?: string;
-  localOperator: boolean;
-  isAdmin: boolean;
-  adminGroups: { app: string; authentikBuiltin: string };
-  capabilities: { userDirectory: boolean };
-}
-
 export function Sidebar() {
   const [provisioning, setProvisioning] = useState<NavItem[]>([]);
   const [maintenance, setMaintenance] = useState<NavItem[]>([]);
   const [open, setOpen] = useState(false);
-  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
+  const { whoami, error: whoamiError, refresh: refreshWhoAmI } = useWhoAmI();
   const [groups, setGroups] = useState<AuthentikGroupEntry[]>([]);
   const [impersonateTarget, setImpersonateTarget] = useState('');
   const [impersonateBusy, setImpersonateBusy] = useState(false);
@@ -40,7 +27,6 @@ export function Sidebar() {
   useEffect(() => {
     apiGet<NavItem[]>('/provisioning').then(setProvisioning);
     apiGet<NavItem[]>('/maintenance').then(setMaintenance);
-    apiGet<WhoAmI>('/whoami').then(setWhoami);
   }, []);
 
   // Only fetched for a real admin who isn't already impersonating -- while
@@ -76,7 +62,14 @@ export function Sidebar() {
     setImpersonateError(null);
     try {
       await apiPost('/impersonate', { group: impersonateTarget });
-      window.location.reload();
+      // Refresh the shared identity instead of reloading the browser (R1):
+      // this bumps whoami's generation, which remounts the routed page so
+      // its own data is re-fetched under the impersonated identity, while
+      // the Sidebar itself just re-renders in place.
+      await refreshWhoAmI();
+      setImpersonateTarget('');
+      setImpersonateBusy(false);
+      close(); // close the mobile off-canvas drawer, same as a nav-link click
     } catch (err) {
       setImpersonateError(err instanceof Error ? err.message : String(err));
       setImpersonateBusy(false);
@@ -88,7 +81,10 @@ export function Sidebar() {
     setImpersonateError(null);
     try {
       await apiDelete('/impersonate');
-      window.location.reload();
+      // Same refresh-in-place as starting, above.
+      await refreshWhoAmI();
+      setImpersonateBusy(false);
+      close(); // close the mobile off-canvas drawer, same as a nav-link click
     } catch (err) {
       setImpersonateError(err instanceof Error ? err.message : String(err));
       setImpersonateBusy(false);
@@ -134,6 +130,25 @@ export function Sidebar() {
         )}
         <ThemeToggle />
         {impersonateError && <div className="warning-banner">{impersonateError}</div>}
+        {whoamiError && (
+          // Rendered outside the impersonating/not-impersonating ternary
+          // below (FR-008) so the retry stays reachable even when the
+          // "stop impersonating" banner can't be shown because the failed
+          // lookup means the current impersonation state isn't known.
+          // Retry reloads the page rather than calling refresh(): a plain
+          // fetch can never recover an expired Authentik forward-auth
+          // session (Caddy's login redirect only works on a top-level
+          // navigation), and this banner only appears when the identity
+          // couldn't be loaded at all, so the page is already fail-closed
+          // and there's no in-page state a reload would lose.
+          <div className="warning-banner">
+            Couldn't load your sign-in details: {whoamiError}
+            <br />
+            <button className="button" onClick={() => window.location.reload()}>
+              Retry
+            </button>
+          </div>
+        )}
         {whoami?.localOperator && (
           // One of the two visible guards on the inferred default auth
           // mode -- the other is the server's startup warning. An
