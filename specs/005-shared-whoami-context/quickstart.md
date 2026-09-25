@@ -24,4 +24,4 @@ and at 375px (≤640px, where the Sidebar is a drawer).
 | 3 | Load `/users` directly | exactly 1 `/whoami`; own account's delete/deactivate disabled; Groups section present |
 | 4 | Sidebar → Impersonate a restricted group → Start | no page reload (preserve-log stays, no document request); 1 new `/whoami`; banner "Impersonating: …"; Admin nav hidden; Dashboard refetches `/inventory` and shows only what the group may see |
 | 5 | Stop impersonating | no reload; 1 new `/whoami`; banner gone; Admin nav back; Dashboard back to the full view |
-| 6 | Block `/api/whoami` in devtools (request blocking), reload | no admin nav or admin controls; Sidebar shows the load error with a Retry button; unblock and Retry restores everything |
+| 6 | Block `/api/whoami` in devtools (request blocking), reload | no admin nav or admin controls; Sidebar shows the load error with a Retry button; unblock, then click Retry (which reloads the page) to restore everything |

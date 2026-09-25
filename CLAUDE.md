@@ -1846,7 +1846,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   remounts the routed page (see the "Web UI user/group management" bullet
   above) so it refetches under the new identity without a full browser
   reload; a failed lookup surfaces inline in the Sidebar with a Retry
-  control instead.
+  control that reloads the page instead of calling `refresh()`, since a
+  plain re-fetch can never recover an expired Authentik forward-auth
+  session (Caddy's login redirect only works on a top-level navigation) and
+  the banner only shows once the identity has already failed to load, so
+  there's no in-page state a reload would lose.
 - **Web UI Settings page** (`/settings`,
   `web-client/src/pages/SettingsPage.tsx`, nav link beside Users and
   Permissions — issue #124) is the web-UI half of the `meta` scalars

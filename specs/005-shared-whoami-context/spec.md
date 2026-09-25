@@ -88,8 +88,8 @@ impersonating and confirm they all revert.
 
 ### Edge Cases
 
-- **Identity lookup fails on first load.** The UI treats the viewer as not an admin: admin-only controls stay hidden or disabled, never enabled. The sidebar shows that the identity could not be loaded, with a retry action.
-- **Identity lookup fails after an impersonation change.** The server-side change has already happened. The UI again fails closed and shows the error with a retry action in the sidebar. The retry must stay reachable even though the "stop impersonating" banner can no longer be shown, so the admin is never stranded.
+- **Identity lookup fails on first load.** The UI treats the viewer as not an admin: admin-only controls stay hidden or disabled, never enabled. The sidebar shows that the identity could not be loaded, with a retry action that reloads the page.
+- **Identity lookup fails after an impersonation change.** The server-side change has already happened. The UI again fails closed and shows the error with a retry action (a page reload) in the sidebar. The retry must stay reachable even though the "stop impersonating" banner can no longer be shown, so the admin is never stranded.
 - **Starting or stopping impersonation itself fails** (server rejects the request). No identity lookup is sent, nothing on the page changes, and the sidebar shows the error, as today.
 - **The OIDC credentials row before the identity is known.** It renders nothing until the answer arrives, so a non-admin never briefly sees a reveal button.
 - **A development build that mounts components twice** (React's strict mode). It still sends only one identity lookup per page load.
@@ -106,7 +106,7 @@ impersonating and confirm they all revert.
 - **FR-005**: After a successful impersonation change, the page being viewed MUST be shown afresh so that its own server data is fetched again under the new identity. The sidebar MUST stay in place and update rather than be rebuilt.
 - **FR-006**: The first identity lookup of a page load MUST NOT cause the page being viewed to be shown or fetched a second time.
 - **FR-007**: When the identity lookup fails or has not completed, every consumer MUST behave as for a non-admin (fail closed). Admin-only controls MUST never be shown or enabled because of a missing answer.
-- **FR-008**: When the identity lookup fails, the sidebar MUST show that it failed and offer a retry action, and that action MUST be available whether or not impersonation is active.
+- **FR-008**: When the identity lookup fails, the sidebar MUST show that it failed and offer a retry action that reloads the page (a plain re-fetch can never recover an expired sign-in session), and that action MUST be available whether or not impersonation is active.
 - **FR-009**: The OIDC credentials row MUST render nothing until the identity is known.
 - **FR-010**: Apart from the number of identity lookups and the removal of the full-page reload on impersonation changes, nothing the user sees or can do may change: the same controls, the same enabled/disabled states, the same text, the same server-side permission checks.
 - **FR-011**: The group management section and the auth-group control are out of scope. Neither requests the identity lookup today: the group section receives the admin group names from its page, and the auth-group control derives its admin-equivalent flag from the auth-groups lookup it already needs.

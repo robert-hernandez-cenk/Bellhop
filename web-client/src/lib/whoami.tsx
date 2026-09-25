@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { apiGet } from '../api/client';
 import type { WhoAmI } from '../api/types';
-import { createWhoAmIStore, type WhoAmIState } from './whoami-store.ts';
+import { createWhoAmIStore, type WhoAmIState } from './whoami-store';
 
 interface WhoAmIContextValue extends WhoAmIState {
   refresh: () => Promise<void>;
@@ -20,9 +20,12 @@ export function WhoAmIProvider({ children }: { children: ReactNode }) {
     void store.load();
   }, [store]);
 
-  return (
-    <WhoAmIContext.Provider value={{ ...state, refresh: store.refresh }}>{children}</WhoAmIContext.Provider>
-  );
+  // Memoized so consumers reading this via useContext don't see a new
+  // object identity on every render of an unrelated ancestor -- only when
+  // the store's own state actually changes, or the store itself does.
+  const value = useMemo(() => ({ ...state, refresh: store.refresh }), [state, store]);
+
+  return <WhoAmIContext.Provider value={value}>{children}</WhoAmIContext.Provider>;
 }
 
 export function useWhoAmI(): WhoAmIContextValue {

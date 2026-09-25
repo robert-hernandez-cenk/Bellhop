@@ -44,8 +44,12 @@
   newer one was started (sequence number).
 - **Rationale**: Fail closed (FR-007): every consumer already treats a null identity as
   not-admin. Bumping on failure too keeps the page consistent with the server-side
-  identity change that already happened. The Sidebar's retry (FR-008) calls `refresh()` and
-  is rendered outside the impersonation banner, so it stays reachable.
+  identity change that already happened. The Sidebar's retry (FR-008) reloads the page
+  rather than calling `refresh()` -- a plain re-fetch can never recover an expired
+  Authentik forward-auth session, since Caddy's login redirect only works on a top-level
+  navigation, and the banner only appears once the identity has already failed to load, so
+  there's no in-page state a reload would lose -- and is rendered outside the impersonation
+  banner, so it stays reachable.
 - **Alternatives considered**: keeping the previous `whoami` on refresh failure (could show
   admin controls after impersonation started, i.e. fail open).
 

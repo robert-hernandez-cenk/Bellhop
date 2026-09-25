@@ -25,8 +25,10 @@ Rules (each covered by `test/web-client/whoami-store.test.ts`):
 1. Initial state is `{ whoami: null, loading: true, error: null, generation: 0 }`.
 2. `load()` called any number of times calls `fetchWhoAmI` once.
 3. `load()` never changes `generation`.
-4. `refresh()` calls `fetchWhoAmI` every time and increments `generation` by 1 once settled,
-   on success and on failure.
+4. `refresh()` calls `fetchWhoAmI` every time and, once its request settles and is still the
+   latest request started, increments `generation` by 1, on success and on failure. A
+   superseded request's result -- generation bump included -- is ignored (rule 6), so an
+   overlapping `refresh()` only bumps `generation` once.
 5. A failure sets `whoami: null` and `error` to the thrown error's message (or its string
    form); a later success clears `error`.
 6. A response from an older request that settles after a newer request started is ignored.
