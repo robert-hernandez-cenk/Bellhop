@@ -39,12 +39,14 @@ request and still leaves the name ambiguity).
 ## R3 — Changed-set rule
 
 **Decision**: A slug is changed when `ct/<slug>.sh` or `install/<slug>-install.sh` appears in
-`files[]` with a status other than `removed`. For `renamed`, both `filename` and
-`previous_filename` are considered. Files under `json/`, `misc/`, etc. never make an app
-changed on their own.
+`files[]` with a status other than `removed`. For `renamed`, only `filename` (the new
+name) counts. Files under `json/`, `misc/`, etc. never make an app changed on their own.
 
 **Rationale**: Only those two scripts decide what gets installed. A deletion on the branch
-leaves nothing in the fork to install, so the slug must resolve as it otherwise would.
+leaves nothing in the fork to install, so the slug must resolve as it otherwise would. A
+name renamed away is the same case: it no longer exists in the fork, so counting it would
+send the slug to a 404 while upstream still ships it. (Changed from "both names" after
+code review.)
 
 ## R4 — The 300-file cap
 
@@ -101,7 +103,7 @@ resolution are the head-SHA pin and the compare (spec SC-006).
 **Decision**: Replace `formatOverrideWarning` with `formatSourceNotice(source)` returning
 `{ level: 'warn' | 'info'; message } | undefined`:
 - conflict → `warn`: `"<slug>" changed upstream in ProxmoxVED since <label> branched (merge base <short>); installing the custom copy at commit <short>. Rebase <branch> onto upstream main to pick up the upstream changes.`
-- changed + shadows, no conflict → `info`: `"<slug>" is installing from the custom script repository <label> (commit <short>) in place of the upstream copy in <repos>.`
+- changed + shadows, no conflict → `info`: `"<slug>" comes from the custom script repository <label> (commit <short>) in place of the upstream copy in <repos>.`
 - otherwise → `undefined`.
 
 `runInstallApp`/`runUpdateApp` call `logWarn` or `logInfo` accordingly, in the same place the

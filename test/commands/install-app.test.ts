@@ -717,7 +717,7 @@ test('runInstallApp throws a resolution failure before any pct/install exec is r
         { host: 'pve1', mid: 4, app: 'demo-shop', hostname: 'demo-shop', fetchImpl: failingFetch },
         { ssh, inventory: inventoryWithCustomSource }
       ),
-    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub returned 403/
+    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub rate limit reached \(try again later\)/
   );
   assert.equal(ssh.history.length, 0, 'no pct/install exec should have been recorded');
 });
@@ -754,7 +754,7 @@ test('runInstallApp logs the R7 override notice as the first console line when t
   assert.ok(lines.length > 0, 'expected the override notice to be logged');
   assert.match(
     lines[0],
-    /^\[INFO\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
   );
 });
 

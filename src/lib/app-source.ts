@@ -138,6 +138,10 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
   if (!response.ok) {
     if (response.status === 404) throw new Error(`${prefix} repository not found or not public${ERROR_SUFFIX}`);
     if (response.status === 422) throw new Error(`${prefix} branch not found${ERROR_SUFFIX}`);
+    // The pin is the first rate-limited request of a resolution, so it's the
+    // one most likely to hit the limit -- name it the same way compareBranch does.
+    if (response.status === 403 || response.status === 429)
+      throw new Error(`${prefix} GitHub rate limit reached (try again later)${ERROR_SUFFIX}`);
     throw new Error(`${prefix} GitHub returned ${response.status}${ERROR_SUFFIX}`);
   }
   if (!/^[0-9a-f]{40}$/.test(body)) throw new Error(`${prefix} unexpected response${ERROR_SUFFIX}`);
@@ -167,7 +171,6 @@ export interface BranchComparison {
 
 const CompareFileSchema = z.object({
   filename: z.string(),
-  previous_filename: z.string().optional(),
   status: z.string(),
 });
 
@@ -191,18 +194,15 @@ function slugFromScriptPath(path: string): string | undefined {
 // research R3: an app is changed when its ct/<slug>.sh or
 // install/<slug>-install.sh is added, modified or renamed on the branch --
 // only those two scripts decide what gets installed. A deletion leaves
-// nothing in the fork to install, so it never makes an app changed; a
-// rename counts both the old and new names.
-export function changedSlugsFromFiles(
-  files: { filename: string; previous_filename?: string; status: string }[]
-): Set<string> {
+// nothing in the fork to install, so it never makes an app changed; for the
+// same reason a rename counts only its new name -- the old name no longer
+// exists in the fork, so it must resolve as it otherwise would.
+export function changedSlugsFromFiles(files: { filename: string; status: string }[]): Set<string> {
   const slugs = new Set<string>();
   for (const file of files) {
     if (file.status === 'removed') continue;
-    for (const path of [file.filename, file.previous_filename]) {
-      const slug = path === undefined ? undefined : slugFromScriptPath(path);
-      if (slug) slugs.add(slug);
-    }
+    const slug = slugFromScriptPath(file.filename);
+    if (slug) slugs.add(slug);
   }
   return slugs;
 }
@@ -390,8 +390,8 @@ export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: t
   const custom = { ...source, sha, mergeBase: comparison.mergeBase };
   const upstream = await probeBothUpstreams(slug, fetchImpl);
 
-  // The compare already proved ct/ or install/ exists on the branch for a
-  // changed slug, so the fork's ct/ script isn't probed here.
+  // The compare already proved the branch added or changed this slug's ct/
+  // or install/ script, so the fork's ct/ script isn't probed here.
   if (comparison.changedSlugs.has(slug)) {
     const shadows = shadowsFrom(upstream);
     const conflict = await detectConflict(slug, comparison, fetchImpl);
@@ -429,6 +429,6 @@ export function formatSourceNotice(source: AppSource): SourceNotice | undefined 
   if (source.shadows.length === 0) return undefined;
   return {
     level: 'info',
-    message: `"${source.slug}" is installing from the custom script repository ${source.custom.label} (commit ${shortSha}) in place of the upstream copy in ${source.shadows.join(', ')}.`,
+    message: `"${source.slug}" comes from the custom script repository ${source.custom.label} (commit ${shortSha}) in place of the upstream copy in ${source.shadows.join(', ')}.`,
   };
 }

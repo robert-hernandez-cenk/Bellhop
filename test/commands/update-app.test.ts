@@ -176,7 +176,7 @@ test('runUpdateApp throws a resolution failure before any exec is recorded', asy
   const failingFetch = (async () => new Response('rate limited', { status: 403 })) as unknown as typeof fetch;
   await assert.rejects(
     () => runUpdateApp({ guest: 'demo-shop', app: 'demo-shop', apply: true, fetchImpl: failingFetch }, { ssh, inventory: inventoryWithDemoShop }),
-    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub returned 403/
+    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub rate limit reached \(try again later\)/
   );
   assert.equal(ssh.history.length, 0, 'no remote exec should have been recorded');
 });
@@ -210,7 +210,7 @@ test('runUpdateApp logs the R7 override notice when the custom source shadows an
   assert.ok(lines.length > 0, 'expected the override notice to be logged');
   assert.match(
     lines[0],
-    /^\[INFO\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
   );
 });
 

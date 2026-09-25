@@ -1088,7 +1088,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   ProxmoxVED's fork network 404s instead. `changedSlugsFromFiles` turns
   its `files[]` into the changed set -- `ct/<slug>.sh` or
   `install/<slug>-install.sh` with any status but `removed` (a rename
-  counts both names). Resolution then follows `specs/004-changed-apps-only/
+  counts only its new name -- the old one no longer exists in the fork,
+  the same reason a deletion never counts). Resolution then follows `specs/004-changed-apps-only/
   research.md` R6: a changed slug -> `kind: 'custom'` at the pinned commit
   (`changed: true`); otherwise the two upstream `ct/` scripts are probed
   (raw, `probeUpstream`'s present/absent/error tri-state) and a hit *or an

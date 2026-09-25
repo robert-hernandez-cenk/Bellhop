@@ -196,7 +196,7 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   // into the job log under its own "----- dry-run preview -----" header.
   assert.match(
     preview,
-    /^\[INFO\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
   );
 
   await waitForJobFinished(jobStore, jobId);

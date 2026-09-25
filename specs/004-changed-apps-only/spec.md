@@ -14,7 +14,7 @@
 
 Settled while designing issue #15, before this spec was written:
 
-- Q: How is "changed on the branch" decided? → A: By comparing the branch, pinned to its current head commit, against upstream ProxmoxVED's main branch. An app is changed when its container script or its install script is added, modified, or renamed on the branch relative to the point where the branch left upstream. Deleting a script does not make an app "changed".
+- Q: How is "changed on the branch" decided? → A: By comparing the branch, pinned to its current head commit, against upstream ProxmoxVED's main branch. An app is changed when its container script or its install script is added, modified, or renamed on the branch relative to the point where the branch left upstream. Deleting a script does not make an app "changed", and a rename counts only its new name (the old name no longer exists on the branch).
 - Q: Why pin the comparison to a commit rather than the branch name? → A: A comparison addressed by branch name can silently be answered from a different fork of the same upstream repository when the configured fork doesn't exist, which would produce a wrong changed-app list with no error. A pinned commit either belongs to the upstream repository's fork network or the comparison fails outright.
 - Q: How is a conflict detected? → A: Only for a changed app, and only when upstream has moved on since the branch point: the app's two scripts are read as they were at the branch point and as they are on upstream main now. If either differs, upstream also changed the app, and that is a conflict. This deliberately does not list every file upstream changed, because that list is capped and upstream moves fast enough to exceed the cap routinely.
 - Q: What happens to an app that exists only in the fork but that the branch didn't change (e.g. inherited from an older upstream state and since removed upstream)? → A: It still installs from the fork, since there is nowhere else to get it, with no notice. It is not listed in the catalog's custom group, but typing its name still works.
@@ -52,7 +52,7 @@ When the operator's branch has fallen behind upstream and upstream has also chan
 **Acceptance Scenarios**:
 
 1. **Given** the branch changes app A and upstream also changed A's container or install script since the branch point, **When** the operator checks, previews, or installs A from any front end, **Then** a warning appears telling them upstream also changed A and to rebase the branch, and the source is still the fork.
-2. **Given** the branch changes app A, A also exists upstream, and upstream has not changed A since the branch point, **When** the operator installs A, **Then** a single informational line says A is installing from the custom repository in place of the upstream copy, and no warning is shown.
+2. **Given** the branch changes app A, A also exists upstream, and upstream has not changed A since the branch point, **When** the operator installs A, **Then** a single informational line says A comes from the custom repository in place of the upstream copy, and no warning is shown.
 3. **Given** the branch changes app A and A does not exist upstream, **When** the operator installs A, **Then** no notice of either kind is shown.
 4. **Given** the branch is not behind upstream at all, **When** any changed app is checked, **Then** no conflict is reported and no conflict check is made.
 
@@ -78,7 +78,7 @@ The web UI's App suggestion list, and the MCP catalog listing, show the custom g
 - The configured repository is not a fork of upstream ProxmoxVED (or the pinned commit is otherwise unknown to upstream's fork network): checking or installing fails with a named error pointing at the settings, never falling back to upstream.
 - GitHub rate-limits the comparison, returns a server error, or is unreachable: the same named error.
 - The branch changes so many files that the comparison's file list is truncated: resolution fails with a named error explaining that the changed-app list can't be determined in full, rather than acting on a partial list.
-- A script was renamed on the branch: both the old and new names count as changed apps.
+- A script was renamed on the branch: only the new name counts as a changed app; the old name resolves as it otherwise would, since it no longer exists in the fork.
 - A script was deleted on the branch: that deletion alone does not make the app changed; the app resolves as it would otherwise.
 - Only the install script (not the container script) changed: the app still counts as changed.
 - The conflict check can't read one of the scripts (network failure): the conflict check is informational, so the failure is logged and the app is treated as not conflicting; the install is not blocked.
@@ -91,7 +91,7 @@ The web UI's App suggestion list, and the MCP catalog listing, show the custom g
 ### Functional Requirements
 
 - **FR-001**: When the custom repository is configured, the system MUST determine the set of apps the configured branch changes, by comparing the branch at its pinned head commit against upstream ProxmoxVED's main branch.
-- **FR-002**: An app MUST count as changed when its container script or its install script is added, modified, or renamed on the branch relative to the branch point (for a rename, both the old and new names). A deletion alone MUST NOT make an app changed.
+- **FR-002**: An app MUST count as changed when its container script or its install script is added, modified, or renamed on the branch relative to the branch point (for a rename, only the new name). A deletion alone MUST NOT make an app changed.
 - **FR-003**: A changed app MUST resolve to the custom repository at the pinned commit, exactly as a custom resolution does today (same installer direction, same prompt scan source, same recorded guest source).
 - **FR-004**: An app that is not changed MUST resolve to upstream whenever either upstream repository has it, with the same repository choice the feature-off behavior makes, and MUST show no custom-repository notice.
 - **FR-005**: An app that is not changed, is in neither upstream repository, but exists in the fork at the pinned commit MUST resolve to the custom repository with no notice.

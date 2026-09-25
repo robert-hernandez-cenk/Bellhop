@@ -430,7 +430,9 @@ against the custom repository.
 
 Working out which apps changed takes one GitHub API request on top of the
 head-commit pin, so each resolution uses two of GitHub's 60 unauthenticated
-requests per hour. If the comparison can't be made — the repository isn't a
+requests per hour. The web UI resolves separately for the App check, a
+Preview and an Apply, and each refresh of the custom catalog group (at most
+every 5 minutes) spends the same two, so one web install uses roughly 6 to 8. If the comparison can't be made — the repository isn't a
 ProxmoxVED fork, GitHub rate-limits or is unreachable, or the branch
 changes 300 or more files (GitHub stops listing files there) — the command
 fails with an error naming the settings, rather than guessing.

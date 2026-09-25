@@ -204,8 +204,8 @@ test('resolveHeadSha throws a "repository not found or not public" error on 404'
 
 test('resolveHeadSha throws naming the status on any other non-OK response', async () => {
   await assert.rejects(
-    () => resolveHeadSha(SOURCE, fakeFetch({ [HEAD_SHA_URL]: () => new Response('rate limited', { status: 403 }) })),
-    /GitHub returned 403/
+    () => resolveHeadSha(SOURCE, fakeFetch({ [HEAD_SHA_URL]: () => new Response('server error', { status: 500 }) })),
+    /GitHub returned 500/
   );
 });
 
@@ -265,15 +265,27 @@ test('changedSlugsFromFiles does not count a removed script', () => {
   assert.deepEqual([...changedSlugsFromFiles([{ filename: 'ct/demo-notes.sh', status: 'removed' }])], []);
 });
 
-test('changedSlugsFromFiles counts both names of a renamed script', () => {
+// A name renamed away no longer exists in the fork, so like a deletion it
+// must not send that slug to the fork (it would 404 there while upstream
+// still ships it).
+test('changedSlugsFromFiles counts only the new name of a renamed script', () => {
   const files = [{ filename: 'ct/demo-new.sh', previous_filename: 'ct/demo-old.sh', status: 'renamed' }];
-  assert.deepEqual([...changedSlugsFromFiles(files)].sort(), ['demo-new', 'demo-old']);
+  assert.deepEqual([...changedSlugsFromFiles(files)], ['demo-new']);
 });
 
 test('changedSlugsFromFiles counts an install-script-only change', () => {
   assert.deepEqual([...changedSlugsFromFiles([{ filename: 'install/demo-notes-install.sh', status: 'modified' }])], [
     'demo-notes',
   ]);
+});
+
+test('resolveHeadSha names a GitHub rate limit (403/429) rather than a bare status', async () => {
+  for (const status of [403, 429]) {
+    await assert.rejects(
+      resolveHeadSha(SOURCE, fakeFetch({ [HEAD_SHA_URL]: () => new Response('{}', { status }) })),
+      /GitHub rate limit reached \(try again later\) -- check customScriptsRepo/
+    );
+  }
 });
 
 // --- compareBranch (contracts/interfaces.md) ---
@@ -731,7 +743,7 @@ test('formatSourceNotice warns to rebase when a changed app conflicts with upstr
 test('formatSourceNotice gives one info line when a changed app replaces an upstream copy without conflicting', () => {
   assert.deepEqual(formatSourceNotice(customSource({ shadows: ['ProxmoxVE', 'ProxmoxVED'] })), {
     level: 'info',
-    message: `"demo-wiki" is installing from the custom script repository example-user/ProxmoxVED@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, ProxmoxVED.`,
+    message: `"demo-wiki" comes from the custom script repository example-user/ProxmoxVED@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, ProxmoxVED.`,
   });
 });
 

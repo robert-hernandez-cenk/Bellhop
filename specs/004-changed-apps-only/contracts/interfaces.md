@@ -24,7 +24,7 @@ export interface BranchComparison {
 export function compareBranch(source: CustomScriptSource, sha: string, fetchImpl: typeof fetch): Promise<BranchComparison>;
 
 // Pure: files[] -> changed slugs (research R3).
-export function changedSlugsFromFiles(files: { filename: string; previous_filename?: string; status: string }[]): Set<string>;
+export function changedSlugsFromFiles(files: { filename: string; status: string }[]): Set<string>;
 
 // Raw-content conflict check (research R5). Never throws; a fetch error is logWarn'd and
 // counts as "no conflict". Returns false without fetching when comparison.behindBy === 0.

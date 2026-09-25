@@ -16,7 +16,7 @@ The parsed result of one compare call for a pinned custom branch.
 | `changedSlugs` | `Set<string>` | Per research R3. Lowercase, as filenames are. |
 
 Validation: the compare response is parsed with a `zod` schema (only the fields above plus
-`files[].filename/previous_filename/status`); a schema mismatch is a named error.
+`files[].filename/status`); a schema mismatch is a named error.
 `files.length >= 300` is a named error (research R4).
 
 ## AppSource (extended)
