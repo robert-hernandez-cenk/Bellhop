@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { apiGet } from '../api/client';
-import type { GuestEntry, WhoAmI } from '../api/types';
+import type { GuestEntry } from '../api/types';
+import { useWhoAmI } from '../lib/whoami';
 
 interface Props {
   guest: GuestEntry;
@@ -28,20 +29,11 @@ const FIELDS: Array<{ field: CredentialField; label: string }> = [
 // button -- there is nothing for them to reveal (FR-020), so a visibly
 // disabled control would be misleading rather than merely inert.
 export function OidcCredentials({ guest }: Props) {
-  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
+  const { whoami } = useWhoAmI();
   const [credentials, setCredentials] = useState<Credentials | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<CredentialField | null>(null);
-
-  useEffect(() => {
-    apiGet<WhoAmI>('/whoami')
-      .then(setWhoami)
-      .catch(() => {
-        // Leaves whoami null -- rendered the same as "not admin yet" below,
-        // failing closed rather than showing the reveal button by default.
-      });
-  }, []);
 
   const isAdmin = !!whoami?.isAdmin;
 

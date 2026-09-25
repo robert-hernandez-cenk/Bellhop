@@ -1,8 +1,9 @@
 import { NavLink } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { apiGet, apiPost, apiDelete } from '../api/client';
-import type { AuthentikGroupEntry, WhoAmI } from '../api/types';
+import type { AuthentikGroupEntry } from '../api/types';
 import { ThemeToggle } from './ThemeToggle';
+import { useWhoAmI } from '../lib/whoami';
 
 interface NavItem {
   id: string;
@@ -13,7 +14,7 @@ export function Sidebar() {
   const [provisioning, setProvisioning] = useState<NavItem[]>([]);
   const [maintenance, setMaintenance] = useState<NavItem[]>([]);
   const [open, setOpen] = useState(false);
-  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
+  const { whoami } = useWhoAmI();
   const [groups, setGroups] = useState<AuthentikGroupEntry[]>([]);
   const [impersonateTarget, setImpersonateTarget] = useState('');
   const [impersonateBusy, setImpersonateBusy] = useState(false);
@@ -26,7 +27,6 @@ export function Sidebar() {
   useEffect(() => {
     apiGet<NavItem[]>('/provisioning').then(setProvisioning);
     apiGet<NavItem[]>('/maintenance').then(setMaintenance);
-    apiGet<WhoAmI>('/whoami').then(setWhoami);
   }, []);
 
   // Only fetched for a real admin who isn't already impersonating -- while

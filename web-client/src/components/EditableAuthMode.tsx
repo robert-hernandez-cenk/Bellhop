@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { apiGet, apiPatch } from '../api/client';
-import type { GuestEntry, WhoAmI } from '../api/types';
+import { apiPatch } from '../api/client';
+import type { GuestEntry } from '../api/types';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { AuthentikConflictBanner, AuthentikSkipBanner, type AuthentikSkip } from './AuthentikSyncBanners';
 import { isOidcEffective, needsOidcDeletionConfirmation } from '../lib/oidc';
+import { useWhoAmI } from '../lib/whoami';
 
 interface OidcDiscoveryFailure {
   slug: string;
@@ -32,26 +33,6 @@ function patchGuest(name: string, body: Record<string, unknown>): Promise<PatchR
   return apiPatch<PatchResponse>(`/inventory/guests/${encodeURIComponent(name)}`, body);
 }
 
-// Shared by both components below -- both PATCH the same guest and need the
-// same isAdmin gate (FR-018: unconditional in both directions, unlike
-// authGroup's raise/lower asymmetry). Fetched independently per component
-// rather than lifted, matching this codebase's existing pattern of each
-// Editable* field owning its own supplementary fetch (EditableAuthGroup's
-// own /auth-groups call is the precedent).
-function useWhoAmI(): WhoAmI | null {
-  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
-  useEffect(() => {
-    apiGet<WhoAmI>('/whoami')
-      .then(setWhoami)
-      .catch(() => {
-        // Leaves whoami null -- both consumers below treat that as "not
-        // admin yet" (disabled/hidden), never as "admin", so a failed
-        // lookup fails closed rather than silently unlocking the controls.
-      });
-  }, []);
-  return whoami;
-}
-
 // The "auth mode" row (T021/T022) -- a Forward-auth/OIDC select. Saves
 // immediately on change, admin-only (disabled with an explanatory title
 // otherwise). Switching an OIDC-effective guest (authGroup set, authMode
@@ -59,7 +40,7 @@ function useWhoAmI(): WhoAmI | null {
 // one transition is gated behind ConfirmDeleteModal; every other change
 // saves straight away like the sibling Editable* components.
 export function EditableAuthMode({ guest, onSaved }: Props) {
-  const whoami = useWhoAmI();
+  const { whoami } = useWhoAmI();
   const [mode, setMode] = useState<'forward' | 'oidc'>(guest.authMode === 'oidc' ? 'oidc' : 'forward');
   const [status, setStatus] = useState<SaveStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -202,7 +183,7 @@ function parseLocal(value: string): string[] {
 // http(s) address (400 otherwise), surfaced the same way any other save
 // error is.
 export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
-  const whoami = useWhoAmI();
+  const { whoami } = useWhoAmI();
   const [value, setValue] = useState((guest.oidcRedirectUris ?? []).join('; '));
   const [status, setStatus] = useState<SaveStatus>('idle');
   const [error, setError] = useState<string | null>(null);

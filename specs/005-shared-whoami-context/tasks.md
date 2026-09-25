@@ -33,11 +33,11 @@ Paths are relative to the repository root.
 
 **Independent test**: quickstart.md rows 1–3.
 
-- [ ] T006 [P] [US1] `web-client/src/components/Sidebar.tsx`: replace the `whoami` state and its `apiGet('/whoami')` call with `useWhoAmI()`; keep the `/provisioning` and `/maintenance` fetches; everything that reads `whoami` renders the same as before.
-- [ ] T007 [P] [US1] `web-client/src/pages/UsersPage.tsx`: replace its `whoami` state and fetch with `useWhoAmI()`; `UsersSection`'s `whoamiUsername` and `GroupsSection`'s `adminGroups` props unchanged in meaning. Leave `GroupsSection.tsx` untouched (FR-011).
-- [ ] T008 [P] [US1] `web-client/src/components/EditableAuthMode.tsx`: delete the local `useWhoAmI` helper and its comment; both components use the shared `useWhoAmI().whoami`, keeping `const isAdmin = !!whoami?.isAdmin` (null fails closed). Leave `EditableAuthGroup.tsx` untouched (FR-011).
-- [ ] T009 [P] [US1] `web-client/src/components/OidcCredentials.tsx`: replace its `whoami` state and fetch with `useWhoAmI()`; keep `if (whoami === null) return null` (FR-009).
-- [ ] T010 [US1] Confirm no `/whoami` fetch remains outside `web-client/src/lib/whoami.tsx` (`grep -rn "'/whoami'" web-client/src`), then run `npm run web:build` and `npm --prefix web-client run lint` (no warnings beyond the 3 existing `set-state-in-effect` ones).
+- [x] T006 [P] [US1] `web-client/src/components/Sidebar.tsx`: replace the `whoami` state and its `apiGet('/whoami')` call with `useWhoAmI()`; keep the `/provisioning` and `/maintenance` fetches; everything that reads `whoami` renders the same as before.
+- [x] T007 [P] [US1] `web-client/src/pages/UsersPage.tsx`: replace its `whoami` state and fetch with `useWhoAmI()`; `UsersSection`'s `whoamiUsername` and `GroupsSection`'s `adminGroups` props unchanged in meaning. Leave `GroupsSection.tsx` untouched (FR-011).
+- [x] T008 [P] [US1] `web-client/src/components/EditableAuthMode.tsx`: delete the local `useWhoAmI` helper and its comment; both components use the shared `useWhoAmI().whoami`, keeping `const isAdmin = !!whoami?.isAdmin` (null fails closed). Leave `EditableAuthGroup.tsx` untouched (FR-011).
+- [x] T009 [P] [US1] `web-client/src/components/OidcCredentials.tsx`: replace its `whoami` state and fetch with `useWhoAmI()`; keep `if (whoami === null) return null` (FR-009).
+- [x] T010 [US1] Confirm no `/whoami` fetch remains outside `web-client/src/lib/whoami.tsx` (`grep -rn "'/whoami'" web-client/src`), then run `npm run web:build` and `npm --prefix web-client run lint` (no warnings beyond the 3 existing `set-state-in-effect` ones).
 
 ## Phase 4: User Story 2 — Impersonation updates everything together, without a reload (P2)
 
