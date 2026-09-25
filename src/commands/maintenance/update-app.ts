@@ -3,8 +3,8 @@ import type { Inventory } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { shellQuote } from '../../lib/ssh-client.ts';
 import { resolveAppUrl, resolveDevAppUrl } from '../provisioning/install-app.ts';
-import { resolveAppSource, formatOverrideWarning, type AppSource } from '../../lib/app-source.ts';
-import { logWarn } from '../../lib/log.ts';
+import { resolveAppSource, formatSourceNotice, type AppSource } from '../../lib/app-source.ts';
+import { logInfo, logWarn } from '../../lib/log.ts';
 
 export interface UpdateAppOptions {
   guest: string;
@@ -74,12 +74,13 @@ export async function runUpdateApp(
   // -- see UpdateAppOptions.source) after the argument checks above but
   // before any exec, mirroring runInstallApp's own ordering -- a resolution
   // failure (bad customScriptsRepo/Branch, GitHub unreachable) must never
-  // reach the guest. The override warning, when the resolved source also
-  // shadows an upstream copy of the same slug, is logged here so it's the
+  // reach the guest. The source notice (issue #15, research R7: a rebase
+  // warning for a conflicting app, an info line for one that replaces an
+  // upstream copy) is logged here so it's the
   // first line of a dry run, a captured preview, and the apply job's log.
   const source = opts.source ?? (await resolveAppSource(opts.app, deps.inventory, opts.fetchImpl ?? fetch));
-  const overrideWarning = formatOverrideWarning(source);
-  if (overrideWarning) logWarn(overrideWarning);
+  const notice = formatSourceNotice(source);
+  if (notice) (notice.level === 'warn' ? logWarn : logInfo)(notice.message);
 
   const script = buildUpdateAppScript(opts.app, source);
   if (!opts.apply) {

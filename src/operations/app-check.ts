@@ -143,6 +143,7 @@ export async function checkAppUrl(
   prompts?: string[];
   custom?: { label: string; sha: string };
   shadows?: ShadowedRepo[];
+  conflict?: true;
   error?: string;
 }> {
   let source = preResolved;
@@ -163,6 +164,9 @@ export async function checkAppUrl(
       prompts: await promptsForSource(source, fetchImpl),
       custom: { label: source.custom!.label, sha: source.custom!.sha },
       ...(source.shadows.length > 0 ? { shadows: source.shadows } : {}),
+      // Issue #15: present only when upstream also changed this app since
+      // the branch point, so a plain override reads exactly as before.
+      ...(source.conflict ? { conflict: true as const } : {}),
     };
   }
 

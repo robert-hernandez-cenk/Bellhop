@@ -500,6 +500,7 @@ test('GET /api/provisioning/install-app/check-app resolves through the custom sc
   assert.equal(res.body.url, customCtUrl('demo-shop'));
   assert.deepEqual(res.body.custom, { label: `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`, sha: CUSTOM_SHA });
   assert.equal(res.body.shadows, undefined);
+  assert.equal(res.body.conflict, undefined, 'conflict is absent unless the app conflicts');
 });
 
 // Same as customScriptFetch, but the ProxmoxVE shadow probe hits -- used to
@@ -527,6 +528,34 @@ test('GET /api/provisioning/install-app/check-app reports shadows for a slug pre
   assert.equal(res.status, 200);
   assert.equal(res.body.exists, true);
   assert.deepEqual(res.body.shadows, ['ProxmoxVE']);
+});
+
+// issue #15 US2: the captured diverged fixture's demo-wiki was added upstream
+// after the branch point too (absent at the merge base, present on
+// ProxmoxVED main), so check-app reports conflict: true -- and still
+// resolves to the fork.
+test('GET /api/provisioning/install-app/check-app reports conflict: true for an app upstream also changed', async () => {
+  const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
+  const divergedBody = readFileSync(path.join(customFixtureDir, 'compare-diverged-conflict.json'), 'utf8');
+  const mergeBase = (JSON.parse(divergedBody) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
+  const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
+    if (href === CUSTOM_COMPARE_URL) return new Response(divergedBody, { status: 200 });
+    if (href === customCtUrl('demo-wiki')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === vedRaw('main', 'ct/demo-wiki.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === vedRaw('main', 'install/demo-wiki-install.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href.startsWith(vedRaw(mergeBase, ''))) return new Response(null, { status: 404 });
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+  const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl });
+  const res = await request(app).get('/api/provisioning/install-app/check-app').query({ value: 'demo-wiki' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.exists, true);
+  assert.equal(res.body.url, customCtUrl('demo-wiki'));
+  assert.equal(res.body.conflict, true);
+  assert.deepEqual(res.body.shadows, ['ProxmoxVED']);
 });
 
 // issue #15 US1: an app the branch doesn't change resolves to upstream even

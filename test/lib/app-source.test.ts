@@ -7,8 +7,10 @@ import {
   customScriptSource,
   resolveHeadSha,
   resolveAppSource,
-  formatOverrideWarning,
+  formatSourceNotice,
   compareBranch,
+  detectConflict,
+  type BranchComparison,
   changedSlugsFromFiles,
   UPSTREAM_STABLE_BASE,
   UPSTREAM_DEV_BASE,
@@ -33,6 +35,13 @@ const COMPARE_AHEAD_BODY = fixtureText('compare-ahead-3-apps.json');
 const COMPARE_DIVERGED_BODY = fixtureText('compare-diverged-conflict.json');
 const AHEAD_MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
 const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
+const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit
+  .sha;
+// research R5: the conflict check reads upstream ProxmoxVED's two scripts
+// for an app at the merge base and on main, through raw content.
+const VED_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+const CT_FILE = (slug: string) => `ct/${slug}.sh`;
+const INSTALL_FILE = (slug: string) => `install/${slug}-install.sh`;
 
 const BASE_INVENTORY: Inventory = {
   domain: 'example.com',
@@ -96,7 +105,7 @@ function probeResponse(probe: Probe): Response {
 // asserts that probe is never made: fakeFetch throws on an unrouted URL.
 function customFetch(
   slug: string,
-  opts: { stable?: Probe; dev?: Probe; fork?: Probe; compareBody?: string } = {}
+  opts: { stable?: Probe; dev?: Probe; fork?: Probe; compareBody?: string; extra?: Record<string, Handler> } = {}
 ): typeof fetch {
   const routes: Record<string, Handler> = {
     [HEAD_SHA_URL]: () => new Response(HEAD_SHA_RAW, { status: 200 }),
@@ -104,6 +113,7 @@ function customFetch(
     [SHADOW_URL(UPSTREAM_STABLE_BASE, slug)]: () => probeResponse(opts.stable ?? 404),
     [SHADOW_URL(UPSTREAM_DEV_BASE, slug)]: () => probeResponse(opts.dev ?? 404),
   };
+  Object.assign(routes, opts.extra);
   const fork = opts.fork;
   if (fork !== undefined) routes[CT_URL(slug)] = () => probeResponse(fork);
   return fakeFetch(routes);
@@ -380,6 +390,107 @@ test('compareBranch refuses a file list at the 300-file cap', async () => {
   );
 });
 
+// --- detectConflict (research R5) ---
+
+// Values from the captured diverged fixture (1 ahead / 251 behind, adds
+// demo-wiki, which upstream added too after the branch point).
+const DIVERGED: BranchComparison = {
+  sha: SHA,
+  mergeBase: DIVERGED_MERGE_BASE,
+  aheadBy: 1,
+  behindBy: 251,
+  changedSlugs: new Set(['demo-wiki']),
+};
+
+type RawSide = 404 | 500 | 'throw' | string;
+
+function rawResponse(side: RawSide): Response {
+  if (side === 'throw') throw new Error('ECONNRESET');
+  if (typeof side === 'number') return new Response(null, { status: side });
+  return new Response(side, { status: 200 });
+}
+
+// Routes the four raw reads for one slug; records every URL requested.
+function conflictFetch(
+  slug: string,
+  sides: { baseCt: RawSide; baseInstall: RawSide; mainCt: RawSide; mainInstall: RawSide }
+): { fetchImpl: typeof fetch; seen: string[] } {
+  const seen: string[] = [];
+  const routes: Record<string, Handler> = {
+    [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE(slug))]: () => rawResponse(sides.baseCt),
+    [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE(slug))]: () => rawResponse(sides.baseInstall),
+    [VED_RAW('main', CT_FILE(slug))]: () => rawResponse(sides.mainCt),
+    [VED_RAW('main', INSTALL_FILE(slug))]: () => rawResponse(sides.mainInstall),
+  };
+  const inner = fakeFetch(routes);
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    seen.push(String(url));
+    return inner(url as string, init);
+  }) as unknown as typeof fetch;
+  return { fetchImpl, seen };
+}
+
+test('detectConflict returns false without fetching when the branch is not behind', async () => {
+  const ahead: BranchComparison = { ...DIVERGED, behindBy: 0 };
+  assert.equal(await detectConflict('demo-wiki', ahead, throwingFetch), false);
+});
+
+test('detectConflict reads both scripts at the merge base and on main, and flags 404-vs-200 as a conflict', async () => {
+  const { fetchImpl, seen } = conflictFetch('demo-wiki', {
+    baseCt: 404,
+    baseInstall: 404,
+    mainCt: '#!/usr/bin/env bash\n# upstream demo-wiki\n',
+    mainInstall: '#!/usr/bin/env bash\n# upstream demo-wiki install\n',
+  });
+  assert.equal(await detectConflict('demo-wiki', DIVERGED, fetchImpl), true);
+  assert.deepEqual(seen.sort(), [
+    VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki')),
+    VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki')),
+    VED_RAW('main', CT_FILE('demo-wiki')),
+    VED_RAW('main', INSTALL_FILE('demo-wiki')),
+  ].sort());
+});
+
+test('detectConflict returns false when both scripts are identical on both sides', async () => {
+  const { fetchImpl } = conflictFetch('demo-wiki', {
+    baseCt: 'ct body\n',
+    baseInstall: 'install body\n',
+    mainCt: 'ct body\n',
+    mainInstall: 'install body\n',
+  });
+  assert.equal(await detectConflict('demo-wiki', DIVERGED, fetchImpl), false);
+});
+
+test('detectConflict returns false when both scripts are absent on both sides', async () => {
+  const { fetchImpl } = conflictFetch('demo-wiki', { baseCt: 404, baseInstall: 404, mainCt: 404, mainInstall: 404 });
+  assert.equal(await detectConflict('demo-wiki', DIVERGED, fetchImpl), false);
+});
+
+test('detectConflict flags a difference in only the install script', async () => {
+  const { fetchImpl } = conflictFetch('demo-wiki', {
+    baseCt: 'ct body\n',
+    baseInstall: 'install body v1\n',
+    mainCt: 'ct body\n',
+    mainInstall: 'install body v2\n',
+  });
+  assert.equal(await detectConflict('demo-wiki', DIVERGED, fetchImpl), true);
+});
+
+for (const failure of ['throw', 500] as const) {
+  test(`detectConflict treats a ${failure === 'throw' ? 'thrown fetch' : 'server error'} as no conflict and logs one warning`, async () => {
+    const { fetchImpl } = conflictFetch('demo-wiki', {
+      baseCt: failure,
+      baseInstall: failure,
+      mainCt: 'ct body\n',
+      mainInstall: 'install body\n',
+    });
+    const { result, warnings } = await captureWarnings(() => detectConflict('demo-wiki', DIVERGED, fetchImpl));
+    assert.equal(result, false);
+    assert.equal(warnings.length, 1, JSON.stringify(warnings));
+    assert.ok(warnings[0].includes('demo-wiki'), warnings[0]);
+  });
+}
+
 // --- resolveAppSource ---
 
 test('resolveAppSource makes no fetch calls when the feature is off', async () => {
@@ -541,54 +652,92 @@ test('resolveAppSource throws a named error when the compare call fails, never f
   );
 });
 
-test('resolveAppSource carries the diverged fixture merge base on a changed slug', async () => {
+// T011 (US2): the diverged fixture's demo-wiki was absent upstream at the
+// merge base and is present on upstream main -- upstream added the same app
+// after the branch point, which is a conflict. The upstream ProxmoxVED ct/
+// probe and the conflict check's main-side ct/ read are the same URL.
+test('resolveAppSource flags a conflict for a changed slug upstream also changed since the branch point', async () => {
   const result = await resolveAppSource(
     'demo-wiki',
     withCustomSource(),
-    customFetch('demo-wiki', { compareBody: COMPARE_DIVERGED_BODY })
+    customFetch('demo-wiki', {
+      compareBody: COMPARE_DIVERGED_BODY,
+      dev: 200,
+      extra: {
+        [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
+        [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
+        [VED_RAW('main', INSTALL_FILE('demo-wiki'))]: () => new Response('#!/usr/bin/env bash\n', { status: 200 }),
+      },
+    })
   );
   assert.equal(result.kind, 'custom');
   assert.equal(result.changed, true);
-  assert.equal(
-    result.custom?.mergeBase,
-    (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha
+  assert.equal(result.conflict, true);
+  assert.equal(result.custom?.mergeBase, DIVERGED_MERGE_BASE);
+  assert.deepEqual(result.shadows, ['ProxmoxVED']);
+});
+
+test('resolveAppSource reports no conflict when upstream left a changed slug alone since the branch point', async () => {
+  const same = () => new Response('#!/usr/bin/env bash\n', { status: 200 });
+  const result = await resolveAppSource(
+    'demo-wiki',
+    withCustomSource(),
+    customFetch('demo-wiki', {
+      compareBody: COMPARE_DIVERGED_BODY,
+      dev: 200,
+      extra: {
+        [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: same,
+        [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: same,
+        [VED_RAW('main', INSTALL_FILE('demo-wiki'))]: same,
+      },
+    })
   );
+  assert.equal(result.conflict, false);
 });
 
-// --- formatOverrideWarning ---
-
-test('formatOverrideWarning returns undefined for a non-custom source', () => {
-  assert.equal(formatOverrideWarning({ kind: 'upstream', slug: 'myapp', shadows: [] }), undefined);
-  assert.equal(formatOverrideWarning({ kind: 'url', shadows: [] }), undefined);
+// FR-008: an ahead-only branch (behind_by 0) never makes a conflict read --
+// customFetch routes none of the raw conflict URLs, so any read would throw.
+test('resolveAppSource makes no conflict reads when the branch is not behind', async () => {
+  const { result, warnings } = await captureWarnings(() =>
+    resolveAppSource('demo-shop', withCustomSource(), customFetch('demo-shop', { dev: 200 }))
+  );
+  assert.equal(result.conflict, false);
+  assert.deepEqual(warnings, []);
 });
 
-test('formatOverrideWarning returns undefined when shadows is empty', () => {
-  const source: AppSource = {
+// --- formatSourceNotice (research R7) ---
+
+function customSource(overrides: Partial<AppSource> = {}): AppSource {
+  return {
     kind: 'custom',
-    slug: 'myapp',
-    custom: { ...SOURCE, sha: SHA, mergeBase: AHEAD_MERGE_BASE },
-    changed: true,
-    conflict: false,
-    ctUrl: CT_URL('myapp'),
+    slug: 'demo-wiki',
+    custom: { ...SOURCE, sha: SHA, mergeBase: DIVERGED_MERGE_BASE },
+    ctUrl: CT_URL('demo-wiki'),
     scriptsBaseUrl: SCRIPTS_BASE_URL,
     shadows: [],
-  };
-  assert.equal(formatOverrideWarning(source), undefined);
-});
-
-test('formatOverrideWarning formats the exact research R6 text with a 7-character short SHA', () => {
-  const source: AppSource = {
-    kind: 'custom',
-    slug: 'myapp',
-    custom: { ...SOURCE, sha: SHA, mergeBase: AHEAD_MERGE_BASE },
     changed: true,
     conflict: false,
-    ctUrl: CT_URL('myapp'),
-    scriptsBaseUrl: SCRIPTS_BASE_URL,
-    shadows: ['ProxmoxVE', 'ProxmoxVED'],
+    ...overrides,
   };
-  assert.equal(
-    formatOverrideWarning(source),
-    `"myapp" is installing from the custom script repository example-user/ProxmoxVED@my-apps (commit ${SHA.slice(0, 7)}), which overrides the upstream copy in ProxmoxVE, ProxmoxVED. Unset customScriptsRepo/customScriptsBranch with set-config to use upstream.`
-  );
+}
+
+test('formatSourceNotice warns to rebase when a changed app conflicts with upstream', () => {
+  assert.deepEqual(formatSourceNotice(customSource({ conflict: true, shadows: ['ProxmoxVED'] })), {
+    level: 'warn',
+    message: `"demo-wiki" changed upstream in ProxmoxVED since example-user/ProxmoxVED@my-apps branched (merge base ${DIVERGED_MERGE_BASE.slice(0, 7)}); installing the custom copy at commit ${SHA.slice(0, 7)}. Rebase my-apps onto upstream main to pick up the upstream changes.`,
+  });
+});
+
+test('formatSourceNotice gives one info line when a changed app replaces an upstream copy without conflicting', () => {
+  assert.deepEqual(formatSourceNotice(customSource({ shadows: ['ProxmoxVE', 'ProxmoxVED'] })), {
+    level: 'info',
+    message: `"demo-wiki" is installing from the custom script repository example-user/ProxmoxVED@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, ProxmoxVED.`,
+  });
+});
+
+test('formatSourceNotice says nothing for a changed app absent upstream, a fork-only app, an upstream or a url source', () => {
+  assert.equal(formatSourceNotice(customSource()), undefined);
+  assert.equal(formatSourceNotice(customSource({ changed: false })), undefined);
+  assert.equal(formatSourceNotice({ kind: 'upstream', slug: 'plex', shadows: [] }), undefined);
+  assert.equal(formatSourceNotice({ kind: 'url', shadows: [] }), undefined);
 });

@@ -165,7 +165,7 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
     if (href === COMPARE_URL) return new Response(COMPARE_AHEAD_BODY, { status: 200 });
     if (href === customInstallUrl('demo-shop')) return new Response('no prompts here\n', { status: 200 });
     // T016 (US2): the ProxmoxVE shadow probe hits, so the resolved source
-    // shadows an upstream copy and the R6 override warning is emitted --
+    // shadows an upstream copy and the R7 override notice is emitted --
     // the ProxmoxVED shadow probe still "not present" (falls through below).
     if (href === `${UPSTREAM_STABLE_BASE}/ct/demo-shop.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     return new Response(null, { status: 404 });
@@ -190,13 +190,13 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   );
   assert.equal(headShaCalls, 1, 'resolveHeadSha should run exactly once, during preview');
 
-  // T016 (US2): the R6 override warning is logged before anything else
+  // T016 (US2): the R7 override notice is logged before anything else
   // runInstallApp prints during preview, so it must lead the preview text
   // previewAndEnqueue returns -- which is also what enqueue() logs first
   // into the job log under its own "----- dry-run preview -----" header.
   assert.match(
     preview,
-    /^\[WARN\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\./
+    /^\[INFO\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
   );
 
   await waitForJobFinished(jobStore, jobId);

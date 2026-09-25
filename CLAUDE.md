@@ -1046,11 +1046,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `CATALOG_MAX_AGE_MS` (24h). There is no manual refresh control and no
   background timer, and the CLI's `install-app --app` is unaffected.
   When `customScriptsRepo`/`customScriptsBranch` (issue #11) are configured,
-  `getScriptCatalog` (`src/lib/script-catalog.ts`) also fetches the custom
-  repository's own `ct/` listing and adds it as a third group, ordered
-  first, labelled with the source's own `owner/repo@branch` string; any
-  slug it shares with `stable`/`dev` is removed from those and annotated
-  with which upstream repo(s) it shadows (`withCustomGroup`). Unlike the
+  `getScriptCatalog` (`src/lib/script-catalog.ts`) also adds a third group,
+  ordered first, labelled with the source's own `owner/repo@branch`
+  string, holding **only the apps the branch changes** (issue #15:
+  `resolveHeadSha` + `compareBranch`, the same comparison
+  `resolveAppSource` uses -- not the fork's whole `ct/` listing, which
+  carries every inherited upstream app), plus `conflicts`, the subset
+  `detectConflict` flags; any slug it shares with `stable`/`dev` is
+  removed from those and annotated with which upstream repo(s) it
+  shadows (`withCustomGroup`). A fork-only app is not listed, but typing
+  its slug still resolves it. Unlike the
   persisted upstream catalog, the custom group's cache
   (`customCatalogCache`, keyed by that same `owner/repo@branch` label so a
   settings change never serves a stale listing under the old key) is
@@ -1074,19 +1079,39 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   its current head commit (a bare-SHA GitHub API request,
   `Accept: application/vnd.github.sha`, chosen over the branches endpoint
   because it needs no JSON parsing and handles a branch name containing
-  `/`), then probes `<custom-base>/ct/<slug>.sh` at that pinned commit --
-  a hit resolves `kind: 'custom'`; a 404 falls back to upstream exactly as
-  today. Only on a custom hit does it also probe both upstream `ct/`
-  scripts for the same slug (`detectShadows`) to populate `shadows`
-  (`ShadowedRepo[]`) for the override warning below -- a failed probe there
-  is swallowed and logged, since it's purely informational and must never
-  block an install that already resolved successfully. Every failure that
-  *does* throw (unknown/private repo, unknown branch, a GitHub error
-  status, an unreachable network) names the configured
-  `customScriptsRepo`/`customScriptsBranch` and points at `set-config`,
-  and — per FR-008 — never silently falls back to upstream, since
-  custom-first precedence means upstream can't be assumed correct once the
-  operator has opted in. `buildInstallAppScript`/`buildUpdateAppScript`
+  `/`), then (issue #15) makes one more rate-limited request,
+  `compareBranch`: `GET /repos/community-scripts/ProxmoxVED/compare/
+  main...<owner>:<repo>:<sha>`. The head is addressed by the *pinned
+  commit*, not the branch name, because a branch-name head whose repo
+  doesn't exist was observed live being answered from a different fork in
+  the same network (`status: identical`, no error); a commit outside
+  ProxmoxVED's fork network 404s instead. `changedSlugsFromFiles` turns
+  its `files[]` into the changed set -- `ct/<slug>.sh` or
+  `install/<slug>-install.sh` with any status but `removed` (a rename
+  counts both names). Resolution then follows `specs/004-changed-apps-only/
+  research.md` R6: a changed slug -> `kind: 'custom'` at the pinned commit
+  (`changed: true`); otherwise the two upstream `ct/` scripts are probed
+  (raw, `probeUpstream`'s present/absent/error tri-state) and a hit *or an
+  error* -> `kind: 'upstream'`, byte-identical to the feature being off
+  ("can't tell" prefers upstream over a possibly stale inherited fork
+  copy); otherwise the fork's `ct/<slug>.sh` at the pinned commit -> 200 is
+  a fork-only `kind: 'custom'` (`changed: false`), 404 falls through to
+  upstream. For a changed slug only, and only when the branch is behind
+  (`behindBy > 0`), `detectConflict` reads the app's two scripts from
+  upstream ProxmoxVED's raw content at the merge base and at `main`; any
+  difference (a 404 on one side counts) sets `conflict: true`. It is
+  deliberately *not* a reverse compare: the compare file list stops at 300
+  files and upstream routinely moves further than that between rebases,
+  while raw reads cost no API quota; a failed read is logged and counts as
+  no conflict. A compare file list of 300 or more files is itself a named
+  error, since a truncated changed set would silently send changed apps
+  upstream. Every failure that
+  *does* throw (unknown/private repo, unknown branch, not a ProxmoxVED
+  fork, a GitHub error status or rate limit, an unreachable network) names
+  the configured `customScriptsRepo`/`customScriptsBranch` and points at
+  `set-config`, and — per FR-008 — never silently falls back to upstream.
+  The upstream base is fixed to `community-scripts/ProxmoxVED@main`, a
+  single-deployment-shape assumption #11 already made (a VED-shaped fork). `buildInstallAppScript`/`buildUpdateAppScript`
   branch on `source.kind === 'custom'`: the generated script curls
   `source.ctUrl` directly (no upstream fallback -- resolution already
   confirmed the script exists at that commit) and, critically, exports
@@ -1105,10 +1130,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   whether an app can be updated, which has no knowledge of a fork-only
   app; both limitations are inherent to reusing community-scripts' own
   engine rather than bugs in this toolkit, and are recorded as known
-  limitations in README rather than worked around. When the resolved
-  source shadows an upstream copy of the same slug,
-  `formatOverrideWarning(source)` builds the one warning line both
-  `runInstallApp`/`runUpdateApp` `logWarn` before doing anything else
+  limitations in README rather than worked around.
+  `formatSourceNotice(source)` builds the one notice line both
+  `runInstallApp`/`runUpdateApp` emit before doing anything else -- a
+  `warn` (`logWarn`) telling the operator to rebase when the source
+  conflicts, an `info` (`logInfo`) when a changed app merely replaces an
+  upstream copy, nothing for a fork-only app or an upstream resolution --
   (before `resolveMid`/`checkVmidAvailable` for install, before the
   update's own `runRemote` call), so it's the first line of a dry run, a
   captured preview, and the job log alike.

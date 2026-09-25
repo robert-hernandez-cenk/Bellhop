@@ -263,6 +263,54 @@ export async function compareBranch(
   };
 }
 
+// A raw-content read of one upstream ProxmoxVED script at one ref, for the
+// conflict check: its body, 'absent' (404), or undefined when the read
+// failed any other way (thrown fetch, non-404 non-OK status).
+async function readUpstreamScript(ref: string, file: string, fetchImpl: typeof fetch): Promise<string | 'absent' | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GITHUB_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(`https://raw.githubusercontent.com/${COMPARE_UPSTREAM}/${ref}/${file}`, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'bellhop' },
+    });
+    if (response.status === 404) return 'absent';
+    if (!response.ok) return undefined;
+    return await response.text();
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// research R5: did upstream ProxmoxVED also change this (branch-changed)
+// app since the branch point? Compares the app's ct/ and install/ scripts
+// at the merge base against upstream main through raw content -- no API
+// quota and no 300-file cap, unlike a reverse compare, whose file list a
+// branch far behind upstream would routinely exceed. A script present on
+// one side only counts as different; absent on both counts as the same.
+// Informational only (FR-013): a failed read is logged once and counts as
+// no conflict; this never throws. Skipped entirely, with no request, when
+// the branch isn't behind (FR-008) -- upstream can't have moved on then.
+export async function detectConflict(slug: string, comparison: BranchComparison, fetchImpl: typeof fetch): Promise<boolean> {
+  if (comparison.behindBy === 0) return false;
+  const files = [`ct/${slug}.sh`, `install/${slug}-install.sh`];
+  const reads = await Promise.all(
+    files.flatMap((file) => [
+      readUpstreamScript(comparison.mergeBase, file, fetchImpl),
+      readUpstreamScript('main', file, fetchImpl),
+    ])
+  );
+  if (reads.some((read) => read === undefined)) {
+    logWarn(
+      `Could not check whether upstream ${COMPARE_UPSTREAM} also changed "${slug}" since the branch point; treating it as not conflicting`
+    );
+    return false;
+  }
+  return reads[0] !== reads[1] || reads[2] !== reads[3];
+}
+
 type UpstreamPresence = 'present' | 'absent' | 'error';
 
 // Probes one upstream repo's ct/<slug>.sh (a raw request -- no API quota).
@@ -343,11 +391,11 @@ export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: t
   const upstream = await probeBothUpstreams(slug, fetchImpl);
 
   // The compare already proved ct/ or install/ exists on the branch for a
-  // changed slug, so the fork's ct/ script isn't probed here. conflict is
-  // filled in by the conflict check (issue #15 US2).
+  // changed slug, so the fork's ct/ script isn't probed here.
   if (comparison.changedSlugs.has(slug)) {
     const shadows = shadowsFrom(upstream);
-    return { kind: 'custom', slug, custom, ctUrl, scriptsBaseUrl, shadows, changed: true, conflict: false };
+    const conflict = await detectConflict(slug, comparison, fetchImpl);
+    return { kind: 'custom', slug, custom, ctUrl, scriptsBaseUrl, shadows, changed: true, conflict };
   }
 
   if (upstream.some((presence) => presence !== 'absent')) return { kind: 'upstream', slug, shadows: [] };
@@ -358,16 +406,29 @@ export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: t
   return { kind: 'custom', slug, custom, ctUrl, scriptsBaseUrl, shadows: [], changed: false, conflict: false };
 }
 
-// The one logWarn line runInstallApp/runUpdateApp (a later unit) emit
-// before anything else when an app resolved to the custom repository also
-// shadows an upstream copy -- see research R6 for the exact wording and
-// placement rationale. Returns undefined for every other case (no shadows,
-// or not a custom resolution at all) so callers can `if (warning) logWarn(warning)`
-// unconditionally. Issue #15: only a changed slug can carry shadows (a
-// fork-only resolution always has none); US2 replaces this with
-// formatSourceNotice.
-export function formatOverrideWarning(source: AppSource): string | undefined {
-  if (source.kind !== 'custom' || !source.custom || !source.slug || source.shadows.length === 0) return undefined;
+// The one line runInstallApp/runUpdateApp emit before anything else about
+// where an app is coming from (research R7) -- the first line of a dry
+// run, a captured preview, and the job log alike:
+//   - a changed app upstream also changed since the branch point -> a
+//     'warn' telling the operator to rebase (the install still proceeds
+//     from the fork, whose copy is the one being tested);
+//   - a changed app that replaces an upstream copy -> one 'info' line;
+//   - anything else (a changed app upstream never had, a fork-only app, an
+//     upstream or pasted-URL resolution) -> undefined, no notice at all.
+export type SourceNotice = { level: 'warn' | 'info'; message: string };
+
+export function formatSourceNotice(source: AppSource): SourceNotice | undefined {
+  if (source.kind !== 'custom' || !source.custom || !source.slug || !source.changed) return undefined;
   const shortSha = source.custom.sha.slice(0, 7);
-  return `"${source.slug}" is installing from the custom script repository ${source.custom.label} (commit ${shortSha}), which overrides the upstream copy in ${source.shadows.join(', ')}. Unset customScriptsRepo/customScriptsBranch with set-config to use upstream.`;
+  if (source.conflict) {
+    return {
+      level: 'warn',
+      message: `"${source.slug}" changed upstream in ProxmoxVED since ${source.custom.label} branched (merge base ${source.custom.mergeBase.slice(0, 7)}); installing the custom copy at commit ${shortSha}. Rebase ${source.custom.branch} onto upstream main to pick up the upstream changes.`,
+    };
+  }
+  if (source.shadows.length === 0) return undefined;
+  return {
+    level: 'info',
+    message: `"${source.slug}" is installing from the custom script repository ${source.custom.label} (commit ${shortSha}) in place of the upstream copy in ${source.shadows.join(', ')}.`,
+  };
 }

@@ -181,10 +181,10 @@ test('runUpdateApp throws a resolution failure before any exec is recorded', asy
   assert.equal(ssh.history.length, 0, 'no remote exec should have been recorded');
 });
 
-// T016's install-app equivalent (R6): the override warning must be logged
+// T016's install-app equivalent (R6): the override notice must be logged
 // before the remote update exec runs, whenever the resolved source also
 // shadows an upstream copy of the same slug.
-test('runUpdateApp logs the R6 override warning when the custom source shadows an upstream copy', async () => {
+test('runUpdateApp logs the R7 override notice when the custom source shadows an upstream copy', async () => {
   const slug = 'demo-shop';
   const inventoryWithDemoShop: Inventory = { ...inventoryWithCustomSource, guests: [{ name: slug, type: 'lxc', vmid: 105, host: 'pve1' }] };
   const fetchImpl = (async (url: unknown) => {
@@ -207,11 +207,52 @@ test('runUpdateApp logs the R6 override warning when the custom source shadows a
     console.log = originalLog;
     console.error = originalError;
   }
-  assert.ok(lines.length > 0, 'expected the override warning to be logged');
+  assert.ok(lines.length > 0, 'expected the override notice to be logged');
   assert.match(
     lines[0],
-    /^\[WARN\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\), which overrides the upstream copy in ProxmoxVE\. Unset customScriptsRepo\/customScriptsBranch with set-config to use upstream\.$/
+    /^\[INFO\s+\S+ \S+\] "demo-shop" is installing from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
   );
+});
+
+// issue #15 US2: the captured diverged fixture's demo-wiki conflicts with
+// upstream (absent at the merge base, present on ProxmoxVED main); the
+// update warns first and still curls the fork.
+test('runUpdateApp logs the rebase warning first for a conflicting app and still updates from the fork', async () => {
+  const slug = 'demo-wiki';
+  const divergedBody = readFileSync(path.join(fixtureDir, 'compare-diverged-conflict.json'), 'utf8');
+  const mergeBase = (JSON.parse(divergedBody) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
+  const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === COMPARE_URL) return new Response(divergedBody, { status: 200 });
+    if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response(null, { status: 404 });
+    if (href === vedRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === vedRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === vedRaw(mergeBase, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
+    if (href === vedRaw(mergeBase, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+  const guests: Inventory['guests'] = [{ name: slug, type: 'lxc', vmid: 105, host: 'pve1' }];
+
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+  console.error = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+  let result: Awaited<ReturnType<typeof runUpdateApp>>;
+  try {
+    result = await runUpdateApp(
+      { guest: slug, app: slug, fetchImpl },
+      { ssh: new FakeSSHClient(defaultResponder), inventory: { ...inventoryWithCustomSource, guests } }
+    );
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+  assert.match(lines[0], /^\[WARN\s+\S+ \S+\] "demo-wiki" changed upstream in ProxmoxVED since .* Rebase my-apps onto upstream main/);
+  assert.equal(result.source.conflict, true);
+  assert.ok(result.script.includes(`bash -c "$(curl -fsSL ${shellQuote(customCtUrl(slug))})"`), result.script);
 });
 
 // issue #15 US1: an app the branch doesn't change, and that upstream has,

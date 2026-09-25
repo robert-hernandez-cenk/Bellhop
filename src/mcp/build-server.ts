@@ -131,7 +131,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'list_install_apps',
     {
       description:
-        'The cached community-scripts app catalog usable with install_app. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), the response also carries a custom group listing that fork branch\'s own ct/ scripts -- already removed from stable/dev -- plus which upstream repo(s) each overrides.',
+        'The cached community-scripts app catalog usable with install_app. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), the response also carries a custom group listing only the apps that fork branch changes relative to upstream ProxmoxVED -- already removed from stable/dev -- plus which upstream repo(s) each overrides and, in conflicts, which ones upstream also changed since the branch point.',
       inputSchema: {},
     },
     async () => {
@@ -144,7 +144,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'check_install_app',
     {
       description:
-        "Resolve an install_app slug or URL: whether it exists, dev-repo status, the script's recommended sizing and port, and any interactive prompts it contains. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), also resolves against that fork branch first -- the response then carries custom (label, pinned commit sha) and, if the slug also exists upstream, shadows (which upstream repo(s) it overrides). A resolution failure (bad settings, GitHub unreachable) comes back as exists: false plus error, rather than throwing.",
+        "Resolve an install_app slug or URL: whether it exists, dev-repo status, the script's recommended sizing and port, and any interactive prompts it contains. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), an app the fork branch changes resolves to that branch (as does an app only the fork has); every other app resolves upstream as usual. A fork resolution carries custom (label, pinned commit sha), shadows when the slug also exists upstream (which upstream repo(s) it overrides), and conflict: true when upstream also changed the app since the branch point (the install still uses the fork; tell the user to rebase the branch). A resolution failure (bad settings, GitHub unreachable) comes back as exists: false plus error, rather than throwing.",
       inputSchema: { app: z.string().describe('App slug or full script URL') },
     },
     async (args: { app: string }) => {
