@@ -59,8 +59,7 @@ export async function runRemote(
       return ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
     }
     case 'vm': {
-      const timeoutSeconds = VM_EXEC_TIMEOUT_SECONDS;
-      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${timeoutSeconds} -- sh -c ${shellQuote(command)}`;
+      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${VM_EXEC_TIMEOUT_SECONDS} -- sh -c ${shellQuote(command)}`;
       const result = await ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
       if (result.code !== 0) {
         // ssh/qm itself failed (e.g. connection failure) -- no JSON to parse.
@@ -106,7 +105,7 @@ export async function runRemote(
         const pidNote = typeof parsed.pid === 'number' ? ` (pid ${parsed.pid})` : '';
         return {
           stdout: '',
-          stderr: `qm guest exec timed out after ${timeoutSeconds}s; the command is still running in the guest${pidNote}`,
+          stderr: `qm guest exec timed out after ${VM_EXEC_TIMEOUT_SECONDS}s; the command is still running in the guest${pidNote}`,
           code: 1,
         };
       }
