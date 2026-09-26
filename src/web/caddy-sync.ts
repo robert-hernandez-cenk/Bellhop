@@ -10,6 +10,7 @@ import { logInfo, logWarn } from '../lib/log.ts';
 import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
 import { runPruneAcmeChallenges } from '../commands/networking/prune-acme-challenges.ts';
+import { getDriver } from '../lib/proxy/index.ts';
 
 export interface SyncCaddyLiveResult {
   // Slug conflicts reported by sync-authentik: entries with an authGroup set
@@ -46,12 +47,26 @@ export interface SyncCaddyLiveResult {
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
 
+// The prune only ever makes sense for a driver that issues certs via ACME
+// DNS-01 through Cloudflare (Caddy's own hardcoded TLS_BLOCK, today) --
+// issue #10, T016. A driver without that capability never leaves stale
+// _acme-challenge TXT records behind in the first place, so there is
+// nothing here for this step to clean up.
+export function pruneAcmeDriverSkipMessage(driverId: string): string {
+  return `prune-acme-challenges: skipped, the '${driverId}' proxy driver does not use ACME DNS-01 via Cloudflare`;
+}
+
 // Last step of the push-live sequence (issue #162). Every failure is turned
 // into a warning: a stale TXT record is harmless, so a Cloudflare outage or a
 // bad token must never fail the Dashboard edit or provisioning job that
 // triggered this. Nothing is added to SyncCaddyLiveResult -- there is no
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
+  const driver = getDriver(inventory);
+  if (!driver.capabilities.acmeDns01ViaCloudflare) {
+    logInfo(pruneAcmeDriverSkipMessage(driver.id));
+    return;
+  }
   if (!cloudflare.isConfigured()) {
     logInfo(PRUNE_ACME_SKIP_MESSAGE);
     return;

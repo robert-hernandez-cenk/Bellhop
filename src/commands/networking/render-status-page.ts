@@ -1,9 +1,10 @@
 import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
-import { findCaddyEntry } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { confirmOrDryRun } from '../../lib/dry-run.ts';
 import { shellQuote } from '../../lib/ssh-client.ts';
+import { getDriver, driverDeps } from '../../lib/proxy/index.ts';
+import type { DriverDeps } from '../../lib/proxy/driver.ts';
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -57,6 +58,14 @@ export interface RenderStatusPageOptions {
 // operator who hasn't set statusPagePath never gets an index.html written
 // anywhere (see syncCaddyLive in src/web/caddy-sync.ts for the web push-live
 // step, which skips this instead of throwing).
+//
+// Reads the live-deployed config through the active driver's own
+// snapshot() (issue #10, T014) rather than a hardcoded `cat` of a Caddyfile
+// path -- so this page shows whatever the active driver actually manages,
+// and its own failure message ("Failed to read the deployed proxy
+// configuration from '<host>': …") comes from that one shared
+// implementation (src/lib/proxy/file-driver.ts) instead of being
+// duplicated here.
 export async function runRenderStatusPage(
   opts: RenderStatusPageOptions,
   deps: { ssh: SSHClient; inventory: Inventory },
@@ -68,28 +77,22 @@ export async function runRenderStatusPage(
       'statusPagePath is not set -- run: bellhop set-config statusPagePath </absolute/path> --apply'
     );
   }
-  const caddyHost = findCaddyEntry(deps.inventory)?.name;
-  if (!caddyHost) {
-    throw new Error("No inventory entry has 'caddy: true'");
-  }
-  // Reads whichever Caddyfile sync-caddy writes to, rather than assuming
-  // /etc/caddy/Caddyfile -- otherwise this page can display a different
-  // file than the one syncCaddyLive just updated in the same step.
-  const caddyfilePath = opts.caddyfilePath ?? '/etc/caddy/Caddyfile';
 
-  const caddyfileResult = await runRemote(
-    deps.ssh,
-    deps.inventory,
-    caddyHost,
-    `cat ${shellQuote(caddyfilePath)}`
-  );
-  if (caddyfileResult.code !== 0) {
-    throw new Error(
-      `Failed to read the active Caddyfile from ${caddyHost} (exit ${caddyfileResult.code}): ${caddyfileResult.stderr || caddyfileResult.stdout}`
-    );
+  const driver = getDriver(deps.inventory);
+  const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);
+  // Until T021 (a later batch), opts.caddyfilePath (fed by the CLI's own
+  // CADDYFILE_PATH env var) still overrides the resolved configPath -- same
+  // convention sync-caddy.ts's runSyncCaddy uses -- so this page can never
+  // display a different file than the one syncCaddyLive/the CLI just wrote
+  // in the same run.
+  if (opts.caddyfilePath) {
+    resolvedDeps.configPath = opts.caddyfilePath;
   }
+  const caddyHost = resolvedDeps.proxyHost;
 
-  const html = buildStatusPageHtml(hostsYamlText, caddyfileResult.stdout);
+  const activeConfig = await driver.snapshot(resolvedDeps);
+
+  const html = buildStatusPageHtml(hostsYamlText, activeConfig);
 
   const applied = confirmOrDryRun(`Would write status page to ${caddyHost}:${statusPagePath}`, opts.apply ?? false);
   if (applied) {

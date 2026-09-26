@@ -57,7 +57,7 @@ test('runRenderStatusPage throws when reading the active Caddyfile fails', async
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'no such file', code: 1 }));
   await assert.rejects(
     () => runRenderStatusPage({}, { ssh, inventory }, 'domain: example.com'),
-    /Failed to read the active Caddyfile from pve1 \(exit 1\): no such file/
+    /Failed to read the deployed proxy configuration from 'pve1': no such file/
   );
 });
 

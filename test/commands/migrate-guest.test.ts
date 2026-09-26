@@ -319,7 +319,7 @@ function happyPathResponder(overrides: Record<string, { stdout: string; stderr: 
     if (cmd.startsWith('pct config') || cmd.startsWith('qm config')) {
       return { stdout: cmd.startsWith('pct') ? RESTORED_NET0 : RESTORED_IPCONFIG0, stderr: '', code: 0 };
     }
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable's pre-flight probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable's pre-flight probe: free
     if (cmd.includes('status')) {
       // Every plain `pct status`/`qm status` call (the post-vzdump
       // source-guest check and the verify-running poll) reports a genuine,
@@ -352,7 +352,7 @@ function happyPathResponder(overrides: Record<string, { stdout: string; stderr: 
 function orderedStatusResponder(sourceVmid: number, targetVmid: number, opts: { sourceRunning?: boolean } = {}) {
   const sourceRunning = opts.sourceRunning ?? true;
   return (_target: string, _user: string, cmd: string) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     if (cmd === `pct status ${sourceVmid}` || cmd === `qm status ${sourceVmid}`) {
       return sourceRunning
         ? { stdout: 'status: running', stderr: '', code: 0 }
@@ -446,7 +446,7 @@ test('runMigrateGuest apply backs up, stops the source guest, restores under the
 
 test('runMigrateGuest apply throws and never reaches restore when stopping the still-running source guest fails', async () => {
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: running', stderr: '', code: 0 }; // source still running
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd === 'pct stop 4012') return { stdout: '', stderr: 'container is locked', code: 1 };
@@ -469,7 +469,7 @@ test('runMigrateGuest apply throws and never reaches restore when the post-backu
   // stdout must not be silently read as "not running" -- if we can't prove
   // the source guest is stopped, we must not proceed to restore.
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: '', stderr: 'unable to get PID for CT 4012', code: 2 }; // probe itself failed
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd.startsWith('pct restore')) throw new Error('restore must never run when the source status probe fails');
@@ -502,7 +502,7 @@ test('runMigrateGuest apply skips the stop step when the source guest already re
 test('runMigrateGuest apply preserves a non-default gw= (e.g. a VPN-gateway-routed guest) when rewriting net0', async () => {
   const vpnRoutedNet0 = 'net0: name=eth0,bridge=vmbr0,gw=192.168.1.30,hwaddr=BC:24:11:AA:BB:CC,ip=192.168.1.12/16,type=veth\n';
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: stopped', stderr: '', code: 0 }; // source already stopped
     if (cmd === 'pct status 5012') return { stdout: 'status: running', stderr: '', code: 0 }; // verify poll
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
@@ -525,7 +525,7 @@ test('runMigrateGuest apply preserves a non-default gw= (e.g. a VPN-gateway-rout
 
 test('runMigrateGuest apply throws a clear error when the restored guest has no net0 in its config', async () => {
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: stopped', stderr: '', code: 0 };
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd.startsWith('pct config')) return { stdout: 'arch: amd64\nostype: debian', stderr: '', code: 0 }; // no net0 line
@@ -641,7 +641,7 @@ test('runMigrateGuest apply retries the verify-running poll before giving up', a
   const sleeps: number[] = [];
   let pollCalls = 0;
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: stopped', stderr: '', code: 0 }; // source already stopped -- Fix 1 no-op
     if (cmd === 'pct status 5012') {
       pollCalls += 1;
@@ -666,7 +666,7 @@ test('runMigrateGuest apply retries the verify-running poll before giving up', a
 
 test('runMigrateGuest apply throws after exhausting the verify-running retry budget, and never destroys the source guest', async () => {
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     // I1: a genuine `pct status <vmid>` probe of an existing guest reports
     // exit 0 regardless of running/stopped -- Fix 1's source-guest check
     // must see a real, successful "stopped" report here, not a bare
@@ -724,7 +724,7 @@ test('runMigrateGuest never destroys the source guest when verification fails, a
     // Exact match, not startsWith -- see the equivalent comment in Task 3's
     // "exhausts verify-running retry budget" test for why startsWith would
     // misclassify checkVmidAvailable's own compound probe command here.
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     // I1: the source-guest status check needs a genuine successful "stopped"
     // report (exit 0), not a bare non-zero exit -- see the dedicated
     // "post-backup source status probe itself fails" test for that case.

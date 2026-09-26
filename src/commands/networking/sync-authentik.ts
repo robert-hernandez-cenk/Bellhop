@@ -10,6 +10,7 @@ import type {
 import type { Inventory } from '../../lib/inventory.ts';
 import { effectiveAuth } from '../../lib/inventory.ts';
 import { authentikConfig, rungsAtOrAbove } from '../../lib/authentik-config.ts';
+import { publicHostname } from '../../lib/hostname.ts';
 
 export interface SyncAuthentikOptions {
   apply?: boolean;
@@ -276,7 +277,7 @@ function candidateEntries(inventory: Inventory): CandidateEntry[] {
     const slug = subdomains[0];
     result.push({
       slug,
-      externalHost: `https://${slug}.${inventory.domain}`,
+      externalHost: `https://${publicHostname(slug, inventory.domain)}`,
       authGroup: owner.authGroup,
       authMode: owner.authMode,
       oidcRedirectUris: owner.oidcRedirectUris,

@@ -9,6 +9,8 @@ import { CONFLICT_EXPLANATION, OAUTH2_CONFLICT_EXPLANATION } from '../../src/com
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/caddy-sync.ts';
+import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
+import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -227,6 +229,47 @@ test('syncCaddyLive logs a skip line and makes no Cloudflare call when Cloudflar
   );
   assert.ok(logs.info.some((l) => l.includes(PRUNE_ACME_SKIP_MESSAGE)));
   assert.equal(logs.warn.some((l) => l.includes('prune-acme-challenges')), false);
+});
+
+// A minimal fake driver, same shape/convention as
+// test/lib/proxy/index.test.ts's own fakeDriver -- id is cast through
+// Inventory['proxyDriver'] since PROXY_DRIVER_IDS only lists 'caddy' this
+// round (src/lib/proxy/ids.ts), and this test needs a second, test-only id
+// to exercise the registry without touching the real driver list.
+function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
+  return {
+    id: id as ReverseProxyDriver['id'],
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    defaultConfigPath: '/etc/fake/fake.conf',
+    async plan(): Promise<ProxyPlan> {
+      return { preview: '', payload: undefined };
+    },
+    async apply(): Promise<void> {},
+    async snapshot(): Promise<string> {
+      return '';
+    },
+  };
+}
+
+test('syncCaddyLive skips the prune step (no Cloudflare calls) when the active driver does not support ACME DNS-01 via Cloudflare', async () => {
+  const fake = fakeDriverWithoutAcme('fake-driver-no-acme-t016');
+  const unregister = registerDriverForTests(fake);
+  try {
+    const noStatusPage: Inventory = {
+      ...inventory,
+      statusPagePath: undefined,
+      proxyDriver: fake.id as Inventory['proxyDriver'],
+    };
+    const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+    const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+    const logs = await captureLogs(() =>
+      syncCaddyLive({ ssh, inventory: noStatusPage, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+    );
+    assert.deepEqual(cloudflare.history, [], 'the active driver has no ACME DNS-01-via-Cloudflare capability, so the prune never runs');
+    assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes(fake.id)));
+  } finally {
+    unregister();
+  }
 });
 
 test('syncCaddyLive treats an omitted cloudflare dep as unconfigured', async () => {
