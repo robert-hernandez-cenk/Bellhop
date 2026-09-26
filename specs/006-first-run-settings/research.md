@@ -16,7 +16,7 @@ No `NEEDS CLARIFICATION` items came out of Technical Context. The decisions belo
 ## R3. Shape of the shared fix phrase
 
 - **Decision**: `settingFix(key, valueHint)` returns `run: bellhop set-config <key> <valueHint> --apply, or set it on the web UI's Settings page`. Callers keep their own leading `<key> is not set --` and any context such as `-- skipping NFS mount discovery`.
-- **Rationale**: each message's lead-in already differs (skip vs. fail), so only the fix is shared. Existing tests match the `<key> is not set` prefix, so those assertions keep holding. "web UI's Settings page" names the front end for CLI readers. `app-source.ts` says "on the Settings page" in a message that is only shown alongside other Settings-page context, and it stays out of scope (spec Assumptions).
+- **Rationale**: each message's lead-in already differs (skip vs. fail), so only the fix is shared. Existing tests match the `<key> is not set` prefix, so those assertions keep holding. "web UI's Settings page" names the front end for CLI readers. `app-source.ts`'s half-configured message also moves onto this shared helper, and its other custom-repository errors also name the Settings page (issue #20 code review).
 - **Alternatives considered**:
   - A helper that builds the whole message. The lead-ins vary too much for that.
   - Also naming the MCP server. It has no settings tool; `set-config` is exposed there as an operation, so the CLI wording already covers it.

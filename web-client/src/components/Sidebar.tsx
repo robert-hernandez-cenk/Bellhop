@@ -22,7 +22,9 @@ export function Sidebar() {
   const [impersonateError, setImpersonateError] = useState<string | null>(null);
 
   const isAdmin = !!whoami?.isAdmin;
-  // Everything below needs Authentik's REST API, not just an identity.
+  // Gates Users, Permissions, and the impersonation picker, which need
+  // Authentik's REST API, not just an identity -- Settings needs only
+  // admin (see adminNavLinks).
   const hasDirectory = !!whoami?.capabilities.userDirectory;
 
   useEffect(() => {

@@ -1384,7 +1384,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   *does* throw (unknown/private repo, unknown branch, not a ProxmoxVED
   fork, a GitHub error status or rate limit, an unreachable network) names
   the configured `customScriptsRepo`/`customScriptsBranch` and points at
-  `set-config`, and — per FR-008 — never silently falls back to upstream.
+  `set-config` and the Settings page, and — per FR-008 — never silently
+  falls back to upstream.
   The upstream base is fixed to `community-scripts/ProxmoxVED@main`, a
   single-deployment-shape assumption #11 already made (a VED-shaped fork). `buildInstallAppScript`/`buildUpdateAppScript`
   branch on `source.kind === 'custom'`: the generated script curls

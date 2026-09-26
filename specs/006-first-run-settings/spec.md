@@ -94,7 +94,7 @@ A new operator opens the Settings page on a fresh inventory with no `caddy: true
 ## Assumptions
 
 - Settings, like today, needs only admin rights, not Authentik. The server already allows it for the local operator.
-- The phrase pointing at the web UI follows the wording `src/lib/app-source.ts` already uses ("or on the Settings page").
+- The phrase pointing at the web UI uses the shared `settingFix()` helper's wording ("or set it on the web UI's Settings page"), and `src/lib/app-source.ts` uses that same wording too.
 - Message changes alter only the text. The conditions under which each message appears stay the same.
-- `app-source.ts`'s own custom-repository messages already mention the Settings page and are out of scope.
+- `app-source.ts`'s half-configured message also moves onto the shared `settingFix()` helper, and its other custom-repository errors also name the Settings page (issue #20 code review).
 - Non-goals: changing which settings exist, their validation, Users/Permissions gating, impersonation gating, or any authentication behavior.

@@ -12,7 +12,7 @@
 
 Paths: `/users`, `/permissions`, `/settings`. The Sidebar renders the "Admin" group label only when the result is non-empty.
 
-## `settingFix(key: SettingKey, valueHint: string): string`
+## `settingFix(key: keyof Settings, valueHint: string): string`
 
 `src/lib/settings-hint.ts`
 
@@ -33,6 +33,7 @@ Messages after this change (lead-ins unchanged):
 | migrate-guest | `backupStorage is not set -- ${settingFix('backupStorage', '<storage-id>')}, or pass --backup-storage` |
 | render-status-page (skip) | `statusPagePath is not set -- skipping the status page render -- ${settingFix('statusPagePath', '</absolute/path>')}` |
 | render-status-page (throw) | `statusPagePath is not set -- ${settingFix('statusPagePath', '</absolute/path>')}` |
+| app-source.ts half-configured | `${missing} is not set (${present} is) -- ${settingFix(missing, '<value>')}, or unset ${present}` |
 
 ## Settings page text (`web-client/src/lib/settings-display.ts`)
 

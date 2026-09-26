@@ -70,12 +70,15 @@ things like discover NFS mounts right away instead of skipping that scan
 and printing a reminder:
 
 ```bash
-bellhop set-config nfsServer <ip> --apply
+npm run bellhop -- set-config nfsServer <ip> --apply
 ```
 
 The web UI's Settings page sets the same values, for anyone who'd rather
 not use the CLI. See "Inventory-wide settings" below for the full list and
-what happens when a value stays unset.
+what happens when a value stays unset. If you're hand-editing
+`inventory/hosts.yaml` for `import-yaml-inventory` instead, these keys can
+go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
+`statusPagePath` keys in `inventory/hosts.yaml.example`.
 
 ## Usage
 

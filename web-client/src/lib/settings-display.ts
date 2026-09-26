@@ -6,10 +6,9 @@
 // or nothing at all -- see contracts/ui-and-messages.md ("Settings page
 // text").
 
-export interface CaddyHost {
-  name: string;
-  ip: string;
-}
+import type { SettingsResponse } from '../api/types.ts';
+
+export type CaddyHost = NonNullable<SettingsResponse['derived']['caddy']>;
 
 export function caddyHostText(caddy: CaddyHost | null): string {
   if (!caddy) return 'not set — no inventory entry has caddy: true with an IP yet';
