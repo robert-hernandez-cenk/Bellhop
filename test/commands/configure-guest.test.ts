@@ -16,6 +16,29 @@ test('runConfigureGuest requires at least one of --packages or --ssh-key', async
   await assert.rejects(() => runConfigureGuest({ guest: 'media' }, { ssh, inventory }), /Specify at least one/);
 });
 
+// Final fix wave F3: a whitespace-only --packages value is truthy, so
+// without this check the command used to probe the guest and then install
+// nothing (INSTALL_COMMANDS with an empty quoted-argument list). Blank/
+// whitespace-only packages must be treated as not given at all.
+test('runConfigureGuest treats a whitespace-only --packages as not given, throwing when --ssh-key is also absent', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', packages: '   ' }, { ssh, inventory }),
+    /Specify at least one of --packages or --ssh-key/
+  );
+  assert.equal(ssh.history.length, 0, 'no probe call for a blank --packages value');
+});
+
+test('runConfigureGuest skips the packages step for a whitespace-only --packages when --ssh-key is given', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await runConfigureGuest(
+    { guest: 'media', packages: '  ', sshKey: 'ssh-ed25519 AAAA test', apply: true },
+    { ssh, inventory }
+  );
+  assert.equal(ssh.history.length, 1, 'only the ssh-key command runs -- no probe, no install');
+  assert.match(ssh.history[0].command, /authorized_keys/);
+});
+
 test('runConfigureGuest rejects an unknown guest', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   await assert.rejects(

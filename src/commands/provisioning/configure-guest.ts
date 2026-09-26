@@ -17,7 +17,12 @@ export async function runConfigureGuest(
   opts: ConfigureGuestOptions,
   deps: { ssh: SSHClient; inventory: Inventory }
 ): Promise<void> {
-  if (!opts.packages && !opts.sshKey) {
+  // A whitespace-only value (e.g. `--packages "  "`) is truthy but names no
+  // package -- treat it as not given at all, the same as an omitted flag,
+  // rather than probing the guest and then installing nothing.
+  const packages = opts.packages?.trim() ? opts.packages.trim() : undefined;
+
+  if (!packages && !opts.sshKey) {
     throw new Error('Specify at least one of --packages or --ssh-key');
   }
   const entryExists =
@@ -26,7 +31,7 @@ export async function runConfigureGuest(
     throw new Error(`Unknown inventory entry: ${opts.guest}`);
   }
 
-  if (opts.packages) {
+  if (packages) {
     // Detection runs in dry run too (like create-lxc/install-app's own live
     // previews), so the preview names the exact command apply would send.
     const detection = await detectPackageManager(deps.ssh, deps.inventory, opts.guest);
@@ -40,7 +45,7 @@ export async function runConfigureGuest(
       );
     }
     const pm = detection.pm;
-    const quoted = opts.packages.trim().split(/\s+/).map(shellQuote).join(' ');
+    const quoted = packages.split(/\s+/).map(shellQuote).join(' ');
     const cmd = INSTALL_COMMANDS[pm](quoted);
     if (confirmOrDryRun(`Would install on ${opts.guest} (${pm}): ${cmd}`, opts.apply ?? false)) {
       const result = await runRemote(deps.ssh, deps.inventory, opts.guest, cmd);

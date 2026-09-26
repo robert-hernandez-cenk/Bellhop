@@ -120,6 +120,9 @@ bellhop migrate-guest --guest media --to-host pve2 --mid 15 --backup-storage nas
 the exact install command it would run (e.g. `[DRY RUN] Would install on
 media (apk): apk update && apk add 'curl' 'vim'`). An unrecognized OS, a
 failed probe, or a failed install all exit 1 rather than reporting success.
+On Arch, the install runs `pacman -Syu`, so it also upgrades the whole
+system alongside the requested packages — Arch supports no partial
+upgrade.
 
 `--mid <N>` (1-254) is required by `create-lxc`, `create-vm`, and
 `install-app`. It derives both the VMID and the guest's IP/gateway from the
