@@ -2,6 +2,72 @@ import type { Inventory, HostEntry, GuestEntry } from './inventory.ts';
 import type { SSHClient, ExecResult, SshTarget } from './ssh-client.ts';
 import { shellQuote } from './ssh-client.ts';
 
+// `qm guest exec --timeout <N>`'s own N -- named so runRemote's command
+// string and its timeout-envelope failure message (see the `vm` branch of
+// runRemote below) can never drift apart.
+const VM_EXEC_TIMEOUT_SECONDS = 60;
+
+// `qm guest exec`'s JSON output embeds a completed command's own stdout/
+// stderr as a raw substring inside its "out-data"/"err-data" string values,
+// without escaping any control character (newline, CR, tab) the command
+// itself printed -- verified live 2026-09-26: the captured "completed with
+// non-zero exit" envelope (`sh -c 'echo ok; exit 3'`) carries a literal,
+// unescaped newline between `"ok` and the closing `"` of `"out-data"`,
+// which is not strict JSON -- `JSON.parse` throws "Bad control character in
+// string literal" on it outright, even though the command actually
+// succeeded in producing that output. Since virtually every real command's
+// output ends in a newline (`echo` alone always adds one), parsing this
+// envelope with a bare `JSON.parse` would misreport most completed guest
+// commands as unparseable. This walks the raw text once, tracking whether
+// it is inside a JSON string literal (respecting `\"` escapes), and
+// re-escapes any literal control character found there before handing the
+// result to `JSON.parse` -- a no-op on already-strict JSON (e.g. anything
+// built with `JSON.stringify`), and still lets genuinely malformed output
+// fail to parse.
+function sanitizeGuestExecEnvelope(raw: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (const ch of raw) {
+    if (inString) {
+      if (escaped) {
+        out += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        out += ch;
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+      if (ch === '\n') {
+        out += '\\n';
+        continue;
+      }
+      if (ch === '\r') {
+        out += '\\r';
+        continue;
+      }
+      if (ch === '\t') {
+        out += '\\t';
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 export type ResolvedTarget =
   | { kind: 'pve'; host: HostEntry }
   | { kind: 'lxc' | 'vm'; guest: GuestEntry; parentHost: HostEntry };
@@ -54,22 +120,38 @@ export async function runRemote(
       return ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
     }
     case 'vm': {
-      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout 60 -- sh -c ${shellQuote(command)}`;
+      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${VM_EXEC_TIMEOUT_SECONDS} -- sh -c ${shellQuote(command)}`;
       const result = await ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
       if (result.code !== 0) {
         // ssh/qm itself failed (e.g. connection failure) -- no JSON to parse.
         return result;
       }
-      let parsed: { exitcode?: number; 'out-data'?: string; 'err-data'?: string };
+      let parsed: { pid?: number; exitcode?: number; 'out-data'?: string; 'err-data'?: string };
       try {
-        parsed = JSON.parse(result.stdout);
+        parsed = JSON.parse(sanitizeGuestExecEnvelope(result.stdout));
       } catch {
-        parsed = {};
+        return {
+          stdout: '',
+          stderr: `qm guest exec output could not be parsed as JSON: ${result.stdout.trim()}`,
+          code: 1,
+        };
+      }
+      if (typeof parsed.exitcode !== 'number') {
+        // `--timeout <N>` elapsed before the command finished: `qm guest
+        // exec` returns a pid-only envelope with no `exitcode` at all, and
+        // the command is still running in the guest -- this is a failure,
+        // not the success the old `parsed.exitcode ?? 0` silently reported.
+        const pidNote = typeof parsed.pid === 'number' ? ` (pid ${parsed.pid})` : '';
+        return {
+          stdout: '',
+          stderr: `qm guest exec timed out after ${VM_EXEC_TIMEOUT_SECONDS}s; the command is still running in the guest${pidNote}`,
+          code: 1,
+        };
       }
       return {
         stdout: parsed['out-data'] ?? '',
         stderr: parsed['err-data'] ?? '',
-        code: parsed.exitcode ?? 0,
+        code: parsed.exitcode,
       };
     }
   }

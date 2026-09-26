@@ -365,7 +365,29 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   branch and was never wrapped either way. `qm guest exec`'s always-exits-0-on-successful-agent-call
   quirk (the real exit code and output are a JSON envelope on stdout,
   `{"exitcode":N,"out-data":"...","err-data":"..."}`) is parsed and
-  translated into the real `ExecResult` by `runRemote`'s `vm` branch.
+  translated into the real `ExecResult` by `runRemote`'s `vm` branch, with a
+  timeout named as a constant (`VM_EXEC_TIMEOUT_SECONDS`, 60, used to build
+  both the `--timeout` flag and the failure message below) rather than a
+  bare literal repeated in two places. Two envelope shapes besides the
+  normal `{"exitcode":...}` one are reported as failures (`code: 1`), never
+  silently coerced to success the way an old `parsed.exitcode ?? 0` used
+  to: a command that outlives that 60s wait gets a pid-only envelope with
+  no `exitcode` at all (`{"pid":N}`) — the command is still running in the
+  guest when `qm guest exec` gives up waiting on it — and one that fails to
+  parse as JSON at all. Before parsing, the raw stdout is run through
+  `sanitizeGuestExecEnvelope`, which walks it once re-escaping any literal
+  control character (newline, CR, tab) found inside a JSON string literal —
+  discovered live capturing a real completed-with-output envelope (issue
+  #2's final review): `qm guest exec` embeds a command's own stdout/stderr
+  as a raw substring inside `"out-data"`/`"err-data"` without escaping the
+  newlines the command itself printed, which is not strict JSON and makes
+  a bare `JSON.parse` throw "Bad control character in string literal" on
+  virtually any completed command with output (`echo` alone always ends in
+  one) — without this pass, the timeout/unparseable handling above would
+  misreport most successful VM commands as unparseable failures instead.
+  It is a no-op on already-strict JSON (anything built with
+  `JSON.stringify`, as every hand-authored test fixture is), so it only
+  ever changes behavior for this one real quirk.
   `Ssh2SSHClient.exec()` (`src/lib/ssh-client.ts`) authenticates the same way
   a plain `ssh`/git-bash client does when no agent is running: it reads a
   default identity file directly (`~/.ssh/id_ed25519`, `id_ecdsa`, or

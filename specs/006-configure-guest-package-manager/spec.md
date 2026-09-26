@@ -102,6 +102,9 @@ command exits non-zero.
 - When both `--packages` and `--ssh-key` are given and the package step fails, the SSH key step
   does not run; the command fails at the first failure.
 - A package name containing shell metacharacters is still passed as a single quoted argument.
+- A VM guest command that outlives `qm guest exec`'s 60s wait is reported as a failure naming
+  the timeout, not a success — this applies to every command routed to a VM through `runRemote`,
+  including `update-all`, not just `configure-guest`.
 
 ## Requirements *(mandatory)*
 
@@ -127,6 +130,9 @@ command exits non-zero.
 - **FR-009**: The web UI and MCP `configure-guest` operation MUST pick up the new behavior
   without an interface change: preview shows the manager-specific command, and a failure fails
   the job.
+- **FR-010**: A VM guest command that outlives `qm guest exec`'s 60s wait MUST be reported as a
+  failure naming the timeout, never as a success — `runRemote`'s `vm` branch MUST NOT treat a
+  timeout envelope (pid only, no `exitcode`) the same as a completed one.
 
 ### Key Entities
 

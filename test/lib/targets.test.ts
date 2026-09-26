@@ -74,6 +74,52 @@ test('runRemote returns the raw failure when ssh/qm itself fails for a vm target
   assert.equal(result.code, 255);
 });
 
+// Final fix wave F1: a command that outlives `qm guest exec`'s --timeout 60
+// returns a pid-only envelope with no `exitcode` at all -- the old
+// `parsed.exitcode ?? 0` silently reported that as a successful command while
+// it was still running in the guest. Captured live 2026-09-26 through
+// Ssh2SSHClient.exec on the parent host (pid redacted to 12345, shape
+// unchanged): `qm guest exec <vmid> --timeout 2 -- sh -c 'sleep 5; echo done'`.
+test('runRemote reports a vm guest exec timeout envelope (pid only, no exitcode) as a failure naming the pid', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "pid" : 12345\n}\n',
+    stderr: 'timeout reached, returning pid\n',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', "sleep 5; echo done");
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(
+    result.stderr,
+    'qm guest exec timed out after 60s; the command is still running in the guest (pid 12345)'
+  );
+  assert.match(ssh.history[0].command, /--timeout 60 --/);
+});
+
+// Captured live 2026-09-26: `qm guest exec <vmid> --timeout 60 -- sh -c
+// 'echo ok; exit 3'` -- a normal completed-with-nonzero-exit envelope, using
+// the captured shape verbatim rather than a hand-authored fixture.
+test('runRemote parses the captured completed-nonzero-exit envelope verbatim', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "exitcode" : 3,\n   "exited" : 1,\n   "out-data" : "ok\n"\n}\n',
+    stderr: '',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'echo ok; exit 3');
+  assert.equal(result.code, 3);
+  assert.equal(result.stdout, 'ok\n');
+  assert.equal(result.stderr, '');
+});
+
+test('runRemote reports an unparseable vm guest exec envelope as a failure including the trimmed raw stdout', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '  not json at all  ', stderr: '', code: 0 }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'echo hi');
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /qm guest exec output could not be parsed as JSON/);
+  assert.match(result.stderr, /not json at all/);
+});
+
 test('selectTargets --host validates existence', () => {
   assert.deepEqual(selectTargets(inventory, { host: 'media' }), ['media']);
   assert.throws(() => selectTargets(inventory, { host: 'nope' }), /Unknown host\/guest: nope/);
