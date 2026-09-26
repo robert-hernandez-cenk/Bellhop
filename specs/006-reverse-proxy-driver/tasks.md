@@ -106,11 +106,11 @@ Inventory field names stay `caddy`/`caddyManual` throughout this phase; the rena
 
 - [x] T042 [P] `CLAUDE.md`: replace the `sync-caddy` bullet with a proxy-driver bullet (layers, capability check, file driver's validate-in-place/restore, Caddy driver as the only one), rename every `caddy: true`/`caddyManual`/`syncCaddyLive`/`CADDYFILE_PATH`/`sync-caddy` mention, document the #10 migration next to #158's (forward-only), and record the changed single-operator assumption (no longer tied to Caddy; `TLS_BLOCK` stays single-operator inside the Caddy driver).
 - [x] T043 [P] `CONTRIBUTING.md`: update any restated convention that names Caddy or `sync-caddy`.
-- [ ] T044 File the follow-up issue with `gh issue create` for a Caddy admin-API driver (label `enhancement`), summarising research.md R4 (requires `caddy-api.service` with `--resume`, `@id`-tagged routes, hand-authored sites move to JSON); example values only.
-- [ ] T045 Run `npm run typecheck`, `npm test`, `npm run web:build`; paste results.
-- [ ] T046 Quickstart section 3: read-only dry-run comparison against a temp copy of the deployment checkout's database; diff the preview against the deployed managed block; record "identical" (output not committed).
-- [ ] T047 Quickstart section 4: browser check of Dashboard, Advanced modal, Settings, and Maintenance at desktop width and at ≤640px against a temp inventory.
-- [ ] T048 Constitution Principle I scan of the full diff (`git diff main...HEAD`) for real hostnames, domains, IPs, or credentials.
+- [x] T044 File the follow-up issue with `gh issue create` for a Caddy admin-API driver (label `enhancement`), summarising research.md R4 (requires `caddy-api.service` with `--resume`, `@id`-tagged routes, hand-authored sites move to JSON); example values only.
+- [x] T045 Run `npm run typecheck`, `npm test`, `npm run web:build`; paste results.
+- [x] T046 Quickstart section 3: read-only dry-run comparison against a temp copy of the deployment checkout's database; diff the preview against the deployed managed block; record "identical" (output not committed).
+- [x] T047 Quickstart section 4: browser check of Dashboard, Advanced modal, Settings, and Maintenance at desktop width and at ≤640px against a temp inventory.
+- [x] T048 Constitution Principle I scan of the full diff (`git diff main...HEAD`) for real hostnames, domains, IPs, or credentials.
 
 ## Dependencies & execution order
 
