@@ -2,7 +2,7 @@ import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import { runRemote, selectTargets, type TargetSelector } from '../../lib/targets.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
-import { PROBE_COMMAND, UPDATE_COMMANDS, parsePackageManager } from '../../lib/package-manager.ts';
+import { UPDATE_COMMANDS, detectPackageManager, PROBED_COMMANDS } from '../../lib/package-manager.ts';
 import { errorMessage, formatFailureLines, type TargetFailure } from '../../lib/target-failure.ts';
 
 export interface UpdateAllResult {
@@ -31,11 +31,12 @@ export async function runUpdateAll(
       // Probe first, so nothing is ever attempted against a target whose
       // package manager we could not identify -- a `failCommand` caused by
       // running the wrong manager is exactly the bug this replaces.
-      const probe = await runRemote(deps.ssh, deps.inventory, target, PROBE_COMMAND);
-      if (probe.code !== 0) {
+      const detection = await detectPackageManager(deps.ssh, deps.inventory, target);
+      if (detection.kind === 'probe-failed') {
         // The shell ran but the probe itself broke. Not the same thing as an
         // unrecognized OS, so it belongs in failCommand rather than
         // failUnknownPm.
+        const probe = detection.result;
         logWarn(
           `Package-manager probe failed on ${target} (exit ${probe.code}): ${probe.stderr.trim() || 'no output'}`
         );
@@ -43,13 +44,13 @@ export async function runUpdateAll(
         continue;
       }
 
-      const pm = parsePackageManager(probe.stdout);
-      if (!pm) {
-        logWarn(`No known package manager on ${target} (tried apt-get, dnf, apk, pacman, zypper)`);
+      if (detection.kind === 'unknown') {
+        logWarn(`No known package manager on ${target} (tried ${PROBED_COMMANDS})`);
         failUnknownPm.push(target);
         continue;
       }
 
+      const pm = detection.pm;
       logInfo(`Updating ${target} (${pm})...`);
       const result = await runRemote(deps.ssh, deps.inventory, target, UPDATE_COMMANDS[pm]);
       if (result.code === 0) {

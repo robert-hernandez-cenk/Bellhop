@@ -1,3 +1,7 @@
+import type { Inventory } from './inventory.ts';
+import type { ExecResult, SSHClient } from './ssh-client.ts';
+import { runRemote } from './targets.ts';
+
 // The package managers `update-all` knows how to drive. `yum` is
 // deliberately absent -- a yum-only RHEL 7-era guest reports `unknown`
 // rather than being silently handled by a compatibility shim.
@@ -51,4 +55,52 @@ export function parsePackageManager(stdout: string): PackageManager | undefined 
     .filter((line) => line.length > 0);
   const last = lines[lines.length - 1];
   return PACKAGE_MANAGERS.find((pm) => pm === last);
+}
+
+// Shared, human-readable tried-list -- both update-all's unknown-OS warning
+// and UnknownPackageManagerError's message quote this exact string, so the
+// two can never drift apart.
+export const PROBED_COMMANDS = 'apt-get, dnf, apk, pacman, zypper';
+
+// The probe-then-classify sequence `update-all` and `configure-guest` both
+// need before they can do anything target-specific -- what differs between
+// them is the *reaction* to each outcome (a result bucket vs. a thrown
+// error), which is left to the caller. A connection-level failure is not a
+// variant here: runRemote throws, and it propagates to the caller uncaught,
+// exactly as it does today.
+export type DetectionResult =
+  | { kind: 'detected'; pm: PackageManager }
+  | { kind: 'unknown' }
+  | { kind: 'probe-failed'; result: ExecResult };
+
+export async function detectPackageManager(
+  ssh: SSHClient,
+  inv: Inventory,
+  target: string
+): Promise<DetectionResult> {
+  const result = await runRemote(ssh, inv, target, PROBE_COMMAND);
+  if (result.code !== 0) {
+    return { kind: 'probe-failed', result };
+  }
+  const pm = parsePackageManager(result.stdout);
+  if (!pm) {
+    return { kind: 'unknown' };
+  }
+  return { kind: 'detected', pm };
+}
+
+// Thrown by configure-guest (a single-target command) for the `unknown`
+// variant, so any caller -- web, MCP, tests -- can tell this case apart from
+// a generic failure with `instanceof`. update-all instead buckets `unknown`
+// into failUnknownPm and keeps going, since it runs across many targets.
+export class UnknownPackageManagerError extends Error {
+  readonly target: string;
+
+  constructor(target: string) {
+    super(
+      `No known package manager on ${target} (tried ${PROBED_COMMANDS}); install the packages on ${target} by hand`
+    );
+    this.name = 'UnknownPackageManagerError';
+    this.target = target;
+  }
 }
