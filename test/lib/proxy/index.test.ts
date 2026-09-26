@@ -22,7 +22,7 @@ function baseInventory(overrides: Partial<Inventory> = {}): Inventory {
 
 // A minimal fake driver, same shape/convention as test/lib/proxy/driver.test.ts's
 // own fakeDriver -- id is cast through ProxyDriverId since PROXY_DRIVER_IDS
-// only lists 'caddy' this round (src/lib/proxy/ids.ts), and this test needs
+// only lists 'caddy' (src/lib/proxy/ids.ts), and this test needs
 // a second, test-only id to exercise the registry without touching the real
 // driver list.
 function fakeDriver(id: string): ReverseProxyDriver {
@@ -161,7 +161,7 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
       statusPagePath: '/var/www/status.html',
       hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
       guests: [{ name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.168.1.50', port: 8080, subdomains: ['media'] }],
-      // Cast, commented: PROXY_DRIVER_IDS only lists 'caddy' this round
+      // Cast, commented: PROXY_DRIVER_IDS only lists 'caddy'
       // (src/lib/proxy/ids.ts); registerDriverForTests above is what makes
       // this test-only id resolvable at all -- same convention as
       // test/web/proxy-sync.test.ts's fakeDriverWithoutAcme.

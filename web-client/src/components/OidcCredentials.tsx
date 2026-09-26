@@ -21,7 +21,7 @@ const FIELDS: Array<{ field: CredentialField; label: string }> = [
   { field: 'clientSecret', label: 'Client secret' },
 ];
 
-// T030 -- the Advanced modal's "oidc client" row. Admin-only reveal, never
+// The Advanced modal's "oidc client" row. Admin-only reveal, never
 // fetched on mount and never cached across a modal close: `credentials`
 // starts (and every reopen of the Advanced modal remounts this component
 // fresh, so it again starts) at null, and the GET only fires from the

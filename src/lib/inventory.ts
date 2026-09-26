@@ -4,8 +4,7 @@ import { logInfo, logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
 import { authentikConfig } from './authentik-config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
-// module -- importing index.ts here would cycle back into this file
-// (issue #10, contracts/driver-interface.md "index.ts", Ruling 3).
+// module -- importing index.ts here would cycle back into this file.
 import { PROXY_DRIVER_IDS } from './proxy/ids.ts';
 
 export const BridgeEntrySchema = z.object({
@@ -304,6 +303,17 @@ export const SettingsSchema = z.object({
 
 export type Settings = z.infer<typeof SettingsSchema>;
 export const SETTINGS_KEYS = Object.keys(SettingsSchema.shape) as (keyof Settings)[];
+
+// Sets one setting through a key only known at runtime. The cast is needed
+// because proxyDriver's value is an enum literal, so Settings[key] is not
+// one type TypeScript can narrow across every key. It is sound only for a
+// value already checked against that key's schema: every caller either
+// validates first (SettingsSchema.safeParse, or copying from an inventory
+// that InventorySchema already accepted) or validates the result after
+// (loadInventory's own InventorySchema.safeParse).
+export function assignSetting(target: Partial<Settings>, key: keyof Settings, value: string | undefined): void {
+  (target as Record<string, string | undefined>)[key] = value;
+}
 
 export const InventorySchema = z.object({
   domain: z.string().min(1),
@@ -896,12 +906,7 @@ export function loadInventory(path: string): Inventory {
     const settings: Settings = {};
     for (const key of SETTINGS_KEYS) {
       const value = meta.get(key);
-      // Cast needed since proxyDriver's added enum literal type (issue #10)
-      // means Settings[key] is no longer uniformly `string | undefined`
-      // across every key -- soundness is restored by InventorySchema's own
-      // safeParse below, which rejects a stored value that doesn't match
-      // its key's real schema.
-      if (value !== undefined) (settings as Record<string, string>)[key] = value;
+      if (value !== undefined) assignSetting(settings, key, value);
     }
 
     const assembled = sortInventoryForFile({

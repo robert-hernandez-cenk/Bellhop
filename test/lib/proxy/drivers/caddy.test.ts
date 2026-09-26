@@ -1,8 +1,7 @@
 // Characterization test for issue #10 (reverse-proxy driver interface):
-// pins today's `buildCaddyBlock` output byte-for-byte before it's moved
-// behind a driver interface. The import and field names are the only
-// things expected to change as later tasks land -- this test's fixture
-// shape and expected output must otherwise keep passing unmodified. See
+// pins the pre-refactor `buildCaddyBlock` output byte-for-byte, so the
+// Caddy driver provably renders exactly what the old generator did. Its
+// fixture shape and expected output must never change. See
 // specs/006-reverse-proxy-driver/data-model.md "Characterization fixture".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

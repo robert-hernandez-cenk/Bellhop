@@ -7,6 +7,7 @@ import {
   findProxyEntry,
   SettingsSchema,
   SETTINGS_KEYS,
+  assignSetting,
   type Inventory,
   type Settings,
 } from '../../lib/inventory.ts';
@@ -15,12 +16,7 @@ function currentSettings(inv: Inventory): Settings {
   const settings: Settings = {};
   for (const key of SETTINGS_KEYS) {
     const value = inv[key];
-    // Cast needed since proxyDriver's added enum literal type (issue #10)
-    // means Settings[key] is no longer uniformly `string | undefined`
-    // across every key -- inv itself already satisfies InventorySchema
-    // (it was loaded/validated to get here), so this merely re-copies an
-    // already-valid value under a key TS can't narrow generically.
-    if (value !== undefined) (settings as Record<string, unknown>)[key] = value;
+    if (value !== undefined) assignSetting(settings, key, value);
   }
   return settings;
 }
@@ -73,12 +69,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
         res.status(400).json({ error: parsed.error.issues.map((i) => `${key}: ${i.message}`).join('\n') });
         return;
       }
-      // Cast needed since proxyDriver's added enum literal type (issue #10)
-      // means Settings[key] is no longer uniformly `string | undefined`
-      // across every key -- soundness is restored by the SettingsSchema
-      // safeParse just above, which already rejected a value that doesn't
-      // match this specific key's real schema.
-      (updates as Record<string, string>)[key] = value;
+      assignSetting(updates, key, value);
     }
 
     try {

@@ -102,10 +102,7 @@ test('checkCapabilities: one error per offending route, in route order', () => {
   );
 });
 
-// DriverDeps is exercised for its shape only -- no consumer in this batch
-// constructs one at runtime yet (that's a later batch's index.ts/sync-proxy
-// wiring), so this is a compile-time check that the type matches the
-// contract.
+// A compile-time check that DriverDeps matches the contract's shape.
 test('DriverDeps shape matches the contract', () => {
   const deps: DriverDeps = {
     ssh: {

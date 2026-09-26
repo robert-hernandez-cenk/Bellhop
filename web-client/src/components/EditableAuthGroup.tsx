@@ -56,7 +56,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
   // Gating a guest here is also how a forward-auth entry gets skipped for a
   // taken provider name, so this row shows skips too, not just the OIDC rows.
   const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
-  // T035: clearing the tier on an OIDC-effective guest deletes its OpenID
+  // Clearing the tier on an OIDC-effective guest deletes its OpenID
   // client (FR-022a), so that one transition is confirmed first. Every
   // other authGroup change (including lowering to a different rung while
   // staying in OIDC mode) saves straight away, same as before this feature.
@@ -200,7 +200,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       )}
       {ladderError && <div className="warning-banner">Could not load auth groups: {ladderError}</div>}
       {error && <div className="warning-banner">{error}</div>}
-      {/* T042: canLower is admin-equivalent (auth-groups.ts derives it
+      {/* canLower is admin-equivalent (auth-groups.ts derives it
           from the same isAdminUser check GET /whoami's isAdmin uses), so
           this reuses it rather than a second /whoami fetch. */}
       <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={canLower} />

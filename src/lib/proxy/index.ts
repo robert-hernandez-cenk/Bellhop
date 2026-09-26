@@ -5,8 +5,8 @@ import type { DriverDeps, ReverseProxyDriver } from './driver.ts';
 import { caddyDriver } from './drivers/caddy.ts';
 import { PROXY_DRIVER_IDS, type ProxyDriverId } from './ids.ts';
 
-// Re-exported rather than redefined -- ids.ts is the dependency-free source
-// (Ruling 3), so both src/lib/inventory.ts's proxyDriver enum and any
+// Re-exported rather than redefined -- ids.ts is the dependency-free source,
+// so both src/lib/inventory.ts's proxyDriver enum and any
 // caller importing from here see the exact same list/type.
 export { PROXY_DRIVER_IDS, type ProxyDriverId };
 
@@ -53,8 +53,8 @@ export function driverDeps(inventory: Inventory, ssh: SSHClient, driver: Reverse
 // enables this) and returns a function that removes it again. No production
 // code path calls this; it exists so a test can exercise getDriver/a
 // capability check against a driver other than the real caddyDriver
-// (e.g. test/web/proxy-sync.test.ts's later acmeDns01ViaCloudflare:false
-// case, T016) without mutating the real, shipped driver list.
+// (e.g. test/web/proxy-sync.test.ts's acmeDns01ViaCloudflare: false case)
+// without mutating the real, shipped driver list.
 export function registerDriverForTests(driver: ReverseProxyDriver): () => void {
   DRIVERS.set(driver.id, driver);
   return () => {

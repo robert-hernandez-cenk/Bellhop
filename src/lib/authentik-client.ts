@@ -541,7 +541,7 @@ export class RealAuthentikClient implements AuthentikClient {
   // near this limit today, but a missed provider here would read as "not
   // owned yet" and sync-authentik would try to create a duplicate.
   //
-  // T044 live-verification fix: Authentik 2026.8's `GET /api/v3/providers/oauth2/`
+  // Found in live verification: Authentik 2026.8's `GET /api/v3/providers/oauth2/`
   // also returns every proxy provider (ProxyProvider subclasses
   // OAuth2Provider in Authentik's own model, and `meta_model_name`/
   // `component` on the raw response report the OAuth2 values for all of

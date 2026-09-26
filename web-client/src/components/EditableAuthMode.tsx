@@ -33,7 +33,7 @@ function patchGuest(name: string, body: Record<string, unknown>): Promise<PatchR
   return apiPatch<PatchResponse>(`/inventory/guests/${encodeURIComponent(name)}`, body);
 }
 
-// The "auth mode" row (T021/T022) -- a Forward-auth/OIDC select. Saves
+// The "auth mode" row -- a Forward-auth/OIDC select. Saves
 // immediately on change, admin-only (disabled with an explanatory title
 // otherwise). Switching an OIDC-effective guest (authGroup set, authMode
 // 'oidc') back to forward-auth deletes its OpenID client (FR-022a), so that
@@ -176,7 +176,7 @@ function parseLocal(value: string): string[] {
   return Array.from(new Set(value.split(';').map((s) => s.trim()).filter(Boolean)));
 }
 
-// The "callback urls" row (T021/T022) -- a ';'-separated Callback URLs
+// The "callback urls" row -- a ';'-separated Callback URLs
 // input, saved on blur, admin-only. Never itself triggers the OIDC-client
 // deletion confirmation (only switching modes or clearing the access tier
 // does, per FR-022a) -- the server still validates each URL is an absolute

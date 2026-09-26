@@ -9,7 +9,7 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
 // A driver that declares no forward-auth support -- exercises T034/FR-011's
 // refusal path. `id` is cast through ProxyDriverId since PROXY_DRIVER_IDS
-// only lists 'caddy' this round (src/lib/proxy/ids.ts); same convention as
+// only lists 'caddy' (src/lib/proxy/ids.ts); same convention as
 // test/lib/proxy/{driver,index}.test.ts's own fakeDriver.
 function oidcOnlyDriver(): ReverseProxyDriver {
   return {

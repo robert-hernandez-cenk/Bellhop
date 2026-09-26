@@ -60,7 +60,7 @@ export interface RenderStatusPageOptions {
 // step, which skips this instead of throwing).
 //
 // Reads the live-deployed config through the active driver's own
-// snapshot() (issue #10, T014) rather than a hardcoded `cat` of a
+// snapshot() rather than a hardcoded `cat` of a
 // driver-specific config path -- so this page shows whatever the active
 // driver actually manages, and its own failure message ("Failed to read
 // the deployed proxy configuration from '<host>': …") comes from that one
