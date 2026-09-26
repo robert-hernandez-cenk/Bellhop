@@ -334,16 +334,30 @@ a driver for a proxy that can't (plain nginx, HAProxy) will need an
 operator-managed certificate tool (`certbot`, `acme.sh`) running
 alongside it — Bellhop itself never issues or renews a certificate.
 
-**Upgrading an existing installation needs no manual steps.** An
-inventory created by an older version upgrades itself automatically the
-first time it's opened by the new code — pull the new code and restart
-the service; there is nothing to run by hand, and the upgrade never
-repeats. Caddy is chosen as the driver by default, so the reverse-proxy
-configuration a `sync-proxy --apply` produces afterward is unchanged from
-before the upgrade. The renamed command was `sync-caddy`, the renamed
-inventory flags were `caddy`/`caddyManual`, and the removed
-`CADDYFILE_PATH` environment variable is now the `proxyConfigPath` setting
-— none of the old names still work.
+**Upgrading an existing installation needs no manual steps in most
+cases.** An inventory created by an older version upgrades itself
+automatically the first time it's opened by the new code — pull the new
+code and restart the service, and the upgrade never repeats. Caddy is
+chosen as the driver by default, so the reverse-proxy configuration a
+`sync-proxy --apply` produces afterward is unchanged from before the
+upgrade. The renamed command was `sync-caddy` and the renamed inventory
+flags were `caddy`/`caddyManual`; none of the old names still work, and
+`import-yaml-inventory` refuses a `hosts.yaml` that still uses the old
+flags until they are renamed to `proxy`/`proxyManual`. Two cases do need
+a step by hand:
+
+- **You set `CADDYFILE_PATH`.** That environment variable is gone and is
+  no longer read. If you pointed it anywhere other than
+  `/etc/caddy/Caddyfile`, run
+  `bellhop set-config proxyConfigPath <path> --apply` with the same path.
+- **An `unauthenticatedPaths` value is not an exact path or a `/*`
+  prefix.** Each value must now be an exact path (`/health`) or a path
+  ending in `/*` (`/api/*`); anything else (`/api*`, `/a*b`) makes the
+  inventory refuse to load until that value is edited to one of those
+  two forms. Since nothing can load the inventory meanwhile, edit it in
+  `inventory/bellhop.db` directly: the `unauthenticated_paths_json`
+  column of whichever `hosts`, `guests`, or `external_sites` row holds
+  it.
 
 ### OIDC mode
 
