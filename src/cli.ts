@@ -156,7 +156,9 @@ program
 
 program
   .command('set-config')
-  .description('Set or clear one inventory-wide setting (nfsServer, backupStorage, dnsServer, statusPagePath)')
+  .description(
+    'Set or clear one inventory-wide setting (nfsServer, backupStorage, dnsServer, statusPagePath, customScriptsRepo, customScriptsBranch)'
+  )
   .argument('<key>', 'the setting to change')
   .argument('[value]', 'the new value (omit with --unset)')
   .option('--unset', 'clear the setting instead of setting it')

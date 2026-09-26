@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Inventory } from './inventory.ts';
 import { logWarn } from './log.ts';
+import { settingFix } from './settings-hint.ts';
 
 // The two upstream community-scripts repos install-app/update-app resolve
 // to for every app a configured custom branch doesn't change (or for every
@@ -19,7 +20,8 @@ const GITHUB_FETCH_TIMEOUT_MS = 5000;
 // fetch all throw through this same suffix, so any resolution failure (bad
 // settings, GitHub down, a typo'd branch, a repo that isn't a ProxmoxVED
 // fork) points the operator at the same command.
-const ERROR_SUFFIX = ' -- check customScriptsRepo/customScriptsBranch with "bellhop set-config"';
+const ERROR_SUFFIX =
+  ' -- check customScriptsRepo/customScriptsBranch with "bellhop set-config" or on the web UI\'s Settings page';
 
 // A validated, split-apart customScriptsRepo/customScriptsBranch pair, with
 // the human-readable "<owner>/<repo>@<branch>" label used in every message
@@ -69,9 +71,7 @@ export function customScriptSource(inv: Inventory): CustomScriptSource | undefin
     // actually wrong.
     const missing = customScriptsRepo ? 'customScriptsBranch' : 'customScriptsRepo';
     const present = customScriptsRepo ? 'customScriptsRepo' : 'customScriptsBranch';
-    throw new Error(
-      `${missing} is not set (${present} is); set it with "bellhop set-config ${missing} <value> --apply" or on the Settings page, or unset ${present}`
-    );
+    throw new Error(`${missing} is not set (${present} is) -- ${settingFix(missing, '<value>')}, or unset ${present}`);
   }
   // SettingsSchema's regex on customScriptsRepo guarantees exactly one '/',
   // with the repo half forbidden from containing another -- a plain

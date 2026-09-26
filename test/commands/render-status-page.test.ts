@@ -83,7 +83,7 @@ test('runRenderStatusPage throws when statusPagePath is unset', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   await assert.rejects(
     () => runRenderStatusPage({ apply: true }, { ssh, inventory }, 'domain: example.com\n'),
-    /statusPagePath is not set/
+    /statusPagePath is not set -- run: bellhop set-config statusPagePath <\/absolute\/path> --apply, or set it on the web UI's Settings page/
   );
 });
 

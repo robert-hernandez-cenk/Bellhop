@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { SettingsResponse, SettingsValues } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
+import { caddyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
 
@@ -99,17 +100,19 @@ export function SettingsPage() {
 
   return (
     <div>
-      <h1>Settings</h1>
+      <h2>Settings</h2>
       <PageDescription>
-        Inventory-wide values every command reads. A command that needs one of these fails with a
-        named error until it is set. The same values can be set from the CLI with{' '}
+        Inventory-wide values a few commands read. Every one of them is optional -- each field
+        below says what happens while it is unset. The same values can be set from the CLI with{' '}
         <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
       <div className="settings-fields">
         {FIELDS.map((field) => (
           <div key={field.key} className="settings-field">
-            <label htmlFor={`setting-${field.key}`}>{field.label}</label>
+            <label htmlFor={`setting-${field.key}`}>
+              {field.label} <span className="settings-optional">Optional</span>
+            </label>
             <input
               id={`setting-${field.key}`}
               className="field-input"
@@ -140,21 +143,22 @@ export function SettingsPage() {
           </div>
         ))}
       </div>
-      <h2>Derived (read-only)</h2>
+      <h3>Derived (read-only)</h3>
       <PageDescription>
         Not configured anywhere -- read from inventory itself. Shown so it is clear what these
         resolve to today.
       </PageDescription>
       <ul>
-        {data?.derived.lanGateways.map((g) => (
-          <li key={g.host}>
-            LAN gateway for <strong>{g.host}</strong>: {g.gateway}
-          </li>
-        ))}
-        <li>
-          Caddy host (firewall scope):{' '}
-          {data?.derived.caddy ? `${data.derived.caddy.name} (${data.derived.caddy.ip})` : 'none'}
-        </li>
+        {data?.derived.lanGateways.length ? (
+          data.derived.lanGateways.map((g) => (
+            <li key={g.host}>
+              LAN gateway for <strong>{g.host}</strong>: {g.gateway}
+            </li>
+          ))
+        ) : (
+          <li>{LAN_GATEWAYS_EMPTY_TEXT}</li>
+        )}
+        <li>Caddy host (firewall scope): {caddyHostText(data?.derived.caddy ?? null)}</li>
       </ul>
     </div>
   );

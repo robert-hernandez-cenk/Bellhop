@@ -147,7 +147,7 @@ test('customScriptSource throws naming the missing setting when only customScrip
   const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/ProxmoxVED' };
   assert.throws(
     () => customScriptSource(inv),
-    /customScriptsBranch is not set \(customScriptsRepo is\); set it with "bellhop set-config customScriptsBranch <value> --apply" or on the Settings page, or unset customScriptsRepo/
+    /customScriptsBranch is not set \(customScriptsRepo is\) -- run: bellhop set-config customScriptsBranch <value> --apply, or set it on the web UI's Settings page, or unset customScriptsRepo$/
   );
 });
 
@@ -155,7 +155,7 @@ test('customScriptSource throws naming the missing setting when only customScrip
   const inv: Inventory = { ...BASE_INVENTORY, customScriptsBranch: 'my-apps' };
   assert.throws(
     () => customScriptSource(inv),
-    /customScriptsRepo is not set \(customScriptsBranch is\); set it with "bellhop set-config customScriptsRepo <value> --apply" or on the Settings page, or unset customScriptsBranch/
+    /customScriptsRepo is not set \(customScriptsBranch is\) -- run: bellhop set-config customScriptsRepo <value> --apply, or set it on the web UI's Settings page, or unset customScriptsBranch$/
   );
 });
 
@@ -290,7 +290,8 @@ test('resolveHeadSha names a GitHub rate limit (403/429) rather than a bare stat
 
 // --- compareBranch (contracts/interfaces.md) ---
 
-const COMPARE_ERROR_SUFFIX = ' -- check customScriptsRepo/customScriptsBranch with "bellhop set-config"';
+const COMPARE_ERROR_SUFFIX =
+  " -- check customScriptsRepo/customScriptsBranch with \"bellhop set-config\" or on the web UI's Settings page";
 
 function compareFetch(handler: Handler): typeof fetch {
   return fakeFetch({ [COMPARE_URL]: handler });
