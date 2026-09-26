@@ -10,11 +10,12 @@ import type { Inventory } from '../../../../src/lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../../../src/lib/proxy/routes.ts';
 import { render } from '../../../../src/lib/proxy/drivers/caddy.ts';
 
-// buildCaddyBlock itself is gone from src/commands/networking/sync-proxy.ts
-// as of T010 (it now delegates to this same buildRoutes/buildProxyContext/
-// render pipeline) -- this helper reproduces its old single-string return
-// shape so the rest of this file (written against that shape) needs no
-// other changes, per T010's "import and call path only" instruction.
+// buildCaddyBlock itself is gone from the former src/commands/networking/
+// sync-caddy.ts (now sync-proxy.ts) as of T010 (it now delegates to this
+// same buildRoutes/buildProxyContext/render pipeline) -- this helper
+// reproduces its old single-string return shape so the rest of this file
+// (written against that shape) needs no other changes, per T010's "import
+// and call path only" instruction.
 function buildCaddyBlock(inventory: Inventory): string {
   const routes = buildRoutes(inventory);
   const ctx = buildProxyContext(inventory);

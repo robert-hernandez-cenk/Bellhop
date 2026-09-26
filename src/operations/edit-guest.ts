@@ -43,7 +43,7 @@ export function editDeletesOidcClient(current: GuestEntry, updated: GuestEntry):
 export type EditGuestResult =
   | {
       guest: GuestEntry;
-      caddySynced: true;
+      proxySynced: true;
       authentikConflicts?: string[];
       // Set only when this guest's own conflict is one adopt-oidc-client can
       // take over (an unmarked OpenID client holds its slug), so the banner
@@ -63,7 +63,7 @@ export type EditGuestResult =
       // authentikConflicts.
       oidcSkipped?: OidcSkip[];
     }
-  | { guest: GuestEntry; caddySynced: false; caddyError: string };
+  | { guest: GuestEntry; proxySynced: false; proxyError: string };
 
 // The web form sends ';'-joined strings; MCP clients may send arrays and
 // numbers. Normalize to what the parse* helpers accept.
@@ -86,7 +86,7 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
 // ip unless proxyManual is set, no two entries sharing a subdomain) before
 // it's ever written to disk. A successful write always also pushes the
 // change live (proxy configuration + status page) via syncProxyLive -- reported back
-// separately (caddySynced/caddyError) rather than failing the whole
+// separately (proxySynced/proxyError) rather than failing the whole
 // request, since the inventory write itself already succeeded and
 // shouldn't be reported as rejected just because the live push failed.
 export async function commitGuestEdit(
@@ -184,7 +184,7 @@ export async function commitGuestEdit(
       : [];
     return {
       guest: updated,
-      caddySynced: true,
+      proxySynced: true,
       // Omitted when empty so the ordinary response shape is unchanged
       // for every edit that produces no conflict.
       ...(ownConflicts.length > 0 ? { authentikConflicts: ownConflicts } : {}),
@@ -200,7 +200,7 @@ export async function commitGuestEdit(
       ...(ownSkipped.length > 0 ? { oidcSkipped: ownSkipped } : {}),
     };
   } catch (err) {
-    return { guest: updated, caddySynced: false, caddyError: err instanceof Error ? err.message : String(err) };
+    return { guest: updated, proxySynced: false, proxyError: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -214,12 +214,12 @@ export const EDIT_GUEST_SHAPE = {
   unauthenticatedPaths: z
     .union([z.string(), z.array(z.string())])
     .optional()
-    .describe("Caddy path globs exempt from forward-auth (array or ';'-separated)"),
+    .describe("Proxy path globs exempt from forward-auth (array or ';'-separated)"),
   authMode: z
     .enum(['forward', 'oidc'])
     .nullable()
     .optional()
-    .describe("Auth mode when authGroup is set: 'forward' (Caddy forward-auth, default) or 'oidc' (native OIDC); null or empty clears to forward. Admin only."),
+    .describe("Auth mode when authGroup is set: 'forward' (proxy forward-auth, default) or 'oidc' (native OIDC); null or empty clears to forward. Admin only."),
   oidcRedirectUris: z
     .union([z.string(), z.array(z.string())])
     .optional()

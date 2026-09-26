@@ -592,13 +592,13 @@ test('runSyncAuthentik dry-run reports missing rungs and off-ladder entries with
   assert.deepEqual(authentik.listPolicyBindingsForTest(), []);
 });
 
-test('runSyncAuthentik treats empty-string authGroup as ungated, matching sync-caddy behavior', async () => {
+test('runSyncAuthentik treats empty-string authGroup as ungated, matching sync-proxy behavior', async () => {
   const authentik = new FakeAuthentikClient();
   // authGroup: '' is forbidden by the zod schema but reachable via a
   // hand-built fixture, simulating a direct Object.assign bypass.
-  // This test guards against the sync-authentik/sync-caddy disagreement
+  // This test guards against the sync-authentik/sync-proxy disagreement
   // where sync-authentik's !== undefined check would create an Application
-  // while sync-caddy's truthiness check would never route forward_auth to it.
+  // while sync-proxy's truthiness check would never route forward_auth to it.
   const emptyAuthGroupInventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' }],

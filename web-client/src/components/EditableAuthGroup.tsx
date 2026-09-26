@@ -25,8 +25,8 @@ interface OffLadderEntry {
 
 interface PatchResponse {
   guest: GuestEntry;
-  caddySynced: boolean;
-  caddyError?: string;
+  proxySynced: boolean;
+  proxyError?: string;
   authentikConflicts?: string[];
   authentikConflictAdoptable?: true;
   authentikOffLadder?: OffLadderEntry[];
@@ -39,7 +39,7 @@ interface Props {
   onSaved: () => void;
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'caddy-error' | 'error';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'proxy-error' | 'error';
 
 const NONE = '';
 
@@ -106,11 +106,11 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       setMissingRungs(res.authentikMissingRungs ?? []);
       setConflictAdoptable(res.authentikConflictAdoptable === true);
       setSkipped(res.oidcSkipped ?? []);
-      if (res.caddySynced) {
+      if (res.proxySynced) {
         setStatus('saved');
       } else {
-        setStatus('caddy-error');
-        setError(`Saved, but Caddy sync failed: ${res.caddyError}`);
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
       }
       onSaved();
     } catch (err) {
@@ -193,8 +193,8 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
         )}
       </select>
       {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
-      {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
       {ladder !== null && !ladder.configured && (
         <div className="warning-banner">Authentik is not configured, so auth tiers cannot be changed here.</div>
       )}

@@ -20,10 +20,11 @@ export function parseSubdomains(raw: string): string[] {
   return Array.from(new Set(raw.split(';').map((s) => s.trim()).filter(Boolean)));
 }
 
-// Mirrors the inventory's own source-of-truth for Caddy routing (its
-// subdomains assignments, which is exactly what sync-caddy turns into the
-// Caddyfile) -- checked entirely client-side against the already-loaded
-// hosts/guests, no round trip, same as MidInput's collision check.
+// Mirrors the inventory's own source-of-truth for proxy routing (its
+// subdomains assignments, which is exactly what sync-proxy turns into the
+// deployed proxy configuration) -- checked entirely client-side against the
+// already-loaded hosts/guests, no round trip, same as MidInput's collision
+// check.
 export function findConflicts(
   subdomains: string[],
   hosts: HostEntry[],

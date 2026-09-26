@@ -16,6 +16,7 @@ test('buildStatusPageHtml embeds both files in <pre> blocks, HTML-escaped', () =
   assert.match(html, /<pre>domain: &lt;b&gt;example\.com&lt;\/b&gt;<\/pre>/);
   assert.match(html, /<pre>a\.example\.com &amp; b\.example\.com \{\n\}<\/pre>/);
   assert.match(html, /<title>Homelab status<\/title>/);
+  assert.match(html, /<h2>Deployed proxy configuration<\/h2>/);
 });
 
 test('runRenderStatusPage throws when no entry has proxy: true', async () => {
@@ -35,12 +36,12 @@ test('runRenderStatusPage does not call ssh a second time (the write) when apply
   });
   const result = await runRenderStatusPage({}, { ssh, inventory }, 'domain: example.com');
   assert.equal(result.applied, false);
-  assert.equal(calls.length, 1, 'only the read (cat Caddyfile), no write');
+  assert.equal(calls.length, 1, 'only the read (cat the deployed proxy config), no write');
   assert.match(calls[0], /cat '\/etc\/caddy\/Caddyfile'/);
   assert.match(result.html, /the-live-caddyfile-content/);
 });
 
-test('runRenderStatusPage writes the status page to the caddy host when apply is set', async () => {
+test('runRenderStatusPage writes the status page to the proxy host when apply is set', async () => {
   const calls: string[] = [];
   const ssh = new FakeSSHClient((_t, _u, c) => {
     calls.push(c);
@@ -53,7 +54,7 @@ test('runRenderStatusPage writes the status page to the caddy host when apply is
   assert.match(calls[1], /live-content/);
 });
 
-test('runRenderStatusPage throws when reading the active Caddyfile fails', async () => {
+test('runRenderStatusPage throws when reading the deployed proxy configuration fails', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'no such file', code: 1 }));
   await assert.rejects(
     () => runRenderStatusPage({}, { ssh, inventory }, 'domain: example.com'),

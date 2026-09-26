@@ -333,7 +333,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
   'delete-guest': {
     id: 'delete-guest',
     category: 'provisioning',
-    description: 'Destroy an lxc/vm guest, optionally backing it up first, and remove it from inventory, Caddy, and Authentik.',
+    description: 'Destroy an lxc/vm guest, optionally backing it up first, and remove it from inventory, the proxy, and Authentik.',
     shape: {
       guest: reqStr('Guest name'),
       backup: flag('Back up the guest before destroying it'),
@@ -377,9 +377,9 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
       await runDeleteGuest({ ...(i as any), apply: true }, deps);
 
       // runDeleteGuest already removed the guest and saved inventory --
-      // deps.inventory.guests reflects that now, so a stale Caddy site
-      // block for it (if it had subdomains) just needs a resync to
-      // disappear, same as sync-caddy's buildCaddyBlock always did.
+      // deps.inventory.guests reflects that now, so a stale proxy route
+      // for it (if it had subdomains) just needs a resync to disappear,
+      // same as sync-proxy's buildRoutes always did.
       if (target?.subdomains && target.subdomains.length > 0) {
         await syncProxyLive(deps);
       }

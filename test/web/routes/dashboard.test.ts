@@ -74,7 +74,7 @@ test('GET /api/inventory returns customScripts when both settings are set', asyn
   assert.deepEqual(res.body.customScripts, { repo: 'example-user/ProxmoxVED', branch: 'my-apps' });
 });
 
-test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and syncs Caddy', async () => {
+test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and syncs the proxy', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
@@ -84,7 +84,7 @@ test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and s
   const res = await request(app).patch('/api/inventory/guests/plex-lxc').send({ subdomains: 'plex ; plex ;movies' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.guest.subdomains, ['plex', 'movies']);
-  assert.equal(res.body.caddySynced, true);
+  assert.equal(res.body.proxySynced, true);
 
   const invRes = await request(app).get('/api/inventory');
   assert.deepEqual(invRes.body.guests[0].subdomains, ['plex', 'movies']);
@@ -103,7 +103,7 @@ test('PATCH /api/inventory/guests/:name prunes stale _acme-challenge records thr
   const app = testApp(inventory, undefined, new FakeAuthentikClient(), cloudflare);
   const res = await request(app).patch('/api/inventory/guests/plex-lxc').send({ subdomains: 'plex' });
   assert.equal(res.status, 200);
-  assert.equal(res.body.caddySynced, true);
+  assert.equal(res.body.proxySynced, true);
   assert.deepEqual(cloudflare.records, []);
 });
 
@@ -117,7 +117,7 @@ test('PATCH /api/inventory/guests/:name clears subdomains when given an empty st
   const res = await request(app).patch('/api/inventory/guests/plex-lxc').send({ subdomains: '' });
   assert.equal(res.status, 200);
   assert.equal(res.body.guest.subdomains, undefined);
-  assert.equal(res.body.caddySynced, true);
+  assert.equal(res.body.proxySynced, true);
 });
 
 test('PATCH /api/inventory/guests/:name still saves when there is no proxy: true entry, but reports the sync failure', async () => {
@@ -130,8 +130,8 @@ test('PATCH /api/inventory/guests/:name still saves when there is no proxy: true
   const res = await request(app).patch('/api/inventory/guests/plex-lxc').send({ subdomains: 'plex' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.guest.subdomains, ['plex']);
-  assert.equal(res.body.caddySynced, false);
-  assert.match(res.body.caddyError, /No inventory entry has 'proxy: true'/);
+  assert.equal(res.body.proxySynced, false);
+  assert.match(res.body.proxyError, /No inventory entry has 'proxy: true'/);
 
   const invRes = await request(app).get('/api/inventory');
   assert.deepEqual(invRes.body.guests[0].subdomains, ['plex'], 'inventory write must still persist');
@@ -227,7 +227,7 @@ test('PATCH /api/inventory/guests/:name updates authGroup independently, leaving
   assert.equal(res.status, 200);
   assert.equal(res.body.guest.authGroup, 'bellhop-users');
   assert.deepEqual(res.body.guest.subdomains, ['sonarr'], 'an authGroup-only PATCH must not touch subdomains');
-  assert.equal(res.body.caddySynced, true);
+  assert.equal(res.body.proxySynced, true);
 
   const invRes = await request(app).get('/api/inventory');
   assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').authGroup, 'bellhop-users');
@@ -251,7 +251,7 @@ test('PATCH /api/inventory/guests/:name updates unauthenticatedPaths independent
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.guest.unauthenticatedPaths, ['/api/*']);
   assert.deepEqual(res.body.guest.subdomains, ['sonarr'], 'an unauthenticatedPaths-only PATCH must not touch subdomains');
-  assert.equal(res.body.caddySynced, true);
+  assert.equal(res.body.proxySynced, true);
 
   const invRes = await request(app).get('/api/inventory');
   assert.deepEqual(invRes.body.guests.find((g: any) => g.name === 'sonarr').unauthenticatedPaths, ['/api/*']);
@@ -743,7 +743,7 @@ test('PATCH /api/inventory/guests/:name reports an Authentik slug conflict in th
 
   const res = await request(app).patch('/api/inventory/guests/sonarr').send({ authGroup: 'bellhop-users' });
   assert.equal(res.status, 200);
-  assert.equal(res.body.caddySynced, true, 'the edit still succeeds -- a conflict never fails the request');
+  assert.equal(res.body.proxySynced, true, 'the edit still succeeds -- a conflict never fails the request');
   assert.deepEqual(res.body.authentikConflicts, ['sonarr']);
 });
 
@@ -756,7 +756,7 @@ test('PATCH /api/inventory/guests/:name omits authentikConflicts entirely when t
   const app = testApp(inventory);
   const res = await request(app).patch('/api/inventory/guests/sonarr').send({ port: 8989 });
   assert.equal(res.status, 200);
-  assert.equal(res.body.caddySynced, true);
+  assert.equal(res.body.proxySynced, true);
   assert.equal('authentikConflicts' in res.body, false, 'the ordinary response shape is unchanged');
   assert.equal('authentikOffLadder' in res.body, false, 'the ordinary response shape is unchanged');
   assert.equal('authentikMissingRungs' in res.body, false, 'the ordinary response shape is unchanged');
@@ -1178,7 +1178,7 @@ test('PATCH guest authMode/oidcRedirectUris reports this guest\'s own oidcSkippe
     oidcRedirectUris: ['https://sonarr.example.com/oauth/callback'],
   });
   assert.equal(res.status, 200);
-  assert.equal(res.body.caddySynced, true, 'a skip never fails the save');
+  assert.equal(res.body.proxySynced, true, 'a skip never fails the save');
   assert.deepEqual(
     res.body.oidcSkipped.map((s: { slug: string; kind: string }) => [s.slug, s.kind]),
     [['sonarr', 'missing-signing-key']],

@@ -54,10 +54,10 @@ test('applyGuestEdits leaves untouched fields alone and clears authGroup on null
   assert.equal(updated.port, 80);
 });
 
-test('runEditGuest saves, pushes Caddy live, and reports the result', async () => {
+test('runEditGuest saves, pushes the proxy live, and reports the result', async () => {
   const d = deps();
   const result = await runEditGuest({ name: 'app-lxc', subdomains: ['app'], port: 8080 }, d);
-  assert.equal(result.caddySynced, true);
+  assert.equal(result.proxySynced, true);
   assert.deepEqual(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'app-lxc')?.subdomains, ['app']);
   assert.deepEqual(d.inventory.guests.find((g) => g.name === 'app-lxc')?.subdomains, ['app']);
 });
@@ -72,7 +72,7 @@ test('runEditGuest prunes stale _acme-challenge records through deps.cloudflare'
   });
   const d = { ...deps(), cloudflare };
   const result = await runEditGuest({ name: 'app-lxc', subdomains: ['app'], port: 8080 }, d);
-  assert.equal(result.caddySynced, true);
+  assert.equal(result.proxySynced, true);
   assert.deepEqual(cloudflare.records, []);
 });
 
@@ -138,7 +138,7 @@ test('runEditGuest carries oidcDiscoveryFailures scoped to the edited guest, omi
     { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
     d
   );
-  assert.equal(result.caddySynced, true);
+  assert.equal(result.proxySynced, true);
   assert.ok('oidcDiscoveryFailures' in result);
   assert.deepEqual((result as { oidcDiscoveryFailures?: { slug: string }[] }).oidcDiscoveryFailures?.map((f) => f.slug), ['app']);
 });
@@ -150,7 +150,7 @@ test('runEditGuest omits oidcDiscoveryFailures when the discovery check passes',
     { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
     d
   );
-  assert.equal(result.caddySynced, true);
+  assert.equal(result.proxySynced, true);
   assert.equal('oidcDiscoveryFailures' in result, false);
 });
 

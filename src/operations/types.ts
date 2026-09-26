@@ -38,7 +38,7 @@ export interface Operation {
   // permission check before parsing (same ordering as before #16).
   target(input: Record<string, any>): string | undefined;
   targetType?: 'host' | 'guest';
-  // No single target: admin-only on the web (sync-inventory, sync-caddy, ...).
+  // No single target: admin-only on the web (sync-inventory, sync-proxy, ...).
   fleetWide?: boolean;
   // Input fields holding credentials -- redacted from stored job args and
   // scrubbed from MCP tool results.

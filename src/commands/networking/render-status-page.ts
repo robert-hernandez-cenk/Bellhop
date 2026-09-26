@@ -10,7 +10,7 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function buildStatusPageHtml(hostsYaml: string, activeCaddyfile: string): string {
+export function buildStatusPageHtml(hostsYaml: string, deployedProxyConfig: string): string {
   return [
     '<!DOCTYPE html>',
     '<html lang="en">',
@@ -23,8 +23,8 @@ export function buildStatusPageHtml(hostsYaml: string, activeCaddyfile: string):
     '<h1>Homelab status</h1>',
     '<h2>inventory (generated from bellhop.db)</h2>',
     `<pre>${escapeHtml(hostsYaml)}</pre>`,
-    '<h2>Active Caddyfile</h2>',
-    `<pre>${escapeHtml(activeCaddyfile)}</pre>`,
+    '<h2>Deployed proxy configuration</h2>',
+    `<pre>${escapeHtml(deployedProxyConfig)}</pre>`,
     '</body>',
     '</html>',
     '',
@@ -33,7 +33,7 @@ export function buildStatusPageHtml(hostsYaml: string, activeCaddyfile: string):
 
 // Shared by the two callers that treat an unset statusPagePath as an
 // opt-in skip rather than a hard failure (syncProxyLive in
-// src/web/proxy-sync.ts, and migrate-guest's own post-migration Caddy
+// src/web/proxy-sync.ts, and migrate-guest's own post-migration proxy
 // push) -- both already import from this module for runRenderStatusPage,
 // so this is the natural place to keep their skip message in sync with
 // the remedy runRenderStatusPage's own throw below names, rather than
@@ -59,11 +59,11 @@ export interface RenderStatusPageOptions {
 // step, which skips this instead of throwing).
 //
 // Reads the live-deployed config through the active driver's own
-// snapshot() (issue #10, T014) rather than a hardcoded `cat` of a Caddyfile
-// path -- so this page shows whatever the active driver actually manages,
-// and its own failure message ("Failed to read the deployed proxy
-// configuration from '<host>': …") comes from that one shared
-// implementation (src/lib/proxy/file-driver.ts) instead of being
+// snapshot() (issue #10, T014) rather than a hardcoded `cat` of a
+// driver-specific config path -- so this page shows whatever the active
+// driver actually manages, and its own failure message ("Failed to read
+// the deployed proxy configuration from '<host>': …") comes from that one
+// shared implementation (src/lib/proxy/file-driver.ts) instead of being
 // duplicated here.
 export async function runRenderStatusPage(
   opts: RenderStatusPageOptions,

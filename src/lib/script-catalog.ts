@@ -116,7 +116,7 @@ export async function fetchCatalog(fetchImpl: typeof fetch = fetch): Promise<Cat
 // tables outside saveInventory's DELETE FROM .../re-insert list -- so a
 // sync-inventory --apply run never disturbs the cached catalog. Same
 // precedent as src/lib/permissions.ts's permission_groups/permission_rules.
-// The single-row CHECK (id = 1) meta table mirrors the existing caddy_owner
+// The single-row CHECK (id = 1) meta table mirrors the existing proxy_owner
 // shape.
 const CATALOG_SCHEMA = `
   CREATE TABLE IF NOT EXISTS script_catalog (

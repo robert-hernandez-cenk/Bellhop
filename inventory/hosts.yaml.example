@@ -19,9 +19,15 @@ domain: example.com
 # LAN resolver a VPN-routed guest keeps using for internal names, and the
 # nameserver set-guest-vpn --vpn none restores. Required by set-guest-vpn.
 #   dnsServer: 10.0.0.53
-# Absolute path on the Caddy host for the generated status page. Unset
+# Absolute path on the proxy host for the generated status page. Unset
 # means the status page is never rendered at all.
 #   statusPagePath: /usr/share/caddy/index.html
+# Which reverse-proxy driver sync-proxy/render-status-page use. Unset means
+# the 'caddy' default -- this is the only driver that ships today.
+#   proxyDriver: caddy
+# Overrides the active driver's own default config path (the caddy driver's
+# is /etc/caddy/Caddyfile). Unset means that default.
+#   proxyConfigPath: /etc/caddy/Caddyfile
 
 hosts:
   - name: pve1
@@ -74,7 +80,7 @@ guests:
     vmid: 110
     host: pve1
     ip: 192.168.1.10
-    caddy: true          # this entry runs Caddy; sync-caddy.sh writes/reloads here
+    proxy: true          # this entry runs the proxy; sync-proxy writes/reloads here
   - name: bookstack
     type: lxc
     vmid: 111
@@ -85,7 +91,7 @@ guests:
       - bookstack           # -> bookstack.example.com
     authGroup: bellhop-app-users  # gates this subdomain behind Authentik at this group-ladder rung
     # authMode (optional; defaults to forward) picks how that gate is
-    # enforced: "forward" puts Caddy's forward_auth in front of the app
+    # enforced: "forward" puts the proxy's forward-auth in front of the app
     # (the default -- omit authMode entirely for this); "oidc" instead gives
     # the app its own Authentik OpenID Connect client, for an app with its
     # own user accounts that can tell users apart itself. See README's
@@ -99,20 +105,22 @@ guests:
 
 # Only for a subdomain whose own backend serves HTTPS with a self-signed/
 # otherwise-untrusted cert (e.g. a NAS's web UI, Proxmox's own web UI) --
-# adds `transport http { tls_insecure_skip_verify }` so Caddy doesn't refuse
-# to connect to it. Every generated block gets Cloudflare DNS-01 TLS
-# regardless; this only affects the *backend* connection.
+# tells sync-proxy to skip TLS certificate verification for that backend
+# (the caddy driver emits `transport http { tls_insecure_skip_verify }`) so
+# the proxy doesn't refuse to connect to it. Every generated route gets
+# Cloudflare DNS-01 TLS regardless; this only affects the *backend*
+# connection.
 #   insecureBackendTls: true
 
-# For an entry whose real Caddy config is hand-authored elsewhere (outside
-# sync-caddy's managed markers) -- e.g. the guest running Caddy itself, which
-# already has its own hand-written site block outside the managed section.
-# subdomains[] still drives the Dashboard's service link; sync-caddy just
-# skips generating a block for it.
-#   caddyManual: true
+# For an entry whose real proxy config is hand-authored elsewhere (outside
+# sync-proxy's managed markers) -- e.g. the guest running the proxy itself,
+# which already has its own hand-written site block outside the managed
+# section. subdomains[] still drives the Dashboard's service link;
+# sync-proxy just skips generating a route for it.
+#   proxyManual: true
 
 # Reverse-proxy targets that aren't a Proxmox host or guest at all -- never
-# an SSH/exec target, only ever read by sync-caddy. Optional; omit entirely
+# an SSH/exec target, only ever read by sync-proxy. Optional; omit entirely
 # if you have none.
 externalSites:
   - name: nas

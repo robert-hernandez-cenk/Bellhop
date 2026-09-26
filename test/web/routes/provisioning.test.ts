@@ -923,7 +923,7 @@ test('POST /api/provisioning/delete-guest/preview returns the labeled destroy sc
   assert.equal(calls.length, 1); // status check only, no mutation
 });
 
-test('POST /api/provisioning/delete-guest/apply destroys a stopped guest with no subdomains, removing it from inventory without touching Caddy', async () => {
+test('POST /api/provisioning/delete-guest/apply destroys a stopped guest with no subdomains, removing it from inventory without touching the proxy', async () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
@@ -932,7 +932,7 @@ test('POST /api/provisioning/delete-guest/apply destroys a stopped guest with no
   const { app, jobStore } = isolatedApp(inv, (_t, _u, c) => {
     if (c.includes('status')) return { stdout: 'status: stopped', stderr: '', code: 0 };
     if (c.includes('destroy')) return { stdout: '', stderr: '', code: 0 };
-    throw new Error(`unexpected command (Caddy should not be touched): ${c}`);
+    throw new Error(`unexpected command (the proxy should not be touched): ${c}`);
   });
   const res = await request(app).post('/api/provisioning/delete-guest/apply').send({ guest: 'media' });
   await waitForFinished(jobStore, res.body.jobId);
@@ -942,17 +942,17 @@ test('POST /api/provisioning/delete-guest/apply destroys a stopped guest with no
   assert.ok(!invRes.body.guests.some((g: any) => g.name === 'media'));
 });
 
-test('POST /api/provisioning/delete-guest/apply removes a subdomains-bearing guest and re-syncs Caddy', async () => {
+test('POST /api/provisioning/delete-guest/apply removes a subdomains-bearing guest and re-syncs the proxy', async () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'media', type: 'lxc', vmid: 4020, host: 'pve1', ip: '192.168.1.20', subdomains: ['media'] }],
   };
-  const caddyCalls: string[] = [];
+  const proxyCalls: string[] = [];
   const { app, jobStore } = isolatedApp(inv, (_t, _u, c) => {
     if (c.includes('status')) return { stdout: 'status: stopped', stderr: '', code: 0 };
     if (c.includes('destroy')) return { stdout: '', stderr: '', code: 0 };
-    caddyCalls.push(c);
+    proxyCalls.push(c);
     return { stdout: '', stderr: '', code: 0 };
   });
   const res = await request(app).post('/api/provisioning/delete-guest/apply').send({ guest: 'media' });
@@ -961,7 +961,7 @@ test('POST /api/provisioning/delete-guest/apply removes a subdomains-bearing gue
 
   const invRes = await request(app).get('/api/inventory');
   assert.ok(!invRes.body.guests.some((g: any) => g.name === 'media'));
-  assert.ok(caddyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'Caddy managed block must be regenerated');
+  assert.ok(proxyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'the managed proxy block must be regenerated');
 });
 
 test('POST /api/provisioning/delete-guest/apply removes a gated guest\'s Authentik Application instead of orphaning it', async () => {
@@ -1029,7 +1029,7 @@ test('POST /api/provisioning/delete-guest/apply succeeds for a gated guest when 
   };
   // Before issue #123's fix wave, this call site called runSyncAuthentik
   // unconditionally -- UnconfiguredAuthentikClient.listApplications() then
-  // rejects, failing the whole delete job even though the guest's Caddy
+  // rejects, failing the whole delete job even though the guest's proxy
   // config still needs to be torn down. Mirrors syncProxyLive's own
   // isConfigured() guard in src/web/proxy-sync.ts.
   const { app, jobStore } = isolatedApp(
@@ -1415,14 +1415,14 @@ test('POST /api/provisioning/migrate-guest/preview returns the source and target
   assert.match(res.body.preview, /pct restore 5012/);
 });
 
-test('POST /api/provisioning/migrate-guest/apply migrates the guest, updates inventory, and re-syncs Caddy for a subdomains-bearing guest', async () => {
+test('POST /api/provisioning/migrate-guest/apply migrates the guest, updates inventory, and re-syncs the proxy for a subdomains-bearing guest', async () => {
   const VZDUMP_STDOUT =
     "INFO: creating vzdump archive '/mnt/pve/nas-proxmox/dump/vzdump-lxc-4012-2026_08_11-12_00_00.tar.zst'\nINFO: Finished Backup";
   const inv: Inventory = {
     domain: 'example.com',
     backupStorage: 'nas-proxmox',
     // Set so this apply's final runRenderStatusPage step is actually
-    // exercised (see the caddyCalls assertions below) rather than skipped
+    // exercised (see the proxyCalls assertions below) rather than skipped
     // as a no-op -- statusPagePath is opt-in as of issue #124.
     statusPagePath: '/usr/share/caddy/index.html',
     hosts: [
@@ -1451,7 +1451,7 @@ test('POST /api/provisioning/migrate-guest/apply migrates the guest, updates inv
     guests: [{ name: 'media', type: 'lxc', vmid: 4012, host: 'pve-main', ip: '192.168.1.12', subdomains: ['media'] }],
   };
   let statusCalls = 0;
-  const caddyCalls: string[] = [];
+  const proxyCalls: string[] = [];
   const { app, jobStore } = isolatedApp(inv, (_t, _u, cmd) => {
     // Exact match, not a generic `cmd.includes('status')` -- the route
     // handler calls runMigrateGuest (and so checkVmidAvailable's compound
@@ -1494,7 +1494,7 @@ test('POST /api/provisioning/migrate-guest/apply migrates the guest, updates inv
     }
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd.includes('BEGIN bellhop-managed') || cmd.includes('Caddyfile') || cmd.includes('index.html')) {
-      caddyCalls.push(cmd);
+      proxyCalls.push(cmd);
       return { stdout: '', stderr: '', code: 0 };
     }
     return { stdout: '', stderr: '', code: 0 };
@@ -1511,7 +1511,7 @@ test('POST /api/provisioning/migrate-guest/apply migrates the guest, updates inv
   assert.equal(guest.vmid, 5012);
   assert.equal(guest.ip, '192.168.2.12');
   assert.deepEqual(guest.subdomains, ['media']);
-  assert.ok(caddyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'Caddy managed block must be regenerated');
+  assert.ok(proxyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'the managed proxy block must be regenerated');
 });
 
 test('POST /api/provisioning/migrate-guest/apply fails the job and leaves the source guest in inventory when the restored guest never reports running', async () => {

@@ -340,12 +340,12 @@ export async function runMigrateGuest(
   inventory.guests = guests;
 
   if (guest.subdomains && guest.subdomains.length > 0) {
-    logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via Caddy...`);
+    logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via the proxy...`);
     await runSyncProxy({ apply: true }, { ssh, inventory });
     // Same opt-in behavior as syncProxyLive (src/web/proxy-sync.ts): an
     // operator who hasn't configured statusPagePath never gets an
     // index.html write attempted, and skipping it is not a failure here
-    // either -- the Caddy config update above is what actually matters for
+    // either -- the proxy config update above is what actually matters for
     // the migrated guest's subdomains to keep working.
     if (inventory.statusPagePath !== undefined) {
       await runRenderStatusPage({ apply: true }, { ssh, inventory }, stringify(inventory));

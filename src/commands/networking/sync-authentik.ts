@@ -382,12 +382,12 @@ export async function runSyncAuthentik(
 
   const candidates = candidateEntries(deps.inventory);
   const candidatesBySlug = new Map(candidates.map((c) => [c.slug, c]));
-  // Truthy, not just !== undefined -- matches sync-caddy's own `entry.authGroup`
-  // gate (buildCaddyBlock) so the two commands never disagree about whether
-  // an authGroup: '' entry is gated. That value is unreachable through the
-  // zod schema but reachable from a hand-built Inventory literal (every test
-  // fixture in this repo is one) -- without this, sync-authentik could create
-  // an Application that sync-caddy never routes forward_auth to.
+  // Truthy, not just !== undefined -- matches sync-proxy's own `entry.authGroup`
+  // gate (the caddy driver's `render()`) so the two commands never disagree
+  // about whether an authGroup: '' entry is gated. That value is unreachable
+  // through the zod schema but reachable from a hand-built Inventory literal
+  // (every test fixture in this repo is one) -- without this, sync-authentik
+  // could create an Application that sync-proxy never routes forward_auth to.
   const desired = candidates.filter((c): c is CandidateEntry & { authGroup: string } => Boolean(c.authGroup));
 
   // Split before anything else. An off-ladder entry is neither created nor

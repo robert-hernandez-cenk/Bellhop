@@ -86,8 +86,8 @@ export function authentikConfig(env: NodeJS.ProcessEnv = process.env): Authentik
 }
 
 // The one parsed value. Throwing beats coercing: a NaN here would reach the
-// generated Caddyfile as a silently broken forward_auth target. Same spirit
-// as parsePositiveInt in src/cli.ts.
+// generated proxy configuration as a silently broken forward_auth target.
+// Same spirit as parsePositiveInt in src/cli.ts.
 function outpostPort(env: NodeJS.ProcessEnv): number {
   const raw = env.AUTHENTIK_OUTPOST_PORT;
   if (raw === undefined || raw === '') return DEFAULT_OUTPOST_PORT;

@@ -177,7 +177,7 @@ test('job control on another process\'s job is refused with the owner named', as
 test('edit_guest writes inventory and reports the caddy sync outcome', async () => {
   const { call, inventoryPath } = await setup();
   const result = JSON.parse((await call('edit_guest', { name: 'app-lxc', subdomains: ['app'], port: 8080 })).content[0].text);
-  assert.equal(result.caddySynced, true);
+  assert.equal(result.proxySynced, true);
   assert.deepEqual(loadInventory(inventoryPath).guests.find((g) => g.name === 'app-lxc')?.subdomains, ['app']);
 });
 

@@ -31,7 +31,19 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
     key: 'statusPagePath',
     label: 'Status page path',
     placeholder: '/usr/share/caddy/index.html',
-    help: 'Absolute path on the Caddy host where the status page is written. Unset: the status page is never rendered.',
+    help: 'Absolute path on the proxy host where the status page is written. Unset: the status page is never rendered.',
+  },
+  {
+    key: 'proxyDriver',
+    label: 'Proxy driver',
+    placeholder: 'caddy',
+    help: 'Which reverse-proxy driver sync-proxy/render-status-page use. Unset: the caddy default (the only driver that ships today).',
+  },
+  {
+    key: 'proxyConfigPath',
+    label: 'Proxy config path',
+    placeholder: '/etc/caddy/Caddyfile',
+    help: "Overrides the active driver's own default config path. Unset: that default.",
   },
   {
     key: 'customScriptsRepo',
@@ -152,8 +164,8 @@ export function SettingsPage() {
           </li>
         ))}
         <li>
-          Caddy host (firewall scope):{' '}
-          {data?.derived.caddy ? `${data.derived.caddy.name} (${data.derived.caddy.ip})` : 'none'}
+          Proxy IP (firewall scope):{' '}
+          {data?.derived.proxy ? `${data.derived.proxy.name} (${data.derived.proxy.ip})` : 'none'}
         </li>
       </ul>
     </div>

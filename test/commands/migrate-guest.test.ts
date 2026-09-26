@@ -50,7 +50,7 @@ const inventory: Inventory = {
       // reaches full completion (not just an early-throw test) drives
       // runMigrateGuest into its final runSyncProxy/runRenderStatusPage
       // step -- same as recordProvisionedGuest/removeGuestEntry's real
-      // production precedent, which never guards that call on a caddy host
+      // production precedent, which never guards that call on a proxy host
       // actually existing. Without a 'proxy: true' entry here, those tests
       // would fail on "No inventory entry has 'proxy: true'" for a reason
       // unrelated to what they're actually testing (destroy/cleanup/
@@ -377,10 +377,10 @@ function orderedStatusResponder(sourceVmid: number, targetVmid: number, opts: { 
       cmd.startsWith('pct destroy') ||
       cmd.startsWith('qm destroy') ||
       cmd.startsWith('rm -f') ||
-      // sync-caddy's remote script and render-status-page's Caddyfile
-      // read/write both run once 'media' (which always has subdomains)
-      // finishes migrating and pve-main's 'proxy: true' entry is found --
-      // see the base inventory fixture's comment above.
+      // sync-proxy's remote script and render-status-page's deployed
+      // proxy-config read/write both run once 'media' (which always has
+      // subdomains) finishes migrating and pve-main's 'proxy: true' entry
+      // is found -- see the base inventory fixture's comment above.
       cmd.startsWith('cat ') ||
       cmd.startsWith('set -e')
     ) {
@@ -803,8 +803,8 @@ test('runMigrateGuest apply renumbers a guest in place on the same host (backup/
   assert.equal(guest?.ip, '192.168.1.50');
 });
 
-test('runMigrateGuest apply re-syncs Caddy when the migrated guest has subdomains', async () => {
-  const caddyCalls: string[] = [];
+test('runMigrateGuest apply re-syncs the proxy when the migrated guest has subdomains', async () => {
+  const proxyCalls: string[] = [];
   // Must be created once, outside the FakeSSHClient callback -- it tracks
   // status-call count across calls to distinguish checkVmidAvailable's probe
   // from the later verify-running poll (see its own doc comment above).
@@ -813,7 +813,7 @@ test('runMigrateGuest apply re-syncs Caddy when the migrated guest has subdomain
   const respondStatus = orderedStatusResponder(4012, 5012);
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
     if (cmd.includes('BEGIN bellhop-managed') || cmd.includes('Caddyfile') || cmd.includes('caddy')) {
-      caddyCalls.push(cmd);
+      proxyCalls.push(cmd);
       return { stdout: '', stderr: '', code: 0 };
     }
     return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
@@ -827,15 +827,15 @@ test('runMigrateGuest apply re-syncs Caddy when the migrated guest has subdomain
     { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
     { ssh, inventory: inv, inventoryPath: invPath }
   );
-  assert.ok(caddyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'Caddy managed block must be regenerated');
+  assert.ok(proxyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'the managed proxy block must be regenerated');
 });
 
-test('runMigrateGuest apply still syncs Caddy but skips the status page when statusPagePath is unset', async () => {
-  const caddyCalls: string[] = [];
+test('runMigrateGuest apply still syncs the proxy but skips the status page when statusPagePath is unset', async () => {
+  const proxyCalls: string[] = [];
   const respondStatus = orderedStatusResponder(4012, 5012);
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
     if (cmd.includes('BEGIN bellhop-managed') || cmd.includes('Caddyfile') || cmd.includes('caddy')) {
-      caddyCalls.push(cmd);
+      proxyCalls.push(cmd);
       return { stdout: '', stderr: '', code: 0 };
     }
     return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
@@ -851,16 +851,16 @@ test('runMigrateGuest apply still syncs Caddy but skips the status page when sta
     { ssh, inventory: inv, inventoryPath: invPath }
   );
   assert.equal(result.applied, true);
-  assert.ok(caddyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'Caddy managed block is still regenerated');
+  assert.ok(proxyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'the managed proxy block is still regenerated');
   // render-status-page's read is an exact 'cat /etc/caddy/Caddyfile' and its
   // write script always contains its 'STATUS_PAGE_EOF' heredoc terminator --
-  // distinct markers from sync-caddy's own 'cat'-using remote script, which
+  // distinct markers from sync-proxy's own 'cat'-using remote script, which
   // this test's other 'BEGIN bellhop-managed' assertion already confirms
   // still ran.
-  assert.ok(!caddyCalls.some((c) => c === 'cat /etc/caddy/Caddyfile' || c.includes('STATUS_PAGE_EOF')), 'the status page read/write must be skipped');
+  assert.ok(!proxyCalls.some((c) => c === 'cat /etc/caddy/Caddyfile' || c.includes('STATUS_PAGE_EOF')), 'the status page read/write must be skipped');
 });
 
-test('runMigrateGuest apply does not touch Caddy for a guest with no subdomains', async () => {
+test('runMigrateGuest apply does not touch the proxy for a guest with no subdomains', async () => {
   const ssh = new FakeSSHClient(orderedStatusResponder(4020, 5020));
   const inv = isolatedInventory();
   const invPath = tempSavedInventoryPath(inv);

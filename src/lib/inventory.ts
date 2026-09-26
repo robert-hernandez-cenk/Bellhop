@@ -100,19 +100,20 @@ export const HostEntrySchema = z.object({
   port: z.number().optional(),
   // The reverse-proxied service's own backend speaks HTTPS with a
   // self-signed/otherwise-untrusted cert (e.g. the Proxmox web UI) -- tells
-  // sync-caddy to add `transport http { tls_insecure_skip_verify }` so Caddy
-  // doesn't refuse to connect to it.
+  // sync-proxy to skip TLS certificate verification for that backend (the
+  // caddy driver emits `transport http { tls_insecure_skip_verify }`) so the
+  // proxy doesn't refuse to connect to it.
   insecureBackendTls: z.boolean().optional(),
   // See ExternalSiteSchema's authGroup for what this does; also settable
   // on a host (e.g. the Proxmox web UI's own reverse-proxied subdomain).
   authGroup: z.string().min(1).optional(),
   // How this entry's gate is enforced when authGroup is set -- 'forward'
-  // (Caddy forward_auth to the embedded outpost, the original behavior) or
+  // (forward-auth to the embedded outpost, the original behavior) or
   // 'oidc' (a native Authentik OpenID client, issue #1). Absent means
   // 'forward'. Meaningless without authGroup -- see effectiveAuth() below,
-  // the single function every consumer (buildCaddyBlock, sync-authentik,
-  // the edit confirmation rule, the web UI) uses so they can't disagree
-  // about which mode an entry is actually in.
+  // the single function every consumer (the proxy driver's route builder,
+  // sync-authentik, the edit confirmation rule, the web UI) uses so they
+  // can't disagree about which mode an entry is actually in.
   authMode: z.enum(['forward', 'oidc']).optional(),
   // Callback addresses Authentik's OpenID client redirects back to after
   // login, one per entry -- only meaningful when authMode is 'oidc'.
@@ -187,10 +188,10 @@ export const GuestEntrySchema = z.object({
   vpn: z.string().optional(),
 });
 
-// A Caddy reverse-proxy target that isn't a Proxmox host or guest at all
+// A reverse-proxy target that isn't a Proxmox host or guest at all
 // (a NAS, a non-Proxmox box on the LAN, ...) -- never an SSH/exec target,
 // never touched by resolveTarget/runRemote/sync-inventory; the only command
-// that ever reads this array is sync-caddy.
+// that ever reads this array is sync-proxy.
 export const ExternalSiteSchema = z.object({
   name: z.string().min(1),
   ip: z.string().min(1),
@@ -200,13 +201,13 @@ export const ExternalSiteSchema = z.object({
   // Names the Authentik group ladder rung that gates this entry's
   // subdomain(s) -- sync-authentik binds the matching Application to that
   // rung and every rung above it (see AUTHENTIK_GROUP_LADDER in
-  // src/lib/authentik-config.ts), and sync-caddy emits the forward_auth
+  // src/lib/authentik-config.ts), and sync-proxy emits the forward-auth
   // directive. Absent means ungated. A no-op on an entry with no subdomains
   // (no candidate to gate) in both commands. proxyManual only silences
-  // sync-caddy (which skips generating any block for such an entry) --
+  // sync-proxy (which skips generating any route for such an entry) --
   // sync-authentik still creates/maintains the Provider/Application
-  // regardless of proxyManual, since a hand-authored Caddy block may still
-  // want to route through it. Ladder membership is deliberately NOT
+  // regardless of proxyManual, since a hand-authored proxy config block may
+  // still want to route through it. Ladder membership is deliberately NOT
   // validated here or in validateInventory: sync-authentik reports an
   // off-ladder value instead, so an AUTHENTIK_GROUP_LADDER edit can never
   // make an already-saved inventory refuse to load.
@@ -519,8 +520,8 @@ export function validateInventory(inv: Inventory): string[] {
   }
 
   // Two entries claiming the same subdomain would silently fight over the
-  // one Caddy site block sync-caddy generates for it -- catch that at
-  // validation time rather than a confusing runtime Caddy behavior.
+  // one route sync-proxy generates for it -- catch that at validation time
+  // rather than a confusing runtime proxy behavior.
   const subdomainOwners = new Map<string, string[]>();
   for (const entry of allEntries) {
     for (const subdomain of entry.subdomains ?? []) {
@@ -548,7 +549,7 @@ export function parseSubdomains(raw: unknown): string[] | undefined {
 
 // The web UI's Port field (free text) -> a validated port number, or
 // undefined when empty so an entry with none doesn't grow a pointless
-// `port: 80` (buildCaddyBlock's own `?? 80` default already covers that).
+// `port: 80` (buildRoutes's own `?? 80` default already covers that).
 // Throws on non-empty-but-invalid input, unlike parseSubdomains, since a
 // silently-dropped bad port is a worse experience than a clear rejection.
 export function parsePort(raw: unknown): number | undefined {
@@ -574,7 +575,7 @@ export function parseAuthGroup(raw: unknown): string | undefined {
 }
 
 // Semicolon-delimited free text (the web UI's Unauthenticated Paths field)
-// -> a deduplicated list of Caddy path-matcher globs, or undefined when
+// -> a deduplicated list of proxy path-matcher globs, or undefined when
 // empty so an entry with none doesn't grow a pointless
 // `unauthenticatedPaths: []`. Throws on a non-empty pattern missing a
 // leading '/', unlike parseSubdomains's silent-drop behavior -- a pattern
@@ -592,7 +593,7 @@ export function parseUnauthenticatedPaths(raw: unknown): string[] | undefined {
 }
 
 // The single source of truth for whether/how an entry is gated -- every
-// consumer (buildCaddyBlock, sync-authentik, the edit confirmation rule,
+// consumer (buildRoutes, sync-authentik, the edit confirmation rule,
 // the web UI) calls this instead of re-deriving it from authGroup/authMode
 // separately, so they cannot disagree (data-model.md "Derived state").
 // authMode is meaningless without authGroup, so an unset authGroup is
@@ -739,7 +740,7 @@ export function loadInventory(path: string): Inventory {
     const guestRows = db.prepare('SELECT * FROM guests ORDER BY host, name').all() as GuestRow[];
     const externalSiteRows = db.prepare('SELECT * FROM external_sites ORDER BY name').all() as ExternalSiteRow[];
     // ORDER BY rowid, not `subdomain` -- array order is operator-meaningful
-    // (sync-caddy treats the first subdomain as an entry's canonical
+    // (sync-proxy treats the first subdomain as an entry's canonical
     // hostname), and saveInventory always fully clears this table and
     // re-inserts every owner's subdomains in their original array order
     // within one transaction, so rowid order == insertion order == authored
