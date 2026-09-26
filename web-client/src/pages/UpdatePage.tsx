@@ -35,9 +35,13 @@ export function UpdatePage() {
     });
   }, []);
 
+  // update-all never updates a VM (issue #2), so a VM gets no OS-packages
+  // button, and a VM with no community-scripts app has nothing to offer here.
   const filtered = sortGuestsForDisplay(
-    guests.filter((g) =>
-      [g.name, g.host, ...(g.subdomains ?? [])].some((v) => v.toLowerCase().includes(filter.toLowerCase()))
+    guests.filter(
+      (g) =>
+        (g.type !== 'vm' || g.app) &&
+        [g.name, g.host, ...(g.subdomains ?? [])].some((v) => v.toLowerCase().includes(filter.toLowerCase()))
     )
   );
 
@@ -79,7 +83,8 @@ export function UpdatePage() {
         community-scripts install script to trigger its own update path. A guest with an
         app installed gets both icons; they run independently of each other -- the
         community-script update already runs its own package update as part of
-        reinstalling, so running the OS-packages icon first isn't required.
+        reinstalling, so running the OS-packages icon first isn't required. VMs are never
+        updated here; update packages inside the VM itself.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
 
@@ -141,15 +146,17 @@ export function UpdatePage() {
                 )}
               </div>
               <div className="actions-cell">
-                <button
-                  className="button button-icon"
-                  onClick={() => runOsUpdate(g.name)}
-                  disabled={stopped || busy}
-                  aria-label="Update (OS packages)"
-                  title={stopped ? 'Guest is stopped' : 'Update (OS packages)'}
-                >
-                  <IconPackage />
-                </button>
+                {g.type !== 'vm' && (
+                  <button
+                    className="button button-icon"
+                    onClick={() => runOsUpdate(g.name)}
+                    disabled={stopped || busy}
+                    aria-label="Update (OS packages)"
+                    title={stopped ? 'Guest is stopped' : 'Update (OS packages)'}
+                  >
+                    <IconPackage />
+                  </button>
+                )}
                 {g.app && (
                   <button
                     className="button button-icon"
