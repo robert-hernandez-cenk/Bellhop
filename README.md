@@ -753,8 +753,9 @@ served as a single always-admin local operator, and the features that need
 Authentik's REST API disable themselves — the Users and Permissions pages
 disappear from the nav, `POST /api/impersonate` returns 503, and
 `sync-authentik` is skipped by the Dashboard's push-live step instead of
-failing it. Everything else — the Dashboard, provisioning, maintenance,
-jobs, `sync-caddy`, and every CLI command — works unchanged.
+failing it. The Settings page stays in the nav and reachable, since it
+needs no Authentik. Everything else — the Dashboard, provisioning,
+maintenance, jobs, `sync-caddy`, and every CLI command — works unchanged.
 
 A persistent banner in the UI and a warning line in the server's startup
 log both say so, because in this mode **network reach is the only access

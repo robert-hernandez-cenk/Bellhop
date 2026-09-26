@@ -1852,8 +1852,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   the banner only shows once the identity has already failed to load, so
   there's no in-page state a reload would lose.
 - **Web UI Settings page** (`/settings`,
-  `web-client/src/pages/SettingsPage.tsx`, nav link beside Users and
-  Permissions — issue #124) is the web-UI half of the `meta` scalars
+  `web-client/src/pages/SettingsPage.tsx` — issue #124, issue #20) is the
+  web-UI half of the `meta` scalars
   described in "Reading/writing the inventory database" above: a
   `GET`/`PATCH /api/settings`
   (`src/web/routes/settings.ts`), gated by the same `requireAdminGroup`
@@ -1864,7 +1864,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   does. The page also shows the two *derived* values (each host's
   `midScheme.gateway`, and the `caddy: true` entry's `ip`) read-only, for
   the same reason the Dashboard shows other server-computed state: nothing
-  to edit, just what the toolkit currently resolves them to.
+  to edit, just what the toolkit currently resolves them to. Unlike Users
+  and Permissions, the Settings nav link shows for any admin even without
+  Authentik's user directory (issue #20) -- it needs only an identity, not
+  Authentik's REST API. `Sidebar.tsx` decides the whole Admin nav group
+  through `adminNavLinks(isAdmin, hasDirectory)`
+  (`web-client/src/lib/admin-nav.ts`, framework-free so it's tested with
+  plain `node --test`): `hasDirectory: false` still returns Settings alone,
+  `true` returns Users/Permissions/Settings in that order, and the "Admin"
+  `nav-group-label` itself only renders when the returned list is
+  non-empty. The impersonation picker's own `isAdmin && hasDirectory` gate
+  is untouched by this -- impersonating a group is itself an Authentik
+  user/group operation, so it still needs the directory regardless of what
+  the nav shows.
 - **VPN gateway deploy credentials** (`src/web/server.ts`): unlike an
   operator's interactive shell (which has `NORDVPN_ACCESS_TOKEN`/
   `PIA_USERNAME`/`PIA_PASSWORD` exported for the CLI's own

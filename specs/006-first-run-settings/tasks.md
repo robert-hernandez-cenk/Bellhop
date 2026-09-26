@@ -31,15 +31,15 @@ None. The three stories touch disjoint files except README.md and CLAUDE.md, whi
 
 **Independent Test**: `test/web-client/admin-nav.test.ts` passes. In the browser, with no Authentik, the sidebar shows Admin → Settings only.
 
-- [ ] T001 [P] [US1] Write failing tests in test/web-client/admin-nav.test.ts for `adminNavLinks(isAdmin, hasDirectory)`, per contracts/ui-and-messages.md:
+- [x] T001 [P] [US1] Write failing tests in test/web-client/admin-nav.test.ts for `adminNavLinks(isAdmin, hasDirectory)`, per contracts/ui-and-messages.md:
   - `(false, false)` and `(false, true)` return `[]`.
   - `(true, false)` returns `[{ to: '/settings', label: 'Settings' }]`.
   - `(true, true)` returns Users, Permissions, and Settings in that order, with paths `/users`, `/permissions`, `/settings`.
-- [ ] T002 [US1] Implement `adminNavLinks` in web-client/src/lib/admin-nav.ts. It must be framework-free (no React/DOM imports), so it compiles under the root NodeNext config. Make T001 pass.
-- [ ] T003 [US1] Update web-client/src/components/Sidebar.tsx:
+- [x] T002 [US1] Implement `adminNavLinks` in web-client/src/lib/admin-nav.ts. It must be framework-free (no React/DOM imports), so it compiles under the root NodeNext config. Make T001 pass.
+- [x] T003 [US1] Update web-client/src/components/Sidebar.tsx:
   - Render the Admin group from `adminNavLinks(isAdmin, hasDirectory)`. Show the "Admin" `nav-group-label` only when the list is non-empty, and give each `NavLink` `onClick={close}`.
   - Leave the impersonation picker's `isAdmin && hasDirectory` condition and the `/groups` fetch effect unchanged (FR-003).
-- [ ] T004 [US1] Update README.md "Running without Authentik": Users and Permissions still disappear from the nav, and Settings stays, since it needs no Authentik. Update CLAUDE.md's "Web UI Settings page" bullet (currently "nav link beside Users and Permissions") to say the link shows for any admin, even without a user directory, via `adminNavLinks` (`web-client/src/lib/admin-nav.ts`).
+- [x] T004 [US1] Update README.md "Running without Authentik": Users and Permissions still disappear from the nav, and Settings stays, since it needs no Authentik. Update CLAUDE.md's "Web UI Settings page" bullet (currently "nav link beside Users and Permissions") to say the link shows for any admin, even without a user directory, via `adminNavLinks` (`web-client/src/lib/admin-nav.ts`).
 
 **Checkpoint**: `npm run typecheck && npm test` pass; US1 is independently shippable.
 
