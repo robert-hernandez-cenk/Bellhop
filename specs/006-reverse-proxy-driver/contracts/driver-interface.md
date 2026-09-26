@@ -86,6 +86,16 @@ export function fileDriver(def: {
   render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
   validateCommand(configPath: string): string;
   reloadCommand: string;
+  // The absolute paths snapshot() reads, given the resolved configPath.
+  // Defaults to `[configPath]` -- correct for every single-file driver,
+  // Caddy included. Deliberately separate from `render`: snapshot is
+  // read-only, and re-deriving its file list from the live inventory via
+  // buildRoutes/buildProxyContext/render would make a read-only status-page
+  // request fail whenever the inventory is momentarily invalid (a bad
+  // unauthenticatedPaths entry, a missing authentik ip, …) -- the same
+  // failure a real sync-proxy run should surface, but not one a snapshot
+  // should ever be blocked by.
+  configFiles?(configPath: string): string[];
 }): ReverseProxyDriver;
 
 export function buildFileDriverScript(files: FileSpec[], validateCommand: string, reloadCommand: string): string;
@@ -96,20 +106,32 @@ Behaviour of the generated POSIX `sh` script, run on the proxy host via
 
 1. `set -e`; for each file, copy it to a backup (or record that it did not
    exist).
-2. Write each file: `owned` replaces it; `managed-section` removes any
+2. Install a `trap ... EXIT` (once every backup exists) that, on any
+   non-zero exit from this point on, restores every backup (removing files
+   that did not exist before) and re-raises that exit code. This is what
+   makes a write-phase failure (a `cat`/`sed`/`cp` step erroring under
+   `set -e`, before the validate command ever runs) restore correctly, not
+   just a failed validate -- both paths exit non-zero once the trap is
+   installed, and the trap does the one restore either way.
+3. Write each file: `owned` replaces it; `managed-section` removes any
    existing `# BEGIN bellhop-managed`…`# END bellhop-managed` block and
    appends the new block (creating the file if absent).
-3. Run the validate command. On failure: restore every backup (removing
-   files that did not exist before), print `<validate> failed; restored
-   previous configuration` to stderr, exit 1.
-4. Remove backups, run the reload command.
+4. Run the validate command. On failure: print
+   `printf '%s failed; restored previous configuration\n' <validate> >&2`
+   (the validate command single-quoted as printf's `%s` argument, not
+   interpolated into a double-quoted string) and exit 1 -- the trap from
+   step 2 performs the actual restore once this exit is seen.
+5. Disarm the trap (`trap - EXIT`, so a reload failure is never treated as
+   a reason to restore), remove backups, run the reload command.
 
 - `plan()` → `{ preview: files.map(content).join('\n'), payload: files }`
   (single file: the content alone, so the Caddy preview equals today's).
 - `apply()` → `runRemote(ssh, inventory, proxyHost, script)`; non-zero exit
   throws with stderr.
-- `snapshot()` → `cat` of each file; more than one file gets a
-  `==> <path> <==` header per file.
+- `snapshot()` → `cat` of each path from `configFiles(configPath)` (default
+  `[configPath]`); more than one file gets a `==> <path> <==` header per
+  file. Never calls `buildRoutes`/`buildProxyContext`/`render` -- a snapshot
+  read must succeed even when the inventory is momentarily invalid.
 
 ## index.ts
 

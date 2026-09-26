@@ -108,8 +108,25 @@ export function buildRoutes(inventory: Inventory): ProxyRoute[] {
       mode === 'forward'
         ? {
             mode: 'forward',
-            exemptPaths: (entry.unauthenticatedPaths ?? []).map(parsePathPattern),
-            rawExemptPaths: entry.unauthenticatedPaths ?? [],
+            // parsePathPattern is called eagerly here (not deferred to a
+            // driver) so a bad unauthenticatedPaths entry fails at
+            // buildRoutes/sync-proxy time, naming both the entry and the raw
+            // value -- parsePathPattern's own error has neither, since it
+            // has no entry context of its own.
+            exemptPaths: (entry.unauthenticatedPaths ?? []).map((raw) => {
+              try {
+                return parsePathPattern(raw);
+              } catch {
+                throw new Error(
+                  `Entry '${entry.name}' has an invalid unauthenticatedPaths pattern '${raw}': must be an exact path (/health) or a prefix ending in /* (/api/*)`
+                );
+              }
+            }),
+            // Copied, not the inventory's own array reference -- a caller
+            // that mutates a route's rawExemptPaths (e.g. a driver sorting
+            // it for rendering) must never reach back into the loaded
+            // Inventory object.
+            rawExemptPaths: [...(entry.unauthenticatedPaths ?? [])],
           }
         : mode === 'oidc'
           ? { mode: 'oidc' }

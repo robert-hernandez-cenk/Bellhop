@@ -219,6 +219,42 @@ test('buildRoutes: throws the exact missing-authentik message for a forward-gate
   );
 });
 
+test('buildRoutes: throws naming the entry and both accepted forms for an invalid unauthenticatedPaths pattern', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [
+      { name: 'auth-host', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.0.2.9', authentik: true },
+      {
+        name: 'bad-pattern-app',
+        type: 'lxc',
+        vmid: 121,
+        host: 'pve1',
+        ip: '192.0.2.53',
+        subdomains: ['bad'],
+        authGroup: 'bellhop-users',
+        unauthenticatedPaths: ['/api*'],
+      },
+    ],
+  };
+  assert.throws(
+    () => buildRoutes(inv),
+    /^Error: Entry 'bad-pattern-app' has an invalid unauthenticatedPaths pattern '\/api\*': must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)$/
+  );
+});
+
+test('buildRoutes: rawExemptPaths is a copy, not the inventory\'s own array', () => {
+  const inv = fixtureInventory();
+  const routes = buildRoutes(inv);
+  const api = routes.find((r) => r.owner.name === 'api-app')!;
+  assert.ok(api.auth.mode === 'forward');
+  if (api.auth.mode === 'forward') {
+    api.auth.rawExemptPaths.push('/mutated');
+  }
+  const apiGuest = inv.guests.find((g) => g.name === 'api-app')!;
+  assert.deepEqual(apiGuest.unauthenticatedPaths, ['/health', '/api/*']);
+});
+
 test('buildProxyContext: returns the outpost address and port when an authentik entry with an ip exists', () => {
   withPinnedOutpostPort(() => {
     const ctx = buildProxyContext(fixtureInventory());
