@@ -56,6 +56,34 @@ const OidcRedirectUriSchema = z.string().refine(isAbsoluteHttpUrl, {
   message: 'must be an absolute http:// or https:// URL',
 });
 
+// The exact message both this schema and parseUnauthenticatedPaths below
+// throw -- issue #10, US4: every proxy this toolkit could ever drive can
+// express an exact path or a prefix, so a path exemption is restricted to
+// those two forms rather than an arbitrary glob.
+export const UNAUTHENTICATED_PATH_MESSAGE = 'must be an exact path (/health) or a prefix ending in /* (/api/*)';
+
+// Mirrors proxy/routes.ts's parsePathPattern accept rule exactly (duplicated,
+// not imported: routes.ts already imports effectiveAuth from this file, and
+// importing back from routes.ts here would cycle -- same reasoning as this
+// file's own PROXY_DRIVER_IDS-from-ids.ts-not-index.ts import above).
+// Agreement between the two is enforced by a test that feeds every string
+// this schema accepts through parsePathPattern (data-model.md
+// "PathPattern"). Must start with '/'; '*' may appear only as the final
+// character and only directly after '/'.
+function isValidUnauthenticatedPath(raw: string): boolean {
+  if (!raw.startsWith('/')) return false;
+  const starIndex = raw.indexOf('*');
+  if (starIndex === -1) return true;
+  return starIndex === raw.length - 1 && raw[starIndex - 1] === '/';
+}
+
+// Shared by HostEntrySchema/GuestEntrySchema/ExternalSiteSchema's
+// unauthenticatedPaths -- one definition so all three enforce the exact
+// same rule rather than three separately-maintained copies (issue #10, US4).
+export const UnauthenticatedPathSchema = z.string().refine(isValidUnauthenticatedPath, {
+  message: UNAUTHENTICATED_PATH_MESSAGE,
+});
+
 export const MidSchemeSchema = z.object({
   vmidBase: z.number().int().min(0),
   // Dotted octets ending in "." -- e.g. "192.168.1." -- the prefix `mid`
@@ -121,7 +149,7 @@ export const HostEntrySchema = z.object({
   // time; oidcConfigErrors requires at least one when effectiveAuth is
   // 'oidc' and the entry has subdomains).
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
-  unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
+  unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
   // Marks this entry as the Authentik instance itself -- mirrors proxy:
   // true's "exactly one entry" role. sync-proxy resolves this entry's ip
   // to address the embedded outpost's forward_auth target.
@@ -154,7 +182,7 @@ export const GuestEntrySchema = z.object({
   // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
   authMode: z.enum(['forward', 'oidc']).optional(),
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
-  unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
+  unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
   authentik: z.boolean().optional(),
   proxy: z.boolean().optional(),
   unprivileged: z.boolean().optional(),
@@ -215,7 +243,7 @@ export const ExternalSiteSchema = z.object({
   // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
   authMode: z.enum(['forward', 'oidc']).optional(),
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
-  unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
+  unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
 });
 
 // Operator-specific scalars that used to be hardcoded literals (issue
@@ -625,16 +653,18 @@ export function parseAuthGroup(raw: unknown): string | undefined {
 // Semicolon-delimited free text (the web UI's Unauthenticated Paths field)
 // -> a deduplicated list of proxy path-matcher globs, or undefined when
 // empty so an entry with none doesn't grow a pointless
-// `unauthenticatedPaths: []`. Throws on a non-empty pattern missing a
-// leading '/', unlike parseSubdomains's silent-drop behavior -- a pattern
-// that silently never matches as intended is a worse experience than a
-// rejected save.
+// `unauthenticatedPaths: []`. Throws on a non-empty pattern that isn't one
+// of the two accepted forms (isValidUnauthenticatedPath -- same rule
+// UnauthenticatedPathSchema enforces, so a guest edit and a schema load can
+// never disagree), unlike parseSubdomains's silent-drop behavior -- a
+// pattern that silently never matches as intended is a worse experience
+// than a rejected save.
 export function parseUnauthenticatedPaths(raw: unknown): string[] | undefined {
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const list = Array.from(new Set(raw.split(';').map((s) => s.trim()).filter(Boolean)));
   for (const pattern of list) {
-    if (!pattern.startsWith('/')) {
-      throw new Error(`Invalid unauthenticated path '${pattern}' (must start with '/')`);
+    if (!isValidUnauthenticatedPath(pattern)) {
+      throw new Error(`Invalid unauthenticated path '${pattern}' (${UNAUTHENTICATED_PATH_MESSAGE})`);
     }
   }
   return list.length > 0 ? list : undefined;

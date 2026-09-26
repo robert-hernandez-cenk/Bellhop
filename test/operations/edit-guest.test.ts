@@ -200,6 +200,26 @@ test('applyGuestEdits leaves untouched fields alone and clears authGroup on null
   assert.equal(updated.port, 80);
 });
 
+// issue #10, US4/T038: a guest edit rejects the same invalid
+// unauthenticatedPaths forms the schema rejects (test/lib/inventory.test.ts)
+// and parsePathPattern rejects (test/lib/proxy/routes.test.ts) -- all three
+// must agree.
+test('applyGuestEdits accepts /health and /api/* for unauthenticatedPaths', () => {
+  const withHealth = applyGuestEdits(inventory.guests[1], { unauthenticatedPaths: '/health' });
+  assert.deepEqual(withHealth.unauthenticatedPaths, ['/health']);
+  const withPrefix = applyGuestEdits(inventory.guests[1], { unauthenticatedPaths: '/api/*' });
+  assert.deepEqual(withPrefix.unauthenticatedPaths, ['/api/*']);
+});
+
+test('applyGuestEdits rejects a star anywhere but a trailing /* for unauthenticatedPaths, naming both accepted forms', () => {
+  for (const bad of ['/a*b', '*/x', '/api*', '/*/x', '/a/*/b']) {
+    assert.throws(
+      () => applyGuestEdits(inventory.guests[1], { unauthenticatedPaths: bad }),
+      /must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)/
+    );
+  }
+});
+
 test('runEditGuest saves, pushes the proxy live, and reports the result', async () => {
   const d = deps();
   const result = await runEditGuest({ name: 'app-lxc', subdomains: ['app'], port: 8080 }, d);

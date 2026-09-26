@@ -90,8 +90,8 @@ Inventory field names stay `caddy`/`caddyManual` throughout this phase; the rena
 
 **Independent test**: spec US4 scenarios through set/edit paths.
 
-- [ ] T038 [US4] Write failing tests in `test/lib/inventory.test.ts` and `test/operations/edit-guest.test.ts`: `/health`, `/api/*`, `/*` accepted; `/a*b`, `*/x`, `/api*`, `/*/x`, `/a/*/b` rejected with `must be an exact path (/health) or a prefix ending in /* (/api/*)`, from the schema and from a guest edit.
-- [ ] T039 [US4] Tighten the three `unauthenticatedPaths` element schemas in `src/lib/inventory.ts` (hosts, guests, external sites — one shared `UnauthenticatedPathSchema` rather than three copies) to: starts with `/`; `*` only as the final character and only directly after `/`. Make T038 pass; `parsePathPattern` (T005) and the schema must agree — add a test that every string the schema accepts parses.
+- [x] T038 [US4] Write failing tests in `test/lib/inventory.test.ts` and `test/operations/edit-guest.test.ts`: `/health`, `/api/*`, `/*` accepted; `/a*b`, `*/x`, `/api*`, `/*/x`, `/a/*/b` rejected with `must be an exact path (/health) or a prefix ending in /* (/api/*)`, from the schema and from a guest edit.
+- [x] T039 [US4] Tighten the three `unauthenticatedPaths` element schemas in `src/lib/inventory.ts` (hosts, guests, external sites — one shared `UnauthenticatedPathSchema` rather than three copies) to: starts with `/`; `*` only as the final character and only directly after `/`. Make T038 pass; `parsePathPattern` (T005) and the schema must agree — add a test that every string the schema accepts parses.
 
 ## Phase 7: User Story 5 — One driver is enough to add a proxy (P3)
 
@@ -99,7 +99,7 @@ Inventory field names stay `caddy`/`caddyManual` throughout this phase; the rena
 
 **Independent test**: SC-005.
 
-- [ ] T040 [US5] Write a test in `test/lib/proxy/index.test.ts` that registers a test-only file driver (via the registry test hook), selects it, runs `runSyncProxy` dry run and `runRenderStatusPage`, and asserts it received the same `ProxyRoute[]` the Caddy driver would and that its preview/snapshot are what the callers return — with no change outside the test file.
+- [x] T040 [US5] Write a test in `test/lib/proxy/index.test.ts` that registers a test-only file driver (via the registry test hook), selects it, runs `runSyncProxy` dry run and `runRenderStatusPage`, and asserts it received the same `ProxyRoute[]` the Caddy driver would and that its preview/snapshot are what the callers return — with no change outside the test file.
 - [ ] T041 [US5] README "Reverse proxy drivers" section in `README.md`: what a driver provides (capabilities, plan/apply/snapshot, `fileDriver` for file-configured proxies), that one driver is active per deployment (`proxyDriver`), that proxies without built-in certificate issuance need an operator-managed certificate tool (certbot, acme.sh), and the upgrade note (automatic migration; restart the service with the new code). Also update every README mention of `sync-caddy`, `caddy: true`, `caddyManual`, `CADDYFILE_PATH`.
 
 ## Phase 8: Polish & cross-cutting

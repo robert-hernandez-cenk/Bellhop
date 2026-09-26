@@ -21,11 +21,13 @@ import {
   HostEntrySchema,
   GuestEntrySchema,
   ExternalSiteSchema,
+  UnauthenticatedPathSchema,
   SettingsSchema,
   SETTINGS_KEYS,
   findProxyEntry,
   type Inventory,
 } from '../../src/lib/inventory.ts';
+import { parsePathPattern } from '../../src/lib/proxy/routes.ts';
 
 const FIXTURE_INVENTORY: Inventory = {
   domain: 'example.com',
@@ -358,9 +360,36 @@ test('parseUnauthenticatedPaths accepts a valid semicolon-separated list, dedupe
   assert.equal(parseUnauthenticatedPaths(undefined), undefined);
 });
 
-test('parseUnauthenticatedPaths throws on a pattern missing a leading slash', () => {
-  assert.throws(() => parseUnauthenticatedPaths('api/*'), /Invalid unauthenticated path 'api\/\*' \(must start with '\/'\)/);
+test('parseUnauthenticatedPaths throws on a pattern missing a leading slash, naming the accepted forms', () => {
+  assert.throws(
+    () => parseUnauthenticatedPaths('api/*'),
+    /Invalid unauthenticated path 'api\/\*' \(must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)\)/
+  );
   assert.throws(() => parseUnauthenticatedPaths('/api/*; system'), /Invalid unauthenticated path 'system'/);
+});
+
+// issue #10, US4/T038: a path exemption is restricted to the two forms
+// every reverse proxy can express -- an exact path, or a prefix ending in
+// /*. Anything else (a '*' anywhere but as a trailing "/*") is rejected,
+// from a guest edit (parseUnauthenticatedPaths, exercised here) exactly
+// like it is from the schema (below) and from parsePathPattern
+// (test/lib/proxy/routes.test.ts) -- all three must agree.
+test('parseUnauthenticatedPaths accepts an exact path, a /* prefix, and the bare /* prefix', () => {
+  assert.deepEqual(parseUnauthenticatedPaths('/health'), ['/health']);
+  assert.deepEqual(parseUnauthenticatedPaths('/api/*'), ['/api/*']);
+  assert.deepEqual(parseUnauthenticatedPaths('/*'), ['/*']);
+});
+
+test('parseUnauthenticatedPaths rejects a star anywhere but a trailing /*, naming both accepted forms', () => {
+  for (const bad of ['/a*b', '*/x', '/api*', '/*/x', '/a/*/b']) {
+    assert.throws(() => parseUnauthenticatedPaths(bad), (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      return (
+        message.includes(`Invalid unauthenticated path '${bad}'`) &&
+        message.includes('must be an exact path (/health) or a prefix ending in /* (/api/*)')
+      );
+    });
+  }
 });
 
 test('saveInventory replaces guests and hosts, without touching domain', () => {
@@ -537,7 +566,71 @@ test('loadInventory rejects a hand-inserted unauthenticated path missing a leadi
   const db = new Database(dest);
   db.prepare("UPDATE hosts SET unauthenticated_paths_json = '[\"api/*\"]' WHERE name = 'pve1'").run();
   db.close();
-  assert.throws(() => loadInventory(dest), /must start with/);
+  assert.throws(() => loadInventory(dest), /must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)/);
+});
+
+// issue #10, US4/T038-T039: the schema-level rejection message and accepted
+// forms must match parseUnauthenticatedPaths (above) and parsePathPattern
+// (test/lib/proxy/routes.test.ts) exactly -- HostEntrySchema is exercised
+// here as a stand-in for all three schemas, which share the one
+// UnauthenticatedPathSchema definition.
+test('HostEntrySchema accepts /health, /api/*, and the bare /* prefix for unauthenticatedPaths', () => {
+  const base = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  for (const good of ['/health', '/api/*', '/*']) {
+    assert.doesNotThrow(() => HostEntrySchema.parse({ ...base, unauthenticatedPaths: [good] }));
+  }
+});
+
+test('HostEntrySchema rejects a star anywhere but a trailing /* for unauthenticatedPaths, naming both accepted forms', () => {
+  const base = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  for (const bad of ['/a*b', '*/x', '/api*', '/*/x', '/a/*/b']) {
+    assert.throws(
+      () => HostEntrySchema.parse({ ...base, unauthenticatedPaths: [bad] }),
+      /must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)/
+    );
+  }
+});
+
+// GuestEntrySchema and ExternalSiteSchema share the exact same
+// UnauthenticatedPathSchema -- one representative rejection from each is
+// enough to prove they didn't drift into their own copy.
+test('GuestEntrySchema and ExternalSiteSchema reject the same invalid unauthenticatedPaths forms as HostEntrySchema', () => {
+  assert.throws(
+    () =>
+      GuestEntrySchema.parse({
+        name: 'app', type: 'lxc', vmid: 100, host: 'pve1', unauthenticatedPaths: ['/a*b'],
+      }),
+    /must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)/
+  );
+  assert.throws(
+    () =>
+      ExternalSiteSchema.parse({
+        name: 'nas', ip: '192.168.1.250', subdomains: ['nas'], unauthenticatedPaths: ['/*/x'],
+      }),
+    /must be an exact path \(\/health\) or a prefix ending in \/\* \(\/api\/\*\)/
+  );
+});
+
+// T039: the schema and parsePathPattern must agree on every accepted
+// string -- this is the "agreement test" the task names, feeding a mix of
+// accepted and rejected forms through both and asserting they land the
+// same way.
+test('UnauthenticatedPathSchema and parsePathPattern agree on every accepted and rejected form', () => {
+  const candidates = ['/health', '/api/*', '/*', '/', '/a*b', '*/x', '/api*', '/*/x', '/a/*/b', 'api/*'];
+  for (const candidate of candidates) {
+    const schemaResult = UnauthenticatedPathSchema.safeParse(candidate);
+    let parsePatternAccepted = true;
+    try {
+      parsePathPattern(candidate);
+    } catch {
+      parsePatternAccepted = false;
+    }
+    assert.equal(
+      schemaResult.success,
+      parsePatternAccepted,
+      `schema and parsePathPattern disagree on '${candidate}'`
+    );
+  }
 });
 
 test('opening a pre-existing database without the unauthenticated_paths_json column migrates it in place', () => {
