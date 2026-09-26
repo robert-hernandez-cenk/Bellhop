@@ -392,8 +392,56 @@ function migrateRequiresAuthToAuthGroup(db: Database.Database, table: string): v
   db.exec(`ALTER TABLE ${table} DROP COLUMN requires_auth`);
 }
 
+// One-time #10 migration: the pre-refactor caddy-specific column/table names
+// (`caddy`, `caddy_manual`, `caddy_owner`) become the proxy-neutral ones the
+// reverse-proxy-driver refactor uses (`proxy`, `proxy_manual`, `proxy_owner`)
+// -- same guarded, self-idempotent, log-only-when-something-changed pattern
+// as #158's migrateRequiresAuthToAuthGroup below. Must run before the
+// `ensureColumn(..., 'proxy_manual', ...)` calls in openInventoryDb: SCHEMA's
+// own `CREATE TABLE IF NOT EXISTS proxy_owner` has already created an empty
+// table by the time this runs, so `caddy_owner` -- never read by
+// loadInventory, only written by saveInventory on every save -- is dropped
+// rather than renamed onto it; the next save fills proxy_owner fresh.
+// Renaming `caddy`/`caddy_manual` *after* ensureColumn had already added
+// `proxy_manual` would collide with a duplicate-column error, hence the
+// ordering requirement (research.md R7). Each column is checked
+// independently (a database predating `caddy_manual` entirely just skips
+// that rename and gets `proxy_manual` from ensureColumn below, same as any
+// other never-had-this-column database). A database created fresh by
+// current code has none of `caddy`/`caddy_manual`/`caddy_owner` at all
+// (SCHEMA already names these `proxy`/`proxy_manual`/`proxy_owner`), so the
+// guards are false from the start and nothing is logged, ever, for it.
+function migrateCaddyToProxy(db: Database.Database): void {
+  const tx = db.transaction(() => {
+    const changed: string[] = [];
+    for (const table of ['hosts', 'guests']) {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (cols.some((c) => c.name === 'caddy')) {
+        db.exec(`ALTER TABLE ${table} RENAME COLUMN caddy TO proxy`);
+        changed.push(`${table}.caddy`);
+      }
+      if (cols.some((c) => c.name === 'caddy_manual')) {
+        db.exec(`ALTER TABLE ${table} RENAME COLUMN caddy_manual TO proxy_manual`);
+        changed.push(`${table}.caddy_manual`);
+      }
+    }
+    const hasCaddyOwner = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'caddy_owner'")
+      .get();
+    if (hasCaddyOwner) {
+      db.exec('DROP TABLE IF EXISTS caddy_owner');
+      changed.push('caddy_owner');
+    }
+    if (changed.length > 0) {
+      logInfo(`Migrated ${changed.join(', ')} from caddy to proxy naming (#10, one-time, irreversible).`);
+    }
+  });
+  tx();
+}
+
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
+  migrateCaddyToProxy(db);
   ensureColumn(db, 'hosts', 'proxy_manual', 'proxy_manual INTEGER');
   ensureColumn(db, 'guests', 'proxy_manual', 'proxy_manual INTEGER');
   ensureColumn(db, 'guests', 'vpn_gateway', 'vpn_gateway TEXT');

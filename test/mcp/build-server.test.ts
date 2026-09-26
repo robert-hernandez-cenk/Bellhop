@@ -174,7 +174,7 @@ test('job control on another process\'s job is refused with the owner named', as
   assert.match(result.content[0].text, /owned by web/);
 });
 
-test('edit_guest writes inventory and reports the caddy sync outcome', async () => {
+test('edit_guest writes inventory and reports the proxy sync outcome', async () => {
   const { call, inventoryPath } = await setup();
   const result = JSON.parse((await call('edit_guest', { name: 'app-lxc', subdomains: ['app'], port: 8080 })).content[0].text);
   assert.equal(result.proxySynced, true);

@@ -1420,3 +1420,185 @@ test('validateInventory still requires an authentik:true entry when a forward-ga
   assert.ok(errors.some((e) => e.includes("'radarr' has an 'authGroup' set but no entry has 'authentik: true'")));
   assert.ok(!errors.some((e) => e.includes("'sonarr'")), 'the OIDC-gated entry must not appear in the forward-auth error');
 });
+
+// #10, one-time on-open migration: caddy/caddy_manual/caddy_owner -> proxy
+// naming. The DDL below is the pre-#10 SCHEMA (git show 641de27), with
+// `caddy_owner` in place of today's `proxy_owner` and `caddy`/`caddy_manual`
+// in place of `proxy`/`proxy_manual` -- structurally identical to today's
+// SCHEMA otherwise, since ensureColumn adds every other column
+// (auth_group/authentik/mid_scheme_json/app_source/vpn_gateway/vpn) the
+// same way it does for today's fixtures above.
+function withCapturedLog<T>(fn: () => T): { result: T; logs: string[] } {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg: string) => logs.push(msg);
+  try {
+    return { result: fn(), logs };
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+test('loadInventory migrates a legacy caddy/caddy_manual/caddy_owner database to proxy naming', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'inventory-caddy-migrate-'));
+  const dbPath = path.join(dir, 'bellhop.db');
+  const legacyDb = new Database(dbPath);
+  legacyDb.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE hosts (
+      name TEXT PRIMARY KEY,
+      ssh_target TEXT NOT NULL,
+      ssh_user TEXT NOT NULL,
+      ssh_port INTEGER,
+      ssh_identity_file TEXT,
+      caddy INTEGER NOT NULL DEFAULT 0,
+      caddy_manual INTEGER,
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      bridges_json TEXT,
+      storages_json TEXT,
+      nfs_mounts_json TEXT,
+      unauthenticated_paths_json TEXT,
+      auth_mode TEXT,
+      oidc_redirect_uris_json TEXT
+    );
+    CREATE TABLE guests (
+      name TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      vmid INTEGER NOT NULL,
+      host TEXT NOT NULL REFERENCES hosts(name),
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      caddy INTEGER NOT NULL DEFAULT 0,
+      caddy_manual INTEGER,
+      unprivileged INTEGER, app TEXT,
+      unauthenticated_paths_json TEXT,
+      auth_mode TEXT,
+      oidc_redirect_uris_json TEXT,
+      UNIQUE (host, vmid)
+    );
+    CREATE TABLE external_sites (
+      name TEXT PRIMARY KEY,
+      ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER,
+      unauthenticated_paths_json TEXT,
+      auth_mode TEXT,
+      oidc_redirect_uris_json TEXT
+    );
+    CREATE TABLE subdomains (
+      subdomain TEXT PRIMARY KEY,
+      owner_type TEXT NOT NULL,
+      owner_name TEXT NOT NULL
+    );
+    CREATE TABLE caddy_owner (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      owner_type TEXT NOT NULL, owner_name TEXT NOT NULL
+    );
+  `);
+  legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
+  legacyDb
+    .prepare("INSERT INTO hosts (name, ssh_target, ssh_user, caddy) VALUES ('pve1', 'pve1.local', 'root', 1)")
+    .run();
+  legacyDb
+    .prepare("INSERT INTO guests (name, type, vmid, host, caddy_manual) VALUES ('sonarr', 'lxc', 120, 'pve1', 1)")
+    .run();
+  legacyDb.prepare("INSERT INTO caddy_owner (id, owner_type, owner_name) VALUES (1, 'host', 'pve1')").run();
+  legacyDb.close();
+
+  const { result: inv, logs } = withCapturedLog(() => loadInventory(dbPath));
+
+  assert.equal(inv.hosts[0].proxy, true, "the legacy host's caddy=1 round-trips as proxy: true");
+  assert.equal(inv.guests[0].proxyManual, true, "the legacy guest's caddy_manual=1 round-trips as proxyManual: true");
+
+  const migrationLogs = logs.filter((l) => l.includes('caddy to proxy naming (#10'));
+  assert.equal(migrationLogs.length, 1, 'exactly one migration log line was written');
+
+  const after = new Database(dbPath, { readonly: true });
+  const hostCols = (after.prepare('PRAGMA table_info(hosts)').all() as { name: string }[]).map((c) => c.name);
+  const guestCols = (after.prepare('PRAGMA table_info(guests)').all() as { name: string }[]).map((c) => c.name);
+  const tables = (
+    after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+  ).map((t) => t.name);
+  after.close();
+  assert.ok(!hostCols.includes('caddy') && !hostCols.includes('caddy_manual'), 'hosts no longer has caddy/caddy_manual');
+  assert.ok(!guestCols.includes('caddy') && !guestCols.includes('caddy_manual'), 'guests no longer has caddy/caddy_manual');
+  assert.ok(hostCols.includes('proxy') && hostCols.includes('proxy_manual'), 'hosts gained proxy/proxy_manual');
+  assert.ok(guestCols.includes('proxy') && guestCols.includes('proxy_manual'), 'guests gained proxy/proxy_manual');
+  assert.ok(!tables.includes('caddy_owner'), 'caddy_owner is dropped, not renamed');
+  assert.ok(tables.includes('proxy_owner'), 'proxy_owner already exists (created empty by SCHEMA)');
+
+  // Reopening logs nothing and changes nothing further.
+  const { result: reopened, logs: logsAgain } = withCapturedLog(() => loadInventory(dbPath));
+  assert.equal(
+    logsAgain.filter((l) => l.includes('caddy to proxy naming (#10')).length,
+    0,
+    'reopening a migrated database logs nothing'
+  );
+  assert.equal(reopened.hosts[0].proxy, true);
+  assert.equal(reopened.guests[0].proxyManual, true);
+
+  // saveInventory afterwards writes proxy_owner.
+  saveInventory(dbPath, reopened);
+  const afterSave = new Database(dbPath, { readonly: true });
+  const proxyOwnerRow = afterSave.prepare('SELECT owner_type, owner_name FROM proxy_owner').get();
+  afterSave.close();
+  assert.deepEqual({ ...(proxyOwnerRow as object) }, { owner_type: 'host', owner_name: 'pve1' });
+});
+
+test('loadInventory never logs the caddy-to-proxy migration for a fresh database', () => {
+  const dest = tempInventoryDb();
+  const { logs } = withCapturedLog(() => loadInventory(dest));
+  assert.equal(
+    logs.filter((l) => l.includes('caddy to proxy naming')).length,
+    0,
+    'a fresh (already-proxy-named) database never logs the migration'
+  );
+});
+
+test(
+  'opening a pre-existing database with caddy but no caddy_manual column migrates caddy and still gets ' +
+    'proxy_manual from ensureColumn',
+  () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'inventory-caddy-migrate-nomanual-'));
+    const dbPath = path.join(dir, 'bellhop.db');
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE hosts (
+        name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
+        caddy INTEGER NOT NULL DEFAULT 0,
+        ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+        bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
+      );
+      CREATE TABLE guests (
+        name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
+        host TEXT NOT NULL REFERENCES hosts(name),
+        ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+        caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+        UNIQUE (host, vmid)
+      );
+      CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
+      CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+      CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    `);
+    legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
+    legacyDb
+      .prepare("INSERT INTO hosts (name, ssh_target, ssh_user, caddy) VALUES ('pve1', 'pve1.local', 'root', 1)")
+      .run();
+    legacyDb.close();
+
+    const inv = loadInventory(dbPath);
+    assert.equal(inv.hosts[0].proxy, true, "the legacy host's caddy=1 still round-trips as proxy: true");
+    assert.equal(
+      inv.hosts[0].proxyManual,
+      undefined,
+      'a pre-migration row with no caddy_manual column at all has no proxyManual value yet'
+    );
+
+    const updated: Inventory = { ...inv, hosts: inv.hosts.map((h) => ({ ...h, proxyManual: true })) };
+    saveInventory(dbPath, updated);
+    const reloaded = loadInventory(dbPath);
+    assert.equal(
+      reloaded.hosts[0].proxyManual,
+      true,
+      'the ensureColumn-added proxy_manual column must actually be writable/readable'
+    );
+  }
+);
