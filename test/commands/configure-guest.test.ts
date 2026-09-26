@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
 import { runConfigureGuest } from '../../src/commands/provisioning/configure-guest.ts';
+import { UnknownPackageManagerError } from '../../src/lib/package-manager.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
 const inventory: Inventory = {
@@ -151,4 +152,77 @@ test("runConfigureGuest's ssh-key command is idempotent (guards each line with g
   await runConfigureGuest({ guest: 'media', sshKey: 'ssh-ed25519 AAAA test', apply: true }, { ssh, inventory });
   assert.equal(ssh.history.length, 1);
   assert.match(ssh.history[0].command, /grep -qxF/);
+});
+
+test('runConfigureGuest rejects with UnknownPackageManagerError on an unrecognized OS, and sends no install (dry run)', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'unknown\n', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', packages: 'curl' }, { ssh, inventory }),
+    (err: unknown) => err instanceof UnknownPackageManagerError
+  );
+  assert.equal(ssh.history.length, 1, 'probe only -- no install attempted');
+});
+
+test('runConfigureGuest rejects with UnknownPackageManagerError on an unrecognized OS, and sends no install (apply)', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'unknown\n', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', packages: 'curl', apply: true }, { ssh, inventory }),
+    (err: unknown) => err instanceof UnknownPackageManagerError
+  );
+  assert.equal(ssh.history.length, 1, 'probe only -- no install attempted');
+});
+
+test('runConfigureGuest rejects when the package-manager probe exits non-zero', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'sh: not found', code: 127 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', packages: 'curl', apply: true }, { ssh, inventory }),
+    /Package-manager probe failed on media \(exit 127\): sh: not found/
+  );
+});
+
+test('runConfigureGuest rejects when the install command exits non-zero, naming the manager and trimmed stderr', async () => {
+  const ssh = new FakeSSHClient((_target, _user, cmd) => {
+    if (cmd.includes('command -v apt-get')) return { stdout: 'apk\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '  disk full  \n', code: 1 };
+  });
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', packages: 'curl', apply: true }, { ssh, inventory }),
+    /Package install failed on media \(apk, exit 1\): disk full/
+  );
+});
+
+test('runConfigureGuest reports "no output" when a failed install has empty stderr', async () => {
+  const ssh = new FakeSSHClient((_target, _user, cmd) => {
+    if (cmd.includes('command -v apt-get')) return { stdout: 'apk\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 1 };
+  });
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', packages: 'curl', apply: true }, { ssh, inventory }),
+    /Package install failed on media \(apk, exit 1\): no output/
+  );
+});
+
+test('runConfigureGuest rejects when the ssh-key step exits non-zero, naming the exit code and trimmed stderr', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '  permission denied  \n', code: 1 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'media', sshKey: 'ssh-ed25519 AAAA test', apply: true }, { ssh, inventory }),
+    /Adding SSH key on media failed \(exit 1\): permission denied/
+  );
+});
+
+test('runConfigureGuest with both flags never sends the ssh-key command when the install fails', async () => {
+  const ssh = new FakeSSHClient((_target, _user, cmd) => {
+    if (cmd.includes('command -v apt-get')) return { stdout: 'apk\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: 'boom', code: 1 };
+  });
+  await assert.rejects(
+    () =>
+      runConfigureGuest(
+        { guest: 'media', packages: 'curl', sshKey: 'ssh-ed25519 AAAA test', apply: true },
+        { ssh, inventory }
+      ),
+    /Package install failed/
+  );
+  assert.equal(ssh.history.length, 2, 'probe and the failed install only -- no ssh-key command sent');
+  assert.doesNotMatch(ssh.history.map((c) => c.command).join('\n'), /authorized_keys/);
 });

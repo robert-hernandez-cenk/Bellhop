@@ -75,8 +75,8 @@ responder pattern in `test/commands/update-all.test.ts` (probe calls are recogni
 
 **Independent Test**: each failure kind rejects with its own message.
 
-- [ ] T011 [US3] Add tests in `test/commands/configure-guest.test.ts`: unknown OS rejects with `UnknownPackageManagerError` (dry run and apply) and sends no install; probe exit 127 rejects `Package-manager probe failed on media (exit 127): sh: not found`; install exit 1 rejects `Package install failed on media (apk, exit 1): <stderr>`, and empty stderr reads `no output`; `--ssh-key` exit 1 rejects `Adding SSH key on media failed (exit 1): <stderr>`; with both flags, a failed install means the SSH-key command is never sent
-- [ ] T012 [US3] In `src/commands/provisioning/configure-guest.ts`, throw on `unknown` / `probe-failed` detection and on non-zero install and SSH-key results, with the messages from `contracts/configure-guest-cli.md`
+- [x] T011 [US3] Add tests in `test/commands/configure-guest.test.ts`: unknown OS rejects with `UnknownPackageManagerError` (dry run and apply) and sends no install; probe exit 127 rejects `Package-manager probe failed on media (exit 127): sh: not found`; install exit 1 rejects `Package install failed on media (apk, exit 1): <stderr>`, and empty stderr reads `no output`; `--ssh-key` exit 1 rejects `Adding SSH key on media failed (exit 1): <stderr>`; with both flags, a failed install means the SSH-key command is never sent
+- [x] T012 [US3] In `src/commands/provisioning/configure-guest.ts`, throw on `unknown` / `probe-failed` detection and on non-zero install and SSH-key results, with the messages from `contracts/configure-guest-cli.md`
 
 **Checkpoint**: all story tests green.
 

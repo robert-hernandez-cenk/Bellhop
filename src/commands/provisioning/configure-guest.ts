@@ -55,7 +55,12 @@ export async function runConfigureGuest(
   if (opts.sshKey) {
     const cmd = buildAuthorizedKeysEnsurePresentScript(opts.sshKey);
     if (confirmOrDryRun(`Would ensure SSH key present on ${opts.guest}`, opts.apply ?? false)) {
-      await runRemote(deps.ssh, deps.inventory, opts.guest, cmd);
+      const result = await runRemote(deps.ssh, deps.inventory, opts.guest, cmd);
+      if (result.code !== 0) {
+        throw new Error(
+          `Adding SSH key on ${opts.guest} failed (exit ${result.code}): ${result.stderr.trim() || 'no output'}`
+        );
+      }
     }
   }
 }
