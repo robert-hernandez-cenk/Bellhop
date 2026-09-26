@@ -47,10 +47,10 @@ responder pattern in `test/commands/update-all.test.ts` (probe calls are recogni
 
 **Independent Test**: apply against fake guests reporting each manager; the second remote call is that manager's install command with quoted names.
 
-- [ ] T005 [P] [US1] Add tests in `test/lib/package-manager.test.ts` for `INSTALL_COMMANDS`: exact strings per research R1 for `'curl' 'vim'` — apt `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'curl' 'vim'`, dnf `dnf -y install 'curl' 'vim'`, apk `apk update && apk add 'curl' 'vim'`, pacman `pacman -Syu --needed --noconfirm 'curl' 'vim'`, zypper `zypper --non-interactive --gpg-auto-import-keys install 'curl' 'vim'`
-- [ ] T006 [US1] Add `INSTALL_COMMANDS: Record<PackageManager, (packages: string) => string>` next to `UPDATE_COMMANDS` in `src/lib/package-manager.ts`, with a comment for the pacman `-Syu` and zypper key-import choices (research R1)
-- [ ] T007 [US1] Add tests in `test/commands/configure-guest.test.ts`: for each of the five managers, apply sends the probe first then that manager's install command (and never `apt-get` for non-apt); a name with a shell metacharacter (e.g. `a;b`) stays one quoted argument. Update the existing "installs quoted packages and adds an SSH key" test for the new call order (probe, install, ssh-key = 3 calls)
-- [ ] T008 [US1] Rewrite the `--packages` branch of `src/commands/provisioning/configure-guest.ts` to call `detectPackageManager`, then run `INSTALL_COMMANDS[pm](quoted)` on apply
+- [x] T005 [P] [US1] Add tests in `test/lib/package-manager.test.ts` for `INSTALL_COMMANDS`: exact strings per research R1 for `'curl' 'vim'` — apt `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y 'curl' 'vim'`, dnf `dnf -y install 'curl' 'vim'`, apk `apk update && apk add 'curl' 'vim'`, pacman `pacman -Syu --needed --noconfirm 'curl' 'vim'`, zypper `zypper --non-interactive --gpg-auto-import-keys install 'curl' 'vim'`
+- [x] T006 [US1] Add `INSTALL_COMMANDS: Record<PackageManager, (packages: string) => string>` next to `UPDATE_COMMANDS` in `src/lib/package-manager.ts`, with a comment for the pacman `-Syu` and zypper key-import choices (research R1)
+- [x] T007 [US1] Add tests in `test/commands/configure-guest.test.ts`: for each of the five managers, apply sends the probe first then that manager's install command (and never `apt-get` for non-apt); a name with a shell metacharacter (e.g. `a;b`) stays one quoted argument. Update the existing "installs quoted packages and adds an SSH key" test for the new call order (probe, install, ssh-key = 3 calls)
+- [x] T008 [US1] Rewrite the `--packages` branch of `src/commands/provisioning/configure-guest.ts` to call `detectPackageManager`, then run `INSTALL_COMMANDS[pm](quoted)` on apply
 
 **Checkpoint**: US1 tests green.
 

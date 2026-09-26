@@ -44,6 +44,27 @@ export const UPDATE_COMMANDS: Record<PackageManager, string> = {
   zypper: 'zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive update',
 };
 
+// `configure-guest --packages`'s counterpart to UPDATE_COMMANDS -- installs
+// specific packages rather than upgrading everything already installed.
+// `<pkgs>` must already be shell-quoted (one quoted argument per package) by
+// the caller; every entry is non-interactive for the same reason
+// UPDATE_COMMANDS is: these run over an exec channel whose stdin is closed.
+export const INSTALL_COMMANDS: Record<PackageManager, (pkgs: string) => string> = {
+  apt: (pkgs) =>
+    `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkgs}`,
+  dnf: (pkgs) => `dnf -y install ${pkgs}`,
+  apk: (pkgs) => `apk update && apk add ${pkgs}`,
+  // -Syu (not a bare -Sy) for the same reason UPDATE_COMMANDS.pacman is:
+  // Arch does not support a partial upgrade, so a sync-without-upgrade can
+  // leave the system with mismatched libraries. --needed skips packages
+  // already at the target version.
+  pacman: (pkgs) => `pacman -Syu --needed --noconfirm ${pkgs}`,
+  // --gpg-auto-import-keys for the same reason UPDATE_COMMANDS.zypper
+  // carries it: --non-interactive alone auto-declines an unknown repo
+  // signing key rather than prompting.
+  zypper: (pkgs) => `zypper --non-interactive --gpg-auto-import-keys install ${pkgs}`,
+};
+
 // Takes the last non-empty line so a login-shell motd or banner ahead of the
 // probe's own output cannot corrupt the result. Returns undefined for
 // `unknown` and for anything unrecognized -- the caller treats both the same

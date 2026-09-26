@@ -4,6 +4,7 @@ import { runRemote } from '../../lib/targets.ts';
 import { confirmOrDryRun } from '../../lib/dry-run.ts';
 import { shellQuote } from '../../lib/ssh-client.ts';
 import { buildAuthorizedKeysEnsurePresentScript } from '../../lib/authorized-keys.ts';
+import { detectPackageManager, INSTALL_COMMANDS, UnknownPackageManagerError } from '../../lib/package-manager.ts';
 
 export interface ConfigureGuestOptions {
   guest: string;
@@ -26,10 +27,28 @@ export async function runConfigureGuest(
   }
 
   if (opts.packages) {
+    // Detection runs in dry run too (like create-lxc/install-app's own live
+    // previews), so the preview names the exact command apply would send.
+    const detection = await detectPackageManager(deps.ssh, deps.inventory, opts.guest);
+    if (detection.kind === 'unknown') {
+      throw new UnknownPackageManagerError(opts.guest);
+    }
+    if (detection.kind === 'probe-failed') {
+      const probe = detection.result;
+      throw new Error(
+        `Package-manager probe failed on ${opts.guest} (exit ${probe.code}): ${probe.stderr.trim() || 'no output'}`
+      );
+    }
+    const pm = detection.pm;
     const quoted = opts.packages.trim().split(/\s+/).map(shellQuote).join(' ');
-    const cmd = `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${quoted}`;
-    if (confirmOrDryRun(`Would install on ${opts.guest}: ${opts.packages}`, opts.apply ?? false)) {
-      await runRemote(deps.ssh, deps.inventory, opts.guest, cmd);
+    const cmd = INSTALL_COMMANDS[pm](quoted);
+    if (confirmOrDryRun(`Would install on ${opts.guest} (${pm}): ${cmd}`, opts.apply ?? false)) {
+      const result = await runRemote(deps.ssh, deps.inventory, opts.guest, cmd);
+      if (result.code !== 0) {
+        throw new Error(
+          `Package install failed on ${opts.guest} (${pm}, exit ${result.code}): ${result.stderr.trim() || 'no output'}`
+        );
+      }
     }
   }
 

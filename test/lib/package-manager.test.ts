@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   PROBE_COMMAND,
   UPDATE_COMMANDS,
+  INSTALL_COMMANDS,
   parsePackageManager,
   detectPackageManager,
   UnknownPackageManagerError,
@@ -68,6 +69,26 @@ test('UPDATE_COMMANDS runs every package manager non-interactively', () => {
   assert.equal(
     UPDATE_COMMANDS.zypper,
     'zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive update'
+  );
+});
+
+test('INSTALL_COMMANDS builds the exact install command for each package manager', () => {
+  const pkgs = "'curl' 'vim'";
+  assert.equal(
+    INSTALL_COMMANDS.apt(pkgs),
+    `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkgs}`
+  );
+  assert.equal(INSTALL_COMMANDS.dnf(pkgs), `dnf -y install ${pkgs}`);
+  assert.equal(INSTALL_COMMANDS.apk(pkgs), `apk update && apk add ${pkgs}`);
+  // --needed skips packages already current; -Syu (not a bare -Sy) because
+  // Arch does not support a partial upgrade -- same reason UPDATE_COMMANDS.pacman
+  // is -Syu.
+  assert.equal(INSTALL_COMMANDS.pacman(pkgs), `pacman -Syu --needed --noconfirm ${pkgs}`);
+  // --gpg-auto-import-keys for the same reason UPDATE_COMMANDS.zypper carries
+  // it: --non-interactive alone auto-declines an unknown repo signing key.
+  assert.equal(
+    INSTALL_COMMANDS.zypper(pkgs),
+    `zypper --non-interactive --gpg-auto-import-keys install ${pkgs}`
   );
 });
 
