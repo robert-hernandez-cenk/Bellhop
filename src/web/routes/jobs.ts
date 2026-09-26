@@ -1,10 +1,11 @@
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { WebSocketServer } from 'ws';
 import type { Server } from 'node:http';
 import type { JobStore, JobRow, JobStatus } from '../jobs/job-store.ts';
 import type { JobLog } from '../jobs/job-log.ts';
 import type { JobRunner } from '../jobs/job-runner.ts';
 import { createForeignJobTail } from '../jobs/job-tail.ts';
+import { requestJobControl } from '../jobs/job-control.ts';
 import { resolveAuthUser } from '../auth.ts';
 import { isAdmin } from '../access.ts';
 import { loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
@@ -70,19 +71,6 @@ export function isJobVisible(rules: Map<string, GroupPermission>, groups: string
 export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRunner, inventoryPath: string): Router {
   const router = Router();
 
-  // Issue #16: a job may be owned by another process (an MCP server) whose
-  // JobRunner holds its live exec channel -- this process can't cancel,
-  // answer, or dismiss it. Returns true (after sending a 409 naming the
-  // owner, same wording as src/mcp/build-server.ts's requireOwned) when the
-  // job isn't ours, rather than letting the runner's "nothing to cancel"
-  // failure produce a misleading error.
-  const rejectForeignOwner = (job: JobRow, res: Response): boolean => {
-    const owner = job.owner ?? 'web';
-    if (owner === jobRunner.owner) return false;
-    res.status(409).json({ error: `job ${job.id} is owned by ${owner}; control it from there` });
-    return true;
-  };
-
   router.get('/', (req, res) => {
     const groups = req.user?.groups ?? [];
     const rules = loadPermissionRules(inventoryPath);
@@ -101,6 +89,32 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
     res.json({ job, log: jobLog.read(job.logFile) });
   });
 
+  // Issue #6 (US2): a job may be owned by another process (an MCP server)
+  // whose JobRunner holds its live exec channel -- this process can't
+  // cancel/answer/dismiss it directly. requestJobControl (shared with the
+  // MCP tools, src/web/jobs/job-control.ts) decides what happens: applied
+  // locally when this route's own jobRunner owns the job, queued as a
+  // control request for the owning process to poll and apply otherwise, or
+  // refused up front when nothing could ever come of asking (a dead-pid
+  // owner, or a job whose status already rules the action out). The
+  // requesting user recorded is the real identity (research.md R6), same as
+  // triggeredByUsername elsewhere.
+  const applyControl = (req: Request, res: Response, job: JobRow, action: 'cancel' | 'answer' | 'dismiss', text?: string) => {
+    const result = requestJobControl(
+      { jobStore, jobRunner },
+      { job, action, text, requestedByUsername: (req.realUser ?? req.user)?.username }
+    );
+    if (result.kind === 'done') {
+      res.json(action === 'cancel' ? { cancelled: true } : action === 'answer' ? { answered: true } : { dismissed: true });
+      return;
+    }
+    if (result.kind === 'requested') {
+      res.status(202).json({ requested: true, owner: result.owner });
+      return;
+    }
+    res.status(409).json({ error: result.message });
+  };
+
   router.post('/:id/cancel', (req, res) => {
     const id = Number(req.params.id);
     const job = jobStore.get(id);
@@ -110,12 +124,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
-    if (rejectForeignOwner(job, res)) return;
-    if (!jobRunner.cancel(id)) {
-      res.status(409).json({ error: `Job ${id} is already ${job.status} — nothing to cancel` });
-      return;
-    }
-    res.json({ cancelled: true });
+    applyControl(req, res, job, 'cancel');
   });
 
   router.post('/:id/answer', (req, res) => {
@@ -127,13 +136,8 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
-    if (rejectForeignOwner(job, res)) return;
     const text = typeof req.body?.text === 'string' ? req.body.text : '';
-    if (!jobRunner.answerPrompt(id, text)) {
-      res.status(409).json({ error: `Job ${id} is not awaiting input — nothing to answer` });
-      return;
-    }
-    res.json({ answered: true });
+    applyControl(req, res, job, 'answer', text);
   });
 
   router.post('/:id/dismiss-prompt', (req, res) => {
@@ -145,12 +149,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
-    if (rejectForeignOwner(job, res)) return;
-    if (!jobRunner.dismissPrompt(id)) {
-      res.status(409).json({ error: `Job ${id} is not awaiting input — nothing to dismiss` });
-      return;
-    }
-    res.json({ dismissed: true });
+    applyControl(req, res, job, 'dismiss');
   });
 
   return router;

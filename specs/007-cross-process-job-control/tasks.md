@@ -126,7 +126,7 @@ its row from the test, and receive `chunk`/`status`/`prompt`/`prompt-cleared` me
 **Independent Test**: POST cancel/answer/dismiss for a foreign job returns 202 and writes a
 request; state refusals and dead-owner refusal return 409; a second runner owning the job applies it.
 
-- [ ] T013 [US2] Replace the `for (const action of ['cancel', 'answer', 'dismiss-prompt'])` 409
+- [x] T013 [US2] Replace the `for (const action of ['cancel', 'answer', 'dismiss-prompt'])` 409
   test near the end of `test/web/routes/jobs.test.ts` with failing tests: for a job owned by
   `mcp:<process.pid>` (alive), running and, for answer/dismiss, marked awaiting input, each route
   returns 202 `{ requested: true, owner }` and a pending request exists with the right action,
@@ -137,7 +137,7 @@ request; state refusals and dead-owner refusal return 409; a second runner ownin
   second `JobRunner` (owner `mcp:<process.pid>`) sharing the store and log runs a hanging job, the
   web app's cancel route returns 202, the second runner's `processControlRequests()` is invoked,
   and the job ends `cancelled` with `Stop requested from web UI by admin` in its log.
-- [ ] T014 [US2] Update the three control routes in `src/web/routes/jobs.ts` to call
+- [x] T014 [US2] Update the three control routes in `src/web/routes/jobs.ts` to call
   `requestJobControl` with `requestedByUsername` from `(req.realUser ?? req.user)?.username`; map
   `done` → today's 200 body, `requested` → 202 `{ requested: true, owner }`, `refused` → 409
   `{ error: message }`; remove `rejectForeignOwner`. Keep the visibility check first.

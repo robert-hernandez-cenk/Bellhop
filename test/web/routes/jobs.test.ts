@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import { buildApp } from '../../../src/web/app.ts';
-import { JobStore } from '../../../src/web/jobs/job-store.ts';
+import { JobStore, defaultIsPidAlive } from '../../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../../src/web/jobs/job-log.ts';
 import type { JobLog } from '../../../src/web/jobs/job-log.ts';
 import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
@@ -877,25 +877,169 @@ test('WS /ws/jobs/:id still refuses a foreign job a restricted group cannot see'
   }
 });
 
-// Issue #16: a job owned by another process (an MCP server) can't be
-// controlled from this web process's JobRunner -- say so, instead of the
-// misleading "already running — nothing to cancel".
+// Issue #6 (US2): a job owned by another live process is no longer a flat
+// 409 "control it from there" -- the requester writes a control-request row
+// the owning process polls for and applies asynchronously through its own
+// JobRunner methods (requestJobControl, research.md R3). The route itself
+// can't tell whether that async apply will actually succeed (it never
+// touches the job), so it only ever previews the *synchronous* refusal
+// cases requestJobControl decides up front: a dead-pid owner, or a job
+// whose current status rules the action out entirely.
 for (const action of ['cancel', 'answer', 'dismiss-prompt'] as const) {
-  test(`POST /api/jobs/:id/${action} 409s naming the owner for a job owned by another process`, async () => {
+  const controlAction = action === 'dismiss-prompt' ? 'dismiss' : action;
+
+  test(`POST /api/jobs/:id/${action} 202s and records a control request for a job owned by another live process`, async () => {
     const jobStore = new JobStore(':memory:');
     const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
     const jobRunner = new JobRunner(jobStore, jobLog, ssh);
     const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
-    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:123' });
+    const owner = `mcp:${process.pid}`;
+    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+    if (action === 'cancel') jobStore.markRunning(id);
+    else jobStore.markAwaitingInput(id, 'Continue? (y/N) ', 'heuristic', null);
 
     const res = await request(app)
       .post(`/api/jobs/${id}/${action}`)
       .send({ text: 'y' })
       .set('x-authentik-username', 'admin')
       .set('x-authentik-groups', 'bellhop-admins');
+
+    assert.equal(res.status, 202);
+    assert.deepEqual(res.body, { requested: true, owner });
+
+    const pending = jobStore.pendingControlRequests(owner);
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].jobId, id);
+    assert.equal(pending[0].action, controlAction);
+    assert.equal(pending[0].requestedByOwner, 'web');
+    assert.equal(pending[0].requestedByUsername, 'admin');
+  });
+
+  test(`POST /api/jobs/:id/${action} 409s naming the exited owner for a job owned by a dead process`, async () => {
+    const jobStore = new JobStore(':memory:');
+    const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+
+    const deadPid = 2147483646;
+    assert.equal(defaultIsPidAlive(deadPid), false, 'test assumes this pid is not a real running process');
+    const owner = `mcp:${deadPid}`;
+    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+    if (action === 'cancel') jobStore.markRunning(id);
+    else jobStore.markAwaitingInput(id, 'Continue? (y/N) ', 'heuristic', null);
+
+    const res = await request(app)
+      .post(`/api/jobs/${id}/${action}`)
+      .send({ text: 'y' })
+      .set('x-authentik-username', 'admin')
+      .set('x-authentik-groups', 'bellhop-admins');
+
     assert.equal(res.status, 409);
-    assert.equal(res.body.error, `job ${id} is owned by mcp:123; control it from there`);
+    assert.equal(res.body.error, `job ${id}'s owning process ${owner} has exited`);
+    assert.deepEqual(jobStore.pendingControlRequests(owner), []);
   });
 }
+
+test('POST /api/jobs/:id/cancel 409s "nothing to cancel" for a terminal job owned by another live process', async () => {
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+
+  const owner = `mcp:${process.pid}`;
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+  jobStore.markFinished(id, { status: 'success', exitCode: 0 });
+
+  const res = await request(app)
+    .post(`/api/jobs/${id}/cancel`)
+    .set('x-authentik-username', 'admin')
+    .set('x-authentik-groups', 'bellhop-admins');
+
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, `Job ${id} is already success — nothing to cancel`);
+  assert.deepEqual(jobStore.pendingControlRequests(owner), []);
+});
+
+for (const action of ['answer', 'dismiss-prompt'] as const) {
+  const verb = action === 'dismiss-prompt' ? 'dismiss' : 'answer';
+
+  test(`POST /api/jobs/:id/${action} 409s "nothing to ${verb}" for a running (not awaiting-input) job owned by another live process`, async () => {
+    const jobStore = new JobStore(':memory:');
+    const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+
+    const owner = `mcp:${process.pid}`;
+    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+    jobStore.markRunning(id);
+
+    const res = await request(app)
+      .post(`/api/jobs/${id}/${action}`)
+      .send({ text: 'y' })
+      .set('x-authentik-username', 'admin')
+      .set('x-authentik-groups', 'bellhop-admins');
+
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, `Job ${id} is not awaiting input — nothing to ${verb}`);
+    assert.deepEqual(jobStore.pendingControlRequests(owner), []);
+  });
+}
+
+// End-to-end (T013): a second JobRunner standing in for a real MCP server
+// process, sharing this JobStore/JobLog. The web app's cancel route can't
+// touch this job directly (different owner) -- it only writes a control
+// request; the owning runner's own processControlRequests() is what
+// actually cancels it and appends the attribution line, exactly as it
+// would on its own poll timer.
+test('POST /api/jobs/:id/cancel on a job owned by a second JobRunner ends it cancelled once that runner polls', async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'joblog-'));
+  const jobLog = createJobLog(dir);
+  const webSsh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const webRunner = new JobRunner(jobStore, jobLog, webSsh);
+  const app = buildApp({
+    inventory,
+    baseSsh: webSsh,
+    jobStore,
+    jobLog,
+    jobRunner: webRunner,
+    inventoryPath: seededInventoryPath(),
+    authentik: new FakeAuthentikClient(),
+  });
+
+  const owner = `mcp:${process.pid}`;
+  const mcpSsh = new HangingSSHClient();
+  const secondRunner = new JobRunner(jobStore, jobLog, mcpSsh, { owner });
+
+  const id = secondRunner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async (s) => {
+      await s.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
+    },
+  });
+
+  await waitFor(() => jobStore.get(id)?.status === 'running');
+
+  const res = await request(app)
+    .post(`/api/jobs/${id}/cancel`)
+    .set('x-authentik-username', 'admin')
+    .set('x-authentik-groups', 'bellhop-admins');
+
+  assert.equal(res.status, 202);
+  assert.deepEqual(res.body, { requested: true, owner });
+
+  secondRunner.processControlRequests();
+
+  await waitFor(() => jobStore.get(id)?.status === 'cancelled');
+  assert.match(jobLog.read(jobStore.get(id)!.logFile), /Stop requested from web UI by admin/);
+
+  rmSync(dir, { recursive: true, force: true });
+  jobStore.close();
+});
