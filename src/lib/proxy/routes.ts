@@ -69,78 +69,103 @@ function findAuthentikEntry(inventory: Inventory): { ip?: string } | undefined {
   return [...inventory.hosts, ...inventory.guests].find((e) => e.authentik);
 }
 
-// Derives one ProxyRoute per host/guest/external-site entry that has
-// subdomains and isn't proxyManual, in the order hosts, guests, external
-// sites (each already in loadInventory's sorted order) -- reproducing
-// buildCaddyBlock's existing derivation rules (data-model.md "ProxyRoute"),
-// just as a proxy-neutral data structure instead of rendered Caddyfile
-// text. Throws the same missing-authentik message buildCaddyBlock does, at
-// the same point (the first forward-gated entry encountered with no
-// authentik ip to address), moved here per contracts/driver-interface.md.
-export function buildRoutes(inventory: Inventory): ProxyRoute[] {
-  const authentikEntry = findAuthentikEntry(inventory);
-  const owned: { type: 'host' | 'guest' | 'externalSite'; entry: ProxyCandidate }[] = [
+type OwnerType = ProxyRoute['owner']['type'];
+
+// Every host, guest, and external site, in the order hosts, guests,
+// external sites (each already in loadInventory's sorted order).
+function candidates(inventory: Inventory): { type: OwnerType; entry: ProxyCandidate }[] {
+  return [
     ...inventory.hosts.map((entry) => ({ type: 'host' as const, entry })),
     ...inventory.guests.map((entry) => ({ type: 'guest' as const, entry })),
     ...(inventory.externalSites ?? []).map((entry) => ({ type: 'externalSite' as const, entry })),
   ];
+}
 
+// Only an entry with subdomains that isn't proxyManual gets a route.
+function hasRoute(entry: ProxyCandidate): boolean {
+  return !entry.proxyManual && (entry.subdomains ?? []).length > 0;
+}
+
+// One entry's route, from that entry alone -- it never looks at any other
+// entry, so it cannot fail over one. Throws only for this entry's own
+// invalid unauthenticatedPaths value.
+function deriveRoute(type: OwnerType, entry: ProxyCandidate, inventory: Inventory): ProxyRoute {
+  const mode = effectiveAuth(entry);
+  const auth: ProxyAuth =
+    mode === 'forward'
+      ? {
+          mode: 'forward',
+          // parsePathPattern is called eagerly here (not deferred to a
+          // driver) so a bad unauthenticatedPaths entry fails at
+          // buildRoutes/sync-proxy time, naming both the entry and the raw
+          // value -- parsePathPattern's own error has neither, since it
+          // has no entry context of its own.
+          exemptPaths: (entry.unauthenticatedPaths ?? []).map((raw) => {
+            try {
+              return parsePathPattern(raw);
+            } catch {
+              throw new Error(
+                `Entry '${entry.name}' has an invalid unauthenticatedPaths pattern '${raw}': must be an exact path (/health) or a prefix ending in /* (/api/*)`
+              );
+            }
+          }),
+          // Copied, not the inventory's own array reference -- a caller
+          // that mutates a route's rawExemptPaths (e.g. a driver sorting
+          // it for rendering) must never reach back into the loaded
+          // Inventory object.
+          rawExemptPaths: [...(entry.unauthenticatedPaths ?? [])],
+        }
+      : mode === 'oidc'
+        ? { mode: 'oidc' }
+        : { mode: 'ungated' };
+
+  return {
+    owner: { type, name: entry.name },
+    hostnames: (entry.subdomains ?? []).map((s) => publicHostname(s, inventory.domain)),
+    backend: {
+      // Non-null: validateInventory() already enforces that a non-manual
+      // entry with subdomains has an ip -- entries reaching this point
+      // are exactly those (hasRoute filters out the rest).
+      ip: entry.ip!,
+      port: entry.port ?? 80,
+      insecureTls: entry.insecureBackendTls === true,
+    },
+    auth,
+  };
+}
+
+// Derives one ProxyRoute per host/guest/external-site entry that has
+// subdomains and isn't proxyManual, in the order hosts, guests, external
+// sites (data-model.md "ProxyRoute"). Throws the missing-authentik message
+// at the first forward-gated entry encountered with no authentik ip to
+// address (contracts/driver-interface.md), before that entry's own
+// exempt paths are parsed.
+export function buildRoutes(inventory: Inventory): ProxyRoute[] {
+  const authentikEntry = findAuthentikEntry(inventory);
   const routes: ProxyRoute[] = [];
-  for (const { type, entry } of owned) {
-    if (entry.proxyManual) continue;
-    const subdomains = entry.subdomains ?? [];
-    if (subdomains.length === 0) continue;
-
-    const mode = effectiveAuth(entry);
-    if (mode === 'forward' && !authentikEntry?.ip) {
+  for (const { type, entry } of candidates(inventory)) {
+    if (!hasRoute(entry)) continue;
+    if (effectiveAuth(entry) === 'forward' && !authentikEntry?.ip) {
       throw new Error(
         `Entry '${entry.name}' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set`
       );
     }
-
-    const auth: ProxyAuth =
-      mode === 'forward'
-        ? {
-            mode: 'forward',
-            // parsePathPattern is called eagerly here (not deferred to a
-            // driver) so a bad unauthenticatedPaths entry fails at
-            // buildRoutes/sync-proxy time, naming both the entry and the raw
-            // value -- parsePathPattern's own error has neither, since it
-            // has no entry context of its own.
-            exemptPaths: (entry.unauthenticatedPaths ?? []).map((raw) => {
-              try {
-                return parsePathPattern(raw);
-              } catch {
-                throw new Error(
-                  `Entry '${entry.name}' has an invalid unauthenticatedPaths pattern '${raw}': must be an exact path (/health) or a prefix ending in /* (/api/*)`
-                );
-              }
-            }),
-            // Copied, not the inventory's own array reference -- a caller
-            // that mutates a route's rawExemptPaths (e.g. a driver sorting
-            // it for rendering) must never reach back into the loaded
-            // Inventory object.
-            rawExemptPaths: [...(entry.unauthenticatedPaths ?? [])],
-          }
-        : mode === 'oidc'
-          ? { mode: 'oidc' }
-          : { mode: 'ungated' };
-
-    routes.push({
-      owner: { type, name: entry.name },
-      hostnames: subdomains.map((s) => publicHostname(s, inventory.domain)),
-      backend: {
-        // Non-null: validateInventory() already enforces that a non-manual
-        // entry with subdomains has an ip -- entries reaching this point
-        // are exactly those (proxyManual/no-subdomains are skipped above).
-        ip: entry.ip!,
-        port: entry.port ?? 80,
-        insecureTls: entry.insecureBackendTls === true,
-      },
-      auth,
-    });
+    routes.push(deriveRoute(type, entry, inventory));
   }
   return routes;
+}
+
+// The one named entry's route, or undefined when it gets none (no
+// subdomains, proxyManual, or no such entry). Built from that entry alone,
+// so an unrelated entry's problem (a missing authentik ip, a bad exempt
+// path) never makes it fail -- which is what commitGuestEdit's edit-time
+// capability check needs. It skips buildRoutes's missing-authentik check:
+// that is about where the outpost lives, not about the route's shape, and
+// sync-proxy still reports it.
+export function buildRouteForEntry(inventory: Inventory, owner: ProxyRoute['owner']): ProxyRoute | undefined {
+  const found = candidates(inventory).find((c) => c.type === owner.type && c.entry.name === owner.name);
+  if (!found || !hasRoute(found.entry)) return undefined;
+  return deriveRoute(found.type, found.entry, inventory);
 }
 
 // The driver-agnostic context every route rendering needs alongside the

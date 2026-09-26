@@ -554,10 +554,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   joins every message into one thrown `Error` and refuses to preview or
   write anything -- for both a dry run and `--apply`; `commitGuestEdit`
   (`src/operations/edit-guest.ts`) runs the same check against the
-  *edited* guest's own route only, so an unrelated forward-gated entry's
-  mismatch never blocks a different guest's edit -- it still surfaces the
-  next time that entry is itself synced or edited, or by the push-live
-  step's own `sync-proxy` call. This check runs only where a route is
+  *edited* guest's own route only, derived alone by `buildRouteForEntry`
+  (`routes.ts`), so nothing about another entry -- its own capability
+  mismatch, a missing authentik ip, a bad exempt path -- can block a
+  different guest's edit; it still surfaces the next time that entry is
+  itself synced or edited, or by the push-live step's own `sync-proxy`
+  call, reported as `proxySynced: false`. This check runs only where a route is
   about to become live configuration or a specific entry is being saved --
   never from `validateInventory()` itself (FR-013), so changing
   `proxyDriver` can never make an already-saved inventory fail to load;

@@ -174,6 +174,34 @@ test('commitGuestEdit does not block an edit to a different, ungated guest even 
   }
 });
 
+test('commitGuestEdit saves a port-only edit even when route derivation fails for an unrelated entry, reporting the failure as proxySynced:false', async () => {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-unrelated-route-')), 'bellhop.db');
+  saveInventory(inventoryPath, capabilityInventory);
+  const loaded = loadInventory(inventoryPath);
+  // An exempt-path value route derivation rejects, on an entry this edit
+  // never touches. validateInventory() does not check path shapes (the
+  // schema does, on load), so this reaches commitGuestEdit the way a
+  // hand-edited row would reach sync-proxy.
+  loaded.guests.find((g) => g.name === 'gated-other')!.unauthenticatedPaths = ['/api*'];
+  const d: OperationDeps = {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loaded,
+    inventoryPath,
+    authentik: new UnconfiguredAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+  const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
+  const result = await commitGuestEdit(d, 'sonarr', applyGuestEdits(current, { port: 8989 }), false);
+  // d.inventory, not a reload: the saved file carries the bad path too,
+  // which loadInventory's schema would reject. commitGuestEdit only updates
+  // d.inventory after saveInventory returns.
+  assert.equal(d.inventory.guests.find((g) => g.name === 'sonarr')?.port, 8989);
+  assert.equal(result.proxySynced, false);
+  if (!result.proxySynced) {
+    assert.match(result.proxyError, /Entry 'gated-other' has an invalid unauthenticatedPaths pattern '\/api\*'/);
+  }
+});
+
 test('applyGuestEdits accepts form strings and typed arrays/numbers alike', () => {
   const current = inventory.guests[1];
   const fromForm = applyGuestEdits(current, { subdomains: 'app; app2', port: '8080' });

@@ -5,6 +5,7 @@ import {
   parsePathPattern,
   buildRoutes,
   buildProxyContext,
+  buildRouteForEntry,
   type ProxyRoute,
 } from '../../../src/lib/proxy/routes.ts';
 
@@ -279,4 +280,36 @@ test('buildProxyContext: omits outpost when no authentik entry has an ip', () =>
 test('buildRoutes: return type matches ProxyRoute[]', () => {
   const routes: ProxyRoute[] = buildRoutes(fixtureInventory());
   assert.ok(Array.isArray(routes));
+});
+
+test('buildRouteForEntry: derives only the named entry, so another entry\'s missing authentik ip or bad exempt path never makes it fail', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
+    guests: [
+      { name: 'gated', type: 'lxc', vmid: 101, host: 'pve1', ip: '192.0.2.11', subdomains: ['gated'], authGroup: 'bellhop-users', unauthenticatedPaths: ['/api*'] },
+      { name: 'web-lxc', type: 'lxc', vmid: 102, host: 'pve1', ip: '192.0.2.12', port: 8080, subdomains: ['web'] },
+    ],
+  };
+  assert.throws(() => buildRoutes(inv));
+  assert.deepEqual(buildRouteForEntry(inv, { type: 'guest', name: 'web-lxc' }), {
+    owner: { type: 'guest', name: 'web-lxc' },
+    hostnames: ['web.example.com'],
+    backend: { ip: '192.0.2.12', port: 8080, insecureTls: false },
+    auth: { mode: 'ungated' },
+  });
+});
+
+test('buildRouteForEntry: undefined for an entry with no route or no such entry', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
+    guests: [
+      { name: 'internal-lxc', type: 'lxc', vmid: 101, host: 'pve1', ip: '192.0.2.11' },
+      { name: 'manual-lxc', type: 'lxc', vmid: 102, host: 'pve1', subdomains: ['manual'], proxyManual: true },
+    ],
+  };
+  assert.equal(buildRouteForEntry(inv, { type: 'guest', name: 'internal-lxc' }), undefined);
+  assert.equal(buildRouteForEntry(inv, { type: 'guest', name: 'manual-lxc' }), undefined);
+  assert.equal(buildRouteForEntry(inv, { type: 'host', name: 'web-lxc' }), undefined);
 });
