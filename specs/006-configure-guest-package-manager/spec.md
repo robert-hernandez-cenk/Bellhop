@@ -102,9 +102,17 @@ command exits non-zero.
 - When both `--packages` and `--ssh-key` are given and the package step fails, the SSH key step
   does not run; the command fails at the first failure.
 - A package name containing shell metacharacters is still passed as a single quoted argument.
-- A VM guest command that outlives `qm guest exec`'s 60s wait is reported as a failure naming
+- A VM guest command that outlives `qm guest exec`'s wait is reported as a failure naming
   the timeout, not a success — this applies to every command routed to a VM through `runRemote`,
-  including `update-all`, not just `configure-guest`.
+  including `update-all`, not just `configure-guest`. That wait is 60s for an ordinary command
+  and 30 minutes (1800s) for a package install/upgrade command specifically — package operations
+  routinely outlast 60s, and a wait that short would report a still-running apt/dnf/etc. as
+  failed while leaving its lock held for the next attempt.
+- A VM guest command killed by a signal (e.g. `kill -9`) returns an `exited: 1` envelope with a
+  `signal` number and no `exitcode` at all — a shape distinct from the pid-only "still running"
+  timeout envelope above. This is reported as a failure naming the killing signal, with whatever
+  stdout/stderr the command produced before being killed, not misreported as a timeout with the
+  output dropped.
 
 ## Requirements *(mandatory)*
 
@@ -130,9 +138,15 @@ command exits non-zero.
 - **FR-009**: The web UI and MCP `configure-guest` operation MUST pick up the new behavior
   without an interface change: preview shows the manager-specific command, and a failure fails
   the job.
-- **FR-010**: A VM guest command that outlives `qm guest exec`'s 60s wait MUST be reported as a
+- **FR-010**: A VM guest command that outlives `qm guest exec`'s wait MUST be reported as a
   failure naming the timeout, never as a success — `runRemote`'s `vm` branch MUST NOT treat a
-  timeout envelope (pid only, no `exitcode`) the same as a completed one.
+  timeout envelope (pid only, no `exitcode`) the same as a completed one. That wait MUST be
+  configurable per call (`runRemote`'s optional `vmTimeoutSeconds`), defaulting to 60s for an
+  ordinary command; `update-all`'s update command and `configure-guest`'s install command MUST
+  pass 30 minutes (1800s) instead, since package operations routinely outlast 60s. A VM guest
+  command killed by a signal (an `exited: 1` envelope carrying a `signal` number and no
+  `exitcode`) MUST be reported as a failure naming the signal, with whatever output the command
+  produced, rather than being treated as the timeout case above.
 
 ### Key Entities
 

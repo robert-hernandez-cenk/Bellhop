@@ -114,6 +114,66 @@ test('runRemote parses the captured completed-nonzero-exit envelope verbatim', a
   assert.equal(result.stderr, '');
 });
 
+// Issue #2 code review R1: a process killed by a signal returns `exited: 1`
+// + `signal` and no `exitcode` at all -- a shape distinct from the pid-only
+// "still running" timeout envelope above. The old `typeof parsed.exitcode
+// !== 'number'` check sent this down the timeout path too, misreporting a
+// signal-killed command as still running and dropping its output. Captured
+// live 2026-09-26 through Ssh2SSHClient.exec on the parent host: `qm guest
+// exec <vmid> --timeout 10 -- sh -c 'echo before; echo oops >&2; kill -9
+// $$'`.
+test('runRemote reports a vm guest exec signal-killed envelope as a failure with its output, not a timeout', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "err-data" : "oops\\n",\n   "exited" : 1,\n   "out-data" : "before\\n",\n   "signal" : 9\n}\n',
+    stderr: '',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', "echo before; echo oops >&2; kill -9 $$");
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, 'before\n');
+  assert.equal(result.stderr, 'oops\nkilled by signal 9');
+});
+
+test('runRemote reports a signal-killed envelope with no err-data as just "killed by signal N"', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: JSON.stringify({ exited: 1, 'out-data': 'before\n', signal: 9 }),
+    stderr: '',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'kill -9 $$');
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, 'before\n');
+  assert.equal(result.stderr, 'killed by signal 9');
+});
+
+// Issue #2 code review R2: an optional per-call vmTimeoutSeconds overrides
+// the default 60s wait, both in the qm guest exec --timeout flag and in the
+// timeout failure message -- configure-guest/update-all pass a longer one
+// for package install/upgrade commands, which routinely outlast 60s.
+test('runRemote honors a custom vmTimeoutSeconds in the qm guest exec --timeout flag', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: JSON.stringify({ exitcode: 0, 'out-data': '', 'err-data': '' }),
+    stderr: '',
+    code: 0,
+  }));
+  await runRemote(ssh, inventory, 'windows-test', 'apt-get upgrade', { vmTimeoutSeconds: 1800 });
+  assert.match(ssh.history[0].command, /^qm guest exec 201 --timeout 1800 -- sh -c/);
+});
+
+test('runRemote uses a custom vmTimeoutSeconds in the timeout failure message', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "pid" : 12345\n}\n',
+    stderr: 'timeout reached, returning pid\n',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'apt-get upgrade', { vmTimeoutSeconds: 1800 });
+  assert.equal(result.code, 1);
+  assert.equal(
+    result.stderr,
+    'qm guest exec timed out after 1800s; the command is still running in the guest (pid 12345)'
+  );
+});
+
 test('runRemote reports an unparseable vm guest exec envelope as a failure including the trimmed raw stdout', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '  not json at all  ', stderr: '', code: 0 }));
   const result = await runRemote(ssh, inventory, 'windows-test', 'echo hi');

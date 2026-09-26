@@ -8,7 +8,10 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 const inventory: Inventory = {
   domain: 'example.com',
   hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
-  guests: [{ name: 'media', type: 'lxc', vmid: 105, host: 'pve1' }],
+  guests: [
+    { name: 'media', type: 'lxc', vmid: 105, host: 'pve1' },
+    { name: 'windows-guest', type: 'vm', vmid: 201, host: 'pve1' },
+  ],
 };
 
 test('runConfigureGuest requires at least one of --packages or --ssh-key', async () => {
@@ -231,6 +234,23 @@ test('runConfigureGuest rejects when the ssh-key step exits non-zero, naming the
     () => runConfigureGuest({ guest: 'media', sshKey: 'ssh-ed25519 AAAA test', apply: true }, { ssh, inventory }),
     /Adding SSH key on media failed \(exit 1\): permission denied/
   );
+});
+
+// Issue #2 code review R2: a VM guest's package install routinely outlasts
+// runRemote's default 60s qm guest exec wait, so configure-guest passes the
+// longer PACKAGE_COMMAND_VM_TIMEOUT_SECONDS for the install command itself
+// -- the package-manager probe ahead of it keeps the default 60s.
+test('runConfigureGuest sends the 1800s package-command VM timeout for a vm guest install, keeping the probe at 60s', async () => {
+  const ssh = new FakeSSHClient((_target, _user, cmd) => {
+    if (cmd.includes('command -v apt-get')) {
+      return { stdout: JSON.stringify({ exitcode: 0, 'out-data': 'apt\n', 'err-data': '' }), stderr: '', code: 0 };
+    }
+    return { stdout: JSON.stringify({ exitcode: 0, 'out-data': '', 'err-data': '' }), stderr: '', code: 0 };
+  });
+  await runConfigureGuest({ guest: 'windows-guest', packages: 'curl', apply: true }, { ssh, inventory });
+  assert.equal(ssh.history.length, 2, 'probe, install');
+  assert.match(ssh.history[0].command, /--timeout 60 --/);
+  assert.match(ssh.history[1].command, /--timeout 1800 --/);
 });
 
 test('runConfigureGuest with both flags never sends the ssh-key command when the install fails', async () => {

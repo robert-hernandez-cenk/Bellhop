@@ -15,6 +15,7 @@ const inventory: Inventory = {
     { name: 'unreachable-guest', type: 'lxc', vmid: 108, host: 'pve1' },
     { name: 'broken-guest', type: 'lxc', vmid: 109, host: 'pve1' },
     { name: 'probe-broken-guest', type: 'lxc', vmid: 110, host: 'pve1' },
+    { name: 'windows-guest', type: 'vm', vmid: 201, host: 'pve1' },
   ],
 };
 
@@ -97,6 +98,26 @@ test('runUpdateAll counts a probe that exits nonzero as a command failure, not a
   assert.deepEqual(result.failCommand, ['probe-broken-guest']);
   assert.deepEqual(result.failUnknownPm, []);
   assert.equal(ssh.history.length, 1, 'probe only -- no update attempted');
+});
+
+// Issue #2 code review R2: a VM target's package upgrade routinely outlasts
+// runRemote's default 60s qm guest exec wait, so update-all passes the
+// longer PACKAGE_COMMAND_VM_TIMEOUT_SECONDS for the update command itself
+// -- the package-manager probe ahead of it keeps the default 60s.
+test('runUpdateAll sends the 1800s package-command VM timeout for a vm target update, keeping the probe at 60s', async () => {
+  const ssh = new FakeSSHClient((_target, _user, cmd) => {
+    if (cmd.includes('command -v apt-get')) {
+      return { stdout: JSON.stringify({ exitcode: 0, 'out-data': 'apt\n', 'err-data': '' }), stderr: '', code: 0 };
+    }
+    return { stdout: JSON.stringify({ exitcode: 0, 'out-data': '', 'err-data': '' }), stderr: '', code: 0 };
+  });
+
+  const result = await runUpdateAll({ host: 'windows-guest' }, { ssh, inventory });
+
+  assert.deepEqual(result.pass, ['windows-guest']);
+  assert.equal(ssh.history.length, 2, 'one probe + one update');
+  assert.match(ssh.history[0].command, /--timeout 60 --/);
+  assert.match(ssh.history[1].command, /--timeout 1800 --/);
 });
 
 test('runUpdateAll throws when no targets match', async () => {

@@ -368,12 +368,27 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   translated into the real `ExecResult` by `runRemote`'s `vm` branch, with a
   timeout named as a constant (`VM_EXEC_TIMEOUT_SECONDS`, 60, used to build
   both the `--timeout` flag and the failure message below) rather than a
-  bare literal repeated in two places. Two envelope shapes besides the
-  normal `{"exitcode":...}` one are reported as failures (`code: 1`), never
-  silently coerced to success the way an old `parsed.exitcode ?? 0` used
-  to: a command that outlives that 60s wait gets a pid-only envelope with
-  no `exitcode` at all (`{"pid":N}`) — the command is still running in the
-  guest when `qm guest exec` gives up waiting on it — and one that fails to
+  bare literal repeated in two places. The wait is overridable per call via
+  `runRemote`'s optional fourth argument, `{ vmTimeoutSeconds }` (issue #2
+  code review) — a no-op on the `pve`/`lxc` branches, which ignore it.
+  `update-all`'s update command and `configure-guest`'s install command both
+  pass the exported `PACKAGE_COMMAND_VM_TIMEOUT_SECONDS` (1800,
+  `src/lib/package-manager.ts`) instead of the 60s default: package
+  installs/upgrades routinely outlast 60s, and a wait that short reports a
+  still-running apt/dnf/etc. as failed while leaving its lock held for the
+  next attempt; `detectPackageManager`'s probe keeps the default 60s on
+  every caller. Three envelope shapes besides the normal `{"exitcode":...}`
+  one are reported as failures (`code: 1`), never silently coerced to
+  success the way an old `parsed.exitcode ?? 0` used to: a command that
+  outlives the wait gets a pid-only envelope with no `exitcode` at all
+  (`{"pid":N}`) — the command is still running in the guest when `qm guest
+  exec` gives up waiting on it; a command killed by a signal gets an
+  `exited: 1` envelope carrying a `signal` number instead of a `pid` (also
+  no `exitcode`) — reported with whatever `out-data`/`err-data` it produced
+  plus `killed by signal <N>` appended to stderr, rather than being
+  misreported as the pid-only timeout case above and having its output
+  dropped (this check runs first, since both shapes share the "no
+  `exitcode`" test); and one that fails to
   parse as JSON at all (a plain `JSON.parse`, no pre-processing needed —
   verified live 2026-09-26 that real `qm guest exec` output is strict JSON,
   including a completed command's own embedded newlines, which come through

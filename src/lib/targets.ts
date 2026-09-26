@@ -45,7 +45,8 @@ export async function runRemote(
   ssh: SSHClient,
   inv: Inventory,
   name: string,
-  command: string
+  command: string,
+  opts?: { vmTimeoutSeconds?: number }
 ): Promise<ExecResult> {
   const target = resolveTarget(inv, name);
   switch (target.kind) {
@@ -59,13 +60,25 @@ export async function runRemote(
       return ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
     }
     case 'vm': {
-      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${VM_EXEC_TIMEOUT_SECONDS} -- sh -c ${shellQuote(command)}`;
+      // Per-call override of the default 60s wait (issue #2 code review R2)
+      // -- callers running a package install/upgrade command pass a much
+      // longer value, since apt et al. routinely outlast 60s and a
+      // dishonestly-short wait now reports a still-running install as
+      // failed while leaving its lock held for the next attempt.
+      const timeoutSeconds = opts?.vmTimeoutSeconds ?? VM_EXEC_TIMEOUT_SECONDS;
+      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${timeoutSeconds} -- sh -c ${shellQuote(command)}`;
       const result = await ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
       if (result.code !== 0) {
         // ssh/qm itself failed (e.g. connection failure) -- no JSON to parse.
         return result;
       }
-      let parsed: { pid?: number; exitcode?: number; 'out-data'?: string; 'err-data'?: string };
+      let parsed: {
+        pid?: number;
+        exitcode?: number;
+        signal?: number;
+        'out-data'?: string;
+        'err-data'?: string;
+      };
       try {
         parsed = JSON.parse(result.stdout);
       } catch {
@@ -76,6 +89,22 @@ export async function runRemote(
         };
       }
       if (typeof parsed.exitcode !== 'number') {
+        if (typeof parsed.signal === 'number') {
+          // The remote process was killed by a signal rather than exiting
+          // normally: `exited: 1` with a `signal` number and no `exitcode`
+          // at all -- a shape distinct from the pid-only "still running"
+          // envelope below. Report it as a failure with whatever output was
+          // actually captured, naming the signal, rather than sending it
+          // down the timeout path (which used to misreport this as "still
+          // running" and drop the output entirely).
+          const errData = (parsed['err-data'] ?? '').trim();
+          const killedNote = `killed by signal ${parsed.signal}`;
+          return {
+            stdout: parsed['out-data'] ?? '',
+            stderr: errData ? `${errData}\n${killedNote}` : killedNote,
+            code: 1,
+          };
+        }
         // `--timeout <N>` elapsed before the command finished: `qm guest
         // exec` returns a pid-only envelope with no `exitcode` at all, and
         // the command is still running in the guest -- this is a failure,
@@ -83,7 +112,7 @@ export async function runRemote(
         const pidNote = typeof parsed.pid === 'number' ? ` (pid ${parsed.pid})` : '';
         return {
           stdout: '',
-          stderr: `qm guest exec timed out after ${VM_EXEC_TIMEOUT_SECONDS}s; the command is still running in the guest${pidNote}`,
+          stderr: `qm guest exec timed out after ${timeoutSeconds}s; the command is still running in the guest${pidNote}`,
           code: 1,
         };
       }

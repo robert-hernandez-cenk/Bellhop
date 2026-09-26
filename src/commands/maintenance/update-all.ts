@@ -2,7 +2,12 @@ import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import { runRemote, selectTargets, type TargetSelector } from '../../lib/targets.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
-import { UPDATE_COMMANDS, detectPackageManager, PROBED_COMMANDS } from '../../lib/package-manager.ts';
+import {
+  UPDATE_COMMANDS,
+  PACKAGE_COMMAND_VM_TIMEOUT_SECONDS,
+  detectPackageManager,
+  PROBED_COMMANDS,
+} from '../../lib/package-manager.ts';
 import { errorMessage, formatFailureLines, type TargetFailure } from '../../lib/target-failure.ts';
 
 export interface UpdateAllResult {
@@ -52,7 +57,11 @@ export async function runUpdateAll(
 
       const pm = detection.pm;
       logInfo(`Updating ${target} (${pm})...`);
-      const result = await runRemote(deps.ssh, deps.inventory, target, UPDATE_COMMANDS[pm]);
+      // Package upgrades routinely outlast runRemote's default 60s VM wait
+      // (a no-op for lxc/pve targets, which ignore vmTimeoutSeconds).
+      const result = await runRemote(deps.ssh, deps.inventory, target, UPDATE_COMMANDS[pm], {
+        vmTimeoutSeconds: PACKAGE_COMMAND_VM_TIMEOUT_SECONDS,
+      });
       if (result.code === 0) {
         pass.push(target);
       } else {
