@@ -28,13 +28,13 @@ No setup: the worktree already has dependencies installed and the baseline suite
 **Purpose**: the durable request queue, the owner-side poller, and the one shared requester
 function. See research.md R2 to R4 and data-model.md.
 
-- [ ] T001 Write failing tests in `test/web/jobs/job-store.test.ts` for control requests:
+- [x] T001 Write failing tests in `test/web/jobs/job-store.test.ts` for control requests:
   `createControlRequest` returns an id; `pendingControlRequests('mcp:4242')` returns only unhandled
   rows whose job's `COALESCE(owner, 'web')` equals the argument, in id order (a job with null owner
   counts as `'web'`); `markControlRequestHandled(id, 'applied')` sets `handledAt`, `result`, and
   clears `text` to null, and the row no longer appears as pending; the table survives reopening the
   same database file (constructor is idempotent).
-- [ ] T002 Implement in `src/web/jobs/job-store.ts`: `CREATE TABLE IF NOT EXISTS
+- [x] T002 Implement in `src/web/jobs/job-store.ts`: `CREATE TABLE IF NOT EXISTS
   job_control_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, action TEXT
   NOT NULL CHECK (action IN ('cancel', 'answer', 'dismiss')), text TEXT, requested_by_owner TEXT NOT
   NULL, requested_by_username TEXT, created_at TEXT NOT NULL, handled_at TEXT, result TEXT)`;
@@ -42,7 +42,7 @@ function. See research.md R2 to R4 and data-model.md.
   fields), and the methods `createControlRequest({ jobId, action, text?, requestedByOwner,
   requestedByUsername? })`, `pendingControlRequests(owner)`, `markControlRequestHandled(id, result:
   'applied' | 'not-applicable')`. Match the file's comment style (explain why, reference #6).
-- [ ] T003 Write failing tests in `test/web/jobs/job-runner.test.ts` for
+- [x] T003 Write failing tests in `test/web/jobs/job-runner.test.ts` for
   `processControlRequests()`: with a job this runner owns paused on a prompt (reuse the file's
   existing hanging-exec/prompt helpers), an `answer` request from `mcp:4242` writes `'y\n'` to the
   channel, resumes, marks the request `applied`, and appends `Answer sent from MCP (mcp:4242)` to
@@ -54,14 +54,14 @@ function. See research.md R2 to R4 and data-model.md.
   owner's jobs are left pending; a runner with no active jobs has no poll timer (assert via an
   injected `controlPollMs` plus a `hasControlPoller()` test accessor, or equivalent) and one is
   running while a job is active and cleared after it finishes.
-- [ ] T004 Implement in `src/web/jobs/job-runner.ts`: `controlPollMs` option (default 500);
+- [x] T004 Implement in `src/web/jobs/job-runner.ts`: `controlPollMs` option (default 500);
   start an `unref()`'d interval calling `processControlRequests()` in `enqueue` when none is
   running; clear it in `execute`'s `finally` once `controllers` is empty; public
   `processControlRequests()` per research.md R4, including the attribution line helper (source
   `web UI` for owner `web`, `MCP (<owner>)` for `mcp:<pid>`, ` by <user>` only when a username is
   recorded) written with the same `log.append` + `events.emit('chunk', …)` path `emitChunk` uses, so a
   local WebSocket viewer sees it too. `shutdown()` must also clear the interval.
-- [ ] T005 Write failing tests in `test/web/jobs/job-control.test.ts` for `requestJobControl(deps,
+- [x] T005 Write failing tests in `test/web/jobs/job-control.test.ts` for `requestJobControl(deps,
   { job, action, text, requestedByUsername })`: local job → calls the runner method and returns
   `{ kind: 'done' }` on true, or `{ kind: 'refused', message }` with today's exact wording
   (`Job N is already <status> — nothing to cancel`, `Job N is not awaiting input — nothing to
@@ -72,7 +72,7 @@ function. See research.md R2 to R4 and data-model.md.
   + cancel and foreign paused job + answer/dismiss → a request row is written with
   `requestedByOwner` = the local runner's owner and `{ kind: 'requested', owner }` returned; a
   foreign job owned by `web` is never treated as dead.
-- [ ] T006 Implement `src/web/jobs/job-control.ts` exporting `requestJobControl` and its result
+- [x] T006 Implement `src/web/jobs/job-control.ts` exporting `requestJobControl` and its result
   type; reuse `defaultIsPidAlive` from `job-store.ts` as the default `isPidAlive`. The refusal
   strings are defined once here.
 

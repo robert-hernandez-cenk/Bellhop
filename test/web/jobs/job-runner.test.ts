@@ -499,6 +499,220 @@ test('enqueue stamps the runner owner on each job, defaulting to web (#16)', asy
   store.close();
 });
 
+// Cross-process job control request queue (#6) -- processControlRequests()
+// applies a row another process wrote via requestJobControl
+// (src/web/jobs/job-control.ts) through this runner's own normal methods.
+
+test('processControlRequests applies an answer request from another process, logging attribution without leaking the answer text', async () => {
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new HangingSSHClient();
+  let fireCheck: (() => void) | undefined;
+  const runner = new JobRunner(store, log, ssh, {
+    promptScheduleCheck: (fn) => {
+      fireCheck = fn;
+      return { cancel: () => { fireCheck = undefined; } };
+    },
+  });
+
+  const id = runner.enqueue({
+    command: 'install-app',
+    category: 'provisioning',
+    argsJson: '{}',
+    watchForPrompts: true,
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    },
+  });
+
+  await delay(10);
+  fireCheck?.();
+  fireCheck?.();
+  assert.equal(store.get(id)?.status, 'awaiting_input');
+
+  store.createControlRequest({ jobId: id, action: 'answer', text: 'totally-secret-answer', requestedByOwner: 'mcp:4242' });
+  runner.processControlRequests();
+
+  assert.deepEqual(ssh.writes, ['totally-secret-answer\n']);
+  assert.equal(store.get(id)?.status, 'running');
+  assert.deepEqual(store.pendingControlRequests('mcp:4242'), []);
+  const logText = log.read(store.get(id)!.logFile);
+  assert.match(logText, /Answer sent from MCP \(mcp:4242\)/);
+  assert.ok(!logText.includes('totally-secret-answer'), 'the answer text itself must never appear in the log');
+
+  ssh.finish({ stdout: 'installed', stderr: '', code: 0 });
+  await waitForFinished(runner, id);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('processControlRequests applies a cancel request from web with attribution, ending the job cancelled', async () => {
+  const { store, log, dir, runner } = makeRunner();
+
+  const id = runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async (ssh) => {
+      await delay(20);
+      await ssh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
+    },
+  });
+
+  await delay(5);
+  store.createControlRequest({ jobId: id, action: 'cancel', requestedByOwner: 'web', requestedByUsername: 'admin' });
+  runner.processControlRequests();
+  await waitForFinished(runner, id);
+
+  assert.equal(store.get(id)?.status, 'cancelled');
+  assert.match(log.read(store.get(id)!.logFile), /Stop requested from web UI by admin/);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('processControlRequests applies a dismiss request with attribution', async () => {
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new HangingSSHClient();
+  let fireCheck: (() => void) | undefined;
+  const runner = new JobRunner(store, log, ssh, {
+    promptScheduleCheck: (fn) => {
+      fireCheck = fn;
+      return { cancel: () => { fireCheck = undefined; } };
+    },
+  });
+
+  const id = runner.enqueue({
+    command: 'install-app',
+    category: 'provisioning',
+    argsJson: '{}',
+    watchForPrompts: true,
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    },
+  });
+
+  await delay(10);
+  fireCheck?.();
+  fireCheck?.();
+  assert.equal(store.get(id)?.status, 'awaiting_input');
+
+  store.createControlRequest({ jobId: id, action: 'dismiss', requestedByOwner: 'web', requestedByUsername: 'admin' });
+  runner.processControlRequests();
+
+  assert.deepEqual(ssh.writes, []);
+  assert.equal(store.get(id)?.status, 'running');
+  assert.match(log.read(store.get(id)!.logFile), /Prompt dismissed from web UI by admin/);
+
+  ssh.finish({ stdout: 'installed', stderr: '', code: 0 });
+  await waitForFinished(runner, id);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('processControlRequests marks a request for an inactive job not-applicable and changes nothing', async () => {
+  const { store, dir, runner } = makeRunner();
+
+  const finishedId = runner.enqueue({ command: 'a', category: 'maintenance', argsJson: '{}', run: async () => {} });
+  await waitForFinished(runner, finishedId);
+
+  // Created directly in the store -- never enqueued through this runner, so
+  // it has no in-memory controller even though its row says 'running'.
+  const directId = store.createJob({ command: 'b', category: 'maintenance', argsJson: '{}' });
+  store.markRunning(directId);
+
+  store.createControlRequest({ jobId: finishedId, action: 'cancel', requestedByOwner: 'web' });
+  store.createControlRequest({ jobId: directId, action: 'cancel', requestedByOwner: 'web' });
+
+  runner.processControlRequests();
+
+  assert.deepEqual(store.pendingControlRequests('web'), []);
+  assert.equal(store.get(finishedId)?.status, 'success');
+  assert.equal(store.get(directId)?.status, 'running');
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('processControlRequests marks an answer request not-applicable when the job is running but not paused', async () => {
+  const { store, dir, runner } = makeRunner();
+
+  const id = runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await delay(30);
+    },
+  });
+  await delay(5);
+  assert.equal(store.get(id)?.status, 'running');
+
+  store.createControlRequest({ jobId: id, action: 'answer', text: 'y', requestedByOwner: 'web' });
+  runner.processControlRequests();
+
+  assert.deepEqual(store.pendingControlRequests('web'), []);
+  assert.equal(store.get(id)?.status, 'running');
+
+  await waitForFinished(runner, id);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('processControlRequests leaves another owner\'s pending requests untouched', async () => {
+  const { store, dir, runner } = makeRunner(); // runner.owner === 'web'
+
+  const id = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await delay(30);
+    },
+  });
+  await delay(5);
+
+  const foreignJobId = store.createJob({ command: 'b', category: 'maintenance', argsJson: '{}', owner: 'mcp:9999' });
+  const requestId = store.createControlRequest({ jobId: foreignJobId, action: 'cancel', requestedByOwner: 'web' });
+
+  runner.processControlRequests();
+
+  assert.deepEqual(store.pendingControlRequests('mcp:9999').map((r) => r.id), [requestId]);
+
+  runner.cancel(id);
+  await waitForFinished(runner, id);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('the control-request poller runs only while a job is active', async () => {
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const runner = new JobRunner(store, log, ssh, { controlPollMs: 5 });
+
+  assert.equal(runner.hasControlPoller(), false);
+
+  const id = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await delay(20);
+    },
+  });
+
+  assert.equal(runner.hasControlPoller(), true);
+
+  await waitForFinished(runner, id);
+  assert.equal(runner.hasControlPoller(), false);
+
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
 test('shutdown cancels in-flight jobs and interrupts any own row still non-terminal (#16)', async () => {
   const store = new JobStore(':memory:');
   const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));

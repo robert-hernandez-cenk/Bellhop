@@ -348,3 +348,88 @@ test('interruptOrphaned called by an mcp process leaves web-owned and legacy row
 test('defaultIsPidAlive reports the current process alive', () => {
   assert.equal(defaultIsPidAlive(process.pid), true);
 });
+
+// Cross-process job control request queue (#6) -- see research.md R2-R4.
+// A non-owning process writes a row here instead of calling
+// cancel/answerPrompt/dismissPrompt directly (those only exist in the
+// owning JobRunner's in-memory state, in a different process).
+
+test('createControlRequest returns an id', () => {
+  const store = new JobStore(':memory:');
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const requestId = store.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+  assert.equal(typeof requestId, 'number');
+  store.close();
+});
+
+test('pendingControlRequests(owner) returns only unhandled rows for jobs that owner owns, in id order', () => {
+  const store = new JobStore(':memory:');
+  const mcpJob = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const webJob = store.createJob({ command: 'sync-caddy', category: 'maintenance', argsJson: '{}', owner: 'web' });
+  // No owner at all -- predates #16, and counts as 'web' the same way
+  // isOrphanFor already treats a null owner.
+  const legacyJob = store.createJob({ command: 'sync-inventory', category: 'maintenance', argsJson: '{}' });
+
+  const forMcpFirst = store.createControlRequest({ jobId: mcpJob, action: 'cancel', requestedByOwner: 'web' });
+  const forWeb = store.createControlRequest({ jobId: webJob, action: 'dismiss', requestedByOwner: 'mcp:4242' });
+  const forLegacy = store.createControlRequest({ jobId: legacyJob, action: 'cancel', requestedByOwner: 'mcp:4242' });
+  const forMcpSecond = store.createControlRequest({ jobId: mcpJob, action: 'answer', text: 'y', requestedByOwner: 'web' });
+
+  const pendingForMcp = store.pendingControlRequests('mcp:4242');
+  assert.deepEqual(pendingForMcp.map((r) => r.id), [forMcpFirst, forMcpSecond]);
+  assert.equal(pendingForMcp[0].jobId, mcpJob);
+  assert.equal(pendingForMcp[0].action, 'cancel');
+  assert.equal(pendingForMcp[1].action, 'answer');
+  assert.equal(pendingForMcp[1].text, 'y');
+
+  const pendingForWeb = store.pendingControlRequests('web').map((r) => r.id).sort((a, b) => a - b);
+  assert.deepEqual(pendingForWeb, [forWeb, forLegacy].sort((a, b) => a - b));
+  store.close();
+});
+
+test('markControlRequestHandled sets handledAt/result, clears text, and removes the row from pending', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-control-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const requestId = store.createControlRequest({
+    jobId,
+    action: 'answer',
+    text: 'y',
+    requestedByOwner: 'web',
+    requestedByUsername: 'admin',
+  });
+
+  store.markControlRequestHandled(requestId, 'applied');
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242'), []);
+
+  // Inspect the raw row (via a second connection to the same file -- WAL
+  // allows this while `store`'s own connection is still open) to confirm
+  // handledAt/result/text, none of which pendingControlRequests can show
+  // once the row is no longer pending.
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'applied');
+  assert.equal(row.text, null);
+  raw.close();
+
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('job_control_requests survives reopening the same database file (constructor is idempotent)', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-control-reopen-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store1 = new JobStore(dbPath);
+  const jobId = store1.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const requestId = store1.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+  store1.close();
+
+  const store2 = new JobStore(dbPath);
+  const pending = store2.pendingControlRequests('mcp:4242');
+  assert.deepEqual(pending.map((r) => r.id), [requestId]);
+  store2.close();
+  rmSync(dir, { recursive: true, force: true });
+});
