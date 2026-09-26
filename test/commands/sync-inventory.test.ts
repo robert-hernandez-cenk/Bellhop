@@ -454,7 +454,11 @@ test('runSyncInventory skips the NFS scan when nfsServer is unset', async () => 
   });
   const result = await runSyncInventory({}, { ssh, inventory });
   assert.equal(result.nfsMountsSkipped, true);
-  assert.ok(formatSyncInventory(result).includes('nfsServer is not set'));
+  assert.ok(
+    formatSyncInventory(result).includes(
+      "nfsServer is not set -- run: bellhop set-config nfsServer <ip> --apply, or set it on the web UI's Settings page"
+    )
+  );
 });
 
 test('runSyncInventory uses inventory.nfsServer when no option is passed', async () => {

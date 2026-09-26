@@ -3,6 +3,7 @@ import type { Inventory } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { parseNfsLines, parseMpEntries, nextFreeMpIndex } from '../../lib/nfs.ts';
 import { logInfo } from '../../lib/log.ts';
+import { settingFix } from '../../lib/settings-hint.ts';
 
 export interface MigrateNfsMountOptions {
   guest: string;
@@ -22,7 +23,7 @@ export async function runMigrateNfsMount(
   const fstabPath = opts.fstabPath ?? '/etc/fstab';
   const nfsServer = opts.nfsServer ?? deps.inventory.nfsServer;
   if (nfsServer === undefined) {
-    throw new Error('nfsServer is not set -- run: bellhop set-config nfsServer <ip> --apply');
+    throw new Error(`nfsServer is not set -- ${settingFix('nfsServer', '<ip>')}`);
   }
 
   const guest = deps.inventory.guests.find((g) => g.name === opts.guest);
