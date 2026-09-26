@@ -101,3 +101,35 @@ test('runImportYamlInventory rejects YAML that fails validateInventory', async (
     /guest 'orphan' has host 'pve-missing'/
   );
 });
+
+const RENAMED_KEYS_MESSAGE =
+  "hosts.yaml uses 'caddy'/'caddyManual', renamed to 'proxy'/'proxyManual' in #10 -- rename them in the file and re-run";
+
+test('runImportYamlInventory rejects a host still using the old caddy key, naming the rename', async () => {
+  const yaml = [
+    'domain: example.com',
+    'hosts:',
+    '  - name: pve1',
+    '    ssh_target: pve1.local',
+    '    ssh_user: root',
+    '    caddy: true',
+    'guests: []',
+    '',
+  ].join('\n');
+  const yamlPath = tempYamlFile(yaml);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  await assert.rejects(() => runImportYamlInventory({ yamlPath, dbPath, apply: true }), (err: unknown) => {
+    assert.equal((err as Error).message, RENAMED_KEYS_MESSAGE);
+    return true;
+  });
+});
+
+test('runImportYamlInventory rejects a guest still using the old caddyManual key, naming the rename', async () => {
+  const yaml = VALID_YAML.replace('    host: pve1\n', '    host: pve1\n    caddyManual: true\n');
+  const yamlPath = tempYamlFile(yaml);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  await assert.rejects(() => runImportYamlInventory({ yamlPath, dbPath }), (err: unknown) => {
+    assert.equal((err as Error).message, RENAMED_KEYS_MESSAGE);
+    return true;
+  });
+});
