@@ -419,6 +419,79 @@ test('markControlRequestHandled sets handledAt/result, clears text, and removes 
   rmSync(dir, { recursive: true, force: true });
 });
 
+// closeStaleControlRequests (fix round 1, SC-005): a pending request whose
+// owner never gets a chance to poll it again -- the owning MCP process
+// exits after the requester's own liveness check, or a job finishes in the
+// gap between that check and the row being written -- must not keep its
+// answer text forever. This closes it regardless of who would have applied
+// it.
+
+test('closeStaleControlRequests closes a pending request whose job is terminal, clearing its text', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-stale-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'web' });
+  store.markRunning(jobId);
+  store.markFinished(jobId, { status: 'success', exitCode: 0 });
+  const requestId = store.createControlRequest({ jobId, action: 'answer', text: 'y', requestedByOwner: 'mcp:111' });
+
+  store.closeStaleControlRequests();
+
+  assert.deepEqual(store.pendingControlRequests('web'), []);
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'not-applicable');
+  assert.equal(row.text, null);
+  raw.close();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('closeStaleControlRequests closes a pending request whose job id does not exist', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-stale-missing-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  // No job with this id was ever created -- jobs has no cascading delete
+  // today, but a future one, or a hand-edited database, could leave exactly
+  // this shape (a control request row whose job_id no longer resolves).
+  const requestId = store.createControlRequest({ jobId: 999999, action: 'cancel', requestedByOwner: 'web' });
+
+  store.closeStaleControlRequests();
+
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'not-applicable');
+  raw.close();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('closeStaleControlRequests closes a pending request whose job owner is a dead mcp process, regardless of job status', () => {
+  const store = new JobStore(':memory:');
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  store.markRunning(jobId); // still non-terminal -- the process died, not the job
+  const requestId = store.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+
+  store.closeStaleControlRequests(() => false);
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242'), []);
+  store.close();
+});
+
+test('closeStaleControlRequests leaves a pending request alone when its job is non-terminal and its owner is alive', () => {
+  const store = new JobStore(':memory:');
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  store.markRunning(jobId);
+  const requestId = store.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+
+  store.closeStaleControlRequests(() => true);
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242').map((r) => r.id), [requestId]);
+  store.close();
+});
+
 test('job_control_requests survives reopening the same database file (constructor is idempotent)', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-control-reopen-'));
   const dbPath = path.join(dir, 'jobs.sqlite3');

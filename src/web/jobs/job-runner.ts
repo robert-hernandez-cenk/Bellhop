@@ -5,6 +5,7 @@ import type { JobLog } from './job-log.ts';
 import { JobSSHClient } from './job-ssh-client.ts';
 import type { PromptOrigin } from './job-ssh-client.ts';
 import { withCapturedConsole } from '../console-capture.ts';
+import { logWarn } from '../../lib/log.ts';
 
 // The attribution line processControlRequests appends to the job log once
 // a request is applied (research.md R4) -- source is "web UI" for the web
@@ -131,25 +132,47 @@ export class JobRunner {
   // (finished, or created directly in the store) is marked not-applicable
   // and left otherwise untouched -- covers both "the job is already over"
   // and "this row predates this process's own lifetime."
+  //
+  // Fix round 1: the whole pass is wrapped in a try/catch (a setInterval
+  // callback that throws becomes an uncaughtException that kills the
+  // whole process -- SQLITE_BUSY from the shared DB, or a failure inside
+  // the pending-rows read itself, must never escape from here), and each
+  // row's own apply step gets its own inner try/catch (write() into an
+  // exec channel that's already closing throws from inside
+  // answerPrompt() -- without this, that row would stay pending and
+  // re-throw on every single poll tick forever instead of ever being
+  // marked handled).
   processControlRequests(): void {
-    for (const req of this.store.pendingControlRequests(this.owner)) {
-      if (!this.controllers.has(req.jobId)) {
-        this.store.markControlRequestHandled(req.id, 'not-applicable');
-        continue;
-      }
-      const applied =
-        req.action === 'cancel'
-          ? this.cancel(req.jobId)
-          : req.action === 'answer'
-            ? this.answerPrompt(req.jobId, req.text ?? '')
-            : this.dismissPrompt(req.jobId);
-      this.store.markControlRequestHandled(req.id, applied ? 'applied' : 'not-applicable');
-      if (applied) {
-        const job = this.store.get(req.jobId);
-        if (job) {
-          this.emitLogChunk(req.jobId, job.logFile, controlAttributionLine(req.action, req.requestedByOwner, req.requestedByUsername), 'stdout');
+    try {
+      this.store.closeStaleControlRequests();
+      for (const req of this.store.pendingControlRequests(this.owner)) {
+        if (!this.controllers.has(req.jobId)) {
+          this.store.markControlRequestHandled(req.id, 'not-applicable');
+          continue;
+        }
+        try {
+          const applied =
+            req.action === 'cancel'
+              ? this.cancel(req.jobId)
+              : req.action === 'answer'
+                ? this.answerPrompt(req.jobId, req.text ?? '')
+                : this.dismissPrompt(req.jobId);
+          this.store.markControlRequestHandled(req.id, applied ? 'applied' : 'not-applicable');
+          if (applied) {
+            const job = this.store.get(req.jobId);
+            if (job) {
+              this.emitLogChunk(req.jobId, job.logFile, controlAttributionLine(req.action, req.requestedByOwner, req.requestedByUsername), 'stdout');
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logWarn(`Control request ${req.id} for job ${req.jobId} (${req.action}) failed to apply: ${message} -- marking not-applicable`);
+          this.store.markControlRequestHandled(req.id, 'not-applicable');
         }
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn(`processControlRequests failed: ${message}`);
     }
   }
 
@@ -219,6 +242,12 @@ export class JobRunner {
           : `Interrupted: service restarted while this job was ${row.status}. Remote work may have completed — check the log above and verify manually.\n`;
       this.log.append(row.logFile, note);
     }
+    // Runs after interruptOrphaned so a job just flipped to 'interrupted'
+    // above already counts as terminal here -- closes any pending control
+    // request left behind for it (or for any other stale job/dead-mcp-owner
+    // row system-wide; see JobStore.closeStaleControlRequests), rather than
+    // leaving it to sit unhandled forever (#6 fix round 1, SC-005).
+    this.store.closeStaleControlRequests();
   }
 
   // For a process that is exiting (the MCP server's stdin closing, #16):

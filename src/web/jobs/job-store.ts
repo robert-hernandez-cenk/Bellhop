@@ -336,6 +336,51 @@ export class JobStore {
       .run(new Date().toISOString(), result, id);
   }
 
+  // SC-005 retention gap (fix round 1): a pending request whose owner never
+  // gets a chance to poll it again -- its process exits after the
+  // requester's own liveness check, or the job finishes in the gap between
+  // that check and the row being written -- would otherwise keep its
+  // answer text forever, since nothing else ever marks it handled. Closes
+  // every pending row, regardless of which owner would normally apply it,
+  // whose job is terminal (success/failed/cancelled/interrupted) or no
+  // longer exists at all, or whose job's owner is a dead mcp:<pid> even
+  // while the job row itself is still non-terminal (the process died, not
+  // the job -- nothing will ever interrupt that row until some process's
+  // reconcileOrphanedJobs happens to run again). Called from
+  // JobRunner.reconcileOrphanedJobs (after interruptOrphaned, so a job it
+  // just interrupted already counts as terminal here) and at the start of
+  // every processControlRequests() pass.
+  closeStaleControlRequests(isPidAlive: (pid: number) => boolean = defaultIsPidAlive): void {
+    const TERMINAL: JobStatus[] = ['success', 'failed', 'cancelled', 'interrupted'];
+    const rows = this.db
+      .prepare(
+        `SELECT r.id AS request_id, j.status AS job_status, j.owner AS job_owner
+         FROM job_control_requests r
+         LEFT JOIN jobs j ON j.id = r.job_id
+         WHERE r.handled_at IS NULL`
+      )
+      .all() as { request_id: number; job_status: JobStatus | null; job_owner: string | null }[];
+
+    const staleIds: number[] = [];
+    for (const row of rows) {
+      if (row.job_status === null || TERMINAL.includes(row.job_status)) {
+        staleIds.push(row.request_id);
+        continue;
+      }
+      const match = /^mcp:(\d+)$/.exec(row.job_owner ?? 'web');
+      if (match && !isPidAlive(Number(match[1]))) {
+        staleIds.push(row.request_id);
+      }
+    }
+    if (staleIds.length === 0) return;
+
+    const update = this.db.prepare(`UPDATE job_control_requests SET handled_at = ?, result = 'not-applicable', text = NULL WHERE id = ?`);
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      for (const id of staleIds) update.run(now, id);
+    })();
+  }
+
   close(): void {
     this.db.close();
   }

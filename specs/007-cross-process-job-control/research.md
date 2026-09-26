@@ -102,6 +102,18 @@ adapters, per the constitution's "shared logic lives in one place".
   `web UI` for `web`, `MCP (mcp:<pid>)` for an MCP requester. The answer text never appears;
 - `markControlRequestHandled` sets `handled_at`, `result`, and `text = NULL` (SC-005).
 
+Applying a row is guarded: a throw is logged with `logWarn` and the row is marked
+`not-applicable`, so a background timer can never raise an uncaught exception in the web service or
+MCP server, and a failing row is never retried in a loop.
+
+A request whose owner never polls again (the owning MCP process exits after the requester's
+liveness check, or a job finishes between the requester's check and its insert) would otherwise keep
+its answer text forever. `JobStore.closeStaleControlRequests()` marks every pending request whose
+job is terminal or missing, or whose `mcp:<pid>` owner is dead, as handled `not-applicable` with its
+text cleared, regardless of owner. It runs in `reconcileOrphanedJobs()` (after `interruptOrphaned`)
+and at the start of every poll pass, so any Bellhop process that starts or polls cleans up after
+one that is gone (SC-005).
+
 Pending rows are only ever read while the runner has active jobs, satisfying FR-011's "no work while
 idle". A row that arrives while the runner is idle and its job is already finished is by definition
 not applicable, so leaving it until the next active period is harmless.

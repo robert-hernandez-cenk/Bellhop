@@ -9,9 +9,49 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { logInfo } from '../../../src/lib/log.ts';
+import type { ExecResult, SSHClient, SshTarget } from '../../../src/lib/ssh-client.ts';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A test-only SSHClient whose exec() genuinely stays pending (like
+// HangingSSHClient) but whose stdin-write callback throws instead of
+// recording anything -- simulates a real write() into an exec channel
+// that's already closing (fix round 1, finding 1): processControlRequests
+// must survive that instead of letting it become an uncaughtException on
+// the poller's timer.
+class ThrowingWriteSSHClient implements SSHClient {
+  private resolveExec: ((result: ExecResult) => void) | undefined;
+
+  exec(
+    _target: SshTarget,
+    _command: string,
+    onChunk?: (chunk: string, stream: 'stdout' | 'stderr') => void,
+    signal?: AbortSignal,
+    onStdinReady?: (write: (text: string) => void) => void
+  ): Promise<ExecResult> {
+    onStdinReady?.(() => {
+      throw new Error('channel is closing');
+    });
+    onChunk?.('Add Adminer? (y/N) ', 'stdout');
+    return new Promise((resolve, reject) => {
+      this.resolveExec = resolve;
+      signal?.addEventListener('abort', () => reject(new Error('Job cancelled')));
+    });
+  }
+
+  finish(result: ExecResult): void {
+    this.resolveExec?.(result);
+  }
+
+  execInteractive(): Promise<ExecResult> {
+    return Promise.reject(new Error('not used in this fixture'));
+  }
+
+  putFile(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 function makeRunner() {
@@ -27,6 +67,21 @@ function waitForFinished(runner: JobRunner, id: number): Promise<void> {
   return new Promise((resolve) => {
     runner.events.on('status', function handler(payload: any) {
       if (payload.jobId === id && payload.status !== 'running') {
+        runner.events.off('status', handler);
+        resolve();
+      }
+    });
+  });
+}
+
+// Deterministic replacement for a fixed delay() when a test just needs to
+// know execute() has actually started running a job (emitted synchronously
+// once markRunning()/the 'running' status event fire, before def.run() is
+// even called) -- fix round 1, finding 4.
+function waitForStatus(runner: JobRunner, id: number, status: string): Promise<void> {
+  return new Promise((resolve) => {
+    runner.events.on('status', function handler(payload: any) {
+      if (payload.jobId === id && payload.status === status) {
         runner.events.off('status', handler);
         resolve();
       }
@@ -387,6 +442,28 @@ test('reconcileOrphanedJobs interrupts every non-terminal job and appends a note
   store.close();
 });
 
+test('reconcileOrphanedJobs closes a leftover pending control request for a job it just interrupted (#6 fix round 1)', () => {
+  const { store, dir, runner } = makeRunner();
+  // Never enqueued through this runner -- no in-memory controller, so only
+  // the reconcile pass (interruptOrphaned) can close it out, the same
+  // "stray row" shape shutdown()'s own test below exercises.
+  const strayId = store.createJob({ command: 'z', category: 'maintenance', argsJson: '{}' });
+  store.markRunning(strayId);
+  store.createControlRequest({ jobId: strayId, action: 'cancel', requestedByOwner: 'web' });
+
+  runner.reconcileOrphanedJobs();
+
+  assert.equal(store.get(strayId)?.status, 'interrupted');
+  // closeStaleControlRequests runs after interruptOrphaned, so the
+  // now-terminal job's own pending request is closed in the same pass --
+  // it must never sit there forever with its (here, non-existent) answer
+  // text since no process will ever come back to apply it.
+  assert.deepEqual(store.pendingControlRequests('web'), []);
+
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
 test('a detected prompt emits its origin and matched index, and persists both on the job row', async () => {
   const store = new JobStore(':memory:');
   const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
@@ -548,19 +625,25 @@ test('processControlRequests applies an answer request from another process, log
 });
 
 test('processControlRequests applies a cancel request from web with attribution, ending the job cancelled', async () => {
-  const { store, log, dir, runner } = makeRunner();
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  // HangingSSHClient's exec() genuinely stays pending until finish()/abort()
+  // -- a deterministic hold, unlike a fixed delay() the job's own run()
+  // would race against.
+  const ssh = new HangingSSHClient();
+  const runner = new JobRunner(store, log, ssh);
 
   const id = runner.enqueue({
     command: 'update-all',
     category: 'maintenance',
     argsJson: '{}',
-    run: async (ssh) => {
-      await delay(20);
-      await ssh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
     },
   });
 
-  await delay(5);
+  await waitForStatus(runner, id, 'running');
   store.createControlRequest({ jobId: id, action: 'cancel', requestedByOwner: 'web', requestedByUsername: 'admin' });
   runner.processControlRequests();
   await waitForFinished(runner, id);
@@ -612,6 +695,54 @@ test('processControlRequests applies a dismiss request with attribution', async 
   store.close();
 });
 
+test('processControlRequests marks a request not-applicable and never throws when the apply step itself throws (#6 fix round 1)', async () => {
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new ThrowingWriteSSHClient();
+  let fireCheck: (() => void) | undefined;
+  const runner = new JobRunner(store, log, ssh, {
+    promptScheduleCheck: (fn) => {
+      fireCheck = fn;
+      return { cancel: () => { fireCheck = undefined; } };
+    },
+  });
+
+  const id = runner.enqueue({
+    command: 'install-app',
+    category: 'provisioning',
+    argsJson: '{}',
+    watchForPrompts: true,
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    },
+  });
+
+  await delay(10);
+  fireCheck?.();
+  fireCheck?.();
+  assert.equal(store.get(id)?.status, 'awaiting_input');
+
+  store.createControlRequest({ jobId: id, action: 'answer', text: 'y', requestedByOwner: 'mcp:4242' });
+
+  // answerPrompt() -> pending.write() throws inside the poll pass -- this
+  // must never escape processControlRequests() (which a real setInterval
+  // callback would otherwise turn into an uncaughtException that kills the
+  // whole process), and the request must still end up handled rather than
+  // being retried forever every 500ms.
+  assert.doesNotThrow(() => runner.processControlRequests());
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242'), []);
+  // The job itself is left exactly as it was -- the throw happened before
+  // any state change, and this is a failed *apply*, not a successful one.
+  assert.equal(store.get(id)?.status, 'awaiting_input');
+
+  runner.cancel(id);
+  await waitForFinished(runner, id);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
 test('processControlRequests marks a request for an inactive job not-applicable and changes nothing', async () => {
   const { store, dir, runner } = makeRunner();
 
@@ -636,17 +767,21 @@ test('processControlRequests marks a request for an inactive job not-applicable 
 });
 
 test('processControlRequests marks an answer request not-applicable when the job is running but not paused', async () => {
-  const { store, dir, runner } = makeRunner();
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new HangingSSHClient();
+  const runner = new JobRunner(store, log, ssh);
 
   const id = runner.enqueue({
     command: 'update-all',
     category: 'maintenance',
     argsJson: '{}',
-    run: async () => {
-      await delay(30);
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
     },
   });
-  await delay(5);
+  await waitForStatus(runner, id, 'running');
   assert.equal(store.get(id)?.status, 'running');
 
   store.createControlRequest({ jobId: id, action: 'answer', text: 'y', requestedByOwner: 'web' });
@@ -655,30 +790,41 @@ test('processControlRequests marks an answer request not-applicable when the job
   assert.deepEqual(store.pendingControlRequests('web'), []);
   assert.equal(store.get(id)?.status, 'running');
 
+  ssh.finish({ stdout: 'ok', stderr: '', code: 0 });
   await waitForFinished(runner, id);
   rmSync(dir, { recursive: true, force: true });
   store.close();
 });
 
 test('processControlRequests leaves another owner\'s pending requests untouched', async () => {
-  const { store, dir, runner } = makeRunner(); // runner.owner === 'web'
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new HangingSSHClient();
+  const runner = new JobRunner(store, log, ssh); // runner.owner === 'web'
 
   const id = runner.enqueue({
     command: 'a',
     category: 'maintenance',
     argsJson: '{}',
-    run: async () => {
-      await delay(30);
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
     },
   });
-  await delay(5);
+  await waitForStatus(runner, id, 'running');
 
-  const foreignJobId = store.createJob({ command: 'b', category: 'maintenance', argsJson: '{}', owner: 'mcp:9999' });
+  // Owned by this test process's own real pid, not an arbitrary made-up
+  // one -- closeStaleControlRequests (wired into processControlRequests as
+  // of fix round 1) treats a request whose job owner is a *dead* mcp:<pid>
+  // as stale regardless of owner, so a fake, guaranteed-dead pid here would
+  // make this row disappear for the wrong reason.
+  const foreignOwner = `mcp:${process.pid}`;
+  const foreignJobId = store.createJob({ command: 'b', category: 'maintenance', argsJson: '{}', owner: foreignOwner });
   const requestId = store.createControlRequest({ jobId: foreignJobId, action: 'cancel', requestedByOwner: 'web' });
 
   runner.processControlRequests();
 
-  assert.deepEqual(store.pendingControlRequests('mcp:9999').map((r) => r.id), [requestId]);
+  assert.deepEqual(store.pendingControlRequests(foreignOwner).map((r) => r.id), [requestId]);
 
   runner.cancel(id);
   await waitForFinished(runner, id);
@@ -707,6 +853,34 @@ test('the control-request poller runs only while a job is active', async () => {
   assert.equal(runner.hasControlPoller(), true);
 
   await waitForFinished(runner, id);
+  assert.equal(runner.hasControlPoller(), false);
+
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+test('the control-request poller restarts for a second enqueue after the first job finished (fix round 1, finding 3)', async () => {
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const runner = new JobRunner(store, log, ssh, { controlPollMs: 5 });
+
+  const first = runner.enqueue({ command: 'a', category: 'maintenance', argsJson: '{}', run: async () => {} });
+  await waitForFinished(runner, first);
+  assert.equal(runner.hasControlPoller(), false);
+
+  const second = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await delay(20);
+    },
+  });
+  assert.equal(runner.hasControlPoller(), true);
+
+  await waitForFinished(runner, second);
   assert.equal(runner.hasControlPoller(), false);
 
   rmSync(dir, { recursive: true, force: true });
