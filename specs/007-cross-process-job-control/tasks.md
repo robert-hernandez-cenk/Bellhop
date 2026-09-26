@@ -153,13 +153,13 @@ request; state refusals and dead-owner refusal return 409; a second runner ownin
 **Independent Test**: call `cancel_job` via the MCP test client on a job owned by `web` and get
 `requested`; `wait_for_job` on it is still refused.
 
-- [ ] T015 [US3] In `test/mcp/build-server.test.ts`, replace "job control on another process's job
+- [x] T015 [US3] In `test/mcp/build-server.test.ts`, replace "job control on another process's job
   is refused with the owner named" with failing tests: `cancel_job` on a running web-owned job
   returns `{ requested: true, owner: 'web', note }` and a pending request with `requestedByOwner` =
   the server runner's owner; `answer_job_prompt` on a web-owned running (not paused) job is an error
   with the "nothing to answer" wording; `wait_for_job` on a web-owned job still errors with
   `owned by web` (keep `test/mcp/wait-for-job.test.ts`'s existing assertion passing).
-- [ ] T016 [US3] Update the three tools in `src/mcp/build-server.ts` to use `requestJobControl`
+- [x] T016 [US3] Update the three tools in `src/mcp/build-server.ts` to use `requestJobControl`
   (no username); `done` → today's JSON; `requested` → `{ requested: true, owner, note: 'The owning
   process applies this within about a second; check get_job for the result.' }`; `refused` → throw
   `Error(message)`. Update tool descriptions to say they work on any process's job. Update the
