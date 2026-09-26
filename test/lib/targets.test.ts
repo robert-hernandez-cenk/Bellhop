@@ -97,11 +97,14 @@ test('runRemote reports a vm guest exec timeout envelope (pid only, no exitcode)
 });
 
 // Captured live 2026-09-26: `qm guest exec <vmid> --timeout 60 -- sh -c
-// 'echo ok; exit 3'` -- a normal completed-with-nonzero-exit envelope, using
-// the captured shape verbatim rather than a hand-authored fixture.
+// 'echo ok; exit 3'` -- a normal completed-with-nonzero-exit envelope. Real
+// `qm guest exec` output is strict JSON: the command's own trailing newline
+// in "out-data" is a proper JSON escape (a literal backslash-n, `\\n` in
+// this TS source) rather than a raw embedded newline, so a plain
+// `JSON.parse` -- no sanitizing pass -- handles it correctly.
 test('runRemote parses the captured completed-nonzero-exit envelope verbatim', async () => {
   const ssh = new FakeSSHClient(() => ({
-    stdout: '{\n   "exitcode" : 3,\n   "exited" : 1,\n   "out-data" : "ok\n"\n}\n',
+    stdout: '{\n   "exitcode" : 3,\n   "exited" : 1,\n   "out-data" : "ok\\n"\n}\n',
     stderr: '',
     code: 0,
   }));

@@ -374,20 +374,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   to: a command that outlives that 60s wait gets a pid-only envelope with
   no `exitcode` at all (`{"pid":N}`) — the command is still running in the
   guest when `qm guest exec` gives up waiting on it — and one that fails to
-  parse as JSON at all. Before parsing, the raw stdout is run through
-  `sanitizeGuestExecEnvelope`, which walks it once re-escaping any literal
-  control character (newline, CR, tab) found inside a JSON string literal —
-  discovered live capturing a real completed-with-output envelope (issue
-  #2's final review): `qm guest exec` embeds a command's own stdout/stderr
-  as a raw substring inside `"out-data"`/`"err-data"` without escaping the
-  newlines the command itself printed, which is not strict JSON and makes
-  a bare `JSON.parse` throw "Bad control character in string literal" on
-  virtually any completed command with output (`echo` alone always ends in
-  one) — without this pass, the timeout/unparseable handling above would
-  misreport most successful VM commands as unparseable failures instead.
-  It is a no-op on already-strict JSON (anything built with
-  `JSON.stringify`, as every hand-authored test fixture is), so it only
-  ever changes behavior for this one real quirk.
+  parse as JSON at all (a plain `JSON.parse`, no pre-processing needed —
+  verified live 2026-09-26 that real `qm guest exec` output is strict JSON,
+  including a completed command's own embedded newlines, which come through
+  as a properly-escaped `\n` inside `"out-data"`/`"err-data"` rather than a
+  raw control character).
   `Ssh2SSHClient.exec()` (`src/lib/ssh-client.ts`) authenticates the same way
   a plain `ssh`/git-bash client does when no agent is running: it reads a
   default identity file directly (`~/.ssh/id_ed25519`, `id_ecdsa`, or
