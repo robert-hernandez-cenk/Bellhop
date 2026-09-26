@@ -36,7 +36,12 @@ library rather than shelling out to a system `ssh` client. See any file
 under `test/commands/` for the pattern: build a `FakeSSHClient` with a
 `(sshTarget, sshUser, command) => ExecResult` responder, pass it as `ssh` in
 the command function's `deps` argument, and assert on `ssh.history` and the
-function's return value.
+function's return value. The one exception is a file-configured proxy
+driver's generated shell script (`src/lib/proxy/file-driver.ts`): it may be
+executed locally under `sh` with that proxy's own binaries (e.g. `caddy`,
+`systemctl`) stubbed on `PATH`, to prove its backup/restore control flow
+actually restores — see `test/lib/proxy/file-driver.test.ts` — distinct
+from the SSH/exec layer above, which stays `FakeSSHClient`-only.
 
 `src/lib/ssh-client.ts`'s `Ssh2SSHClient` is the only file that actually
 opens an SSH connection; it has no automated test (verify it manually
