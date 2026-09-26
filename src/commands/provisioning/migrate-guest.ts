@@ -342,7 +342,16 @@ export async function runMigrateGuest(
 
   if (guest.subdomains && guest.subdomains.length > 0) {
     logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via the proxy...`);
-    await runSyncProxy({ apply: true }, { ssh, inventory });
+    // The migration itself is done by now -- the source is destroyed and
+    // inventory saved -- so a proxy failure here must not report it as
+    // failed. It is a warning with the retry command instead.
+    try {
+      await runSyncProxy({ apply: true }, { ssh, inventory });
+    } catch (err) {
+      logWarn(
+        `'${opts.guest}' migrated successfully to ${opts.toHost} (${newIp}), but the proxy sync failed: ${err instanceof Error ? err.message : String(err)} -- fix the cause and retry with: bellhop sync-proxy --apply`
+      );
+    }
     // Same opt-in behavior as syncProxyLive (src/web/proxy-sync.ts): an
     // operator who hasn't configured statusPagePath never gets an
     // index.html write attempted, and skipping it is not a failure here

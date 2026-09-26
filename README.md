@@ -262,7 +262,10 @@ new one in place for the operator to debug, with no automatic rollback.
 defaults to the current VMID's numeric suffix. `inventory/bellhop.db`
 and (if the guest has subdomains) the live reverse-proxy config are
 updated as part of the same `--apply`, no separate
-`sync-inventory`/`sync-proxy` run needed.
+`sync-inventory`/`sync-proxy` run needed. If that proxy update fails, the
+migration still completes (the original guest is already gone by then) and
+prints a warning with the error; fix the cause and run
+`bellhop sync-proxy --apply`.
 
 **Networking:**
 ```bash

@@ -590,8 +590,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   ever overwriting the real Caddyfile and reported a failed validate as a
   successful apply regardless; now a failed remote validate or write
   throws all the way up, so `syncProxyLive` (the Dashboard guest edit,
-  provisioning jobs) and `migrate-guest`'s post-move push both surface the
-  failure to their caller. For a Dashboard guest edit specifically, this
+  provisioning jobs) surfaces the failure to its caller. `migrate-guest`'s
+  post-move push is the exception: by then the source guest is destroyed
+  and inventory saved, so it catches the failure and logs a `logWarn`
+  saying the migration succeeded, the proxy sync failed (with the error),
+  and to retry with `bellhop sync-proxy --apply`, rather than failing a
+  migration that already happened. For a Dashboard guest edit specifically, this
   means the inventory write has already happened (`commitGuestEdit` saves
   before calling `syncProxyLive`) by the time a proxy failure is caught,
   so the response reports it separately as `proxySynced: false, proxyError:
@@ -1253,7 +1257,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `insecureBackendTls`/`authGroup`/etc., that the Dashboard's guest-PATCH
   route already does for in-place edits), and if the guest has
   `subdomains`, `sync-proxy` runs in the same `--apply` so the managed
-  proxy configuration points at the new IP immediately — `render-status-page`
+  proxy configuration points at the new IP immediately (a failure there
+  only warns -- see the driver-interface bullet above) — `render-status-page`
   runs
   alongside it too, but only when `statusPagePath` is set (see
   `render-status-page` below for the opt-in behavior it shares with

@@ -899,6 +899,38 @@ test('runMigrateGuest apply warns but does not throw when destroying the origina
   }
 });
 
+test('runMigrateGuest apply warns but completes when the post-move proxy sync fails after the source is destroyed', async () => {
+  const warnings: string[] = [];
+  const originalWarn = console.error;
+  console.error = (msg: string) => warnings.push(String(msg));
+  try {
+    const respondStatus = orderedStatusResponder(4012, 5012);
+    const ssh = new FakeSSHClient((_t, _u, cmd) => {
+      if (cmd.includes('BEGIN bellhop-managed')) return { stdout: '', stderr: 'caddy validate failed', code: 1 };
+      return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
+    });
+    const inv: Inventory = {
+      ...isolatedInventory(),
+      hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, proxy: true } : h)),
+    };
+    const invPath = tempSavedInventoryPath(inv);
+    const result = await runMigrateGuest(
+      { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+      { ssh, inventory: inv, inventoryPath: invPath }
+    );
+    assert.equal(result.applied, true, 'the migration itself must still count as successful');
+    assert.ok(ssh.history.some((c) => c.command === 'pct destroy 4012'), 'the source was already destroyed');
+    assert.equal(loadInventory(invPath).guests.find((g) => g.name === 'media')?.host, 'pve-secondary');
+    const warning = warnings.find((w) => w.includes('proxy sync failed'));
+    assert.ok(warning, 'a warning must name the failed proxy sync');
+    assert.match(warning!, /migrated successfully/);
+    assert.match(warning!, /caddy validate failed/);
+    assert.match(warning!, /bellhop sync-proxy --apply/);
+  } finally {
+    console.error = originalWarn;
+  }
+});
+
 // Issue #16: migrate-guest runs for minutes (vzdump, restore, verify) and in
 // the MCP process nothing refreshes inventory mid-job. A setting written to
 // disk by another process while that remote work runs must survive the
