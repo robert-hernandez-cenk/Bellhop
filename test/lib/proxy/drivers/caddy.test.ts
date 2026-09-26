@@ -32,10 +32,10 @@ function withPinnedOutpostPort(fn: () => void): void {
 //   - a guest with a non-default port -- media (8096)
 //   - a guest with no port (defaults to 80) -- web-lxc
 //   - an external site -- nas
-//   - a forward-gated guest with no exempt paths -- sonarr-lxc
+//   - a forward-gated guest with no exempt paths -- app-lxc
 //   - a forward-gated guest with exempt paths in both forms
-//     (/health, /api/*) -- whisparr-lxc
-//   - an OIDC-mode gated guest with oidcRedirectUris -- grafana-lxc
+//     (/health, /api/*) -- api-lxc
+//   - an OIDC-mode gated guest with oidcRedirectUris -- sso-app-lxc
 //   - a caddyManual entry with subdomains (no block) -- manual-lxc
 //   - an entry with no subdomains (no block) -- internal-lxc
 //   - the authentik: true guest with an ip -- auth-lxc
@@ -57,34 +57,34 @@ const inventory: Inventory = {
     { name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.0.2.50', port: 8096, subdomains: ['media'] },
     { name: 'web-lxc', type: 'lxc', vmid: 106, host: 'pve1', ip: '192.0.2.51', subdomains: ['web'] },
     {
-      name: 'sonarr-lxc',
+      name: 'app-lxc',
       type: 'lxc',
       vmid: 120,
       host: 'pve1',
       ip: '192.0.2.20',
-      subdomains: ['sonarr'],
+      subdomains: ['app'],
       authGroup: 'bellhop-users',
     },
     {
-      name: 'whisparr-lxc',
+      name: 'api-lxc',
       type: 'lxc',
       vmid: 121,
       host: 'pve1',
       ip: '192.0.2.21',
-      subdomains: ['whisparr'],
+      subdomains: ['api'],
       authGroup: 'bellhop-users',
       unauthenticatedPaths: ['/health', '/api/*'],
     },
     {
-      name: 'grafana-lxc',
+      name: 'sso-app-lxc',
       type: 'lxc',
       vmid: 122,
       host: 'pve1',
       ip: '192.0.2.22',
-      subdomains: ['grafana'],
+      subdomains: ['dash'],
       authGroup: 'bellhop-users',
       authMode: 'oidc',
-      oidcRedirectUris: ['https://grafana.example.com/oauth/callback'],
+      oidcRedirectUris: ['https://dash.example.com/oauth/callback'],
     },
     {
       name: 'manual-lxc',
@@ -136,7 +136,7 @@ const EXPECTED_LINES = [
   '        resolvers 1.1.1.1 8.8.8.8',
   '    }',
   '}',
-  'sonarr.example.com {',
+  'app.example.com {',
   '    reverse_proxy 192.0.2.20:80 {',
   '        header_up X-Forwarded-Port 443',
   '    }',
@@ -152,7 +152,7 @@ const EXPECTED_LINES = [
   '        resolvers 1.1.1.1 8.8.8.8',
   '    }',
   '}',
-  'whisparr.example.com {',
+  'api.example.com {',
   '    reverse_proxy 192.0.2.21:80 {',
   '        header_up X-Forwarded-Port 443',
   '    }',
@@ -171,7 +171,7 @@ const EXPECTED_LINES = [
   '        resolvers 1.1.1.1 8.8.8.8',
   '    }',
   '}',
-  'grafana.example.com {',
+  'dash.example.com {',
   '    reverse_proxy 192.0.2.22:80 {',
   '        header_up X-Forwarded-Port 443',
   '    }',
@@ -205,18 +205,18 @@ test('buildCaddyBlock throws the missing-authentik error text when a forward-gat
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', caddy: true }],
     guests: [
       {
-        name: 'sonarr-lxc',
+        name: 'app-lxc',
         type: 'lxc',
         vmid: 120,
         host: 'pve1',
         ip: '192.0.2.20',
-        subdomains: ['sonarr'],
+        subdomains: ['app'],
         authGroup: 'bellhop-users',
       },
     ],
   };
   assert.throws(
     () => buildCaddyBlock(inv),
-    /^Error: Entry 'sonarr-lxc' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set$/
+    /^Error: Entry 'app-lxc' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set$/
   );
 });
