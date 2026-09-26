@@ -2,6 +2,11 @@ import type { Inventory, HostEntry, GuestEntry } from './inventory.ts';
 import type { SSHClient, ExecResult, SshTarget } from './ssh-client.ts';
 import { shellQuote } from './ssh-client.ts';
 
+// `qm guest exec --timeout <N>`'s own N -- named so runRemote's command
+// string and its timeout-envelope failure message (see the `vm` branch of
+// runRemote below) can never drift apart.
+const VM_EXEC_TIMEOUT_SECONDS = 60;
+
 export type ResolvedTarget =
   | { kind: 'pve'; host: HostEntry }
   | { kind: 'lxc' | 'vm'; guest: GuestEntry; parentHost: HostEntry };
@@ -54,22 +59,60 @@ export async function runRemote(
       return ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
     }
     case 'vm': {
-      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout 60 -- sh -c ${shellQuote(command)}`;
+      const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${VM_EXEC_TIMEOUT_SECONDS} -- sh -c ${shellQuote(command)}`;
       const result = await ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
       if (result.code !== 0) {
         // ssh/qm itself failed (e.g. connection failure) -- no JSON to parse.
         return result;
       }
-      let parsed: { exitcode?: number; 'out-data'?: string; 'err-data'?: string };
+      let parsed: {
+        pid?: number;
+        exitcode?: number;
+        signal?: number;
+        'out-data'?: string;
+        'err-data'?: string;
+      };
       try {
         parsed = JSON.parse(result.stdout);
       } catch {
-        parsed = {};
+        return {
+          stdout: '',
+          stderr: `qm guest exec output could not be parsed as JSON: ${result.stdout.trim()}`,
+          code: 1,
+        };
+      }
+      if (typeof parsed.exitcode !== 'number') {
+        if (typeof parsed.signal === 'number') {
+          // The remote process was killed by a signal rather than exiting
+          // normally: `exited: 1` with a `signal` number and no `exitcode`
+          // at all -- a shape distinct from the pid-only "still running"
+          // envelope below. Report it as a failure with whatever output was
+          // actually captured, naming the signal, rather than sending it
+          // down the timeout path (which used to misreport this as "still
+          // running" and drop the output entirely).
+          const errData = (parsed['err-data'] ?? '').trim();
+          const killedNote = `killed by signal ${parsed.signal}`;
+          return {
+            stdout: parsed['out-data'] ?? '',
+            stderr: errData ? `${errData}\n${killedNote}` : killedNote,
+            code: 1,
+          };
+        }
+        // `--timeout <N>` elapsed before the command finished: `qm guest
+        // exec` returns a pid-only envelope with no `exitcode` at all, and
+        // the command is still running in the guest -- this is a failure,
+        // not the success the old `parsed.exitcode ?? 0` silently reported.
+        const pidNote = typeof parsed.pid === 'number' ? ` (pid ${parsed.pid})` : '';
+        return {
+          stdout: '',
+          stderr: `qm guest exec timed out after ${VM_EXEC_TIMEOUT_SECONDS}s; the command is still running in the guest${pidNote}`,
+          code: 1,
+        };
       }
       return {
         stdout: parsed['out-data'] ?? '',
         stderr: parsed['err-data'] ?? '',
-        code: parsed.exitcode ?? 0,
+        code: parsed.exitcode,
       };
     }
   }

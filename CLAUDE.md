@@ -365,7 +365,32 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   branch and was never wrapped either way. `qm guest exec`'s always-exits-0-on-successful-agent-call
   quirk (the real exit code and output are a JSON envelope on stdout,
   `{"exitcode":N,"out-data":"...","err-data":"..."}`) is parsed and
-  translated into the real `ExecResult` by `runRemote`'s `vm` branch.
+  translated into the real `ExecResult` by `runRemote`'s `vm` branch, with a
+  timeout named as a constant (`VM_EXEC_TIMEOUT_SECONDS`, 60, used to build
+  both the `--timeout` flag and the failure message below) rather than a
+  bare literal repeated in two places — fixed at 60s for every command
+  routed to a VM, with no per-call override (issue #2 operator PR review:
+  package commands are never sent to a VM at all as of that decision, so
+  the per-call `vmTimeoutSeconds` override this constant briefly grew, and
+  the longer wait it existed for, were both removed rather than kept around
+  unused — see the `update-all`/`configure-guest` bullets below). Three
+  envelope shapes besides the normal `{"exitcode":...}`
+  one are reported as failures (`code: 1`), never silently coerced to
+  success the way an old `parsed.exitcode ?? 0` used to: a command that
+  outlives the wait gets a pid-only envelope with no `exitcode` at all
+  (`{"pid":N}`) — the command is still running in the guest when `qm guest
+  exec` gives up waiting on it; a command killed by a signal gets an
+  `exited: 1` envelope carrying a `signal` number instead of a `pid` (also
+  no `exitcode`) — reported with whatever `out-data`/`err-data` it produced
+  plus `killed by signal <N>` appended to stderr, rather than being
+  misreported as the pid-only timeout case above and having its output
+  dropped (this check runs first, since both shapes share the "no
+  `exitcode`" test); and one that fails to
+  parse as JSON at all (a plain `JSON.parse`, no pre-processing needed —
+  verified live 2026-09-26 that real `qm guest exec` output is strict JSON,
+  including a completed command's own embedded newlines, which come through
+  as a properly-escaped `\n` inside `"out-data"`/`"err-data"` rather than a
+  raw control character).
   `Ssh2SSHClient.exec()` (`src/lib/ssh-client.ts`) authenticates the same way
   a plain `ssh`/git-bash client does when no agent is running: it reads a
   default identity file directly (`~/.ssh/id_ed25519`, `id_ecdsa`, or
@@ -422,9 +447,33 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   same `midScheme.vmidBase` or `midScheme.ipPrefix`, since either would let
   `resolveMid` hand out colliding VMIDs/IPs across two different hosts.
 - **Targeting flags**: `update-all` uses `--host <name>` / `--all` /
-  `--group pve|lxc|vm`, implemented once by `selectTargets` in
-  `src/lib/targets.ts`. As of issue #120 it no longer runs one hardcoded
-  apt command against every target: it probes each one first
+  `--group pve|lxc`, implemented once by `selectTargets` in
+  `src/lib/targets.ts`. As of issue #2 (operator PR review) `update-all`
+  never acts on a VM at all: `selectUpdateTargets`
+  (`src/commands/maintenance/update-all.ts`) is the one place its targets
+  are decided, and both `runUpdateAll` and the `update-all` operation's
+  `preview` (`src/operations/maintenance.ts`) call it rather than
+  `selectTargets` directly, so preview and apply can never disagree.
+  `{ all: true }` silently drops every `vm` guest from the result (hosts
+  and lxc guests only — an operator running `--all` wants everything this
+  toolkit can safely update, not a failure over a VM that happens to be in
+  inventory); `{ group: 'vm' }` and `{ host: <vm-name> }` are explicit
+  requests to target a VM, so both reject outright (`update-all does not
+  update VMs...`) instead of silently resolving to nothing — naming a VM
+  explicitly is treated as an operator mistake worth surfacing. Every other
+  selector shape delegates to the unchanged `selectTargets`, including its
+  unknown-host error. `TargetSelector`'s own `group` field
+  (`src/lib/targets.ts`) still accepts `'vm'` (other callers, like
+  `selectTargets` itself, use the full type), and the CLI's `--group`
+  flag still accepts any string at the commander layer — it's
+  `selectUpdateTargets`'s runtime check that actually rejects `vm`, not a
+  narrower CLI-level type. The web/MCP `update-all` operation's own `group`
+  field (`src/operations/maintenance.ts`) *is* narrowed to
+  `z.enum(['pve', 'lxc'])`, so a `vm` value is rejected at input-parsing
+  time there, before `selectUpdateTargets` ever runs.
+
+  As of issue #120, `update-all` no longer runs one hardcoded apt command
+  against every target: it probes each one first
   (`PROBE_COMMAND` in `src/lib/package-manager.ts`, a `command -v` chain)
   and dispatches to `UPDATE_COMMANDS`, a five-entry table covering
   `apt`/`dnf`/`apk`/`pacman`/`zypper`. A target whose OS isn't recognized
@@ -434,6 +483,24 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   rather than an inventory field: Proxmox's own `ostype` is a
   creation-time label (and a useless generic `l26` for every VM), while
   `command -v` is ground truth and self-corrects if a guest's OS changes.
+  As of issue #2 the probe-then-classify step itself is shared:
+  `detectPackageManager` (`src/lib/package-manager.ts`) runs
+  `PROBE_COMMAND` and classifies the result, and both `update-all` and
+  `configure-guest --packages` call it — only the *reaction* to an
+  unrecognized OS differs, left to the caller: `update-all` still buckets
+  it into `failUnknownPm` and keeps going across its many targets, while
+  `configure-guest` (a single-target command) throws
+  `UnknownPackageManagerError` instead. `configure-guest --packages`
+  installs the requested packages with the detected manager via
+  `INSTALL_COMMANDS`, an `UPDATE_COMMANDS`-shaped table of install (rather
+  than upgrade) commands living alongside it in the same file.
+  `configure-guest --packages` also refuses a guest of type `vm` outright
+  (issue #2 operator PR review, the same VM exclusion `update-all` applies
+  above) — checked before any remote call, in both dry run and apply, so
+  neither the probe nor the install ever reaches a VM; `--ssh-key` given in
+  the same invocation is not run either, since the whole command fails
+  before reaching that step. `--ssh-key` given alone (no `--packages`) is
+  unaffected and still works against a VM.
 - **Dry-run convention**: anything that mutates infrastructure or the
   inventory file (`create-lxc`, `create-vm`, `configure-guest`,
   `sync-caddy`, `migrate-nfs-mount`, `attach-nfs-mount`, `sync-inventory`)
@@ -452,7 +519,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   resolution already established (`resolveNfsMountPath` makes a live
   `pvesh get /storage/<id>` call during preview when NFS options are
   given), except this one happens unconditionally on every dry run, not
-  just when an optional flag is set.
+  just when an optional flag is set. `configure-guest --packages`'s dry
+  run (issue #2) joins this same group: it now also makes one live probe
+  call (`detectPackageManager`, above) against the target guest before
+  printing its preview line, so a dry run names the exact detected
+  package manager and install command apply would send rather than
+  guessing `apt-get` — a `--ssh-key`-only dry run still makes no remote
+  calls at all, since only `--packages` has anything to detect.
 - **`sync-caddy`** (`src/commands/networking/sync-caddy.ts`) writes into a
   delimited managed section of the Caddyfile
   (`# BEGIN bellhop-managed` / `# END bellhop-managed`) on whichever

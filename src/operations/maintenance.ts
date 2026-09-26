@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { saveInventory, refreshInventory } from '../lib/inventory.ts';
-import { selectTargets, type TargetSelector } from '../lib/targets.ts';
+import { type TargetSelector } from '../lib/targets.ts';
 import { withCapturedConsole } from '../web/console-capture.ts';
 import { runSyncInventory, formatSyncInventory } from '../commands/maintenance/sync-inventory.ts';
-import { runUpdateAll } from '../commands/maintenance/update-all.ts';
+import { runUpdateAll, selectUpdateTargets } from '../commands/maintenance/update-all.ts';
 import { runUpdateApp } from '../commands/maintenance/update-app.ts';
 import { runGuestPower } from '../commands/maintenance/guest-power.ts';
 import { runSetGuestVpn } from '../commands/provisioning/set-guest-vpn.ts';
@@ -109,16 +109,17 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
   'update-all': {
     id: 'update-all',
     category: 'maintenance',
-    description: 'Update OS packages on selected hosts/guests. Set exactly one of host, all, or group.',
+    description:
+      'Update OS packages on selected hosts/LXC guests (VMs are never updated). Set exactly one of host, all, or group.',
     shape: {
       host: optStr('One host or guest name'),
-      all: flag('Every host and guest'),
-      group: z.enum(['pve', 'lxc', 'vm']).optional().describe('Every entry of one type'),
+      all: flag('Every host and every LXC guest (VMs are never updated)'),
+      group: z.enum(['pve', 'lxc']).optional().describe('Every entry of one type'),
     },
     target: () => undefined,
     fleetWide: true,
     preview: async (i, deps) => {
-      const targets = selectTargets(deps.inventory, toTargetSelector(i));
+      const targets = selectUpdateTargets(deps.inventory, toTargetSelector(i));
       return `Would update OS packages on: ${targets.join(', ')}`;
     },
     apply: async (i, deps) => {
