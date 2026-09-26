@@ -56,21 +56,24 @@ const OidcRedirectUriSchema = z.string().refine(isAbsoluteHttpUrl, {
   message: 'must be an absolute http:// or https:// URL',
 });
 
-// The exact message both this schema and parseUnauthenticatedPaths below
-// throw -- issue #10, US4: every proxy this toolkit could ever drive can
-// express an exact path or a prefix, so a path exemption is restricted to
-// those two forms rather than an arbitrary glob.
+// The exact message this schema, parseUnauthenticatedPaths below, and
+// proxy/routes.ts's parsePathPattern all throw -- issue #10, US4: every
+// proxy this toolkit could ever drive can express an exact path or a
+// prefix, so a path exemption is restricted to those two forms rather than
+// an arbitrary glob.
 export const UNAUTHENTICATED_PATH_MESSAGE = 'must be an exact path (/health) or a prefix ending in /* (/api/*)';
 
-// Mirrors proxy/routes.ts's parsePathPattern accept rule exactly (duplicated,
-// not imported: routes.ts already imports effectiveAuth from this file, and
-// importing back from routes.ts here would cycle -- same reasoning as this
-// file's own PROXY_DRIVER_IDS-from-ids.ts-not-index.ts import above).
-// Agreement between the two is enforced by a test that feeds every string
-// this schema accepts through parsePathPattern (data-model.md
-// "PathPattern"). Must start with '/'; '*' may appear only as the final
-// character and only directly after '/'.
-function isValidUnauthenticatedPath(raw: string): boolean {
+// The single accept rule for a path exemption (data-model.md
+// "PathPattern"): must start with '/'; '*' may appear only as the final
+// character and only directly after '/'. Exported so proxy/routes.ts's
+// parsePathPattern can call this directly instead of re-implementing the
+// same check -- routes.ts already imports effectiveAuth from this file (the
+// opposite direction would cycle, per this file's own
+// PROXY_DRIVER_IDS-from-ids.ts-not-index.ts import above, but this direction
+// is the one routes.ts already takes), so there is one definition, not two
+// that could drift. Agreement is still exercised by a test that feeds every
+// string this schema accepts through parsePathPattern.
+export function isValidUnauthenticatedPath(raw: string): boolean {
   if (!raw.startsWith('/')) return false;
   const starIndex = raw.indexOf('*');
   if (starIndex === -1) return true;

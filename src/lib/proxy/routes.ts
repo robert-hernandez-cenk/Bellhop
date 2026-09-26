@@ -1,5 +1,5 @@
 import type { Inventory } from '../inventory.ts';
-import { effectiveAuth } from '../inventory.ts';
+import { effectiveAuth, isValidUnauthenticatedPath, UNAUTHENTICATED_PATH_MESSAGE } from '../inventory.ts';
 import { publicHostname } from '../hostname.ts';
 import { authentikConfig } from '../authentik-config.ts';
 
@@ -29,22 +29,19 @@ export interface ProxyContext {
 // A stored unauthenticatedPaths string -> its parsed form (data-model.md
 // "PathPattern"). Must start with '/'; '*' may appear only as the final
 // character and only directly after a '/' (so "/api/*" and the bare "/*"
-// are valid prefixes, but "/api*", "/a*b", and "/*/x" are not). The schema
-// itself is tightened to match this exact rule in a later task (US4) --
-// this function is the single source both agree with.
+// are valid prefixes, but "/api*", "/a*b", and "/*/x" are not) -- the exact
+// rule `isValidUnauthenticatedPath` (src/lib/inventory.ts) enforces, called
+// here rather than re-implemented, so `UnauthenticatedPathSchema` and this
+// function share one definition instead of two that could drift (issue #10,
+// US4). Agreement is still exercised by a test that feeds every string the
+// schema accepts through this function.
 export function parsePathPattern(raw: string): PathPattern {
-  const invalid = () =>
-    new Error(`Invalid unauthenticatedPaths entry '${raw}' (must be an exact path (/health) or a prefix ending in /* (/api/*))`);
-  if (!raw.startsWith('/')) {
-    throw invalid();
+  if (!isValidUnauthenticatedPath(raw)) {
+    throw new Error(`Invalid unauthenticatedPaths entry '${raw}' (${UNAUTHENTICATED_PATH_MESSAGE})`);
   }
   const starIndex = raw.indexOf('*');
   if (starIndex === -1) {
     return { kind: 'exact', path: raw };
-  }
-  const isTrailingStarAfterSlash = starIndex === raw.length - 1 && raw[starIndex - 1] === '/';
-  if (!isTrailingStarAfterSlash) {
-    throw invalid();
   }
   return { kind: 'prefix', path: raw.slice(0, -1) };
 }
