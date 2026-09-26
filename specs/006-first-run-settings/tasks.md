@@ -78,17 +78,17 @@ None. The three stories touch disjoint files except README.md and CLAUDE.md, whi
 
 **Independent Test**: `test/web-client/settings-display.test.ts` passes. In the browser, against a fixture with no `caddy: true` and no `midScheme`, the page shows both empty-state sentences.
 
-- [ ] T011 [P] [US3] Write failing tests in test/web-client/settings-display.test.ts:
+- [x] T011 [P] [US3] Write failing tests in test/web-client/settings-display.test.ts:
   - `caddyHostText({ name: 'proxy', ip: '10.0.0.2' })` returns `'proxy (10.0.0.2)'`.
   - `caddyHostText(null)` returns `'not set — no inventory entry has caddy: true with an IP yet'`.
   - `LAN_GATEWAYS_EMPTY_TEXT` equals `'LAN gateways: none yet — no host has a midScheme'`.
-- [ ] T012 [US3] Implement web-client/src/lib/settings-display.ts (framework-free) and make T011 pass.
-- [ ] T013 [US3] Update web-client/src/pages/SettingsPage.tsx:
+- [x] T012 [US3] Implement web-client/src/lib/settings-display.ts (framework-free) and make T011 pass.
+- [x] T013 [US3] Update web-client/src/pages/SettingsPage.tsx:
   - Reword the intro `PageDescription`. Every setting is optional, and each field says what happens while it is unset. Keep the `bellhop set-config <key> <value> --apply` pointer. Remove the "fails with a named error until it is set" claim.
   - Add an "Optional" marker to each field label (e.g. `<span className="settings-optional">Optional</span>`).
   - Render `LAN_GATEWAYS_EMPTY_TEXT` as a list item when `derived.lanGateways` is empty.
   - Render the Caddy line with `caddyHostText(data.derived.caddy)`.
-- [ ] T014 [US3] Add a muted, non-wrapping-safe `.settings-optional` style in web-client/src/index.css next to the existing `.settings-*` rules, using existing theme variables (dark mode via `:root[data-theme='dark']` if a new color is needed).
+- [x] T014 [US3] Add a muted, non-wrapping-safe `.settings-optional` style in web-client/src/index.css next to the existing `.settings-*` rules, using existing theme variables (dark mode via `:root[data-theme='dark']` if a new color is needed).
 
 **Checkpoint**: `npm run typecheck && npm test` pass.
 
