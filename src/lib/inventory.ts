@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
 import { authentikConfig } from './authentik-config.ts';
+// From the dependency-free ids.ts, not proxy/index.ts's own registry
+// module -- importing index.ts here would cycle back into this file
+// (issue #10, contracts/driver-interface.md "index.ts", Ruling 3).
+import { PROXY_DRIVER_IDS } from './proxy/ids.ts';
 
 export const BridgeEntrySchema = z.object({
   name: z.string().min(1),
@@ -234,6 +238,15 @@ export const SettingsSchema = z.object({
   backupStorage: z.string().min(1).optional(),
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // Which reverse-proxy driver src/lib/proxy/index.ts's getDriver() hands
+  // back -- unset means the 'caddy' default (issue #10). set-config/the web
+  // Settings page's own tests and UI arrive in a later batch (T021); this
+  // schema entry only needs to exist now so driverDeps() (T012) can read it
+  // typed.
+  proxyDriver: z.enum(PROXY_DRIVER_IDS).optional(),
+  // Overrides the active driver's own defaultConfigPath (issue #10) -- unset
+  // means driverDeps() falls back to that default.
+  proxyConfigPath: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
   // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
   // the repo name (research R7).
@@ -804,7 +817,12 @@ export function loadInventory(path: string): Inventory {
     const settings: Settings = {};
     for (const key of SETTINGS_KEYS) {
       const value = meta.get(key);
-      if (value !== undefined) settings[key] = value;
+      // Cast needed since proxyDriver's added enum literal type (issue #10)
+      // means Settings[key] is no longer uniformly `string | undefined`
+      // across every key -- soundness is restored by InventorySchema's own
+      // safeParse below, which rejects a stored value that doesn't match
+      // its key's real schema.
+      if (value !== undefined) (settings as Record<string, string>)[key] = value;
     }
 
     const assembled = sortInventoryForFile({

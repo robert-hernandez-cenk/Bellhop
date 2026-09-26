@@ -7,7 +7,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../../../src/lib/inventory.ts';
-import { buildCaddyBlock } from '../../../../src/commands/networking/sync-caddy.ts';
+import { buildRoutes, buildProxyContext } from '../../../../src/lib/proxy/routes.ts';
+import { render } from '../../../../src/lib/proxy/drivers/caddy.ts';
+
+// buildCaddyBlock itself is gone from src/commands/networking/sync-caddy.ts
+// as of T010 (it now delegates to this same buildRoutes/buildProxyContext/
+// render pipeline) -- this helper reproduces its old single-string return
+// shape so the rest of this file (written against that shape) needs no
+// other changes, per T010's "import and call path only" instruction.
+function buildCaddyBlock(inventory: Inventory): string {
+  const routes = buildRoutes(inventory);
+  const ctx = buildProxyContext(inventory);
+  return render(routes, ctx, '/etc/caddy/Caddyfile')[0].content;
+}
 
 // buildCaddyBlock reads authentikConfig().outpostPort from
 // AUTHENTIK_OUTPOST_PORT, so it's pinned here (and restored after) rather

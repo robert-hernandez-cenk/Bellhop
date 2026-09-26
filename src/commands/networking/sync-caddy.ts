@@ -1,8 +1,8 @@
 import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
-import { effectiveAuth } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
-import { authentikConfig } from '../../lib/authentik-config.ts';
+import { buildRoutes, buildProxyContext } from '../../lib/proxy/routes.ts';
+import { render as renderCaddy, caddyDriver } from '../../lib/proxy/drivers/caddy.ts';
 
 const BEGIN_MARKER = '# BEGIN bellhop-managed';
 const END_MARKER = '# END bellhop-managed';
@@ -12,84 +12,17 @@ export interface SyncCaddyOptions {
   caddyfilePath?: string;
 }
 
-// Every site this toolkit's Caddy manages gets its cert the same way: DNS-01
-// via Cloudflare (the API token is a Caddy-side env var this generator never
-// needs to see) with these two resolvers. Not inventory-configurable --
-// there's one domain, one DNS provider, one operator.
-const TLS_BLOCK = ['    tls {', '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}', '        resolvers 1.1.1.1 8.8.8.8', '    }'];
-
-// Every site sync-caddy manages is reached externally over HTTPS on 443 --
-// not inventory-configurable, same rationale as TLS_BLOCK above.
-const EXTERNAL_PORT = 443;
-
-interface CaddyTarget {
-  name: string;
-  ip?: string;
-  port?: number;
-  subdomains?: string[];
-  insecureBackendTls?: boolean;
-  caddyManual?: boolean;
-  authGroup?: string;
-  authMode?: 'forward' | 'oidc';
-  unauthenticatedPaths?: string[];
-}
-
+// Delegates to the same buildRoutes -> buildProxyContext -> render pipeline
+// the src/lib/proxy/drivers/caddy.ts driver uses (issue #10, T010) -- kept
+// here, under its old name/shape, only because T013 (a later batch) is what
+// rewrites runSyncCaddy itself into orchestration over the driver registry.
+// caddyDriver.defaultConfigPath is passed through as the render path even
+// though nothing here reads FileSpec.path -- render's only externally
+// visible output at this call site is the managed-section content string.
 export function buildCaddyBlock(inventory: Inventory): string {
-  const lines = [BEGIN_MARKER];
-  const targets: CaddyTarget[] = [...inventory.hosts, ...inventory.guests, ...(inventory.externalSites ?? [])];
-  const authentikEntry = [...inventory.hosts, ...inventory.guests].find((e) => e.authentik);
-  // The embedded outpost's forward-auth port -- see the authentik: true
-  // inventory flag (src/lib/inventory.ts), which marks which host/guest
-  // entry actually runs it.
-  const outpostPort = authentikConfig().outpostPort;
-  for (const entry of targets) {
-    if (entry.caddyManual) continue;
-    const subdomains = entry.subdomains ?? [];
-    if (subdomains.length === 0) continue;
-    const port = entry.port ?? 80;
-    const gatedForward = effectiveAuth(entry) === 'forward';
-    if (gatedForward && !authentikEntry?.ip) {
-      throw new Error(
-        `Entry '${entry.name}' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set`
-      );
-    }
-    // One comma-separated site address list per entry, not one block per
-    // subdomain -- matches the hand-authored style already live in
-    // production (e.g. `sonarr.example.com, shows.example.com { ... }`) and
-    // avoids repeating the same reverse_proxy/tls directives once per alias.
-    const addresses = subdomains.map((s) => `${s}.${inventory.domain}`).join(', ');
-    lines.push(`${addresses} {`);
-    lines.push(`    reverse_proxy ${entry.ip}:${port} {`);
-    lines.push(`        header_up X-Forwarded-Port ${EXTERNAL_PORT}`);
-    if (entry.insecureBackendTls) {
-      lines.push('        transport http {');
-      lines.push('            tls_insecure_skip_verify');
-      lines.push('        }');
-    }
-    lines.push('    }');
-    if (gatedForward) {
-      const outpostAddr = `${authentikEntry!.ip}:${outpostPort}`;
-      const exemptPaths = entry.unauthenticatedPaths ?? [];
-      if (exemptPaths.length > 0) {
-        lines.push('    @auth_required {');
-        lines.push(`        not path ${exemptPaths.join(' ')}`);
-        lines.push('    }');
-        lines.push(`    forward_auth @auth_required ${outpostAddr} {`);
-      } else {
-        lines.push(`    forward_auth ${outpostAddr} {`);
-      }
-      lines.push('        uri /outpost.goauthentik.io/auth/caddy');
-      lines.push('        copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid');
-      lines.push('    }');
-      lines.push('    handle /outpost.goauthentik.io/* {');
-      lines.push(`        reverse_proxy ${outpostAddr}`);
-      lines.push('    }');
-    }
-    lines.push(...TLS_BLOCK);
-    lines.push('}');
-  }
-  lines.push(END_MARKER);
-  return lines.join('\n');
+  const routes = buildRoutes(inventory);
+  const ctx = buildProxyContext(inventory);
+  return renderCaddy(routes, ctx, caddyDriver.defaultConfigPath)[0].content;
 }
 
 // Local single-quote escaping for embedding a path into the generated

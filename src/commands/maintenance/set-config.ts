@@ -50,7 +50,12 @@ export function runSetConfig(
     // literal: a `{ ...inv, [key]: value }` spread with a union-typed key
     // widens to an index signature that no longer satisfies Inventory.
     const updated = { ...loadInventory(deps.inventoryPath) };
-    updated[key] = value;
+    // Cast needed since proxyDriver's added enum literal type (issue #10)
+    // means Settings[key] is no longer uniformly `string | undefined`
+    // across every key -- soundness is restored by the SettingsSchema
+    // safeParse just above, which already rejected a value that doesn't
+    // match this specific key's real schema.
+    (updated as unknown as Record<string, string | undefined>)[key] = value;
     saveInventory(deps.inventoryPath, updated);
   }
   return { key, value, applied };

@@ -970,13 +970,15 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the six settings keys', () => {
+test('SETTINGS_KEYS lists exactly the eight settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'backupStorage',
     'customScriptsBranch',
     'customScriptsRepo',
     'dnsServer',
     'nfsServer',
+    'proxyConfigPath',
+    'proxyDriver',
     'statusPagePath',
   ]);
 });
