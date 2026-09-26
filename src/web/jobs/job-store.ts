@@ -170,8 +170,13 @@ export class JobStore {
     // NULL (markControlRequestHandled/closeStaleControlRequests), but a
     // plain UPDATE can leave the old value readable in a freed database
     // page until something else overwrites it -- secure_delete makes SQLite
-    // scrub freed content instead (SC-005: an answer shouldn't survive on
-    // disk once it's been cleared).
+    // scrub freed pages in the main database file once those changes are
+    // checkpointed. The row-level guarantee SC-005 actually relies on is
+    // narrower: the answer text column reads back NULL once handled. In WAL
+    // mode (see above), the original write can still live on in an
+    // as-yet-unreused frame of jobs.sqlite3-wal until the WAL is
+    // checkpointed and that frame is overwritten -- accepted here, since
+    // this is a single-operator local disk, not a shared or untrusted one.
     this.db.pragma('secure_delete = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (

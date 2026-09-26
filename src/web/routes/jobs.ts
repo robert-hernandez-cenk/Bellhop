@@ -162,7 +162,11 @@ export function attachJobsWebSocket(
   jobLog: JobLog,
   inventoryPath: string,
   impersonationStore: ImpersonationStore,
-  options: { tailIntervalMs?: number } = {}
+  // isPidAlive: overridable for tests (see job-tail.ts) so a route-level
+  // test can deterministically exercise the dead-owner path without
+  // depending on a real pid ever being dead. Left unset in production, so
+  // createForeignJobTail's own defaultIsPidAlive is used.
+  options: { tailIntervalMs?: number; isPidAlive?: (pid: number) => boolean } = {}
 ): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   const tailIntervalMs = options.tailIntervalMs ?? 1000;
@@ -256,6 +260,7 @@ export function attachJobsWebSocket(
             jobId,
             initial: { offset: foreignTailOffset, row: job },
             send: (msg) => ws.send(JSON.stringify(msg)),
+            isPidAlive: options.isPidAlive,
           });
           const interval = setInterval(() => {
             tail.tick();

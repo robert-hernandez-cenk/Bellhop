@@ -173,7 +173,7 @@ function startWsServer(
   jobLog: JobLog,
   inventoryPath: string,
   impersonationStore: ImpersonationStore = new Map(),
-  options?: { tailIntervalMs?: number }
+  options?: { tailIntervalMs?: number; isPidAlive?: (pid: number) => boolean }
 ): Promise<{ server: http.Server; port: number }> {
   const server = http.createServer();
   attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, impersonationStore, options);
@@ -814,7 +814,7 @@ test('WS /ws/jobs/:id streams a job owned by another process via polling, not jo
   jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
   jobStore.markRunning(id);
 
-  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
@@ -869,7 +869,7 @@ test('WS /ws/jobs/:id still refuses a foreign job a restricted group cannot see'
   jobStore.markRunning(id);
   savePermissionGroup(inventoryPath, 'family', { mode: 'block-list', resources: [{ type: 'guest', name: 'stash-lxc' }] });
 
-  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
   try {
     const outcome = await connect(port, { 'x-authentik-username': 'kid', 'x-authentik-groups': 'family' }, id);
     assert.equal(outcome, 'refused');
@@ -899,7 +899,7 @@ test('WS /ws/jobs/:id closes the socket when the foreign job tail stops from a t
   jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
   jobStore.markRunning(id);
 
-  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
@@ -945,7 +945,7 @@ test('WS /ws/jobs/:id closes the socket after a foreign job reaches a terminal s
   jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
   jobStore.markRunning(id);
 
-  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
@@ -958,6 +958,48 @@ test('WS /ws/jobs/:id closes the socket after a foreign job reaches a terminal s
     await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'success'));
 
     await waitFor(() => ws.readyState === WebSocket.CLOSED);
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+    jobStore.close();
+  }
+});
+
+// Fix wave (this file's dead-owner counterpart to job-tail.test.ts's own
+// unit-level coverage): the foreign-job tailer must also stop -- and this
+// socket must close -- once the owning MCP process has crashed, rather than
+// polling a stuck row forever. isPidAlive: () => false stands in for a real
+// dead pid so this is deterministic.
+test("WS /ws/jobs/:id closes the socket once the foreign job's owning MCP process has died", async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobs-'));
+  const jobLog: JobLog = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => false });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+
+    // The row itself was never touched (FR-004) -- still 'running', not
+    // flipped to some invented terminal status, and no 'status' message
+    // beyond the initial backlog-time one was ever sent for it.
+    assert.equal(jobStore.get(id)!.status, 'running');
+    assert.deepEqual(
+      messages.filter((m) => m.type === 'status'),
+      [{ type: 'status', status: 'running' }]
+    );
   } finally {
     server.close();
     rmSync(dir, { recursive: true, force: true });

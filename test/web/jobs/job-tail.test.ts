@@ -26,7 +26,14 @@ test('a tick after an append sends one chunk with exactly the new text', () => {
   const { jobStore, jobLog, dir, id } = setUp();
   const row = jobStore.get(id)!;
   const messages: any[] = [];
-  const tail = createForeignJobTail({ jobStore, jobLog, jobId: id, initial: { offset: 0, row }, send: (m) => messages.push(m) });
+  const tail = createForeignJobTail({
+    jobStore,
+    jobLog,
+    jobId: id,
+    initial: { offset: 0, row },
+    send: (m) => messages.push(m),
+    isPidAlive: () => true,
+  });
 
   jobLog.append(row.logFile, 'hello\n');
   tail.tick();
@@ -44,7 +51,14 @@ test('a tick with nothing new sends nothing', () => {
   const { jobStore, jobLog, dir, id } = setUp();
   const row = jobStore.get(id)!;
   const messages: any[] = [];
-  const tail = createForeignJobTail({ jobStore, jobLog, jobId: id, initial: { offset: 0, row }, send: (m) => messages.push(m) });
+  const tail = createForeignJobTail({
+    jobStore,
+    jobLog,
+    jobId: id,
+    initial: { offset: 0, row },
+    send: (m) => messages.push(m),
+    isPidAlive: () => true,
+  });
 
   tail.tick();
   assert.deepEqual(messages, []);
@@ -57,7 +71,14 @@ test('a 3-byte UTF-8 character split across two writes arrives intact across two
   const { jobStore, jobLog, dir, id } = setUp();
   const row = jobStore.get(id)!;
   const messages: any[] = [];
-  const tail = createForeignJobTail({ jobStore, jobLog, jobId: id, initial: { offset: 0, row }, send: (m) => messages.push(m) });
+  const tail = createForeignJobTail({
+    jobStore,
+    jobLog,
+    jobId: id,
+    initial: { offset: 0, row },
+    send: (m) => messages.push(m),
+    isPidAlive: () => true,
+  });
 
   const logPath = jobLog.path(row.logFile);
   const bytes = Buffer.from('€', 'utf8'); // e2 82 ac -- a 3-byte UTF-8 sequence
@@ -80,11 +101,68 @@ test('a 3-byte UTF-8 character split across two writes arrives intact across two
   jobStore.close();
 });
 
+test('stops watching once the owning MCP process has died, after sending remaining output, without inventing a status', () => {
+  const { jobStore, jobLog, dir, id } = setUp();
+  const row = jobStore.get(id)!;
+  assert.equal(row.owner, 'mcp:4242');
+  const messages: any[] = [];
+  const tail = createForeignJobTail({
+    jobStore,
+    jobLog,
+    jobId: id,
+    initial: { offset: 0, row },
+    send: (m) => messages.push(m),
+    isPidAlive: () => false,
+  });
+
+  jobLog.append(row.logFile, 'partial output\n');
+  tail.tick();
+
+  assert.deepEqual(messages, [{ type: 'chunk', stream: 'stdout', text: 'partial output\n' }]);
+  assert.equal(tail.stopped, true);
+  // The row itself is untouched (FR-004: watching never modifies the job) --
+  // still 'running', not flipped to some terminal status by the tail.
+  assert.equal(jobStore.get(id)!.status, 'running');
+
+  rmSync(dir, { recursive: true, force: true });
+  jobStore.close();
+});
+
+test('keeps watching while the owning MCP process is still alive', () => {
+  const { jobStore, jobLog, dir, id } = setUp();
+  const row = jobStore.get(id)!;
+  const messages: any[] = [];
+  const tail = createForeignJobTail({
+    jobStore,
+    jobLog,
+    jobId: id,
+    initial: { offset: 0, row },
+    send: (m) => messages.push(m),
+    isPidAlive: () => true,
+  });
+
+  jobLog.append(row.logFile, 'still going\n');
+  tail.tick();
+
+  assert.deepEqual(messages, [{ type: 'chunk', stream: 'stdout', text: 'still going\n' }]);
+  assert.equal(tail.stopped, false);
+
+  rmSync(dir, { recursive: true, force: true });
+  jobStore.close();
+});
+
 test('status changes, a prompt appearing/clearing, and a terminal status flush the log and stop the tail', () => {
   const { jobStore, jobLog, dir, id } = setUp();
   const row = jobStore.get(id)!;
   const messages: any[] = [];
-  const tail = createForeignJobTail({ jobStore, jobLog, jobId: id, initial: { offset: 0, row }, send: (m) => messages.push(m) });
+  const tail = createForeignJobTail({
+    jobStore,
+    jobLog,
+    jobId: id,
+    initial: { offset: 0, row },
+    send: (m) => messages.push(m),
+    isPidAlive: () => true,
+  });
 
   // Move to awaiting_input with a prompt -- expects a 'prompt' message with
   // origin defaulted to 'heuristic' (promptOrigin is null on this call).

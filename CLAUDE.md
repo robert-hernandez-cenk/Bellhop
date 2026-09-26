@@ -1611,7 +1611,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   foreign-job tailer (`src/web/jobs/job-tail.ts`) instead -- a `setInterval`
   that polls the shared job row and log file once a second and emits the
   same `chunk`/`status`/`prompt`/`prompt-cleared` messages a local job
-  would, so a client sees no protocol difference. Control
+  would, so a client sees no protocol difference. It also stops (and the
+  socket closes) once it sees the owning MCP process has died -- checked
+  via the row's `mcp:<pid>` owner, same liveness check as orphan cleanup --
+  rather than polling a stuck row forever; the job row itself is only ever
+  closed out by orphan cleanup at the next web-service start. Control
   (cancel/answer/dismiss) of a foreign job goes through the shared
   `requestJobControl` (`src/web/jobs/job-control.ts`), used by both the
   three web routes and the three matching MCP tools: a local job is still

@@ -1,5 +1,5 @@
 import { StringDecoder } from 'node:string_decoder';
-import type { JobRow, JobStatus, JobStore } from './job-store.ts';
+import { defaultIsPidAlive, type JobRow, type JobStatus, type JobStore } from './job-store.ts';
 import type { JobLog } from './job-log.ts';
 import { logWarn } from '../../lib/log.ts';
 
@@ -22,6 +22,10 @@ export interface ForeignJobTailOptions {
   // never re-sends what the client already has.
   initial: { offset: number; row: JobRow };
   send: (msg: object) => void;
+  // Overridable for tests (a real crashed-pid scenario is otherwise
+  // unreproducible deterministically). Defaults to the same liveness check
+  // JobStore's own orphan cleanup uses.
+  isPidAlive?: (pid: number) => boolean;
 }
 
 export interface ForeignJobTail {
@@ -48,6 +52,7 @@ function samePrompt(a: PromptState | null, b: PromptState | null): boolean {
 
 export function createForeignJobTail(options: ForeignJobTailOptions): ForeignJobTail {
   const { jobStore, jobLog, jobId, send } = options;
+  const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const logFile = options.initial.row.logFile;
   let offset = options.initial.offset;
   const decoder = new StringDecoder('utf8');
@@ -71,6 +76,21 @@ export function createForeignJobTail(options: ForeignJobTailOptions): ForeignJob
       if (text.length > 0) send({ type: 'chunk', stream: 'stdout', text });
 
       if (!row) {
+        stopped = true;
+        return;
+      }
+
+      // If the owning MCP process has crashed mid-job, its row is stuck
+      // wherever its last write left it (running/awaiting_input) -- nothing
+      // will ever change it short of the web service's own next-startup
+      // orphan cleanup (JobStore.interruptOrphaned). Without this check an
+      // open page would poll this row/log forever. Stop watching rather
+      // than touch the row or log ourselves (FR-004: watching never
+      // modifies the job) -- no status/prompt message is invented, since
+      // the row's actual status hasn't changed.
+      const ownerMatch = /^mcp:(\d+)$/.exec(row.owner ?? '');
+      if (ownerMatch && !isPidAlive(Number(ownerMatch[1]))) {
+        logWarn(`foreign job tail for job ${jobId} stopping: owning process ${row.owner} is no longer running`);
         stopped = true;
         return;
       }
