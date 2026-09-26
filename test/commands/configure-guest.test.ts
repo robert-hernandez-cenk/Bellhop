@@ -24,17 +24,66 @@ test('runConfigureGuest rejects an unknown guest', async () => {
 });
 
 // Detection now runs before confirmOrDryRun (so the dry-run preview can name
-// the exact command apply would send -- see US2), so a --packages dry run
-// makes one remote call, the probe, rather than zero. The exact preview text
-// this produces is asserted separately once US2 lands.
-test('runConfigureGuest makes only the probe call in dry run, never the install', async () => {
+// the exact command apply would send, like create-lxc/install-app's own live
+// previews -- research R4), so a --packages dry run makes one remote call,
+// the probe, rather than zero.
+test('runConfigureGuest --packages dry run makes only the probe call and logs the exact install command', async () => {
   const ssh = new FakeSSHClient((_target, _user, cmd) => {
-    if (cmd.includes('command -v apt-get')) return { stdout: 'apt\n', stderr: '', code: 0 };
+    if (cmd.includes('command -v apt-get')) return { stdout: 'apk\n', stderr: '', code: 0 };
     return { stdout: '', stderr: '', code: 0 };
   });
-  await runConfigureGuest({ guest: 'media', packages: 'curl vim' }, { ssh, inventory });
-  assert.equal(ssh.history.length, 1, 'probe only');
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg: string) => logs.push(msg);
+  try {
+    await runConfigureGuest({ guest: 'media', packages: 'curl vim' }, { ssh, inventory });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(ssh.history.length, 1, 'probe only, no install');
   assert.match(ssh.history[0].command, /command -v apt-get/);
+  assert.ok(
+    logs.some((l) => l.includes("[DRY RUN] Would install on media (apk): apk update && apk add 'curl' 'vim'")),
+    `expected the exact dry-run install line, got: ${JSON.stringify(logs)}`
+  );
+});
+
+test('runConfigureGuest --ssh-key-only dry run makes zero remote calls', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await runConfigureGuest({ guest: 'media', sshKey: 'ssh-ed25519 AAAA test' }, { ssh, inventory });
+  assert.equal(ssh.history.length, 0);
+});
+
+// SC-004: the command named in the dry-run preview line must be exactly the
+// command apply sends -- not just a matching manager name.
+test("runConfigureGuest's dry-run preview command equals the command apply actually sends", async () => {
+  const responder = (_target: string, _user: string, cmd: string) => {
+    if (cmd.includes('command -v apt-get')) return { stdout: 'apk\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 0 };
+  };
+
+  // Targets the 'pve1' host, not the 'media' guest: a pve target's command
+  // reaches ssh.exec directly with no pct-exec/sh -c wrapping (see
+  // src/lib/targets.ts's runRemote), so the captured history entry is the
+  // exact string this command built, letting this test compare it
+  // byte-for-byte against the dry-run preview's own text.
+  const dryRunLogs: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg: string) => dryRunLogs.push(msg);
+  try {
+    await runConfigureGuest({ guest: 'pve1', packages: 'curl vim' }, { ssh: new FakeSSHClient(responder), inventory });
+  } finally {
+    console.log = originalLog;
+  }
+  const dryRunLine = dryRunLogs.find((l) => l.includes('Would install on pve1'));
+  assert.ok(dryRunLine, `expected a dry-run install line, got: ${JSON.stringify(dryRunLogs)}`);
+  const match = dryRunLine!.match(/Would install on pve1 \(apk\): (.+)$/);
+  assert.ok(match, `expected the dry-run line to name the command, got: ${dryRunLine}`);
+  const dryRunCommand = match![1];
+
+  const applySsh = new FakeSSHClient(responder);
+  await runConfigureGuest({ guest: 'pve1', packages: 'curl vim', apply: true }, { ssh: applySsh, inventory });
+  assert.equal(applySsh.history[1].command, dryRunCommand);
 });
 
 test('runConfigureGuest installs quoted packages and adds an SSH key when apply is set', async () => {

@@ -62,8 +62,8 @@ responder pattern in `test/commands/update-all.test.ts` (probe calls are recogni
 
 **Independent Test**: dry run makes exactly one remote call and prints the manager-specific command.
 
-- [ ] T009 [US2] Replace the test "runConfigureGuest does not call ssh in dry run" in `test/commands/configure-guest.test.ts` with: `--packages` dry run makes exactly one call (the probe) and logs `[DRY RUN] Would install on media (apk): apk update && apk add 'curl' 'vim'`; an `--ssh-key`-only dry run still makes zero calls; the dry-run line's command equals the command apply sends (SC-004). Capture output the way other tests do (see `test/support/` helpers)
-- [ ] T010 [US2] In `src/commands/provisioning/configure-guest.ts`, run detection before `confirmOrDryRun` so both modes print `Would install on <target> (<pm>): <command>` from the same string apply executes
+- [x] T009 [US2] Replace the test "runConfigureGuest does not call ssh in dry run" in `test/commands/configure-guest.test.ts` with: `--packages` dry run makes exactly one call (the probe) and logs `[DRY RUN] Would install on media (apk): apk update && apk add 'curl' 'vim'`; an `--ssh-key`-only dry run still makes zero calls; the dry-run line's command equals the command apply sends (SC-004). Capture output the way other tests do (see `test/support/` helpers)
+- [x] T010 [US2] In `src/commands/provisioning/configure-guest.ts`, run detection before `confirmOrDryRun` so both modes print `Would install on <target> (<pm>): <command>` from the same string apply executes
 
 **Checkpoint**: US2 tests green.
 
