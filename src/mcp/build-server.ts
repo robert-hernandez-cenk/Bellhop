@@ -243,7 +243,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
       return {
         requested: true,
         owner: result.owner,
-        note: 'The owning process applies this within about a second; check get_job for the result.',
+        note: 'The owning process applies this within about a second if it is running; check get_job for the result.',
       };
     }
     throw new Error(result.message);

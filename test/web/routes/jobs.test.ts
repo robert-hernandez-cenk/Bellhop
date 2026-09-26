@@ -15,9 +15,10 @@ import path from 'node:path';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import http from 'node:http';
 import { WebSocket } from 'ws';
-import { attachJobsWebSocket } from '../../../src/web/routes/jobs.ts';
+import { attachJobsWebSocket, completeUtf8Length } from '../../../src/web/routes/jobs.ts';
 import { savePermissionGroup } from '../../../src/lib/permissions.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import Database from 'better-sqlite3';
 
 const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
 
@@ -877,6 +878,93 @@ test('WS /ws/jobs/:id still refuses a foreign job a restricted group cannot see'
   }
 });
 
+// Fix wave (M2): the foreign-job tailer's setInterval used to clearInterval
+// on a stopped tail but leave the socket itself open. The client's own
+// useJobStream only falls back to HTTP polling on the socket's 'close'/
+// 'error' event, so a tail that stopped for a non-terminal reason (a
+// throwing tick, a vanished row) left the client stuck watching a socket
+// that would never send anything again. Both cases -- and the ordinary
+// terminal-status case -- must now close the socket once the tail stops.
+test('WS /ws/jobs/:id closes the socket when the foreign job tail stops from a throwing tick', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const jobStore = new JobStore(dbPath);
+  const logDir = mkdtempSync(path.join(tmpdir(), 'joblog-'));
+  const jobLog = createJobLog(logDir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'running'));
+
+    // Directly corrupt expected_prompts_json (not writable through any
+    // JobStore method -- createJob is the only place it's ever set) via a
+    // second connection to the same file, then flip the row into
+    // awaiting_input in the same statement so the tail's next tick sees a
+    // genuine prompt-state change and actually attempts to JSON.parse the
+    // corrupted column, throwing inside tick()'s try/catch.
+    const raw = new Database(dbPath);
+    raw
+      .prepare(
+        `UPDATE jobs SET status = 'awaiting_input', prompt_text = ?, prompt_origin = ?, prompt_matched_index = NULL, expected_prompts_json = ? WHERE id = ?`
+      )
+      .run('Continue? (y/N) ', 'heuristic', 'not valid json', id);
+    raw.close();
+
+    // The tail's throwing tick sets stopped = true; the interval callback
+    // must then close the socket rather than leaving it open forever.
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+  } finally {
+    server.close();
+    jobStore.close();
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('WS /ws/jobs/:id closes the socket after a foreign job reaches a terminal status', async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobs-'));
+  const jobLog: JobLog = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'running'));
+
+    jobStore.markFinished(id, { status: 'success', exitCode: 0 });
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'success'));
+
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+    jobStore.close();
+  }
+});
+
 // Issue #6 (US2): a job owned by another live process is no longer a flat
 // 409 "control it from there" -- the requester writes a control-request row
 // the owning process polls for and applies asynchronously through its own
@@ -1042,4 +1130,43 @@ test('POST /api/jobs/:id/cancel on a job owned by a second JobRunner ends it can
 
   rmSync(dir, { recursive: true, force: true });
   jobStore.close();
+});
+
+// completeUtf8Length (T, fix wave): a log file another process is actively
+// appending to can be read mid-write, so a byte chunk handed to the backlog
+// send can end with a torn multi-byte UTF-8 character. This is the table of
+// cases the function's own comment promises to handle.
+test('completeUtf8Length excludes only a torn trailing multi-byte character, never a complete one', () => {
+  const euroComplete = Buffer.from('ab€'); // 'ab' + complete 3-byte €
+  const euroTorn2of3 = euroComplete.subarray(0, euroComplete.length - 1); // 'ab' + first 2 of €'s 3 bytes
+  const euroTorn1of3 = euroComplete.subarray(0, euroComplete.length - 2); // 'ab' + first 1 of €'s 3 bytes
+  const emoji4byte = Buffer.from('ab\u{1f600}', 'utf8'); // 'ab' + complete 4-byte emoji
+  const emojiTorn1of4 = Buffer.concat([Buffer.from('ab'), emoji4byte.subarray(2, 3)]); // 'ab' + emoji's first byte only
+  const allContinuation = Buffer.from([0x80, 0x81, 0x82]); // no lead byte at all
+
+  const cases: { name: string; buffer: Buffer; expected: number }[] = [
+    { name: 'empty buffer', buffer: Buffer.alloc(0), expected: 0 },
+    { name: 'plain ASCII ending', buffer: Buffer.from('hello'), expected: 5 },
+    { name: 'complete 3-byte character (€) ending', buffer: euroComplete, expected: euroComplete.length },
+    // Torn 2-of-3 bytes of €: the lead byte and one continuation byte
+    // are present but the sequence is incomplete, so both are excluded --
+    // the returned length stops right before the lead byte ('ab'.length).
+    { name: 'torn 2-of-3 bytes of € excludes both torn bytes', buffer: euroTorn2of3, expected: 2 },
+    // Torn 1-of-3 bytes: only the lead byte is present, no continuation
+    // bytes at all -- still excluded the same way.
+    { name: 'torn 1-of-3 bytes of € (lead byte only) excludes it', buffer: euroTorn1of3, expected: 2 },
+    { name: 'complete 4-byte emoji ending', buffer: emoji4byte, expected: emoji4byte.length },
+    // Torn 1-of-4 bytes of a 4-byte emoji: just its first (lead) byte,
+    // with no continuation bytes following -- excluded the same way.
+    { name: "torn 1-of-4 bytes of a 4-byte emoji (lead byte only) excludes it", buffer: emojiTorn1of4, expected: 2 },
+    // All-continuation-bytes buffer: the backward scan never finds a lead
+    // byte, so i goes negative and the function returns 0 -- as implemented,
+    // this treats the whole buffer as incomplete rather than throwing or
+    // returning some partial length.
+    { name: 'buffer of only continuation bytes returns 0', buffer: allContinuation, expected: 0 },
+  ];
+
+  for (const { name, buffer, expected } of cases) {
+    assert.equal(completeUtf8Length(buffer), expected, name);
+  }
 });

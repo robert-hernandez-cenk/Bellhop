@@ -351,7 +351,25 @@ export class JobRunner {
         clearTimeout(timer);
         this.abandonTimers.delete(id);
       }
-      if (this.controllers.size === 0) this.clearControlPoller();
+      if (this.controllers.size === 0) {
+        // Fix wave (#6): an answer/cancel/dismiss control request can be
+        // written to job_control_requests in the gap between this job
+        // becoming this runner's last active one and this finally block
+        // running -- with the poller about to stop (see clearControlPoller
+        // just below), nothing would ever pick that row up again, leaving
+        // it pending (with answer text still attached) indefinitely. One
+        // last sweep here closes it out the same way reconcileOrphanedJobs/
+        // shutdown already do, guarded the same way processControlRequests
+        // guards its own call so a failure here can never take the whole
+        // finally block (and therefore this job's own cleanup) down with it.
+        try {
+          this.store.closeStaleControlRequests();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logWarn(`closeStaleControlRequests failed: ${message}`);
+        }
+        this.clearControlPoller();
+      }
     }
   }
 }

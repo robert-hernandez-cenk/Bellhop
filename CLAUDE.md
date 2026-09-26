@@ -1604,8 +1604,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`JobStore.interruptOrphaned`) only touches the caller's own rows plus
   rows of MCP processes whose pid is dead, so neither process's startup
   interrupts the other's in-flight jobs. A job owned by the *other* process
-  is nonetheless fully watchable and controllable from here (issue #6,
-  closing #165): `/ws/jobs/:id` (`src/web/routes/jobs.ts`) recognizes a job
+  is nonetheless fully watchable and controllable from here (issue #6):
+  `/ws/jobs/:id` (`src/web/routes/jobs.ts`) recognizes a job
   whose row `owner` differs from this process's own `JobRunner.owner` and,
   since that runner's events never fire for it, runs a per-connection
   foreign-job tailer (`src/web/jobs/job-tail.ts`) instead -- a `setInterval`

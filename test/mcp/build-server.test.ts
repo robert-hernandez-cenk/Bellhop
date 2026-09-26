@@ -183,7 +183,7 @@ test('cancel_job on a running job owned by another live process queues a control
   const body = parse(result);
   assert.equal(body.requested, true);
   assert.equal(body.owner, 'web');
-  assert.equal(body.note, 'The owning process applies this within about a second; check get_job for the result.');
+  assert.equal(body.note, 'The owning process applies this within about a second if it is running; check get_job for the result.');
 
   const pending = jobStore.pendingControlRequests('web');
   assert.equal(pending.length, 1);

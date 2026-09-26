@@ -506,3 +506,15 @@ test('job_control_requests survives reopening the same database file (constructo
   store2.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+// M4 (fix wave, SC-005): a cleared answer's text shouldn't survive on disk
+// in a freed database page after markControlRequestHandled/
+// closeStaleControlRequests overwrites it with NULL. JobStore has no
+// public accessor for its own connection, so this reaches the private
+// field directly rather than adding a test-only accessor just for this.
+test('JobStore turns on secure_delete so cleared answer text is scrubbed, not just unlinked', () => {
+  const store = new JobStore(':memory:');
+  const db = (store as unknown as { db: Database.Database }).db;
+  assert.equal(db.pragma('secure_delete', { simple: true }), 1);
+  store.close();
+});

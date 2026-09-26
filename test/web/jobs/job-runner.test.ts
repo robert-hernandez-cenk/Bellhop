@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { logInfo } from '../../../src/lib/log.ts';
 import type { ExecResult, SSHClient, SshTarget } from '../../../src/lib/ssh-client.ts';
+import Database from 'better-sqlite3';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -917,4 +918,64 @@ test('shutdown cancels in-flight jobs and interrupts any own row still non-termi
   assert.equal(store.get(othersRow)?.status, 'running');
   rmSync(dir, { recursive: true, force: true });
   store.close();
+});
+
+// Fix wave (M3): a control request can be written in the narrow window
+// between a requester's own liveness/status check and this runner's last
+// active job actually finishing -- e.g. an answer submitted just as the job
+// was wrapping up. Once execute()'s finally block drops the job from
+// this.controllers and stops the poller (controllers.size === 0), nothing
+// would ever poll pendingControlRequests() again, leaving that row pending
+// -- with its answer text still attached -- forever. execute()'s finally
+// must therefore sweep closeStaleControlRequests() itself before stopping
+// the poller. controlPollMs is set absurdly high so the real poller can
+// never tick during this test -- the only thing that can close the request
+// here is the finally-block fix itself, not processControlRequests (which
+// this test deliberately never calls).
+test('execute() finally closes a control request left pending when its job finishes, without the poller ever ticking', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-stale-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  const logDir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(logDir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const runner = new JobRunner(store, log, ssh, { controlPollMs: 100_000 });
+
+  let releaseJob!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseJob = resolve;
+  });
+  const id = runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await gate;
+    },
+  });
+  await waitForStatus(runner, id, 'running');
+
+  const requestId = store.createControlRequest({
+    jobId: id,
+    action: 'answer',
+    text: 'a-secret-answer',
+    requestedByOwner: 'web',
+    requestedByUsername: 'admin',
+  });
+
+  releaseJob();
+  await waitForFinished(runner, id);
+
+  assert.deepEqual(store.pendingControlRequests('web'), []);
+
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'not-applicable');
+  assert.equal(row.text, null);
+  raw.close();
+
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(logDir, { recursive: true, force: true });
 });

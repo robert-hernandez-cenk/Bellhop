@@ -20,7 +20,7 @@ const TERMINAL_JOB_STATUSES: JobStatus[] = ['success', 'failed', 'cancelled', 'i
 // contains a torn character -- the foreign-job tailer's own persistent
 // StringDecoder (job-tail.ts) picks up the remaining bytes, whole, on a
 // later tick once the rest of the sequence has been written.
-function completeUtf8Length(buffer: Buffer): number {
+export function completeUtf8Length(buffer: Buffer): number {
   let i = buffer.length - 1;
   let continuationBytes = 0;
   while (i >= 0 && (buffer[i] & 0xc0) === 0x80) {
@@ -259,7 +259,18 @@ export function attachJobsWebSocket(
           });
           const interval = setInterval(() => {
             tail.tick();
-            if (tail.stopped) clearInterval(interval);
+            // A stopped tail always means no more messages are coming --
+            // whether the job reached a terminal status (the client already
+            // has the final 'status' message) or the tail gave up early (a
+            // throwing tick, a row that vanished). Either way, closing the
+            // socket here is what lets the client's own reconnect/HTTP-
+            // polling fallback (it only triggers on 'close'/'error') take
+            // over instead of the connection sitting open with nothing left
+            // to feed it forever.
+            if (tail.stopped) {
+              clearInterval(interval);
+              ws.close();
+            }
           }, tailIntervalMs);
           ws.on('close', () => clearInterval(interval));
         }

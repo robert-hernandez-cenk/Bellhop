@@ -166,6 +166,13 @@ export class JobStore {
     // database concurrently (#16); WAL lets readers proceed during a write
     // and cuts the rollback journal's SQLITE_BUSY contention between them.
     if (path !== ':memory:') this.db.pragma('journal_mode = WAL');
+    // A closed/handled control request's answer text is overwritten with
+    // NULL (markControlRequestHandled/closeStaleControlRequests), but a
+    // plain UPDATE can leave the old value readable in a freed database
+    // page until something else overwrites it -- secure_delete makes SQLite
+    // scrub freed content instead (SC-005: an answer shouldn't survive on
+    // disk once it's been cleared).
+    this.db.pragma('secure_delete = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
