@@ -171,10 +171,11 @@ function startWsServer(
   jobStore: JobStore,
   jobLog: JobLog,
   inventoryPath: string,
-  impersonationStore: ImpersonationStore = new Map()
+  impersonationStore: ImpersonationStore = new Map(),
+  options?: { tailIntervalMs?: number }
 ): Promise<{ server: http.Server; port: number }> {
   const server = http.createServer();
-  attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, impersonationStore);
+  attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, impersonationStore, options);
   return new Promise((resolve) => {
     server.listen(0, () => {
       const address = server.address();
@@ -789,6 +790,91 @@ test('GET /api/jobs/:id exposes the prompt origin and matched index for an await
 
   rmSync(dir, { recursive: true, force: true });
   jobStore.close();
+});
+
+// Issue #6 (US1): a job owned by another process (an MCP server) still
+// streams live over this process's WebSocket -- it just can't come from
+// jobRunner.events (those never fire for a job this process didn't start).
+// attachJobsWebSocket instead runs a foreign-job tailer (job-tail.ts) that
+// polls the shared job row and log file on a short interval. The rows are
+// seeded directly rather than run through a real JobRunner/FakeSSHClient job
+// (see G4-brief.md): a paused job's 15-minute abandon timer belongs to
+// whichever JobRunner owns it, and this job is deliberately owned by
+// 'mcp:4242', not this test's own jobRunner.
+test('WS /ws/jobs/:id streams a job owned by another process via polling, not jobRunner.events', async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobs-'));
+  const jobLog: JobLog = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+
+    await waitFor(() => messages.some((m) => m.type === 'backlog'));
+    assert.equal(messages.find((m) => m.type === 'backlog').text, 'starting\n');
+    assert.ok(messages.some((m) => m.type === 'status' && m.status === 'running'));
+
+    jobLog.append(jobStore.get(id)!.logFile, 'more output\n');
+    jobStore.markAwaitingInput(id, 'Continue? (y/N) ', 'heuristic', null);
+    await waitFor(() => messages.some((m) => m.type === 'prompt'));
+    assert.ok(messages.some((m) => m.type === 'chunk' && m.text === 'more output\n'));
+    const prompt = messages.find((m) => m.type === 'prompt');
+    assert.equal(prompt.text, 'Continue? (y/N) ');
+    assert.equal(prompt.origin, 'heuristic');
+
+    jobStore.markRunning(id);
+    await waitFor(() => messages.some((m) => m.type === 'prompt-cleared'));
+
+    jobStore.markFinished(id, { status: 'success', exitCode: 0 });
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'success'));
+
+    // jobRunner never touched this job at all -- it was never enqueued
+    // through it, so there is nothing in jobRunner.events for this test to
+    // have relied on; the assertions above are only satisfiable through the
+    // polling tail.
+    ws.close();
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+    jobStore.close();
+  }
+});
+
+test('WS /ws/jobs/:id still refuses a foreign job a restricted group cannot see', async () => {
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({
+    command: 'guest-power',
+    category: 'maintenance',
+    target: 'stash-lxc',
+    argsJson: '{}',
+    owner: 'mcp:4242',
+  });
+  jobStore.markRunning(id);
+  savePermissionGroup(inventoryPath, 'family', { mode: 'block-list', resources: [{ type: 'guest', name: 'stash-lxc' }] });
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20 });
+  try {
+    const outcome = await connect(port, { 'x-authentik-username': 'kid', 'x-authentik-groups': 'family' }, id);
+    assert.equal(outcome, 'refused');
+  } finally {
+    server.close();
+  }
 });
 
 // Issue #16: a job owned by another process (an MCP server) can't be

@@ -87,10 +87,10 @@ function. See research.md R2 to R4 and data-model.md.
 **Independent Test**: open `/ws/jobs/:id` for a job owned by `mcp:4242`, append to its log and change
 its row from the test, and receive `chunk`/`status`/`prompt`/`prompt-cleared` messages.
 
-- [ ] T007 [P] [US1] Write failing test in `test/web/jobs/job-log.test.ts`: `readBytes(name, offset)`
+- [x] T007 [P] [US1] Write failing test in `test/web/jobs/job-log.test.ts`: `readBytes(name, offset)`
   returns the bytes from `offset`, an empty buffer for a missing file or an offset at/after the end.
-- [ ] T008 [P] [US1] Implement `readBytes` on `JobLog` in `src/web/jobs/job-log.ts`.
-- [ ] T009 [US1] Write failing tests in `test/web/jobs/job-tail.test.ts` for
+- [x] T008 [P] [US1] Implement `readBytes` on `JobLog` in `src/web/jobs/job-log.ts`.
+- [x] T009 [US1] Write failing tests in `test/web/jobs/job-tail.test.ts` for
   `createForeignJobTail({ jobStore, jobLog, jobId, initial: { offset, row }, send })` returning
   `{ tick, stop, stopped }`: a tick after an append sends one `chunk` (`stream: 'stdout'`) with
   exactly the new text; a tick with nothing new sends nothing; a 3-byte UTF-8 character appended as
@@ -99,16 +99,16 @@ its row from the test, and receive `chunk`/`status`/`prompt`/`prompt-cleared` me
   `text`, parsed `expectedPrompts`, `origin` (default `'heuristic'` when null) and `matchedIndex`; a
   prompt going away sends `prompt-cleared`; a row becoming terminal flushes remaining log output
   before the final `status` and sets `stopped`, and later ticks send nothing.
-- [ ] T010 [US1] Implement `src/web/jobs/job-tail.ts` per research.md R1 (row read first, then log;
+- [x] T010 [US1] Implement `src/web/jobs/job-tail.ts` per research.md R1 (row read first, then log;
   `StringDecoder('utf8')`); the interval itself lives in the caller so `tick` is testable directly.
-- [ ] T011 [US1] Write failing WebSocket test in `test/web/routes/jobs.test.ts` using the existing
+- [x] T011 [US1] Write failing WebSocket test in `test/web/routes/jobs.test.ts` using the existing
   `startWsServer`/`connectCollectingMessages`/`waitFor` helpers and a new optional `tailIntervalMs`
   argument: a job created with `owner: 'mcp:4242'`, marked running, with an initial log line →
   client gets `backlog` with that line and `status: running`; the test then appends a line and marks
   the job awaiting input, then running, then finished → client receives the `chunk`, `prompt`,
   `prompt-cleared` and final `status: success` messages in that order; a foreign job the user's
   group cannot see is still refused (reuse an existing visibility fixture).
-- [ ] T012 [US1] Update `attachJobsWebSocket` in `src/web/routes/jobs.ts`: accept an optional
+- [x] T012 [US1] Update `attachJobsWebSocket` in `src/web/routes/jobs.ts`: accept an optional
   trailing `options: { tailIntervalMs?: number }` (default 1000); for a job whose `owner ?? 'web'`
   differs from `jobRunner.owner`, read the backlog via `readBytes` (send its decoded text), send the
   same initial status/prompt messages as today, then, unless the job is already terminal, run

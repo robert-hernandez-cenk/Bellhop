@@ -1,13 +1,40 @@
 import { Router, type Response } from 'express';
 import { WebSocketServer } from 'ws';
 import type { Server } from 'node:http';
-import type { JobStore, JobRow } from '../jobs/job-store.ts';
+import type { JobStore, JobRow, JobStatus } from '../jobs/job-store.ts';
 import type { JobLog } from '../jobs/job-log.ts';
 import type { JobRunner } from '../jobs/job-runner.ts';
+import { createForeignJobTail } from '../jobs/job-tail.ts';
 import { resolveAuthUser } from '../auth.ts';
 import { isAdmin } from '../access.ts';
 import { loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
 import type { ImpersonationStore } from '../impersonation.ts';
+
+const TERMINAL_JOB_STATUSES: JobStatus[] = ['success', 'failed', 'cancelled', 'interrupted'];
+
+// A log file another process is actively appending to can be read mid-write
+// (issue #6): readBytes(name, 0) may return a trailing UTF-8 sequence that's
+// only partially written. Returns how many leading bytes of `buffer` form
+// complete UTF-8 characters, so the backlog sent to the client never
+// contains a torn character -- the foreign-job tailer's own persistent
+// StringDecoder (job-tail.ts) picks up the remaining bytes, whole, on a
+// later tick once the rest of the sequence has been written.
+function completeUtf8Length(buffer: Buffer): number {
+  let i = buffer.length - 1;
+  let continuationBytes = 0;
+  while (i >= 0 && (buffer[i] & 0xc0) === 0x80) {
+    continuationBytes++;
+    i--;
+  }
+  if (i < 0) return 0;
+  const leadByte = buffer[i];
+  let seqLen = 1;
+  if ((leadByte & 0x80) === 0) seqLen = 1;
+  else if ((leadByte & 0xe0) === 0xc0) seqLen = 2;
+  else if ((leadByte & 0xf0) === 0xe0) seqLen = 3;
+  else if ((leadByte & 0xf8) === 0xf0) seqLen = 4;
+  return continuationBytes + 1 < seqLen ? i : buffer.length;
+}
 
 // A job's `target` is either a host name (provisioning's guest-creating
 // commands) or a guest name (everything else that has one) -- JobRow
@@ -135,9 +162,11 @@ export function attachJobsWebSocket(
   jobStore: JobStore,
   jobLog: JobLog,
   inventoryPath: string,
-  impersonationStore: ImpersonationStore
+  impersonationStore: ImpersonationStore,
+  options: { tailIntervalMs?: number } = {}
 ): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+  const tailIntervalMs = options.tailIntervalMs ?? 1000;
 
   server.on('upgrade', (req, socket, head) => {
     const user = resolveAuthUser(req.headers);
@@ -166,8 +195,25 @@ export function attachJobsWebSocket(
       socket.destroy();
       return;
     }
+    // Issue #6: a job owned by another process (an MCP server) has no
+    // in-memory state in *this* process's jobRunner -- its 'chunk'/'status'/
+    // 'prompt'/'prompt-cleared' events never fire for it. Such a job still
+    // streams live, just via the polling foreign-job tailer below instead of
+    // jobRunner.events.
+    const foreign = job !== undefined && (job.owner ?? 'web') !== jobRunner.owner;
+    // Only meaningful when `foreign` -- the offset into the log file the
+    // backlog below ended at, and where the tail's first tick starts reading
+    // from.
+    let foreignTailOffset = 0;
+
     wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.send(JSON.stringify({ type: 'backlog', text: job ? jobLog.read(job.logFile) : '' }));
+      if (job && foreign) {
+        const backlogBytes = jobLog.readBytes(job.logFile, 0);
+        foreignTailOffset = completeUtf8Length(backlogBytes);
+        ws.send(JSON.stringify({ type: 'backlog', text: backlogBytes.subarray(0, foreignTailOffset).toString('utf8') }));
+      } else {
+        ws.send(JSON.stringify({ type: 'backlog', text: job ? jobLog.read(job.logFile) : '' }));
+      }
       // The job may already have finished before this socket connected (a
       // fast job can complete before the WS handshake does) -- without this,
       // a late-connecting client would wait forever for a 'status' event
@@ -197,6 +243,28 @@ export function attachJobsWebSocket(
             matchedIndex: job.promptMatchedIndex,
           })
         );
+      }
+
+      if (job && foreign) {
+        // No jobRunner.events registration for a foreign job -- those never
+        // fire for it (see the `foreign` comment above). Skip the tail
+        // entirely for a job that's already terminal by connect time, same
+        // as the local path needs no event listeners for one either.
+        if (!TERMINAL_JOB_STATUSES.includes(job.status)) {
+          const tail = createForeignJobTail({
+            jobStore,
+            jobLog,
+            jobId,
+            initial: { offset: foreignTailOffset, row: job },
+            send: (msg) => ws.send(JSON.stringify(msg)),
+          });
+          const interval = setInterval(() => {
+            tail.tick();
+            if (tail.stopped) clearInterval(interval);
+          }, tailIntervalMs);
+          ws.on('close', () => clearInterval(interval));
+        }
+        return;
       }
 
       const onChunk = (payload: { jobId: number; stream: string; text: string }) => {
