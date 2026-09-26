@@ -2,29 +2,23 @@ import type { ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
 
-const BEGIN_MARKER = '# BEGIN bellhop-managed';
-const END_MARKER = '# END bellhop-managed';
-
 // Every site this driver manages gets its cert the same way: DNS-01 via
 // Cloudflare (the API token is a Caddy-side env var this generator never
 // needs to see) with these two resolvers. Not inventory-configurable --
-// there's one domain, one DNS provider, one operator. Moved here verbatim
-// from the former src/commands/networking/sync-caddy.ts (issue #10, T010).
+// there's one domain, one DNS provider, one operator.
 const TLS_BLOCK = ['    tls {', '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}', '        resolvers 1.1.1.1 8.8.8.8', '    }'];
 
-// Renders every route into one Caddyfile managed section -- ported
-// verbatim from buildCaddyBlock (the former src/commands/networking/
-// sync-caddy.ts, now sync-proxy.ts) with two changes: it reads the
-// proxy-neutral ProxyRoute/ProxyContext shapes instead of walking raw
-// inventory entries directly (buildRoutes/
-// buildProxyContext have already done that derivation, including the
-// missing-authentik throw, by the time render ever runs), and exempt
-// paths are emitted from auth.rawExemptPaths verbatim rather than
-// reconstructed from the parsed exemptPaths -- so a forward-gated route's
-// `not path ...` line is byte-identical to what the operator actually
-// typed into unauthenticatedPaths.
+// Renders every route into the body of one Caddyfile managed section --
+// fileDriver adds the bellhop-managed markers around it. Reads the
+// proxy-neutral ProxyRoute/ProxyContext shapes (buildRoutes/
+// buildProxyContext have already done the derivation, including the
+// missing-authentik throw, by the time render runs), and emits exempt
+// paths from auth.rawExemptPaths verbatim rather than reconstructing them
+// from the parsed exemptPaths -- so a forward-gated route's `not path ...`
+// line is byte-identical to what the operator typed into
+// unauthenticatedPaths.
 export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[] {
-  const lines = [BEGIN_MARKER];
+  const lines: string[] = [];
   for (const route of routes) {
     const addresses = route.hostnames.join(', ');
     lines.push(`${addresses} {`);
@@ -61,7 +55,6 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
     lines.push(...TLS_BLOCK);
     lines.push('}');
   }
-  lines.push(END_MARKER);
   return [{ path: configPath, content: lines.join('\n'), mode: 'managed-section' }];
 }
 

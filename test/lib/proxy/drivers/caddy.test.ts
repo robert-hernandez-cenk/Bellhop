@@ -8,18 +8,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../../../src/lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../../../src/lib/proxy/routes.ts';
-import { render } from '../../../../src/lib/proxy/drivers/caddy.ts';
+import { caddyDriver, render } from '../../../../src/lib/proxy/drivers/caddy.ts';
+import { wrapManagedSection } from '../../../../src/lib/proxy/file-driver.ts';
+import { FakeSSHClient } from '../../../support/fake-ssh-client.ts';
 
-// buildCaddyBlock itself is gone from the former src/commands/networking/
-// sync-caddy.ts (now sync-proxy.ts) as of T010 (it now delegates to this
-// same buildRoutes/buildProxyContext/render pipeline) -- this helper
-// reproduces its old single-string return shape so the rest of this file
-// (written against that shape) needs no other changes, per T010's "import
-// and call path only" instruction.
+// The pre-refactor buildCaddyBlock's single-string output, rebuilt from the
+// driver pipeline: render() returns only the block's body, and fileDriver
+// wraps it in the bellhop-managed markers -- the same text plan() previews
+// and apply() writes (the last test in this file checks plan() directly).
 function buildCaddyBlock(inventory: Inventory): string {
   const routes = buildRoutes(inventory);
   const ctx = buildProxyContext(inventory);
-  return render(routes, ctx, '/etc/caddy/Caddyfile')[0].content;
+  return wrapManagedSection(render(routes, ctx, '/etc/caddy/Caddyfile')[0].content);
 }
 
 // buildCaddyBlock reads authentikConfig().outpostPort from
@@ -232,4 +232,30 @@ test('buildCaddyBlock throws the missing-authentik error text when a forward-gat
     () => buildCaddyBlock(inv),
     /^Error: Entry 'app-lxc' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set$/
   );
+});
+
+test('render returns only the body; the bellhop-managed markers come from fileDriver', () => {
+  withPinnedOutpostPort(() => {
+    const [file] = render(buildRoutes(inventory), buildProxyContext(inventory), '/etc/caddy/Caddyfile');
+    assert.equal(file.mode, 'managed-section');
+    assert.equal(file.content, EXPECTED_LINES.slice(1, -1).join('\n'));
+  });
+});
+
+test('caddyDriver.plan previews and carries exactly the pinned block', async () => {
+  process.env.AUTHENTIK_OUTPOST_PORT = '9000';
+  try {
+    const deps = {
+      ssh: new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })),
+      inventory,
+      proxyHost: 'pve1',
+      configPath: '/etc/caddy/Caddyfile',
+    };
+    const plan = await caddyDriver.plan(buildRoutes(inventory), buildProxyContext(inventory), deps);
+    assert.equal(plan.preview, EXPECTED_LINES.join('\n'));
+    assert.deepEqual(plan.payload, [{ path: '/etc/caddy/Caddyfile', content: EXPECTED_LINES.join('\n'), mode: 'managed-section' }]);
+  } finally {
+    if (ORIGINAL_OUTPOST_PORT === undefined) delete process.env.AUTHENTIK_OUTPOST_PORT;
+    else process.env.AUTHENTIK_OUTPOST_PORT = ORIGINAL_OUTPOST_PORT;
+  }
 });

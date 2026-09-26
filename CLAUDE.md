@@ -550,7 +550,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   **Capability enforcement** (FR-011/FR-012): `checkCapabilities` returns
   one `CapabilityError` per route whose `auth.mode` isn't in the active
   driver's `capabilities.authModes` (an `'ungated'` route is never a
-  candidate). `runSyncProxy` (`src/commands/networking/sync-proxy.ts`)
+  candidate). The message suggests switching to the other auth mode only
+  when the driver can enforce that one; otherwise it suggests clearing
+  `authGroup` or choosing a `proxyDriver` that supports the mode.
+  `runSyncProxy` (`src/commands/networking/sync-proxy.ts`)
   joins every message into one thrown `Error` and refuses to preview or
   write anything -- for both a dry run and `--apply`; `commitGuestEdit`
   (`src/operations/edit-guest.ts`) runs the same check against the
@@ -578,13 +581,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   write-phase command failing under `set -e`, or the validate command
   itself failing -- restores every backup (removing files that didn't
   exist before) through that one trap handler, not a restore block
-  duplicated at each failure site; writes each file (`'owned'` replaces it
+  duplicated at each failure site -- and, since an EXIT trap does not run
+  when the shell is killed by a signal, a second trap on HUP/INT/TERM that
+  clears every trap, runs the same restore, and exits 1; writes each file (`'owned'` replaces it
   whole, `'managed-section'` removes any existing
   `# BEGIN bellhop-managed`…`# END bellhop-managed` block and appends the
   new one, creating the file if absent); runs the validate command,
   printing a named failure message and exiting non-zero if it fails (the
-  trap performs the actual restore); disarms the trap, removes the
-  backups, and reloads. `apply()` itself throws on a non-zero exit, with
+  trap performs the actual restore); disarms every trap together
+  (`trap - EXIT HUP INT TERM`), removes the backups, and reloads. The
+  `bellhop-managed` markers are defined once, in `file-driver.ts`: a
+  driver's `render()` returns only a `'managed-section'` file's body, and
+  `plan()` wraps it with `wrapManagedSection` before previewing it or
+  putting it in the payload, so the preview is still exactly what
+  `apply()` writes. `apply()` itself throws on a non-zero exit, with
   stderr in the message -- this is a behavior fix, not just a rename
   (issue #10): the former `sync-caddy` validated a *temporary copy* before
   ever overwriting the real Caddyfile and reported a failed validate as a
@@ -611,7 +621,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `defaultConfigPath: '/etc/caddy/Caddyfile'`, `validateCommand: caddy
   validate --adapter caddyfile --config <path>`, `reloadCommand:
   systemctl reload caddy`. Its `render()` is the old `buildCaddyBlock`
-  ported over verbatim, now reading the proxy-neutral `ProxyRoute[]`/
+  ported over verbatim minus the markers (`fileDriver` adds those), now reading the proxy-neutral `ProxyRoute[]`/
   `ProxyContext` `buildRoutes`/`buildProxyContext` already derived rather
   than walking raw inventory entries itself, and emitting
   `unauthenticatedPaths` from a route's raw stored strings (in stored

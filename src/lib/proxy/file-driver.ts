@@ -5,6 +5,10 @@ import type { ProxyDriverId } from './ids.ts';
 
 export interface FileSpec {
   path: string;
+  // What a driver's render() returns: the whole file ('owned') or only the
+  // managed block's body ('managed-section'). fileDriver's plan() wraps a
+  // body in the markers below, so the FileSpecs in a plan's payload -- and
+  // those buildFileDriverScript writes -- carry the markers already.
   content: string;
   // 'owned': fileDriver replaces the whole file. 'managed-section': it
   // replaces only the `# BEGIN bellhop-managed` ... `# END bellhop-managed`
@@ -13,8 +17,17 @@ export interface FileSpec {
   mode: 'owned' | 'managed-section';
 }
 
+// The one definition of the managed-section markers: fileDriver both writes
+// them (wrapManagedSection) and strips the old block by them
+// (buildFileDriverScript), so a driver never spells them itself.
 const BEGIN_MARKER = '# BEGIN bellhop-managed';
 const END_MARKER = '# END bellhop-managed';
+
+// A managed-section body wrapped in the markers. An empty body (no routes)
+// is the two markers alone, with no blank line between them.
+export function wrapManagedSection(body: string): string {
+  return [BEGIN_MARKER, ...(body === '' ? [] : [body]), END_MARKER].join('\n');
+}
 
 // Single-quote escaping for embedding a path or command into the generated
 // remote shell script -- exported so every other file-configured driver
@@ -41,10 +54,14 @@ export function singleQuote(value: string): string {
 // validate does, and both need the same restore. The trap fires on *any*
 // non-zero exit once installed, so the validate-failure branch only has to
 // print its own message and `exit 1`; the trap does the actual restoring
-// either way. It is disarmed (`trap - EXIT`) right before backups are
-// removed and the reload runs, so a reload failure is never treated as a
-// reason to restore (unchanged from before this round: reload always runs
-// against the new, already-validated configuration).
+// either way. An EXIT trap does not run when the shell is killed by a
+// signal (dash, for one, just dies), so HUP, INT, and TERM get their own
+// trap that runs the same restore and exits 1 -- clearing every trap first
+// so the restore never runs twice. All four are disarmed together
+// (`trap - EXIT HUP INT TERM`) right before backups are removed and the
+// reload runs, so a reload failure is never treated as a reason to
+// restore: reload always runs against the new, already-validated
+// configuration.
 export function buildFileDriverScript(files: FileSpec[], validateCommand: string, reloadCommand: string): string {
   const lines: string[] = ['set -e'];
 
@@ -75,6 +92,13 @@ export function buildFileDriverScript(files: FileSpec[], validateCommand: string
   });
   lines.push('}');
   lines.push('trap \'BELLHOP_STATUS=$?; if [ "$BELLHOP_STATUS" != "0" ]; then bellhop_restore_all; fi\' EXIT');
+  lines.push('bellhop_on_signal() {');
+  lines.push('  trap - EXIT HUP INT TERM');
+  lines.push('  bellhop_restore_all');
+  lines.push("  printf 'interrupted; restored previous configuration\\n' >&2");
+  lines.push('  exit 1');
+  lines.push('}');
+  lines.push('trap bellhop_on_signal HUP INT TERM');
 
   // 2. Write each file's new content in place.
   files.forEach((file, i) => {
@@ -108,8 +132,8 @@ export function buildFileDriverScript(files: FileSpec[], validateCommand: string
   lines.push('  exit 1');
   lines.push('fi');
 
-  // 4. Disarm the trap, remove backups, reload.
-  lines.push('trap - EXIT');
+  // 4. Disarm every trap, remove backups, reload.
+  lines.push('trap - EXIT HUP INT TERM');
   files.forEach((_file, i) => lines.push(`rm -f "$BAK_${i}"`));
   lines.push(reloadCommand);
 
@@ -156,7 +180,9 @@ export function fileDriver(def: {
     defaultConfigPath: def.defaultConfigPath,
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
-      const files = def.render(routes, ctx, deps.configPath);
+      const files = def
+        .render(routes, ctx, deps.configPath)
+        .map((f) => (f.mode === 'managed-section' ? { ...f, content: wrapManagedSection(f.content) } : f));
       return { preview: files.map((f) => f.content).join('\n'), payload: files };
     },
 

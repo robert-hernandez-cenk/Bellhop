@@ -27,6 +27,9 @@ export interface ProxyContext {
 export function parsePathPattern(raw: string): PathPattern;          // throws on an invalid pattern
 export function buildRoutes(inventory: Inventory): ProxyRoute[];      // throws the missing-authentik error
 export function buildProxyContext(inventory: Inventory): ProxyContext;
+// One entry's route from that entry alone (undefined when it gets none);
+// never fails over another entry, and skips the missing-authentik check.
+export function buildRouteForEntry(inventory: Inventory, owner: ProxyRoute['owner']): ProxyRoute | undefined;
 ```
 
 `rawExemptPaths` carries the stored strings in stored order, so a driver
@@ -65,19 +68,34 @@ export interface CapabilityError { owner: ProxyRoute['owner']; mode: ProxyAuthMo
 export function checkCapabilities(routes: ProxyRoute[], driver: ReverseProxyDriver): CapabilityError[];
 ```
 
-Capability error message (one per offending route):
+Capability error message (one per offending route). When the driver can
+enforce the other auth mode:
 
 ```text
 Entry '<name>' uses <forward-auth|OIDC> gating, but the '<driver-id>' proxy driver cannot enforce it -- set its authMode to <oidc|forward> or clear authGroup
 ```
 
+When it cannot enforce that one either (suggesting it would be circular):
+
+```text
+Entry '<name>' uses <forward-auth|OIDC> gating, but the '<driver-id>' proxy driver cannot enforce it -- clear authGroup or choose a proxyDriver that supports it
+```
+
 `sync-proxy` joins all messages into one thrown `Error`. `commitGuestEdit`
-returns the edited entry's message as a 400.
+returns the edited entry's message as a 400, checking only the edited
+guest's own route (`buildRouteForEntry`), so another entry's problem never
+blocks the save.
 
 ## file-driver.ts
 
 ```ts
 export interface FileSpec { path: string; content: string; mode: 'owned' | 'managed-section' }
+
+// The managed-section markers are defined once, here. render() returns a
+// managed-section file's body only; plan() wraps it in the markers (an
+// empty body is the two markers alone) before previewing it or putting it
+// in the payload.
+export function wrapManagedSection(body: string): string;
 
 export function fileDriver(def: {
   id: ProxyDriverId;
@@ -112,7 +130,10 @@ Behaviour of the generated POSIX `sh` script, run on the proxy host via
    makes a write-phase failure (a `cat`/`sed`/`cp` step erroring under
    `set -e`, before the validate command ever runs) restore correctly, not
    just a failed validate -- both paths exit non-zero once the trap is
-   installed, and the trap does the one restore either way.
+   installed, and the trap does the one restore either way. An EXIT trap
+   does not run when the shell is killed by a signal, so HUP, INT, and TERM
+   get their own trap: it clears every trap, runs the same restore, prints
+   `interrupted; restored previous configuration`, and exits 1.
 3. Write each file: `owned` replaces it; `managed-section` removes any
    existing `# BEGIN bellhop-managed`…`# END bellhop-managed` block and
    appends the new block (creating the file if absent).
@@ -121,11 +142,14 @@ Behaviour of the generated POSIX `sh` script, run on the proxy host via
    (the validate command single-quoted as printf's `%s` argument, not
    interpolated into a double-quoted string) and exit 1 -- the trap from
    step 2 performs the actual restore once this exit is seen.
-5. Disarm the trap (`trap - EXIT`, so a reload failure is never treated as
-   a reason to restore), remove backups, run the reload command.
+5. Disarm every trap together (`trap - EXIT HUP INT TERM`, so a reload
+   failure is never treated as a reason to restore), remove backups, run the
+   reload command.
 
-- `plan()` → `{ preview: files.map(content).join('\n'), payload: files }`
-  (single file: the content alone, so the Caddy preview equals today's).
+- `plan()` → render, wrap each `managed-section` body with
+  `wrapManagedSection`, then `{ preview: files.map(content).join('\n'),
+  payload: files }` (single file: its content alone, so the Caddy preview
+  equals today's block, markers included).
 - `apply()` → `runRemote(ssh, inventory, proxyHost, script)`; non-zero exit
   throws with stderr.
 - `snapshot()` → `cat` of each path from `configFiles(configPath)` (default
@@ -156,8 +180,9 @@ proxyDriver <caddy> --apply`.
 --adapter caddyfile --config ${quoted p}\`, reloadCommand: 'systemctl reload
 caddy' })`.
 
-`render` produces one `managed-section` FileSpec whose content is exactly
-today's `buildCaddyBlock` output for the same inventory.
+`render` produces one `managed-section` FileSpec whose content is the body of
+today's `buildCaddyBlock` output for the same inventory; once `plan()` wraps
+it in the markers, preview and payload are byte-identical to that output.
 
 ## Consumers
 
@@ -166,5 +191,5 @@ today's `buildCaddyBlock` output for the same inventory.
 | `runSyncProxy` | `getDriver`, `driverDeps`, `buildRoutes`, `buildProxyContext`, `checkCapabilities`, `plan`, `apply` |
 | `syncProxyLive` | `runSyncProxy`; `capabilities.acmeDns01ViaCloudflare` for the prune |
 | `runRenderStatusPage` | `getDriver`, `driverDeps`, `snapshot` |
-| `commitGuestEdit` | `getDriver`, `buildRoutes` (on the edited inventory), `checkCapabilities` filtered to the edited guest |
+| `commitGuestEdit` | `getDriver`, `buildRouteForEntry` (the edited guest only, on the edited inventory), `checkCapabilities` |
 | `sync-authentik`, `adopt-oidc-client`, `buildRoutes` | `publicHostname` (`src/lib/hostname.ts`) |

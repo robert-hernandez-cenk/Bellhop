@@ -63,6 +63,24 @@ test('buildFileDriverScript: the trap disarms before backups are removed and the
   assert.ok(disarmIndex < reloadIndex, 'trap must be disarmed before the reload command runs');
 });
 
+test('buildFileDriverScript: HUP, INT, and TERM run the same restore and exit non-zero, since an EXIT trap alone does not run when sh is killed by a signal', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, VALIDATE_COMMAND, RELOAD_COMMAND);
+  const signalTrap = script.split('\n').find((l) => /^trap .* HUP INT TERM$/.test(l));
+  assert.ok(signalTrap, `expected a HUP INT TERM trap, got:\n${script}`);
+  assert.ok(script.indexOf(signalTrap!) > script.indexOf('bellhop_restore_all() {'), 'installed after the restore function exists');
+  assert.ok(script.indexOf(signalTrap!) < script.indexOf('<<\'BELLHOP_FILE_0\''), 'installed before anything is written');
+  assert.match(script, /bellhop_on_signal\(\) \{[\s\S]*bellhop_restore_all[\s\S]*exit 1[\s\S]*\}/, 'the handler restores, then exits non-zero');
+});
+
+test('buildFileDriverScript: every trap is disarmed together before backups are removed and the reload runs', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, VALIDATE_COMMAND, RELOAD_COMMAND);
+  const disarmIndex = script.indexOf('trap - EXIT HUP INT TERM');
+  assert.ok(disarmIndex !== -1, `expected one combined disarm, got:\n${script}`);
+  assert.ok(disarmIndex < script.indexOf('rm -f "$BAK_0"\n' + RELOAD_COMMAND), 'disarmed before the backups are removed');
+});
+
 test('buildFileDriverScript: two owned files each get their own backup and restore branch', () => {
   const files = [ownedFile('/etc/nginx/conf.d/bellhop-a.conf', 'server { listen 80; }'), ownedFile('/etc/nginx/conf.d/bellhop-b.conf', 'server { listen 81; }')];
   const script = buildFileDriverScript(files, 'nginx -t', 'systemctl reload nginx');
@@ -80,8 +98,8 @@ test('buildFileDriverScript: two owned files each get their own backup and resto
 
 // --- (b) fileDriver(...).plan() -------------------------------------------
 
-test('fileDriver.plan: a single file preview is that file\'s content alone', async () => {
-  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com {\n    respond "hi"\n}')];
+test('fileDriver.plan: a single owned file preview is that file\'s content alone', async () => {
+  const files = [ownedFile('/etc/caddy/Caddyfile', 'example.com {\n    respond "hi"\n}')];
   const driver = fileDriver({
     id: 'caddy',
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
@@ -99,6 +117,46 @@ test('fileDriver.plan: a single file preview is that file\'s content alone', asy
   const plan = await driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps);
   assert.equal(plan.preview, files[0].content);
   assert.deepEqual(plan.payload, files);
+});
+
+test('fileDriver.plan: wraps a managed-section body in the bellhop-managed markers, in both preview and payload', async () => {
+  const driver = fileDriver({
+    id: 'caddy',
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/caddy/Caddyfile',
+    render: (_routes, _ctx, configPath) => [managedFile(configPath, 'example.com {\n    respond "hi"\n}')],
+    validateCommand: () => 'caddy validate',
+    reloadCommand: RELOAD_COMMAND,
+  });
+  const deps = {
+    ssh: new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })),
+    inventory: { domain: 'example.com', hosts: [], guests: [] } as Inventory,
+    proxyHost: 'pve1',
+    configPath: '/etc/caddy/Caddyfile',
+  };
+  const plan = await driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps);
+  const wrapped = '# BEGIN bellhop-managed\nexample.com {\n    respond "hi"\n}\n# END bellhop-managed';
+  assert.equal(plan.preview, wrapped);
+  assert.deepEqual(plan.payload, [managedFile('/etc/caddy/Caddyfile', wrapped)]);
+});
+
+test('fileDriver.plan: an empty managed-section body is just the two markers', async () => {
+  const driver = fileDriver({
+    id: 'caddy',
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/caddy/Caddyfile',
+    render: (_routes, _ctx, configPath) => [managedFile(configPath, '')],
+    validateCommand: () => 'caddy validate',
+    reloadCommand: RELOAD_COMMAND,
+  });
+  const deps = {
+    ssh: new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })),
+    inventory: { domain: 'example.com', hosts: [], guests: [] } as Inventory,
+    proxyHost: 'pve1',
+    configPath: '/etc/caddy/Caddyfile',
+  };
+  const plan = await driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps);
+  assert.equal(plan.preview, '# BEGIN bellhop-managed\n# END bellhop-managed');
 });
 
 test('fileDriver.plan: several files join their content with a newline', async () => {
@@ -328,6 +386,41 @@ test('buildFileDriverScript, executed: a failed validate restores the original f
   const result = spawnSync('sh', [scriptPath], { env });
 
   assert.equal(result.status, 1, `expected exit 1, got ${result.status}, stderr: ${result.stderr}`);
+  assert.equal(readFileSync(caddyfilePath, 'utf8'), originalContent, 'the original file must be restored byte for byte');
+  assert.ok(!existsSync(systemctlLogPath), 'systemctl must not have been called');
+});
+
+test('buildFileDriverScript, executed: a TERM signal mid-validate restores the original file and never reloads', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-signal-'));
+  const stubDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-signal-stubs-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const caddyfilePath = posix(join(tmpDir, 'Caddyfile'));
+  const systemctlLogPath = posix(join(tmpDir, 'systemctl.log'));
+  const originalContent = ['a.example.com {', '    respond "hand-authored"', '}'].join('\n');
+  writeFileSync(caddyfilePath, originalContent);
+
+  const files: FileSpec[] = [{ path: caddyfilePath, content: 'new.example.com {\n    respond "new"\n}', mode: 'managed-section' }];
+  const script = buildFileDriverScript(files, `caddy validate --config '${caddyfilePath}'`, 'systemctl reload caddy');
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, script);
+
+  // The validate stub signals the script's own shell (its parent) and then
+  // succeeds, so the only thing that can stop the reload is the signal trap.
+  const caddyPath = join(stubDir, 'caddy');
+  writeFileSync(caddyPath, '#!/bin/sh\nkill -TERM "$PPID"\nexit 0\n');
+  chmodSync(caddyPath, 0o755);
+  const systemctlPath = join(stubDir, 'systemctl');
+  writeFileSync(systemctlPath, `#!/bin/sh\necho "$@" >> '${systemctlLogPath}'\n`);
+  chmodSync(systemctlPath, 0o755);
+
+  const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}` };
+  const result = spawnSync('sh', [scriptPath], { env });
+
+  assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status} (signal ${result.signal}), stderr: ${result.stderr}`);
   assert.equal(readFileSync(caddyfilePath, 'utf8'), originalContent, 'the original file must be restored byte for byte');
   assert.ok(!existsSync(systemctlLogPath), 'systemctl must not have been called');
 });

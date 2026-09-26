@@ -57,7 +57,7 @@ Derivation rules (unchanged from `buildCaddyBlock`):
 | Field | Meaning |
 |---|---|
 | `path` | absolute path on the proxy host |
-| `content` | full file content (`owned`) or the managed block including markers (`managed-section`) |
+| `content` | full file content (`owned`), or the managed block's body (`managed-section`, as `render()` returns it -- `fileDriver`'s `plan()` adds the markers) |
 | `mode` | `owned`: replace the whole file. `managed-section`: replace the `# BEGIN bellhop-managed` … `# END bellhop-managed` block, or append it if absent, keeping everything else |
 
 ### Driver capabilities
