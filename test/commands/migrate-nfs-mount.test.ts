@@ -93,6 +93,6 @@ test('runMigrateNfsMount throws when nfsServer is unset', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   await assert.rejects(
     () => runMigrateNfsMount({ guest: 'media', storage: 'nas-proxmox' }, { ssh, inventory }),
-    /nfsServer is not set/
+    /nfsServer is not set -- run: bellhop set-config nfsServer <ip> --apply, or set it on the web UI's Settings page/
   );
 });

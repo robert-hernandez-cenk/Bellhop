@@ -9,6 +9,7 @@ import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
 import { runSyncCaddy } from '../networking/sync-caddy.ts';
 import { runRenderStatusPage, statusPagePathSkipMessage } from '../networking/render-status-page.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
+import { settingFix } from '../../lib/settings-hint.ts';
 import { stringify } from 'yaml';
 
 export interface MigrateGuestOptions {
@@ -166,7 +167,7 @@ export async function runMigrateGuest(
   const backupStorage = opts.backupStorage ?? inventory.backupStorage;
   if (backupStorage === undefined) {
     throw new Error(
-      'backupStorage is not set -- run: bellhop set-config backupStorage <storage-id> --apply, or pass --backup-storage'
+      `backupStorage is not set -- ${settingFix('backupStorage', '<storage-id>')}, or pass --backup-storage`
     );
   }
   // Checked against whichever source won above (flag or inventory

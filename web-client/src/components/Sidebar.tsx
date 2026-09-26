@@ -4,6 +4,7 @@ import { apiGet, apiPost, apiDelete } from '../api/client';
 import type { AuthentikGroupEntry } from '../api/types';
 import { ThemeToggle } from './ThemeToggle';
 import { useWhoAmI } from '../lib/whoami';
+import { adminNavLinks } from '../lib/admin-nav';
 
 interface NavItem {
   id: string;
@@ -21,7 +22,9 @@ export function Sidebar() {
   const [impersonateError, setImpersonateError] = useState<string | null>(null);
 
   const isAdmin = !!whoami?.isAdmin;
-  // Everything below needs Authentik's REST API, not just an identity.
+  // Gates Users, Permissions, and the impersonation picker, which need
+  // Authentik's REST API, not just an identity -- Settings needs only
+  // admin (see adminNavLinks).
   const hasDirectory = !!whoami?.capabilities.userDirectory;
 
   useEffect(() => {
@@ -43,6 +46,8 @@ export function Sidebar() {
   }, [isAdmin, hasDirectory, whoami?.impersonating]);
 
   const close = () => setOpen(false);
+
+  const adminLinks = adminNavLinks(isAdmin, hasDirectory);
 
   // Networking/Update/SSH Keys/Jobs render under the Maintenance group
   // label the same as the API-driven actions do, so both sets are merged
@@ -114,18 +119,14 @@ export function Sidebar() {
             {item.label}
           </NavLink>
         ))}
-        {isAdmin && hasDirectory && (
+        {adminLinks.length > 0 && (
           <>
             <div className="nav-group-label">Admin</div>
-            <NavLink to="/users" onClick={close}>
-              Users
-            </NavLink>
-            <NavLink to="/permissions" onClick={close}>
-              Permissions
-            </NavLink>
-            <NavLink to="/settings" onClick={close}>
-              Settings
-            </NavLink>
+            {adminLinks.map((item) => (
+              <NavLink key={item.to} to={item.to} onClick={close}>
+                {item.label}
+              </NavLink>
+            ))}
           </>
         )}
         <ThemeToggle />

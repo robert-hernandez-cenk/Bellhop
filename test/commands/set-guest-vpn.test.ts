@@ -224,7 +224,7 @@ test('runSetGuestVpn throws when dnsServer is unset', async () => {
         { guest: 'media', vpn: 'none' },
         { ssh, inventory, inventoryPath: tempInventoryPath(inventory), fetchImpl: fakeFetch({ dns: '10.64.0.1' }) }
       ),
-    /dnsServer is not set/
+    /dnsServer is not set -- run: bellhop set-config dnsServer <ip> --apply, or set it on the web UI's Settings page/
   );
 });
 

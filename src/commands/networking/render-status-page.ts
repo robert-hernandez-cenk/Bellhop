@@ -4,6 +4,7 @@ import { findCaddyEntry } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { confirmOrDryRun } from '../../lib/dry-run.ts';
 import { shellQuote } from '../../lib/ssh-client.ts';
+import { settingFix } from '../../lib/settings-hint.ts';
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -38,7 +39,7 @@ export function buildStatusPageHtml(hostsYaml: string, activeCaddyfile: string):
 // the remedy runRenderStatusPage's own throw below names, rather than
 // hand-duplicating the string at each call site.
 export function statusPagePathSkipMessage(): string {
-  return 'statusPagePath is not set -- skipping the status page render -- run: bellhop set-config statusPagePath </absolute/path> --apply';
+  return `statusPagePath is not set -- skipping the status page render -- ${settingFix('statusPagePath', '</absolute/path>')}`;
 }
 
 function buildWriteScript(statusPagePath: string, html: string): string {
@@ -64,9 +65,7 @@ export async function runRenderStatusPage(
 ): Promise<{ caddyHost: string; html: string; applied: boolean }> {
   const statusPagePath = deps.inventory.statusPagePath;
   if (statusPagePath === undefined) {
-    throw new Error(
-      'statusPagePath is not set -- run: bellhop set-config statusPagePath </absolute/path> --apply'
-    );
+    throw new Error(`statusPagePath is not set -- ${settingFix('statusPagePath', '</absolute/path>')}`);
   }
   const caddyHost = findCaddyEntry(deps.inventory)?.name;
   if (!caddyHost) {

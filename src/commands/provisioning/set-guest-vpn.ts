@@ -4,6 +4,7 @@ import { saveInventory } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { parseNet0, setNet0Gateway, buildDnsmasqInstallScript, buildDnsmasqRemoveScript } from '../../lib/guest-vpn.ts';
 import { logInfo } from '../../lib/log.ts';
+import { settingFix } from '../../lib/settings-hint.ts';
 
 export interface SetGuestVpnOptions {
   guest: string;
@@ -88,7 +89,7 @@ export async function runSetGuestVpn(
   // same as before dnsmasq/split-DNS existed.
   const dnsServer = deps.inventory.dnsServer;
   if (dnsServer === undefined) {
-    throw new Error('dnsServer is not set -- run: bellhop set-config dnsServer <ip> --apply');
+    throw new Error(`dnsServer is not set -- ${settingFix('dnsServer', '<ip>')}`);
   }
   const nameserver = opts.vpn === 'none' ? dnsServer : '127.0.0.1';
   const netScript = `pct set ${guest.vmid} -net0 ${setNet0Gateway(net0, gatewayIp)} -nameserver ${nameserver}`;

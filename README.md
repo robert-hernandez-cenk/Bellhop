@@ -61,6 +61,25 @@ other than `import-yaml-inventory` — everything else reads
 `inventory/bellhop.db`, so re-run the import command above any time you
 change the hand-edited `hosts.yaml` copy.
 
+### Inventory-wide settings (before your first sync)
+
+A few operator-specific values — your NAS's `nfsServer` IP chief among
+them — live in the inventory database rather than in code, and are unset
+by default. Set them before your first `sync-inventory`, so it can do
+things like discover NFS mounts right away instead of skipping that scan
+and printing a reminder:
+
+```bash
+npm run bellhop -- set-config nfsServer <ip> --apply
+```
+
+The web UI's Settings page sets the same values, for anyone who'd rather
+not use the CLI. See "Inventory-wide settings" below for the full list and
+what happens when a value stays unset. If you're hand-editing
+`inventory/hosts.yaml` for `import-yaml-inventory` instead, these keys can
+go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
+`statusPagePath` keys in `inventory/hosts.yaml.example`.
+
 ## Usage
 
 All commands are run as `bellhop <command> [flags]` (after `npm link`)
@@ -753,8 +772,9 @@ served as a single always-admin local operator, and the features that need
 Authentik's REST API disable themselves — the Users and Permissions pages
 disappear from the nav, `POST /api/impersonate` returns 503, and
 `sync-authentik` is skipped by the Dashboard's push-live step instead of
-failing it. Everything else — the Dashboard, provisioning, maintenance,
-jobs, `sync-caddy`, and every CLI command — works unchanged.
+failing it. The Settings page stays in the nav and reachable, since it
+needs no Authentik. Everything else — the Dashboard, provisioning,
+maintenance, jobs, `sync-caddy`, and every CLI command — works unchanged.
 
 A persistent banner in the UI and a warning line in the server's startup
 log both say so, because in this mode **network reach is the only access
