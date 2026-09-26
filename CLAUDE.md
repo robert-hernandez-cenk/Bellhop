@@ -1603,10 +1603,42 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   an `owner` on every job (`'web'`, or `'mcp:<pid>'`), and orphan cleanup
   (`JobStore.interruptOrphaned`) only touches the caller's own rows plus
   rows of MCP processes whose pid is dead, so neither process's startup
-  interrupts the other's in-flight jobs. Cancel/answer/dismiss only work
-  from the process that owns the job (the controller lives in its memory);
-  MCP-started jobs show in the web UI's Job History ("Triggered by: mcp")
-  but without live streaming or controls there (issue #165). stdout is the
+  interrupts the other's in-flight jobs. A job owned by the *other* process
+  is nonetheless fully watchable and controllable from here (issue #6,
+  closing #165): `/ws/jobs/:id` (`src/web/routes/jobs.ts`) recognizes a job
+  whose row `owner` differs from this process's own `JobRunner.owner` and,
+  since that runner's events never fire for it, runs a per-connection
+  foreign-job tailer (`src/web/jobs/job-tail.ts`) instead -- a `setInterval`
+  that polls the shared job row and log file once a second and emits the
+  same `chunk`/`status`/`prompt`/`prompt-cleared` messages a local job
+  would, so a client sees no protocol difference. Control
+  (cancel/answer/dismiss) of a foreign job goes through the shared
+  `requestJobControl` (`src/web/jobs/job-control.ts`), used by both the
+  three web routes and the three matching MCP tools: a local job is still
+  applied directly; a foreign job is refused up front the same way a local
+  one would be (a terminal job's cancel, a not-`awaiting_input` job's
+  answer/dismiss) plus one foreign-only case (an `mcp:<pid>` owner whose
+  process has died), and otherwise is recorded as a row in the new
+  `job_control_requests` table and returned immediately -- 202 on the web,
+  `{ requested: true }` from MCP -- without waiting on the owner. The
+  owning `JobRunner` runs its own poll timer (`processControlRequests()`,
+  500ms, running only while it has active jobs) that applies each pending
+  row through its ordinary `cancel`/`answerPrompt`/`dismissPrompt`, appends
+  an attribution line to the job log (`Stop requested from web UI by
+  <user>`, `Answer sent from MCP (mcp:<pid>)`, etc. -- never the answer text
+  itself) and marks the row handled, or marks it `not-applicable` if the
+  job isn't one this runner still has a controller for. Because a request
+  can outlive its target (the MCP process that queued it exits, or the job
+  finishes before the owner ever polls again), `JobStore
+  .closeStaleControlRequests()` -- run at the top of every poll pass and
+  from `reconcileOrphanedJobs()` -- closes any pending request whose job is
+  terminal or whose `mcp:<pid>` owner is dead, from any process, so a
+  request aimed at a since-exited MCP server or a since-restarted web
+  service never sits with its answer text lingering. `wait_for_job` is the
+  one exception, unchanged and still owner-only (`requireOwned` in
+  `src/mcp/job-helpers.ts`, now its only remaining caller) -- it blocks on
+  the job's in-memory controller/events, which only the owning process
+  ever holds. stdout is the
   protocol channel, so `src/mcp/server.ts` redirects `console.log` to
   stderr at startup. On stdin close it cancels its jobs and exits; a job
   still running when the client session ends is therefore interrupted.

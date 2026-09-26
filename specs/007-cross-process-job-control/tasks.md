@@ -169,13 +169,13 @@ request; state refusals and dead-owner refusal return 409; a second runner ownin
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T017 [P] Update `CLAUDE.md` MCP server bullet: replace "Cancel/answer/dismiss only work from
+- [x] T017 [P] Update `CLAUDE.md` MCP server bullet: replace "Cancel/answer/dismiss only work from
   the process that owns the job … without live streaming or controls there (issue #165)" with the
   new behavior (foreign-job tailing in the WS handler, `job_control_requests` queue polled by the
   owner while it has active jobs, requester does not wait, dead-MCP-owner refusal, a stopped web
   service's pending requests become not-applicable after restart, `wait_for_job` still owner-only);
   mention the new files `job-control.ts`/`job-tail.ts`.
-- [ ] T018 [P] Update `README.md` "MCP server" section with one short paragraph: jobs the MCP server
+- [x] T018 [P] Update `README.md` "MCP server" section with one short paragraph: jobs the MCP server
   starts appear in the web UI's Job History with live output and working Stop/answer controls, and
   the MCP control tools can act on web-started jobs.
 - [ ] T019 Run `npm --prefix <worktree> run typecheck`, `npm --prefix <worktree> test`,
