@@ -17,7 +17,7 @@ Build a temp fixture with no `nfsServer`:
 
 ```bash
 npm run bellhop -- import-yaml-inventory --yaml-path inventory/hosts.yaml.example --db-path <tmp>/bellhop.db --apply
-INVENTORY_FILE=<tmp>/bellhop.db npm run bellhop -- migrate-nfs-mount --host <any-lxc-in-example> --storage x
+INVENTORY_FILE=<tmp>/bellhop.db npm run bellhop -- migrate-nfs-mount --guest <any-lxc-in-example> --storage x
 ```
 
 Expected: the error reads `nfsServer is not set -- run: bellhop set-config nfsServer <ip> --apply, or set it on the web UI's Settings page`.

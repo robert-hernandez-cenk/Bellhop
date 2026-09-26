@@ -96,10 +96,10 @@ None. The three stories touch disjoint files except README.md and CLAUDE.md, whi
 
 ## Phase 6: Polish & Verification
 
-- [ ] T015 Run `npm run typecheck`, `npm test`, and `npm run web:build`. All must pass.
-- [ ] T016 Run quickstart.md §2 against a temp fixture: the CLI message shows the Settings-page wording.
-- [ ] T017 Run quickstart.md §3 in a browser against a temp fixture with no `caddy: true` and no `midScheme`, in no-Authentik mode, at desktop width and ≤640px. Check the sidebar Admin → Settings only, the intro, the Optional markers, both empty states, and that nothing overflows.
-- [ ] T018 Re-read README Setup and "Running without Authentik" (quickstart §4). Confirm CONTRIBUTING.md needs no change.
+- [x] T015 Run `npm run typecheck`, `npm test`, and `npm run web:build`. All must pass.
+- [x] T016 Run quickstart.md §2 against a temp fixture: the CLI message shows the Settings-page wording.
+- [x] T017 Run quickstart.md §3 in a browser against a temp fixture with no `caddy: true` and no `midScheme`, in no-Authentik mode, at desktop width and ≤640px. Check the sidebar Admin → Settings only, the intro, the Optional markers, both empty states, and that nothing overflows.
+- [x] T018 Re-read README Setup and "Running without Authentik" (quickstart §4). Confirm CONTRIBUTING.md needs no change.
 
 ---
 
