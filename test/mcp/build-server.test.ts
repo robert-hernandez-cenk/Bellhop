@@ -53,7 +53,7 @@ test('tool list covers the registry, read-only, and job tools, and nothing exclu
   const { client } = await setup();
   const names = (await client.listTools()).tools.map((t) => t.name);
   for (const expected of [
-    'create_lxc', 'install_app', 'delete_guest', 'update_all', 'guest_power', 'set_config', 'sync_authentik',
+    'create_lxc', 'install_app', 'delete_guest', 'update_all', 'guest_power', 'set_config', 'sync_authentik', 'sync_proxy',
     'adopt_oidc_client',
     'edit_guest', 'get_inventory', 'get_guest_status', 'audit_nfs_mounts', 'list_install_apps', 'check_install_app',
     'list_jobs', 'get_job', 'wait_for_job', 'answer_job_prompt', 'dismiss_job_prompt', 'cancel_job',
@@ -61,6 +61,7 @@ test('tool list covers the registry, read-only, and job tools, and nothing exclu
     assert.ok(names.includes(expected), `missing tool ${expected}`);
   }
   assert.ok(!names.includes('migrate_nfs_mount'));
+  assert.ok(!names.includes('sync_caddy'), 'no sync_caddy alias');
   assert.ok(!names.some((n) => /user|group|permission|imperson|import_yaml/.test(n)));
 });
 
@@ -178,6 +179,29 @@ test('edit_guest writes inventory and reports the caddy sync outcome', async () 
   const result = JSON.parse((await call('edit_guest', { name: 'app-lxc', subdomains: ['app'], port: 8080 })).content[0].text);
   assert.equal(result.caddySynced, true);
   assert.deepEqual(loadInventory(inventoryPath).guests.find((g) => g.name === 'app-lxc')?.subdomains, ['app']);
+});
+
+test('set_config accepts the proxyDriver and proxyConfigPath keys', async () => {
+  const { client } = await setup();
+  const tool = (await client.listTools()).tools.find((t) => t.name === 'set_config')!;
+  const key = (tool.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.key;
+  assert.ok(key.enum?.includes('proxyDriver'));
+  assert.ok(key.enum?.includes('proxyConfigPath'));
+});
+
+test('edit_guest takes proxyManual (not caddyManual), and ignores an old caddyManual argument', async () => {
+  const { client, call, inventoryPath } = await setup();
+  const tool = (await client.listTools()).tools.find((t) => t.name === 'edit_guest')!;
+  const props = (tool.inputSchema as { properties: Record<string, { description?: string }> }).properties;
+  assert.equal(props.proxyManual?.description, 'Proxy config for this entry is hand-authored outside the managed section');
+  assert.ok(!('caddyManual' in props));
+  assert.match(tool.description ?? '', /proxyManual/);
+  assert.doesNotMatch(tool.description ?? '', /caddyManual/);
+
+  await call('edit_guest', { name: 'app-lxc', caddyManual: true });
+  assert.equal(loadInventory(inventoryPath).guests.find((g) => g.name === 'app-lxc')?.proxyManual, undefined);
+  await call('edit_guest', { name: 'app-lxc', proxyManual: true });
+  assert.equal(loadInventory(inventoryPath).guests.find((g) => g.name === 'app-lxc')?.proxyManual, true);
 });
 
 test('secret field values never appear in a tool result', async () => {

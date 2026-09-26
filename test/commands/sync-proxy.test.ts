@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
-import { runSyncCaddy } from '../../src/commands/networking/sync-caddy.ts';
+import { runSyncProxy } from '../../src/commands/networking/sync-proxy.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
-  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
   guests: [
     { name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.168.1.50', port: 8080, subdomains: ['media', 'movies'] },
     { name: 'other', type: 'lxc', vmid: 106, host: 'pve1', ip: '192.168.1.60', subdomains: ['other'] },
@@ -16,20 +16,16 @@ const inventory: Inventory = {
 
 const TLS_LINES = '\\n {4}tls \\{\\n {8}dns cloudflare \\{env\\.CLOUDFLARE_API_TOKEN\\}\\n {8}resolvers 1\\.1\\.1\\.1 8\\.8\\.8\\.8\\n {4}\\}';
 
-// buildCaddyBlock/buildRemoteScript were deleted from sync-caddy.ts (issue
-// #10, T013) -- runSyncCaddy is now orchestration over the driver registry,
-// so every test that used to call buildCaddyBlock(inv) directly instead
-// drives the whole pipeline through runSyncCaddy in dry-run mode (apply not
-// set, so no ssh call happens) and reads the generated block off
-// result.block, which the fileDriver populates from plan.preview -- byte
-// identical to the old buildCaddyBlock output for the same inventory.
+// runSyncProxy is orchestration over the driver registry, so these tests
+// drive the whole pipeline in dry-run mode (apply not set, so no ssh call
+// happens) and read the generated configuration off result.preview.
 async function buildBlock(inv: Inventory): Promise<string> {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-  const result = await runSyncCaddy({}, { ssh, inventory: inv });
-  return result.block;
+  const result = await runSyncProxy({}, { ssh, inventory: inv });
+  return result.preview;
 }
 
-test('buildCaddyBlock combines an entry\'s subdomains into one comma-separated address list, with TLS on every block', async () => {
+test('sync-proxy (caddy driver) combines an entry\'s subdomains into one comma-separated address list, with TLS on every block', async () => {
   const block = await buildBlock(inventory);
   assert.match(
     block,
@@ -50,11 +46,11 @@ test('buildCaddyBlock combines an entry\'s subdomains into one comma-separated a
   assert.match(block, /# END bellhop-managed$/);
 });
 
-test('buildCaddyBlock adds a tls_insecure_skip_verify transport when insecureBackendTls is set, alongside header_up', async () => {
+test('sync-proxy (caddy driver) adds a tls_insecure_skip_verify transport when insecureBackendTls is set, alongside header_up', async () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true },
       {
         name: 'pve2',
         ssh_target: '192.168.1.253',
@@ -74,10 +70,10 @@ test('buildCaddyBlock adds a tls_insecure_skip_verify transport when insecureBac
   );
 });
 
-test('buildCaddyBlock includes externalSites entries alongside hosts/guests', async () => {
+test('sync-proxy (caddy driver) includes externalSites entries alongside hosts/guests', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [],
     externalSites: [{ name: 'nas', ip: '192.168.1.250', port: 5001, subdomains: ['nas'], insecureBackendTls: true }],
   };
@@ -88,10 +84,10 @@ test('buildCaddyBlock includes externalSites entries alongside hosts/guests', as
   );
 });
 
-test('buildCaddyBlock skips an entry with caddyManual set, even though it has subdomains', async () => {
+test('sync-proxy (caddy driver) skips an entry with proxyManual set, even though it has subdomains', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       {
         name: 'caddy-lxc',
@@ -100,7 +96,7 @@ test('buildCaddyBlock skips an entry with caddyManual set, even though it has su
         host: 'pve1',
         ip: '192.168.1.2',
         subdomains: ['caddy'],
-        caddyManual: true,
+        proxyManual: true,
       },
       { name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.168.1.50', subdomains: ['media'] },
     ],
@@ -110,22 +106,43 @@ test('buildCaddyBlock skips an entry with caddyManual set, even though it has su
   assert.match(block, /media\.example\.com \{\n {4}reverse_proxy 192\.168\.1\.50:80 \{\n {8}header_up X-Forwarded-Port 443\n {4}\}/);
 });
 
-test('runSyncCaddy throws when no entry has caddy: true', async () => {
-  const noCaddy: Inventory = { ...inventory, hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }] };
+test('runSyncProxy throws when no entry has proxy: true', async () => {
+  const noProxy: Inventory = { ...inventory, hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }] };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-  await assert.rejects(() => runSyncCaddy({}, { ssh, inventory: noCaddy }), /No inventory entry has 'caddy: true'/);
+  await assert.rejects(() => runSyncProxy({}, { ssh, inventory: noProxy }), /No inventory entry has 'proxy: true'/);
 });
 
-test('runSyncCaddy does not call ssh when apply is not set', async () => {
+test('runSyncProxy returns { proxyHost, driver, preview, applied }', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-  const result = await runSyncCaddy({}, { ssh, inventory });
+  const result = await runSyncProxy({}, { ssh, inventory });
+  assert.deepEqual(Object.keys(result).sort(), ['applied', 'driver', 'preview', 'proxyHost']);
+  assert.equal(result.proxyHost, 'pve1');
+  assert.equal(result.driver, 'caddy');
+  assert.match(result.preview, /^# BEGIN bellhop-managed/);
+  assert.equal(result.applied, false);
+});
+
+test('runSyncProxy writes to the proxyConfigPath setting when set, else the driver default', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await runSyncProxy({ apply: true }, { ssh, inventory: { ...inventory, proxyConfigPath: '/opt/proxy/Caddyfile' } });
+  assert.match(ssh.history[0].command, /'\/opt\/proxy\/Caddyfile'/);
+  assert.doesNotMatch(ssh.history[0].command, /\/etc\/caddy\/Caddyfile/);
+
+  const ssh2 = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await runSyncProxy({ apply: true }, { ssh: ssh2, inventory });
+  assert.match(ssh2.history[0].command, /'\/etc\/caddy\/Caddyfile'/);
+});
+
+test('runSyncProxy does not call ssh when apply is not set', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({}, { ssh, inventory });
   assert.equal(result.applied, false);
   assert.equal(ssh.history.length, 0);
 });
 
-test('runSyncCaddy writes the managed block on the caddy host when apply is set', async () => {
+test('runSyncProxy writes the managed block on the proxy host when apply is set', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-  const result = await runSyncCaddy({ apply: true }, { ssh, inventory });
+  const result = await runSyncProxy({ apply: true }, { ssh, inventory });
   assert.equal(result.applied, true);
   assert.equal(ssh.history.length, 1);
   assert.equal(ssh.history[0].sshTarget, 'pve1.local');
@@ -133,18 +150,18 @@ test('runSyncCaddy writes the managed block on the caddy host when apply is set'
   assert.match(ssh.history[0].command, /systemctl reload caddy/);
 });
 
-test('runSyncCaddy rejects, naming the stderr, when the remote apply script exits non-zero', async () => {
+test('runSyncProxy rejects, naming the stderr, when the remote apply script exits non-zero', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'caddy validate failed; restored previous configuration', code: 1 }));
   await assert.rejects(
-    () => runSyncCaddy({ apply: true }, { ssh, inventory }),
+    () => runSyncProxy({ apply: true }, { ssh, inventory }),
     /Failed to apply proxy configuration on 'pve1': caddy validate failed; restored previous configuration/
   );
 });
 
-test('buildCaddyBlock adds a forward_auth directive and outpost passthrough when authGroup is set', async () => {
+test('sync-proxy (caddy driver) adds a forward_auth directive and outpost passthrough when authGroup is set', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
       { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
@@ -157,10 +174,10 @@ test('buildCaddyBlock adds a forward_auth directive and outpost passthrough when
   );
 });
 
-test('buildCaddyBlock wraps forward_auth in a not-path matcher when unauthenticatedPaths is set', async () => {
+test('sync-proxy (caddy driver) wraps forward_auth in a not-path matcher when unauthenticatedPaths is set', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
       {
@@ -182,10 +199,10 @@ test('buildCaddyBlock wraps forward_auth in a not-path matcher when unauthentica
   );
 });
 
-test('buildCaddyBlock joins multiple unauthenticatedPaths into one space-separated not-path matcher', async () => {
+test('sync-proxy (caddy driver) joins multiple unauthenticatedPaths into one space-separated not-path matcher', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
       {
@@ -204,10 +221,10 @@ test('buildCaddyBlock joins multiple unauthenticatedPaths into one space-separat
   assert.match(block, /not path \/api\/\* \/system\/\*/);
 });
 
-test('buildCaddyBlock leaves forward_auth unmatched when unauthenticatedPaths is unset (unchanged from today)', async () => {
+test('sync-proxy (caddy driver) leaves forward_auth unmatched when unauthenticatedPaths is unset (unchanged from today)', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
       { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
@@ -218,10 +235,10 @@ test('buildCaddyBlock leaves forward_auth unmatched when unauthenticatedPaths is
   assert.match(block, /forward_auth 192\.168\.1\.5:9000 \{/);
 });
 
-test('buildCaddyBlock ignores unauthenticatedPaths on an entry with authGroup unset', async () => {
+test('sync-proxy (caddy driver) ignores unauthenticatedPaths on an entry with authGroup unset', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.168.1.50', subdomains: ['media'], unauthenticatedPaths: ['/api/*'] },
     ],
@@ -231,10 +248,10 @@ test('buildCaddyBlock ignores unauthenticatedPaths on an entry with authGroup un
   assert.doesNotMatch(block, /forward_auth/);
 });
 
-test('buildCaddyBlock skips an entry with caddyManual set, even though it has authGroup and unauthenticatedPaths', async () => {
+test('sync-proxy (caddy driver) skips an entry with proxyManual set, even though it has authGroup and unauthenticatedPaths', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
       {
@@ -244,7 +261,7 @@ test('buildCaddyBlock skips an entry with caddyManual set, even though it has au
         host: 'pve1',
         ip: '192.168.1.2',
         subdomains: ['caddy'],
-        caddyManual: true,
+        proxyManual: true,
         authGroup: 'bellhop-users',
         unauthenticatedPaths: ['/api/*'],
       },
@@ -256,10 +273,10 @@ test('buildCaddyBlock skips an entry with caddyManual set, even though it has au
   assert.doesNotMatch(block, /forward_auth/);
 });
 
-test('buildCaddyBlock throws when an authGroup entry exists but no authentik:true entry has an ip', async () => {
+test('sync-proxy (caddy driver) throws when an authGroup entry exists but no authentik:true entry has an ip', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
     ],
@@ -270,10 +287,10 @@ test('buildCaddyBlock throws when an authGroup entry exists but no authentik:tru
   );
 });
 
-test('buildCaddyBlock emits a plain reverse proxy for an OIDC-mode entry, with no forward_auth/outpost/matcher even with unauthenticatedPaths set', async () => {
+test('sync-proxy (caddy driver) emits a plain reverse proxy for an OIDC-mode entry, with no forward_auth/outpost/matcher even with unauthenticatedPaths set', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       {
         name: 'whisparr',
@@ -298,10 +315,10 @@ test('buildCaddyBlock emits a plain reverse proxy for an OIDC-mode entry, with n
   assert.doesNotMatch(block, /@auth_required/);
 });
 
-test('buildCaddyBlock does not require an authentik: true entry when the only gated entry is OIDC-mode', async () => {
+test('sync-proxy (caddy driver) does not require an authentik: true entry when the only gated entry is OIDC-mode', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       {
         name: 'sonarr',
@@ -318,14 +335,14 @@ test('buildCaddyBlock does not require an authentik: true entry when the only ga
   await buildBlock(inv);
 });
 
-test('sync-caddy emits the configured Authentik outpost port', async () => {
+test('sync-proxy emits the configured Authentik outpost port', async () => {
   const original = process.env.AUTHENTIK_OUTPOST_PORT;
   process.env.AUTHENTIK_OUTPOST_PORT = '9100';
   try {
     const inventory: Inventory = {
       domain: 'example.com',
       hosts: [
-        { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true },
+        { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true },
         { name: 'auth-lxc-host', ssh_target: 'pve2.local', ssh_user: 'root', authentik: true, ip: '192.168.1.9' },
       ],
       guests: [
@@ -333,9 +350,9 @@ test('sync-caddy emits the configured Authentik outpost port', async () => {
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-    const result = await runSyncCaddy({}, { ssh, inventory });
-    assert.match(result.block, /forward_auth 192\.168\.1\.9:9100/);
-    assert.doesNotMatch(result.block, /:9000/);
+    const result = await runSyncProxy({}, { ssh, inventory });
+    assert.match(result.preview, /forward_auth 192\.168\.1\.9:9100/);
+    assert.doesNotMatch(result.preview, /:9000/);
   } finally {
     if (original === undefined) delete process.env.AUTHENTIK_OUTPOST_PORT;
     else process.env.AUTHENTIK_OUTPOST_PORT = original;

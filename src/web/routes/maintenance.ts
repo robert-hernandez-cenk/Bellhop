@@ -125,7 +125,7 @@ export function maintenanceRoutes(
 
   // Only these three ids have ever been reachable through the generic
   // routes; every other maintenance operation keeps its dedicated route.
-  const GENERIC_IDS = ['sync-inventory', 'update-app', 'sync-caddy'];
+  const GENERIC_IDS = ['sync-inventory', 'update-app', 'sync-proxy'];
 
   function authorize(req: Request, res: Response): Operation | undefined {
     const op = GENERIC_IDS.includes(req.params.id as string) ? MAINTENANCE_OPERATIONS[req.params.id as string] : undefined;

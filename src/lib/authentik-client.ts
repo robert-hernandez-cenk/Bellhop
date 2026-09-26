@@ -112,7 +112,7 @@ export interface AuthentikClient {
   // Whether this client instance has a real Authentik API to talk to --
   // every other method call is only meaningful when this is true. Used to
   // gate routes/steps that need the REST API (requireUserDirectory in
-  // src/web/auth.ts, syncCaddyLive in src/web/caddy-sync.ts) against the
+  // src/web/auth.ts, syncProxyLive in src/web/proxy-sync.ts) against the
   // actual injected client rather than re-reading process.env, so the gate
   // can never disagree with what the client itself will do.
   isConfigured(): boolean;
@@ -441,7 +441,7 @@ export class RealAuthentikClient implements AuthentikClient {
   }
 
   // One unfiltered list rather than a per-Application query: this instance
-  // holds a few dozen bindings in total, and syncCaddyLive already makes
+  // holds a few dozen bindings in total, and syncProxyLive already makes
   // several REST calls per Dashboard edit.
   //
   // Unlike every other `?page_size=500` call in this file, a truncated page

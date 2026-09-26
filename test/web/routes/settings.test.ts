@@ -23,7 +23,7 @@ function baseInventory(): Inventory {
         midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '10.0.0.1' },
       },
     ],
-    guests: [{ name: 'proxy', type: 'lxc', vmid: 110, host: 'pve1', ip: '10.0.0.2', caddy: true }],
+    guests: [{ name: 'proxy', type: 'lxc', vmid: 110, host: 'pve1', ip: '10.0.0.2', proxy: true }],
   };
 }
 
@@ -66,7 +66,8 @@ test('GET /api/settings returns current and derived values', async () => {
   assert.equal(res.body.settings.dnsServer, '10.0.0.53');
   assert.equal(res.body.settings.nfsServer, undefined);
   assert.deepEqual(res.body.derived.lanGateways, [{ host: 'pve1', gateway: '10.0.0.1' }]);
-  assert.deepEqual(res.body.derived.caddy, { name: 'proxy', ip: '10.0.0.2' });
+  assert.deepEqual(res.body.derived.proxy, { name: 'proxy', ip: '10.0.0.2' });
+  assert.ok(!('caddy' in res.body.derived), 'derived.caddy is renamed, not aliased');
 });
 
 test('PATCH /api/settings writes a value', async () => {
@@ -140,4 +141,40 @@ test('PATCH /api/settings returns 403 for a non-admin', async () => {
     .set('x-authentik-groups', 'family')
     .send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 403);
+});
+
+test('PATCH /api/settings writes proxyDriver and proxyConfigPath', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyDriver: 'caddy',
+    proxyConfigPath: '/etc/caddy/Caddyfile',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'caddy');
+  assert.equal(res.body.settings.proxyConfigPath, '/etc/caddy/Caddyfile');
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyDriver, 'caddy');
+  assert.equal(onDisk.proxyConfigPath, '/etc/caddy/Caddyfile');
+});
+
+test('PATCH /api/settings rejects an unknown proxyDriver', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'nginx' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /^proxyDriver: /);
+  assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
+});
+
+test('PATCH /api/settings rejects a relative proxyConfigPath, with the same message set-config produces', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyConfigPath: 'etc/caddy/Caddyfile' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /proxyConfigPath: must be an absolute path/);
+});
+
+test('PATCH /api/settings clears proxyConfigPath sent as null', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), proxyConfigPath: '/opt/proxy/Caddyfile' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyConfigPath: null });
+  assert.equal(res.status, 200);
+  assert.equal(loadInventory(inventoryPath).proxyConfigPath, undefined);
 });

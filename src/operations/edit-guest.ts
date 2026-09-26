@@ -13,7 +13,7 @@ import {
   effectiveAuth,
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
-import { syncCaddyLive } from '../web/caddy-sync.ts';
+import { syncProxyLive } from '../web/proxy-sync.ts';
 import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
 
@@ -73,7 +73,7 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   const updated = { ...current };
   if ('subdomains' in body) updated.subdomains = parseSubdomains(asDelimited(body.subdomains));
   if ('port' in body) updated.port = parsePort(typeof body.port === 'number' ? String(body.port) : body.port);
-  if ('caddyManual' in body) updated.caddyManual = !!body.caddyManual;
+  if ('proxyManual' in body) updated.proxyManual = !!body.proxyManual;
   if ('insecureBackendTls' in body) updated.insecureBackendTls = !!body.insecureBackendTls;
   if ('authGroup' in body) updated.authGroup = parseAuthGroup(body.authGroup);
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
@@ -83,9 +83,9 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
 }
 
 // Validated the same way any other inventory write is (subdomains requires
-// ip unless caddyManual is set, no two entries sharing a subdomain) before
+// ip unless proxyManual is set, no two entries sharing a subdomain) before
 // it's ever written to disk. A successful write always also pushes the
-// change live (Caddyfile + status page) via syncCaddyLive -- reported back
+// change live (proxy configuration + status page) via syncProxyLive -- reported back
 // separately (caddySynced/caddyError) rather than failing the whole
 // request, since the inventory write itself already succeeded and
 // shouldn't be reported as rejected just because the live push failed.
@@ -120,10 +120,10 @@ export async function commitGuestEdit(
   if (oidcErrors.length > 0) throw new GuestEditValidationError(oidcErrors.join('\n'));
 
   // Only when this edit actually touched subdomains or port (an
-  // insecureBackendTls/caddyManual/authGroup-only edit never
+  // insecureBackendTls/proxyManual/authGroup-only edit never
   // re-probes), and the resulting entry has a concrete ip+port+
-  // subdomains combo to test, and isn't caddyManual (which never gets
-  // a generated Caddy block at all, so insecureBackendTls on it is
+  // subdomains combo to test, and isn't proxyManual (which never gets
+  // a generated proxy route at all, so insecureBackendTls on it is
   // inert). A conclusive result overwrites updated.insecureBackendTls
   // even if this same request also submitted a value for it --
   // mutating `updated` here is visible through `guests` above since
@@ -134,7 +134,7 @@ export async function commitGuestEdit(
     updated.ip &&
     updated.subdomains &&
     updated.subdomains.length > 0 &&
-    !updated.caddyManual
+    !updated.proxyManual
   ) {
     const probe = await probeInsecureBackendTls(deps.ssh, inventory, updated.host, updated.ip, updated.port);
     if (probe !== 'inconclusive') {
@@ -154,7 +154,7 @@ export async function commitGuestEdit(
       authentikOidcSkipped,
       authentikForwardSkipped,
       authentikOidcDiscoveryFailures,
-    } = await syncCaddyLive({
+    } = await syncProxyLive({
       ssh: deps.ssh,
       inventory,
       authentik: deps.authentik,
@@ -164,8 +164,8 @@ export async function commitGuestEdit(
     // Conflicts are computed inventory-wide, but this response belongs to
     // one guest -- surfacing another entry's conflict here would render a
     // banner on the edited row that is not about it. The full list still
-    // goes to logWarn in syncCaddyLive.
-    // Compared against the slug directly: syncCaddyLive's conflict list
+    // goes to logWarn in syncProxyLive.
+    // Compared against the slug directly: syncProxyLive's conflict list
     // holds bare slugs (issue #156). Rebuilding `<slug>.<domain>` here
     // would match nothing and silently stop rendering the banner.
     const ownConflict = updated.subdomains?.[0];
@@ -208,7 +208,7 @@ export const EDIT_GUEST_SHAPE = {
   name: z.string().describe('Guest name'),
   subdomains: z.union([z.string(), z.array(z.string())]).optional().describe("Subdomains (array or ';'-separated); empty clears"),
   port: z.union([z.number().int(), z.string()]).optional().describe('Backend port; empty string clears'),
-  caddyManual: z.boolean().optional().describe('Caddy block is hand-authored outside the managed section'),
+  proxyManual: z.boolean().optional().describe('Proxy config for this entry is hand-authored outside the managed section'),
   insecureBackendTls: z.boolean().optional().describe('Backend serves untrusted/self-signed TLS'),
   authGroup: z.string().nullable().optional().describe('Authentik group ladder rung; null or empty clears the gate'),
   unauthenticatedPaths: z

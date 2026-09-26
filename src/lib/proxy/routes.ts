@@ -4,8 +4,7 @@ import { publicHostname } from '../hostname.ts';
 import { authentikConfig } from '../authentik-config.ts';
 
 // Every site this toolkit's proxy fronts is reached externally over HTTPS on
-// 443 -- not inventory-configurable, one operator, one deployment (mirrors
-// sync-caddy.ts's own EXTERNAL_PORT until T013 moves callers onto this).
+// 443 -- not inventory-configurable, one operator, one deployment.
 const EXTERNAL_PORT = 443;
 
 export type PathPattern = { kind: 'exact'; path: string } | { kind: 'prefix'; path: string };
@@ -53,16 +52,14 @@ export function parsePathPattern(raw: string): PathPattern {
 // The fields buildRoutes reads off a host/guest/external-site entry --
 // deliberately structural (not HostEntry|GuestEntry|ExternalSite directly)
 // since all three satisfy it and buildRoutes never needs their other,
-// entry-type-specific fields (vmid, ssh_target, ...). Field names are still
-// `caddyManual` in this batch -- the rename to `proxyManual` is a later
-// task (US2).
+// entry-type-specific fields (vmid, ssh_target, ...).
 interface ProxyCandidate {
   name: string;
   ip?: string;
   port?: number;
   subdomains?: string[];
   insecureBackendTls?: boolean;
-  caddyManual?: boolean;
+  proxyManual?: boolean;
   authGroup?: string;
   authMode?: 'forward' | 'oidc';
   unauthenticatedPaths?: string[];
@@ -76,7 +73,7 @@ function findAuthentikEntry(inventory: Inventory): { ip?: string } | undefined {
 }
 
 // Derives one ProxyRoute per host/guest/external-site entry that has
-// subdomains and isn't caddyManual, in the order hosts, guests, external
+// subdomains and isn't proxyManual, in the order hosts, guests, external
 // sites (each already in loadInventory's sorted order) -- reproducing
 // buildCaddyBlock's existing derivation rules (data-model.md "ProxyRoute"),
 // just as a proxy-neutral data structure instead of rendered Caddyfile
@@ -93,7 +90,7 @@ export function buildRoutes(inventory: Inventory): ProxyRoute[] {
 
   const routes: ProxyRoute[] = [];
   for (const { type, entry } of owned) {
-    if (entry.caddyManual) continue;
+    if (entry.proxyManual) continue;
     const subdomains = entry.subdomains ?? [];
     if (subdomains.length === 0) continue;
 
@@ -138,7 +135,7 @@ export function buildRoutes(inventory: Inventory): ProxyRoute[] {
       backend: {
         // Non-null: validateInventory() already enforces that a non-manual
         // entry with subdomains has an ip -- entries reaching this point
-        // are exactly those (caddyManual/no-subdomains are skipped above).
+        // are exactly those (proxyManual/no-subdomains are skipped above).
         ip: entry.ip!,
         port: entry.port ?? 80,
         insecureTls: entry.insecureBackendTls === true,

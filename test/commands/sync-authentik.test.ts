@@ -1615,12 +1615,12 @@ test('OIDC: authMode oidc without authGroup is inert', async () => {
   assert.deepEqual(authentik.calls.slice(callsBefore), []);
 });
 
-test('OIDC: a caddyManual OIDC entry is still reconciled', async () => {
+test('OIDC: a proxyManual OIDC entry is still reconciled', async () => {
   const authentik = new FakeAuthentikClient();
   await seedLadderGroups(authentik);
   const result = await runSyncAuthentik(
     { apply: true },
-    { authentik, inventory: oidcInventory({ caddyManual: true }), fetchImpl: okFetch() }
+    { authentik, inventory: oidcInventory({ proxyManual: true }), fetchImpl: okFetch() }
   );
   assert.deepEqual(result.oidcToCreate, ['media']);
   assert.equal((await authentik.listOAuth2Providers()).length, 1);

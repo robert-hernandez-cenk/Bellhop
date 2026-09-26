@@ -118,7 +118,7 @@ export function dashboardRoutes(
   authentik: AuthentikClient,
   cloudflare: CloudflareClient,
   // Test-only injection point for the post-apply OIDC issuer discovery
-  // check (syncCaddyLive -> runSyncAuthentik), same convention as every
+  // check (syncProxyLive -> runSyncAuthentik), same convention as every
   // other fetchImpl threaded through AppDeps -- unset in production, so
   // commitGuestEdit falls back to the real global fetch exactly as it
   // always has.
@@ -179,9 +179,9 @@ export function dashboardRoutes(
     res.json({ ...result, failures: result.failures.filter((name) => allowedHostNames.has(name)) });
   });
 
-  // Dashboard-driven inline edit of a guest's subdomains/port/caddyManual/
+  // Dashboard-driven inline edit of a guest's subdomains/port/proxyManual/
   // insecureBackendTls -- the only fields editable from there, each its own
-  // input saving independently (subdomains/port on blur, caddyManual/
+  // input saving independently (subdomains/port on blur, proxyManual/
   // insecureBackendTls immediately on change since a checkbox has no blur
   // moment). Lets an operator set a port on a guest that has none yet, then
   // add a subdomain that actually routes to it, instead of silently

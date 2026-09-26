@@ -16,7 +16,7 @@ const inventory: Inventory = {
   domain: 'example.com',
   hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
   guests: [
-    { name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', caddy: true },
+    { name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', proxy: true },
     { name: 'app-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3' },
     { name: 'other-lxc', type: 'lxc', vmid: 4004, host: 'pve1', ip: '192.168.1.4', subdomains: ['taken'] },
   ],
@@ -37,6 +37,17 @@ test('applyGuestEdits accepts form strings and typed arrays/numbers alike', () =
   assert.deepEqual(typed, fromForm);
 });
 
+test('applyGuestEdits sets proxyManual from the body', () => {
+  const updated = applyGuestEdits(inventory.guests[1], { proxyManual: true });
+  assert.equal(updated.proxyManual, true);
+});
+
+test('applyGuestEdits ignores the old caddyManual key (no alias)', () => {
+  const updated = applyGuestEdits(inventory.guests[1], { caddyManual: true });
+  assert.equal(updated.proxyManual, undefined);
+  assert.ok(!('caddyManual' in updated));
+});
+
 test('applyGuestEdits leaves untouched fields alone and clears authGroup on null', () => {
   const updated = applyGuestEdits({ ...inventory.guests[1], authGroup: 'bellhop-users', port: 80 }, { authGroup: null });
   assert.equal(updated.authGroup, undefined);
@@ -52,7 +63,7 @@ test('runEditGuest saves, pushes Caddy live, and reports the result', async () =
 });
 
 // runEditGuest is what the MCP server's edit-guest tool calls; this proves
-// its OperationDeps.cloudflare actually reaches syncCaddyLive's prune (#162)
+// its OperationDeps.cloudflare actually reaches syncProxyLive's prune (#162)
 // rather than being dropped and silently treated as unconfigured.
 test('runEditGuest prunes stale _acme-challenge records through deps.cloudflare', async () => {
   const cloudflare = new FakeCloudflareClient({
@@ -117,7 +128,7 @@ test('runEditGuest accepts an OIDC-effective edit once a redirect URI is set', a
   assert.deepEqual(result.guest.oidcRedirectUris, ['https://taken.example.com/cb']);
 });
 
-// runEditGuest's OperationDeps.fetchImpl reaches syncCaddyLive's post-apply
+// runEditGuest's OperationDeps.fetchImpl reaches syncProxyLive's post-apply
 // OIDC discovery check (same plumbing proven for deps.cloudflare above), and
 // the result is scoped to the edited guest only, omitted when empty.
 test('runEditGuest carries oidcDiscoveryFailures scoped to the edited guest, omitted when empty', async () => {

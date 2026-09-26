@@ -110,7 +110,7 @@ function fixtureInventory(): Inventory {
         host: 'pve1',
         ip: '192.0.2.55',
         subdomains: ['manual'],
-        caddyManual: true,
+        proxyManual: true,
       },
       { name: 'no-subdomain-app', type: 'lxc', vmid: 111, host: 'pve1', ip: '192.0.2.56' },
       { name: 'auth-host', type: 'lxc', vmid: 112, host: 'pve1', ip: '192.0.2.9', authentik: true },
@@ -122,7 +122,7 @@ function fixtureInventory(): Inventory {
 test('buildRoutes: manual and subdomain-less entries produce no route', () => {
   const routes = buildRoutes(fixtureInventory());
   const names = routes.map((r) => r.owner.name);
-  assert.ok(!names.includes('manual-app'), 'caddyManual entry must not produce a route');
+  assert.ok(!names.includes('manual-app'), 'proxyManual entry must not produce a route');
   assert.ok(!names.includes('no-subdomain-app'), 'entry with no subdomains must not produce a route');
   assert.ok(!names.includes('auth-host'), 'authentik entry with no subdomains must not produce a route');
   assert.ok(!names.includes('pve1'), 'host with no subdomains must not produce a route');

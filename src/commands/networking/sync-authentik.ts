@@ -35,7 +35,7 @@ export interface SyncAuthentikResult {
   // Desired entries whose slug is already held in Authentik by an
   // Application this command does not own (not proxy-backed). Creating one
   // would fail Authentik's unique-slug constraint, so it is skipped and
-  // reported rather than attempted -- syncCaddyLive runs this command on
+  // reported rather than attempted -- syncProxyLive runs this command on
   // every Dashboard subdomains edit, and an edit elsewhere in the inventory
   // must not fail over a pre-existing clash.
   conflicts: string[];
@@ -180,7 +180,7 @@ export const OFF_LADDER_EXPLANATION =
 export const MISSING_RUNG_EXPLANATION =
   'this ladder rung does not exist in Authentik; bindings for it were skipped and it was not created';
 
-// Shared by formatSyncAuthentik and src/web/caddy-sync.ts so the CLI and the
+// Shared by formatSyncAuthentik and src/web/proxy-sync.ts so the CLI and the
 // job log describe a conflict the same way. The two React banners
 // deliberately carry their own shorter wording instead -- this string does
 // not fit the Advanced modal's narrow value column (see the
@@ -196,7 +196,7 @@ export const OAUTH2_CONFLICT_EXPLANATION =
   "an OpenID client with this slug already exists in Authentik and is not marked as Bellhop's; run adopt-oidc-client to adopt it";
 
 // The one place a conflict's explanation is chosen (FR-011), shared by
-// formatSyncAuthentik, syncCaddyLive's job-log warnings, and delete-guest's
+// formatSyncAuthentik, syncProxyLive's job-log warnings, and delete-guest's
 // pre-removal sync, so no front end tells an operator to resolve by hand a
 // conflict adopt-oidc-client could take over.
 export function conflictExplanation(slug: string, result: Pick<SyncAuthentikResult, 'adoptableConflicts'>): string {
@@ -233,7 +233,7 @@ export const OIDC_SCOPE_MAPPINGS = [
 export const REPLACED_PROVIDER_SUFFIX = ' (replaced)';
 
 // Same bound as RealCloudflareClient's per-request timeout, so a stalled
-// Authentik cannot hang a Dashboard save that runs this via syncCaddyLive.
+// Authentik cannot hang a Dashboard save that runs this via syncProxyLive.
 const DISCOVERY_TIMEOUT_MS = 10_000;
 
 // `name` is deliberately absent: the Application/Provider display name is

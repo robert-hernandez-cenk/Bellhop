@@ -10,7 +10,7 @@ import { FakeSSHClient, defaultResponder } from '../../support/fake-ssh-client.t
 function baseInventory(overrides: Partial<Inventory> = {}): Inventory {
   return {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
     guests: [],
     ...overrides,
   };
@@ -62,7 +62,7 @@ test('getDriver throws a named error for an id no registered driver has, with th
 
 // --- driverDeps -------------------------------------------------------------
 
-test("driverDeps resolves proxyHost from the entry flagged caddy: true, and configPath from the driver default when proxyConfigPath is unset", () => {
+test("driverDeps resolves proxyHost from the entry flagged proxy: true, and configPath from the driver default when proxyConfigPath is unset", () => {
   const inv = baseInventory();
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = driverDeps(inv, ssh, caddyDriver);
@@ -72,10 +72,10 @@ test("driverDeps resolves proxyHost from the entry flagged caddy: true, and conf
   assert.equal(deps.inventory, inv);
 });
 
-test('driverDeps resolves proxyHost from a guest flagged caddy: true', () => {
+test('driverDeps resolves proxyHost from a guest flagged proxy: true', () => {
   const inv = baseInventory({
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
-    guests: [{ name: 'proxy-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.50', caddy: true }],
+    guests: [{ name: 'proxy-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.50', proxy: true }],
   });
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = driverDeps(inv, ssh, caddyDriver);
@@ -89,12 +89,12 @@ test('driverDeps reads configPath from proxyConfigPath when set, overriding the 
   assert.equal(deps.configPath, '/etc/caddy/custom.Caddyfile');
 });
 
-test("driverDeps throws \"No inventory entry has 'caddy: true'\" when no entry has it (renamed to 'proxy: true' in US2)", () => {
+test("driverDeps throws \"No inventory entry has 'proxy: true'\" when no entry has it", () => {
   const inv = baseInventory({
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
   });
   const ssh = new FakeSSHClient(defaultResponder);
-  assert.throws(() => driverDeps(inv, ssh, caddyDriver), /^Error: No inventory entry has 'caddy: true'$/);
+  assert.throws(() => driverDeps(inv, ssh, caddyDriver), /^Error: No inventory entry has 'proxy: true'$/);
 });
 
 // --- registerDriverForTests (test-only hook) -------------------------------

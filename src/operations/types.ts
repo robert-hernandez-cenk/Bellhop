@@ -14,7 +14,7 @@ export interface OperationDeps {
   inventory: Inventory;
   inventoryPath: string;
   authentik: AuthentikClient;
-  // Required, not optional: syncCaddyLive treats a missing client as
+  // Required, not optional: syncProxyLive treats a missing client as
   // unconfigured and silently skips the stale _acme-challenge prune (#162),
   // so every place that builds OperationDeps must pass one explicitly.
   cloudflare: CloudflareClient;

@@ -107,3 +107,33 @@ test('runSetConfig allows setting only customScriptsRepo without customScriptsBr
   assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/ProxmoxVED');
   assert.equal(loadInventory(inventoryPath).customScriptsBranch, undefined);
 });
+
+test('runSetConfig round-trips proxyDriver through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyDriver', value: 'caddy', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'caddy');
+  runSetConfig({ key: 'proxyDriver', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
+});
+
+test('runSetConfig rejects an unknown proxyDriver', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(() => runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath }), /proxyDriver/);
+  assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
+});
+
+test('runSetConfig round-trips proxyConfigPath through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyConfigPath', value: '/etc/caddy/Caddyfile', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyConfigPath, '/etc/caddy/Caddyfile');
+  runSetConfig({ key: 'proxyConfigPath', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyConfigPath, undefined);
+});
+
+test('runSetConfig rejects a relative proxyConfigPath', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'proxyConfigPath', value: 'etc/caddy/Caddyfile', apply: true }, { inventoryPath }),
+    /must be an absolute path/
+  );
+});

@@ -23,7 +23,7 @@ import {
   ExternalSiteSchema,
   SettingsSchema,
   SETTINGS_KEYS,
-  findCaddyEntry,
+  findProxyEntry,
   type Inventory,
 } from '../../src/lib/inventory.ts';
 
@@ -36,7 +36,7 @@ const FIXTURE_INVENTORY: Inventory = {
   guests: [
     { name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.168.1.50', port: 8080, subdomains: ['media'] },
     { name: 'windows-test', type: 'vm', vmid: 201, host: 'pve2' },
-    { name: 'proxy', type: 'lxc', vmid: 110, host: 'pve1', ip: '192.168.1.10', caddy: true },
+    { name: 'proxy', type: 'lxc', vmid: 110, host: 'pve1', ip: '192.168.1.10', proxy: true },
   ],
 };
 
@@ -53,6 +53,18 @@ test('loadInventory parses a valid fixture', () => {
   assert.equal(inv.hosts.length, 2);
   assert.equal(inv.guests.length, 3);
   assert.deepEqual(inv.hosts[0].midScheme, { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' });
+  assert.equal(findProxyEntry(inv)?.name, 'proxy', 'proxy: true round-trips through the proxy column');
+});
+
+test('saveInventory records the proxy host in proxy_owner', () => {
+  const dest = tempInventoryDb();
+  const db = new Database(dest, { readonly: true });
+  const row = db.prepare('SELECT owner_type, owner_name FROM proxy_owner').get();
+  const cols = (db.prepare('PRAGMA table_info(guests)').all() as { name: string }[]).map((c) => c.name);
+  db.close();
+  assert.deepEqual({ ...(row as object) }, { owner_type: 'guest', owner_name: 'proxy' });
+  assert.ok(cols.includes('proxy') && cols.includes('proxy_manual'));
+  assert.ok(!cols.includes('caddy') && !cols.includes('caddy_manual'));
 });
 
 test('loadInventory rejects a host with an empty ssh_user', () => {
@@ -73,18 +85,18 @@ test('loadInventory rejects a host whose midScheme.ipPrefix is a 2-octet prefix'
   assert.throws(() => loadInventory(dest), /ipPrefix/);
 });
 
-test('validateInventory flags more than one caddy:true entry', () => {
+test('validateInventory flags more than one proxy: true entry', () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true },
     ],
     guests: [
-      { name: 'proxy', type: 'lxc', vmid: 110, host: 'pve1', ip: '192.168.1.10', caddy: true },
+      { name: 'proxy', type: 'lxc', vmid: 110, host: 'pve1', ip: '192.168.1.10', proxy: true },
     ],
   };
   const errors = validateInventory(inv);
-  assert.ok(errors.some((e) => e.includes("multiple entries flagged 'caddy: true'")));
+  assert.ok(errors.some((e) => e.includes("multiple entries flagged 'proxy: true'")));
 });
 
 test('validateInventory flags more than one authentik:true entry', () => {
@@ -280,17 +292,17 @@ test('validateInventory flags a subdomain with no ip', () => {
   assert.ok(errors.some((e) => e.includes("entry 'pve1' has 'subdomains' set but no 'ip'")));
 });
 
-test('validateInventory does not require ip when caddyManual is set', () => {
+test('validateInventory does not require ip when proxyManual is set', () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', subdomains: ['pve1'], caddyManual: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', subdomains: ['pve1'], proxyManual: true }],
     guests: [],
   };
   const errors = validateInventory(inv);
   assert.deepEqual(errors, []);
 });
 
-test('validateInventory still requires ip when caddyManual is not set', () => {
+test('validateInventory still requires ip when proxyManual is not set', () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', subdomains: ['pve1'] }],
@@ -438,24 +450,24 @@ test('saveInventory writes nfsMounts onto a host without disturbing its other fi
   assert.equal(reloadedPve2.nfsMounts, undefined, 'a host with no nfsMounts given should be left alone');
 });
 
-test('saveInventory/loadInventory round-trips caddyManual on a host and a guest', () => {
+test('saveInventory/loadInventory round-trips proxyManual on a host and a guest', () => {
   const dest = tempInventoryDb();
   const inv = loadInventory(dest);
   const updated: Inventory = {
     ...inv,
-    hosts: inv.hosts.map((h) => (h.name === 'pve1' ? { ...h, caddyManual: true } : h)),
-    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, caddyManual: true } : g)),
+    hosts: inv.hosts.map((h) => (h.name === 'pve1' ? { ...h, proxyManual: true } : h)),
+    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, proxyManual: true } : g)),
   };
   saveInventory(dest, updated);
 
   const reloaded = loadInventory(dest);
-  assert.equal(reloaded.hosts.find((h) => h.name === 'pve1')?.caddyManual, true);
+  assert.equal(reloaded.hosts.find((h) => h.name === 'pve1')?.proxyManual, true);
   assert.equal(
-    reloaded.hosts.find((h) => h.name === 'pve2')?.caddyManual,
+    reloaded.hosts.find((h) => h.name === 'pve2')?.proxyManual,
     undefined,
-    'a host with no caddyManual given must stay undefined, not false'
+    'a host with no proxyManual given must stay undefined, not false'
   );
-  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.caddyManual, true);
+  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.proxyManual, true);
 });
 
 test('saveInventory/loadInventory round-trips authGroup and authentik on a host and a guest', () => {
@@ -536,7 +548,7 @@ test('opening a pre-existing database without the unauthenticated_paths_json col
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE hosts (
       name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
-      role TEXT, caddy INTEGER NOT NULL DEFAULT 0,
+      role TEXT, proxy INTEGER NOT NULL DEFAULT 0,
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
       bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
     );
@@ -544,12 +556,12 @@ test('opening a pre-existing database without the unauthenticated_paths_json col
       name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
       host TEXT NOT NULL REFERENCES hosts(name),
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
       UNIQUE (host, vmid)
     );
     CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
     CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
-    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
   `);
   legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
   legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
@@ -589,7 +601,7 @@ test('opening a pre-existing database without the auth_group/authentik columns m
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE hosts (
       name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
-      role TEXT, caddy INTEGER NOT NULL DEFAULT 0,
+      role TEXT, proxy INTEGER NOT NULL DEFAULT 0,
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
       bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
     );
@@ -597,12 +609,12 @@ test('opening a pre-existing database without the auth_group/authentik columns m
       name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
       host TEXT NOT NULL REFERENCES hosts(name),
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
       UNIQUE (host, vmid)
     );
     CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
     CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
-    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
   `);
   legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
   legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
@@ -618,7 +630,7 @@ test('opening a pre-existing database without the auth_group/authentik columns m
   assert.equal(reloaded.hosts[0].authentik, true, 'the migrated column must actually be writable/readable');
 });
 
-test('opening a pre-existing database without the caddy_manual/ssh_port/ssh_identity_file columns migrates them in place', () => {
+test('opening a pre-existing database without the proxy_manual/ssh_port/ssh_identity_file columns migrates them in place', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
   const dest = path.join(dir, 'bellhop.db');
   const legacyDb = new Database(dest);
@@ -626,7 +638,7 @@ test('opening a pre-existing database without the caddy_manual/ssh_port/ssh_iden
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE hosts (
       name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
-      role TEXT, caddy INTEGER NOT NULL DEFAULT 0,
+      role TEXT, proxy INTEGER NOT NULL DEFAULT 0,
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
       bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
     );
@@ -634,29 +646,29 @@ test('opening a pre-existing database without the caddy_manual/ssh_port/ssh_iden
       name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
       host TEXT NOT NULL REFERENCES hosts(name),
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
       UNIQUE (host, vmid)
     );
     CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
     CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
-    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
   `);
   legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
   legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
   legacyDb.close();
 
   const inv = loadInventory(dest);
-  assert.equal(inv.hosts[0].caddyManual, undefined, 'a pre-migration row has no caddy_manual value');
+  assert.equal(inv.hosts[0].proxyManual, undefined, 'a pre-migration row has no proxy_manual value');
   assert.equal(inv.hosts[0].ssh_port, undefined, 'a pre-migration row has no ssh_port value');
   assert.equal(inv.hosts[0].ssh_identity_file, undefined, 'a pre-migration row has no ssh_identity_file value');
 
   const updated: Inventory = {
     ...inv,
-    hosts: inv.hosts.map((h) => ({ ...h, caddyManual: true, ssh_port: 2222, ssh_identity_file: '~/.ssh/pve_key' })),
+    hosts: inv.hosts.map((h) => ({ ...h, proxyManual: true, ssh_port: 2222, ssh_identity_file: '~/.ssh/pve_key' })),
   };
   saveInventory(dest, updated);
   const reloaded = loadInventory(dest);
-  assert.equal(reloaded.hosts[0].caddyManual, true, 'the migrated caddy_manual column must actually be writable/readable');
+  assert.equal(reloaded.hosts[0].proxyManual, true, 'the migrated proxy_manual column must actually be writable/readable');
   assert.equal(reloaded.hosts[0].ssh_port, 2222, 'the migrated ssh_port column must actually be writable/readable');
   assert.equal(
     reloaded.hosts[0].ssh_identity_file,
@@ -673,7 +685,7 @@ test('opening a pre-existing database without the app_source column migrates it 
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE hosts (
       name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
-      caddy INTEGER NOT NULL DEFAULT 0,
+      proxy INTEGER NOT NULL DEFAULT 0,
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
       bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
     );
@@ -681,12 +693,12 @@ test('opening a pre-existing database without the app_source column migrates it 
       name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
       host TEXT NOT NULL REFERENCES hosts(name),
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
       UNIQUE (host, vmid)
     );
     CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
     CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
-    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
   `);
   legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
   legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
@@ -983,15 +995,45 @@ test('SETTINGS_KEYS lists exactly the eight settings keys', () => {
   ]);
 });
 
-test('findCaddyEntry returns the entry flagged caddy: true', () => {
-  assert.equal(findCaddyEntry(FIXTURE_INVENTORY)?.name, 'proxy');
+test('findProxyEntry returns the entry flagged proxy: true', () => {
+  assert.equal(findProxyEntry(FIXTURE_INVENTORY)?.name, 'proxy');
 });
 
-test('findCaddyEntry returns undefined when no entry is flagged', () => {
+test('findProxyEntry returns undefined when no entry is flagged', () => {
   assert.equal(
-    findCaddyEntry({ ...FIXTURE_INVENTORY, guests: FIXTURE_INVENTORY.guests.filter((g) => !g.caddy) }),
+    findProxyEntry({ ...FIXTURE_INVENTORY, guests: FIXTURE_INVENTORY.guests.filter((g) => !g.proxy) }),
     undefined
   );
+});
+
+test('an entry carrying the old caddy/caddyManual keys does not become a proxy host (no alias)', () => {
+  const host = HostEntrySchema.parse({ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, caddyManual: true });
+  const guest = GuestEntrySchema.parse({ name: 'edge', type: 'lxc', vmid: 110, host: 'pve1', caddy: true, caddyManual: true });
+  assert.equal(host.proxy, undefined);
+  assert.equal(host.proxyManual, undefined);
+  assert.equal(guest.proxy, undefined);
+  assert.equal(guest.proxyManual, undefined);
+  assert.ok(!('caddy' in host) && !('caddyManual' in guest), 'zod strips the old keys');
+  assert.equal(findProxyEntry({ domain: 'example.com', hosts: [host], guests: [guest] }), undefined);
+});
+
+test('SettingsSchema accepts proxyDriver caddy and an absolute proxyConfigPath', () => {
+  const result = SettingsSchema.safeParse({ proxyDriver: 'caddy', proxyConfigPath: '/etc/caddy/Caddyfile' });
+  assert.equal(result.success, true);
+});
+
+test('SettingsSchema rejects an unknown proxyDriver and a relative proxyConfigPath', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'nginx' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyConfigPath: 'etc/caddy/Caddyfile' }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, { ...FIXTURE_INVENTORY, proxyDriver: 'caddy', proxyConfigPath: '/etc/caddy/Caddyfile' });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.proxyDriver, 'caddy');
+  assert.equal(loaded.proxyConfigPath, '/etc/caddy/Caddyfile');
 });
 
 test('loadInventory migrates a legacy requires_auth column to authGroup at the ladder top rung', () => {
@@ -1203,7 +1245,7 @@ test('opening a pre-existing database without the auth_mode/oidc_redirect_uris_j
     CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE hosts (
       name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
-      role TEXT, caddy INTEGER NOT NULL DEFAULT 0,
+      role TEXT, proxy INTEGER NOT NULL DEFAULT 0,
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
       bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
     );
@@ -1211,12 +1253,12 @@ test('opening a pre-existing database without the auth_mode/oidc_redirect_uris_j
       name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
       host TEXT NOT NULL REFERENCES hosts(name),
       ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-      caddy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
       UNIQUE (host, vmid)
     );
     CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
     CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
-    CREATE TABLE caddy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
   `);
   legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
   legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();

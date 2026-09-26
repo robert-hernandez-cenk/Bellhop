@@ -4,7 +4,7 @@ import {
   loadInventory,
   saveInventory,
   refreshInventory,
-  findCaddyEntry,
+  findProxyEntry,
   SettingsSchema,
   SETTINGS_KEYS,
   type Inventory,
@@ -27,15 +27,15 @@ function currentSettings(inv: Inventory): Settings {
 
 // The two values that are derived rather than configured (issue #124):
 // set-guest-vpn's LAN gateway comes from each host's own midScheme, and
-// the Windows service's firewall scope comes from the caddy: true entry.
+// the Windows service's firewall scope comes from the proxy: true entry.
 // Shown read-only so an admin can see what they actually resolve to.
 function derivedValues(inv: Inventory) {
-  const caddy = findCaddyEntry(inv);
+  const proxy = findProxyEntry(inv);
   return {
     lanGateways: inv.hosts
       .filter((h) => h.midScheme)
       .map((h) => ({ host: h.name, gateway: h.midScheme!.gateway })),
-    caddy: caddy?.ip ? { name: caddy.name, ip: caddy.ip } : null,
+    proxy: proxy?.ip ? { name: proxy.name, ip: proxy.ip } : null,
   };
 }
 

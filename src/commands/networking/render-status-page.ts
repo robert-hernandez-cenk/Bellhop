@@ -32,8 +32,8 @@ export function buildStatusPageHtml(hostsYaml: string, activeCaddyfile: string):
 }
 
 // Shared by the two callers that treat an unset statusPagePath as an
-// opt-in skip rather than a hard failure (syncCaddyLive in
-// src/web/caddy-sync.ts, and migrate-guest's own post-migration Caddy
+// opt-in skip rather than a hard failure (syncProxyLive in
+// src/web/proxy-sync.ts, and migrate-guest's own post-migration Caddy
 // push) -- both already import from this module for runRenderStatusPage,
 // so this is the natural place to keep their skip message in sync with
 // the remedy runRenderStatusPage's own throw below names, rather than
@@ -48,15 +48,14 @@ function buildWriteScript(statusPagePath: string, html: string): string {
 
 export interface RenderStatusPageOptions {
   apply?: boolean;
-  caddyfilePath?: string;
 }
 
-// Regenerates the static page served at the Caddy host's document root
+// Regenerates the static page served at the proxy host's document root
 // from a live re-render of inventory/bellhop.db plus whatever's
-// actually deployed on the Caddy host right now -- a manual, on-demand
-// command, not something sync-caddy triggers automatically. Opt-in: an
+// actually deployed on the proxy host right now -- a manual, on-demand
+// command, not something sync-proxy triggers automatically. Opt-in: an
 // operator who hasn't set statusPagePath never gets an index.html written
-// anywhere (see syncCaddyLive in src/web/caddy-sync.ts for the web push-live
+// anywhere (see syncProxyLive in src/web/proxy-sync.ts for the web push-live
 // step, which skips this instead of throwing).
 //
 // Reads the live-deployed config through the active driver's own
@@ -70,7 +69,7 @@ export async function runRenderStatusPage(
   opts: RenderStatusPageOptions,
   deps: { ssh: SSHClient; inventory: Inventory },
   hostsYamlText: string
-): Promise<{ caddyHost: string; html: string; applied: boolean }> {
+): Promise<{ proxyHost: string; html: string; applied: boolean }> {
   const statusPagePath = deps.inventory.statusPagePath;
   if (statusPagePath === undefined) {
     throw new Error(
@@ -80,28 +79,20 @@ export async function runRenderStatusPage(
 
   const driver = getDriver(deps.inventory);
   const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);
-  // Until T021 (a later batch), opts.caddyfilePath (fed by the CLI's own
-  // CADDYFILE_PATH env var) still overrides the resolved configPath -- same
-  // convention sync-caddy.ts's runSyncCaddy uses -- so this page can never
-  // display a different file than the one syncCaddyLive/the CLI just wrote
-  // in the same run.
-  if (opts.caddyfilePath) {
-    resolvedDeps.configPath = opts.caddyfilePath;
-  }
-  const caddyHost = resolvedDeps.proxyHost;
+  const proxyHost = resolvedDeps.proxyHost;
 
   const activeConfig = await driver.snapshot(resolvedDeps);
 
   const html = buildStatusPageHtml(hostsYamlText, activeConfig);
 
-  const applied = confirmOrDryRun(`Would write status page to ${caddyHost}:${statusPagePath}`, opts.apply ?? false);
+  const applied = confirmOrDryRun(`Would write status page to ${proxyHost}:${statusPagePath}`, opts.apply ?? false);
   if (applied) {
-    const writeResult = await runRemote(deps.ssh, deps.inventory, caddyHost, buildWriteScript(statusPagePath, html));
+    const writeResult = await runRemote(deps.ssh, deps.inventory, proxyHost, buildWriteScript(statusPagePath, html));
     if (writeResult.code !== 0) {
       throw new Error(
-        `Failed to write status page on ${caddyHost} (exit ${writeResult.code}): ${writeResult.stderr || writeResult.stdout}`
+        `Failed to write status page on ${proxyHost} (exit ${writeResult.code}): ${writeResult.stderr || writeResult.stdout}`
       );
     }
   }
-  return { caddyHost, html, applied };
+  return { proxyHost, html, applied };
 }

@@ -3,7 +3,7 @@ import { saveInventory, refreshInventory, parseSubdomains, parsePort } from '../
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
 import { stripCidr } from '../lib/targets.ts';
 import { withCapturedConsole } from '../web/console-capture.ts';
-import { syncCaddyLive } from '../web/caddy-sync.ts';
+import { syncProxyLive } from '../web/proxy-sync.ts';
 import { runCreateLxc } from '../commands/provisioning/create-lxc.ts';
 import { runCreateVm } from '../commands/provisioning/create-vm.ts';
 import { runInstallApp, appSlugFor } from '../commands/provisioning/install-app.ts';
@@ -73,9 +73,9 @@ const CREATE_PROBE_INTERVAL_MS = 30_000;
 // shared in-memory `inventory` object too (saveInventory only touches disk),
 // so the next request (another create form's MID/bridge suggestions, a
 // GET /api/inventory) sees it without a server restart. If the guest was
-// given subdomains, also pushes them live (Caddyfile + status page) via
-// syncCaddyLive in the same step -- a failure here (e.g. no 'caddy: true'
-// entry, Caddy validation) fails the whole apply job, since "create this
+// given subdomains, also pushes them live (proxy configuration + status page) via
+// syncProxyLive in the same step -- a failure here (e.g. no 'proxy: true'
+// entry, proxy config validation) fails the whole apply job, since "create this
 // guest with subdomains X" only fully succeeds once X is actually routable.
 async function recordProvisionedGuest(deps: OperationDeps, entry: GuestEntry): Promise<void> {
   // Only when there's a concrete ip+port+subdomains combo to test -- same
@@ -83,7 +83,7 @@ async function recordProvisionedGuest(deps: OperationDeps, entry: GuestEntry): P
   // A conclusive result always overwrites whatever the create/install
   // form's checkbox submitted; an inconclusive one (app not listening yet,
   // even after retrying) leaves it exactly as submitted.
-  if (entry.port !== undefined && entry.ip && entry.subdomains && entry.subdomains.length > 0 && !entry.caddyManual) {
+  if (entry.port !== undefined && entry.ip && entry.subdomains && entry.subdomains.length > 0 && !entry.proxyManual) {
     const probe = await probeInsecureBackendTls(deps.ssh, deps.inventory, entry.host, entry.ip, entry.port, {
       retries: CREATE_PROBE_RETRIES,
       intervalMs: CREATE_PROBE_INTERVAL_MS,
@@ -104,7 +104,7 @@ async function recordProvisionedGuest(deps: OperationDeps, entry: GuestEntry): P
   deps.inventory.guests = guests;
 
   if (entry.subdomains && entry.subdomains.length > 0) {
-    await syncCaddyLive(deps);
+    await syncProxyLive(deps);
   }
 }
 
@@ -347,9 +347,9 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     },
     apply: async (i, deps) => {
       const target = deps.inventory.guests.find((g) => g.name === i.guest);
-      if (target?.caddy === true) {
+      if (target?.proxy === true) {
         throw new Error(
-          `Refusing to delete '${i.guest}' -- it's flagged 'caddy: true' (this is the guest hosting Caddy itself)`
+          `Refusing to delete '${i.guest}' -- it's flagged 'proxy: true' (this is the guest hosting the reverse proxy itself)`
         );
       }
 
@@ -360,7 +360,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
       // present but no longer desired, or its Provider/Application/policy-
       // binding would be orphaned forever.
       // Skipped rather than attempted when there is no Authentik API to talk
-      // to -- same guard as syncCaddyLive (src/web/caddy-sync.ts), and for
+      // to -- same guard as syncProxyLive (src/web/proxy-sync.ts), and for
       // the same reason: runSyncAuthentik calls listApplications() before
       // checking whether anything actually needs gating, so an operator
       // running forward-auth without an admin token could not delete a
@@ -381,7 +381,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
       // block for it (if it had subdomains) just needs a resync to
       // disappear, same as sync-caddy's buildCaddyBlock always did.
       if (target?.subdomains && target.subdomains.length > 0) {
-        await syncCaddyLive(deps);
+        await syncProxyLive(deps);
       }
     },
   },

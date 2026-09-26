@@ -13,9 +13,8 @@ export interface DriverCapabilities {
 export interface DriverDeps {
   ssh: SSHClient;
   inventory: Inventory;
-  // Name of the proxy: true entry (still `caddy: true` in this batch --
-  // driverDeps(), the function that resolves this, arrives in a later
-  // batch's src/lib/proxy/index.ts).
+  // Name of the `proxy: true` entry, resolved by driverDeps() in
+  // src/lib/proxy/index.ts.
   proxyHost: string;
   // inventory.proxyConfigPath ?? driver.defaultConfigPath -- proxyConfigPath
   // itself is a later batch's setting; until then callers pass the

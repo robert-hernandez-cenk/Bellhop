@@ -1,41 +1,41 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
-import { syncCaddyLive } from '../../src/web/caddy-sync.ts';
+import { syncProxyLive } from '../../src/web/proxy-sync.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
 import { CONFLICT_EXPLANATION, OAUTH2_CONFLICT_EXPLANATION } from '../../src/commands/networking/sync-authentik.ts';
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
-import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/caddy-sync.ts';
+import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/proxy-sync.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
   statusPagePath: '/usr/share/caddy/index.html',
-  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
   guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', subdomains: ['plex'] }],
 };
 
-test('syncCaddyLive writes the managed Caddyfile block, then regenerates the status page', async () => {
+test('syncProxyLive writes the managed Caddyfile block, then regenerates the status page', async () => {
   const calls: string[] = [];
   const ssh = new FakeSSHClient((_t, _u, c) => {
     calls.push(c);
     return { stdout: 'live-caddyfile-content', stderr: '', code: 0 };
   });
-  await syncCaddyLive({ ssh, inventory, authentik: new FakeAuthentikClient() });
+  await syncProxyLive({ ssh, inventory, authentik: new FakeAuthentikClient() });
 
-  // sync-caddy's write+reload, then render-status-page's read (cat) + write
+  // sync-proxy's write+reload, then render-status-page's read (cat) + write
   assert.equal(calls.length, 3);
-  assert.match(calls[0], /caddy validate --adapter caddyfile/, 'first call is sync-caddy writing+reloading');
+  assert.match(calls[0], /caddy validate --adapter caddyfile/, 'first call is sync-proxy writing+reloading');
   assert.match(calls[1], /cat '\/etc\/caddy\/Caddyfile'/, 'second call is render-status-page reading the just-written file');
   assert.match(calls[2], /cat > '\/usr\/share\/caddy\/index\.html'/, 'third call is render-status-page writing the page');
   assert.match(calls[2], /live-caddyfile-content/, 'the page embeds what was just read back');
 });
 
-test('syncCaddyLive propagates a sync-caddy failure without attempting the status page', async () => {
+test('syncProxyLive propagates a sync-proxy failure without attempting the status page', async () => {
   const calls: string[] = [];
   const noCaddy: Inventory = { ...inventory, hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }] };
   const ssh = new FakeSSHClient((_t, _u, c) => {
@@ -43,33 +43,33 @@ test('syncCaddyLive propagates a sync-caddy failure without attempting the statu
     return { stdout: '', stderr: '', code: 0 };
   });
   await assert.rejects(
-    () => syncCaddyLive({ ssh, inventory: noCaddy, authentik: new FakeAuthentikClient() }),
-    /No inventory entry has 'caddy: true'/
+    () => syncProxyLive({ ssh, inventory: noCaddy, authentik: new FakeAuthentikClient() }),
+    /No inventory entry has 'proxy: true'/
   );
-  assert.equal(calls.length, 0, 'sync-caddy never even reached an ssh call, so neither did the status page');
+  assert.equal(calls.length, 0, 'sync-proxy never even reached an ssh call, so neither did the status page');
 });
 
-test('syncCaddyLive skips the status page but still reconciles Authentik when statusPagePath is unset', async () => {
+test('syncProxyLive skips the status page but still reconciles Authentik when statusPagePath is unset', async () => {
   const calls: string[] = [];
   const noStatusPage: Inventory = { ...inventory, statusPagePath: undefined };
   const ssh = new FakeSSHClient((_t, _u, c) => {
     calls.push(c);
     return { stdout: 'live-caddyfile-content', stderr: '', code: 0 };
   });
-  await syncCaddyLive({ ssh, inventory: noStatusPage, authentik: new FakeAuthentikClient() });
+  await syncProxyLive({ ssh, inventory: noStatusPage, authentik: new FakeAuthentikClient() });
 
-  // Only sync-caddy's write+reload runs -- render-status-page's read (cat)
+  // Only sync-proxy's write+reload runs -- render-status-page's read (cat)
   // and write are skipped entirely, not just left unapplied.
   assert.equal(calls.length, 1);
   assert.match(calls[0], /caddy validate --adapter caddyfile/);
 });
 
-test('syncCaddyLive also reconciles Authentik as a third step', async () => {
+test('syncProxyLive also reconciles Authentik as a third step', async () => {
   const calls: string[] = [];
   const gatedInventory: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true },
     ],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
@@ -81,14 +81,14 @@ test('syncCaddyLive also reconciles Authentik as a third step', async () => {
     return { stdout: '', stderr: '', code: 0 };
   });
   const authentik = new FakeAuthentikClient();
-  await syncCaddyLive({ ssh, inventory: gatedInventory, authentik });
+  await syncProxyLive({ ssh, inventory: gatedInventory, authentik });
 
   const apps = await authentik.listApplications();
   assert.equal(apps.length, 1);
   assert.equal(apps[0].slug, 'sonarr');
 });
 
-test('syncCaddyLive skips sync-authentik when the Authentik API is not configured', async () => {
+test('syncProxyLive skips sync-authentik when the Authentik API is not configured', async () => {
   const calls: string[] = [];
   const ssh = new FakeSSHClient((_t, _u, c) => {
     calls.push(c);
@@ -98,25 +98,25 @@ test('syncCaddyLive skips sync-authentik when the Authentik API is not configure
   // sync-authentik was never reached, not merely that it failed silently.
   const authentik = new UnconfiguredAuthentikClient();
 
-  await syncCaddyLive({ ssh, inventory, authentik });
+  await syncProxyLive({ ssh, inventory, authentik });
 
-  assert.equal(calls.length, 3, 'sync-caddy and render-status-page still ran');
+  assert.equal(calls.length, 3, 'sync-proxy and render-status-page still ran');
 });
 
-test('syncCaddyLive runs sync-authentik when the Authentik API is configured', async () => {
+test('syncProxyLive runs sync-authentik when the Authentik API is configured', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const authentik = new FakeAuthentikClient();
-  await syncCaddyLive({ ssh, inventory, authentik });
+  await syncProxyLive({ ssh, inventory, authentik });
   // FakeAuthentikClient records what it was asked for; reaching this line
   // without throwing means the third step ran against it.
   assert.ok(Array.isArray(await authentik.listApplications()));
 });
 
-test('syncCaddyLive returns the slug conflicts sync-authentik reported', async () => {
+test('syncProxyLive returns the slug conflicts sync-authentik reported', async () => {
   const gated: Inventory = {
     ...inventory,
     guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
   };
   // An Application already holds slug 'plex' backed by a provider that is
   // not in the fake's (empty) proxyProviders list.
@@ -125,21 +125,21 @@ test('syncCaddyLive returns the slug conflicts sync-authentik reported', async (
   });
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
 
-  const result = await syncCaddyLive({ ssh, inventory: gated, authentik });
+  const result = await syncProxyLive({ ssh, inventory: gated, authentik });
   assert.deepEqual(result.authentikConflicts, ['plex']);
 });
 
-test('syncCaddyLive returns no conflicts when Authentik is not configured', async () => {
+test('syncProxyLive returns no conflicts when Authentik is not configured', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
-  const result = await syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient() });
+  const result = await syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient() });
   assert.deepEqual(result.authentikConflicts, []);
 });
 
-test('syncCaddyLive logWarns each conflict, since a Dashboard-triggered call runs outside any job log', async () => {
+test('syncProxyLive logWarns each conflict, since a Dashboard-triggered call runs outside any job log', async () => {
   const gated: Inventory = {
     ...inventory,
     guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
   };
   const authentik = new FakeAuthentikClient({
     applications: [{ id: 'plex', pk: 'pk-plex', name: 'plex.example.com', slug: 'plex', providerId: '99' }],
@@ -152,7 +152,7 @@ test('syncCaddyLive logWarns each conflict, since a Dashboard-triggered call run
     errorLines.push(message);
   };
   try {
-    await syncCaddyLive({ ssh, inventory: gated, authentik });
+    await syncProxyLive({ ssh, inventory: gated, authentik });
   } finally {
     console.error = originalConsoleError;
   }
@@ -186,20 +186,20 @@ async function captureLogs(fn: () => Promise<unknown>): Promise<{ info: string[]
 
 const STALE_MODIFIED_ON = '2020-01-01T00:00:00.000000Z';
 
-test('syncCaddyLive prunes stale _acme-challenge records as a fourth step when Cloudflare is configured', async () => {
+test('syncProxyLive prunes stale _acme-challenge records as a fourth step when Cloudflare is configured', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({
     zones: { 'example.com': 'zone-1' },
     records: [txtRecord('old', '_acme-challenge.gone.example.com', STALE_MODIFIED_ON)],
   });
   const logs = await captureLogs(() =>
-    syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+    syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
   );
   assert.deepEqual(cloudflare.records, []);
   assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: deleted stale _acme-challenge.gone.example.com')));
 });
 
-test('syncCaddyLive runs the prune only after sync-authentik', async () => {
+test('syncProxyLive runs the prune only after sync-authentik', async () => {
   const events: string[] = [];
   class OrderedAuthentik extends FakeAuthentikClient {
     async listApplications() {
@@ -214,18 +214,18 @@ test('syncCaddyLive runs the prune only after sync-authentik', async () => {
     }
   }
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
-  await syncCaddyLive({ ssh, inventory, authentik: new OrderedAuthentik(), cloudflare: new OrderedCloudflare({ zones: { 'example.com': 'zone-1' } }) });
+  await syncProxyLive({ ssh, inventory, authentik: new OrderedAuthentik(), cloudflare: new OrderedCloudflare({ zones: { 'example.com': 'zone-1' } }) });
   assert.ok(events.includes('authentik'), 'sync-authentik ran');
   assert.equal(events.at(-1), 'cloudflare', 'the prune ran last');
   assert.ok(events.indexOf('cloudflare') > events.lastIndexOf('authentik'));
 });
 
-test('syncCaddyLive logs a skip line and makes no Cloudflare call when Cloudflare is unconfigured', async () => {
+test('syncProxyLive logs a skip line and makes no Cloudflare call when Cloudflare is unconfigured', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   // Every UnconfiguredCloudflareClient data method rejects, so reaching one
   // would surface as a warning below.
   const logs = await captureLogs(() =>
-    syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() })
+    syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() })
   );
   assert.ok(logs.info.some((l) => l.includes(PRUNE_ACME_SKIP_MESSAGE)));
   assert.equal(logs.warn.some((l) => l.includes('prune-acme-challenges')), false);
@@ -251,7 +251,7 @@ function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
   };
 }
 
-test('syncCaddyLive skips the prune step (no Cloudflare calls) when the active driver does not support ACME DNS-01 via Cloudflare', async () => {
+test('syncProxyLive skips the prune step (no Cloudflare calls) when the active driver does not support ACME DNS-01 via Cloudflare', async () => {
   const fake = fakeDriverWithoutAcme('fake-driver-no-acme-t016');
   const unregister = registerDriverForTests(fake);
   try {
@@ -263,7 +263,7 @@ test('syncCaddyLive skips the prune step (no Cloudflare calls) when the active d
     const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
     const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
     const logs = await captureLogs(() =>
-      syncCaddyLive({ ssh, inventory: noStatusPage, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+      syncProxyLive({ ssh, inventory: noStatusPage, authentik: new UnconfiguredAuthentikClient(), cloudflare })
     );
     assert.deepEqual(cloudflare.history, [], 'the active driver has no ACME DNS-01-via-Cloudflare capability, so the prune never runs');
     assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes(fake.id)));
@@ -272,21 +272,21 @@ test('syncCaddyLive skips the prune step (no Cloudflare calls) when the active d
   }
 });
 
-test('syncCaddyLive treats an omitted cloudflare dep as unconfigured', async () => {
+test('syncProxyLive treats an omitted cloudflare dep as unconfigured', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
-  const logs = await captureLogs(() => syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient() }));
+  const logs = await captureLogs(() => syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient() }));
   assert.ok(logs.info.some((l) => l.includes(PRUNE_ACME_SKIP_MESSAGE)));
 });
 
-test('syncCaddyLive still resolves, with a warning, when the Cloudflare prune throws', async () => {
+test('syncProxyLive still resolves, with a warning, when the Cloudflare prune throws', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({
     zones: { 'example.com': 'zone-1' },
     listError: new Error('Cloudflare API 403: Authentication error'),
   });
-  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  let result: Awaited<ReturnType<typeof syncProxyLive>> | undefined;
   const logs = await captureLogs(async () => {
-    result = await syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare });
+    result = await syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare });
   });
   assert.deepEqual(result, {
     authentikConflicts: [],
@@ -300,7 +300,7 @@ test('syncCaddyLive still resolves, with a warning, when the Cloudflare prune th
   assert.ok(logs.warn.some((l) => l.includes('prune-acme-challenges: skipped — Cloudflare API 403: Authentication error')));
 });
 
-test('syncCaddyLive warns per failed delete and does not throw', async () => {
+test('syncProxyLive warns per failed delete and does not throw', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({
     zones: { 'example.com': 'zone-1' },
@@ -308,7 +308,7 @@ test('syncCaddyLive warns per failed delete and does not throw', async () => {
     failDeleteIds: ['bad'],
   });
   const logs = await captureLogs(() =>
-    syncCaddyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+    syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
   );
   assert.ok(
     logs.warn.some((l) =>
@@ -317,13 +317,13 @@ test('syncCaddyLive warns per failed delete and does not throw', async () => {
   );
 });
 
-test('syncCaddyLive never reaches the prune when sync-caddy fails', async () => {
+test('syncProxyLive never reaches the prune when sync-proxy fails', async () => {
   const noCaddy: Inventory = { ...inventory, hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }] };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
   await assert.rejects(
-    () => syncCaddyLive({ ssh, inventory: noCaddy, authentik: new FakeAuthentikClient(), cloudflare }),
-    /No inventory entry has 'caddy: true'/
+    () => syncProxyLive({ ssh, inventory: noCaddy, authentik: new FakeAuthentikClient(), cloudflare }),
+    /No inventory entry has 'proxy: true'/
   );
   assert.deepEqual(cloudflare.history, []);
 });
@@ -345,12 +345,12 @@ function oidcGated(overrides: Partial<Inventory['guests'][number]> = {}): Invent
   };
 }
 
-test('syncCaddyLive warns and returns each failed OIDC discovery check, and still resolves', async () => {
+test('syncProxyLive warns and returns each failed OIDC discovery check, and still resolves', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const fetchImpl = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
-  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  let result: Awaited<ReturnType<typeof syncProxyLive>> | undefined;
   const logs = await captureLogs(async () => {
-    result = await syncCaddyLive({ ssh, inventory: oidcGated(), authentik: new FakeAuthentikClient(), fetchImpl });
+    result = await syncProxyLive({ ssh, inventory: oidcGated(), authentik: new FakeAuthentikClient(), fetchImpl });
   });
   assert.equal(result!.authentikOidcDiscoveryFailures.length, 1);
   const failure = result!.authentikOidcDiscoveryFailures[0];
@@ -360,19 +360,19 @@ test('syncCaddyLive warns and returns each failed OIDC discovery check, and stil
   assert.ok(logs.warn.some((l) => l.includes('sync-authentik: plex — OIDC discovery failed') && l.includes('502')));
 });
 
-test('syncCaddyLive returns no discovery failures when the check passes', async () => {
+test('syncProxyLive returns no discovery failures when the check passes', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const fetchImpl = (async () => new Response('{}', { status: 200 })) as typeof fetch;
-  const result = await syncCaddyLive({ ssh, inventory: oidcGated(), authentik: new FakeAuthentikClient(), fetchImpl });
+  const result = await syncProxyLive({ ssh, inventory: oidcGated(), authentik: new FakeAuthentikClient(), fetchImpl });
   assert.deepEqual(result.authentikOidcDiscoveryFailures, []);
   assert.deepEqual(result.authentikOidcSkipped, []);
 });
 
-test('syncCaddyLive warns and returns each OIDC skip', async () => {
+test('syncProxyLive warns and returns each OIDC skip', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
-  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  let result: Awaited<ReturnType<typeof syncProxyLive>> | undefined;
   const logs = await captureLogs(async () => {
-    result = await syncCaddyLive({
+    result = await syncProxyLive({
       ssh,
       inventory: oidcGated({ oidcRedirectUris: undefined }),
       authentik: new FakeAuthentikClient(),
@@ -387,12 +387,12 @@ test('syncCaddyLive warns and returns each OIDC skip', async () => {
 
 // Final-review fix 2: a forward-auth entry skipped for a taken provider name
 // is returned too, not only logged.
-test('syncCaddyLive warns and returns each forward-auth skip', async () => {
+test('syncProxyLive warns and returns each forward-auth skip', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const gated: Inventory = {
     ...inventory,
     guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
   };
   // An unused OAuth2 provider already holds the name 'plex' -- the new
   // proxy provider cannot take it.
@@ -401,9 +401,9 @@ test('syncCaddyLive warns and returns each forward-auth skip', async () => {
       { id: '70', name: 'plex', clientType: 'confidential', grantTypes: [], propertyMappingIds: [], redirectUris: [] },
     ],
   });
-  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  let result: Awaited<ReturnType<typeof syncProxyLive>> | undefined;
   const logs = await captureLogs(async () => {
-    result = await syncCaddyLive({ ssh, inventory: gated, authentik });
+    result = await syncProxyLive({ ssh, inventory: gated, authentik });
   });
   assert.deepEqual(
     result!.authentikForwardSkipped.map((s) => [s.slug, s.kind]),
@@ -414,7 +414,7 @@ test('syncCaddyLive warns and returns each forward-auth skip', async () => {
 
 // Final-review fix 3 (FR-011): an adoptable conflict points at
 // adopt-oidc-client in the log and is flagged in the result.
-test('syncCaddyLive returns adoptable conflicts and logs them with the adopt-oidc-client explanation', async () => {
+test('syncProxyLive returns adoptable conflicts and logs them with the adopt-oidc-client explanation', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const authentik = new FakeAuthentikClient({
     oauth2Providers: [
@@ -422,9 +422,9 @@ test('syncCaddyLive returns adoptable conflicts and logs them with the adopt-oid
     ],
     applications: [{ id: 'plex', pk: 'pk-plex', name: 'plex', slug: 'plex', providerId: '70' }],
   });
-  let result: Awaited<ReturnType<typeof syncCaddyLive>> | undefined;
+  let result: Awaited<ReturnType<typeof syncProxyLive>> | undefined;
   const logs = await captureLogs(async () => {
-    result = await syncCaddyLive({ ssh, inventory: oidcGated(), authentik });
+    result = await syncProxyLive({ ssh, inventory: oidcGated(), authentik });
   });
   assert.deepEqual(result!.authentikConflicts, ['plex']);
   assert.deepEqual(result!.authentikAdoptableConflicts, ['plex']);

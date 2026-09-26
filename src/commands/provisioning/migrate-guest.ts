@@ -6,7 +6,7 @@ import { confirmOrDryRun } from '../../lib/dry-run.ts';
 import { pickStorage, listBackupStorages } from '../../lib/storage.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
-import { runSyncCaddy } from '../networking/sync-caddy.ts';
+import { runSyncProxy } from '../networking/sync-proxy.ts';
 import { runRenderStatusPage, statusPagePathSkipMessage } from '../networking/render-status-page.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
 import { stringify } from 'yaml';
@@ -341,8 +341,8 @@ export async function runMigrateGuest(
 
   if (guest.subdomains && guest.subdomains.length > 0) {
     logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via Caddy...`);
-    await runSyncCaddy({ apply: true }, { ssh, inventory });
-    // Same opt-in behavior as syncCaddyLive (src/web/caddy-sync.ts): an
+    await runSyncProxy({ apply: true }, { ssh, inventory });
+    // Same opt-in behavior as syncProxyLive (src/web/proxy-sync.ts): an
     // operator who hasn't configured statusPagePath never gets an
     // index.html write attempted, and skipping it is not a failure here
     // either -- the Caddy config update above is what actually matters for

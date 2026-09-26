@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import nodeWindows from 'node-windows';
-import { findCaddyEntry, loadInventory } from '../src/lib/inventory.ts';
+import { findProxyEntry, loadInventory } from '../src/lib/inventory.ts';
 import { dataDir, inventoryPath } from '../src/lib/paths.ts';
 
 const { Service, elevate } = nodeWindows;
@@ -36,7 +36,7 @@ type Action = 'install' | 'uninstall';
 const IPV4_ADDRESS = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 function resolveCaddyIp(): string {
-  const entry = findCaddyEntry(loadInventory(inventoryPath()));
+  const entry = findProxyEntry(loadInventory(inventoryPath()));
   if (!entry?.ip) {
     throw new Error(
       "Cannot scope the firewall rule: no inventory entry has 'caddy: true' with an ip. " +

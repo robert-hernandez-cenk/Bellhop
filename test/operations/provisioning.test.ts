@@ -33,7 +33,7 @@ const inventory: Inventory = {
       ],
     },
   ],
-  guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', caddy: true }],
+  guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', proxy: true }],
 };
 
 function deps(): OperationDeps {
@@ -94,7 +94,7 @@ test('create-lxc apply does not clobber inventory edits made after deps.inventor
 test('delete-guest apply refuses the caddy guest', async () => {
   const d = deps();
   const op = PROVISIONING_OPERATIONS['delete-guest'];
-  await assert.rejects(op.apply(parseOperationInput(op, { guest: 'caddy-lxc' }), d), /caddy: true/);
+  await assert.rejects(op.apply(parseOperationInput(op, { guest: 'caddy-lxc' }), d), /proxy: true/);
 });
 
 test('install-app is the only provisioning operation that watches for prompts', () => {

@@ -48,14 +48,14 @@ const inventory: Inventory = {
       midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' },
       // 'media' below always carries subdomains, so every apply test that
       // reaches full completion (not just an early-throw test) drives
-      // runMigrateGuest into its final runSyncCaddy/runRenderStatusPage
+      // runMigrateGuest into its final runSyncProxy/runRenderStatusPage
       // step -- same as recordProvisionedGuest/removeGuestEntry's real
       // production precedent, which never guards that call on a caddy host
-      // actually existing. Without a 'caddy: true' entry here, those tests
-      // would fail on "No inventory entry has 'caddy: true'" for a reason
+      // actually existing. Without a 'proxy: true' entry here, those tests
+      // would fail on "No inventory entry has 'proxy: true'" for a reason
       // unrelated to what they're actually testing (destroy/cleanup/
       // inventory rewrite).
-      caddy: true,
+      proxy: true,
       storages: [
         { name: 'local', type: 'dir', content: ['backup', 'iso', 'vztmpl'], active: true },
         { name: 'local-lvm', type: 'lvmthin', content: ['rootdir', 'images'], active: true },
@@ -379,7 +379,7 @@ function orderedStatusResponder(sourceVmid: number, targetVmid: number, opts: { 
       cmd.startsWith('rm -f') ||
       // sync-caddy's remote script and render-status-page's Caddyfile
       // read/write both run once 'media' (which always has subdomains)
-      // finishes migrating and pve-main's 'caddy: true' entry is found --
+      // finishes migrating and pve-main's 'proxy: true' entry is found --
       // see the base inventory fixture's comment above.
       cmd.startsWith('cat ') ||
       cmd.startsWith('set -e')
@@ -820,7 +820,7 @@ test('runMigrateGuest apply re-syncs Caddy when the migrated guest has subdomain
   });
   const inv: Inventory = {
     ...isolatedInventory(),
-    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, caddy: true } : h)),
+    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, proxy: true } : h)),
   };
   const invPath = tempSavedInventoryPath(inv);
   await runMigrateGuest(
@@ -842,7 +842,7 @@ test('runMigrateGuest apply still syncs Caddy but skips the status page when sta
   });
   const inv: Inventory = {
     ...isolatedInventory(),
-    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, caddy: true } : h)),
+    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, proxy: true } : h)),
   };
   delete inv.statusPagePath;
   const invPath = tempSavedInventoryPath(inv);

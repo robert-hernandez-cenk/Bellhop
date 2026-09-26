@@ -77,7 +77,7 @@ test('GET /api/inventory returns customScripts when both settings are set', asyn
 test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and syncs Caddy', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3' }],
   };
   const app = testApp(inventory);
@@ -93,7 +93,7 @@ test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and s
 test('PATCH /api/inventory/guests/:name prunes stale _acme-challenge records through the injected Cloudflare client', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3' }],
   };
   const cloudflare = new FakeCloudflareClient({
@@ -110,7 +110,7 @@ test('PATCH /api/inventory/guests/:name prunes stale _acme-challenge records thr
 test('PATCH /api/inventory/guests/:name clears subdomains when given an empty string', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', subdomains: ['plex'] }],
   };
   const app = testApp(inventory);
@@ -120,7 +120,7 @@ test('PATCH /api/inventory/guests/:name clears subdomains when given an empty st
   assert.equal(res.body.caddySynced, true);
 });
 
-test('PATCH /api/inventory/guests/:name still saves when there is no caddy: true entry, but reports the sync failure', async () => {
+test('PATCH /api/inventory/guests/:name still saves when there is no proxy: true entry, but reports the sync failure', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' } }],
@@ -131,7 +131,7 @@ test('PATCH /api/inventory/guests/:name still saves when there is no caddy: true
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.guest.subdomains, ['plex']);
   assert.equal(res.body.caddySynced, false);
-  assert.match(res.body.caddyError, /No inventory entry has 'caddy: true'/);
+  assert.match(res.body.caddyError, /No inventory entry has 'proxy: true'/);
 
   const invRes = await request(app).get('/api/inventory');
   assert.deepEqual(invRes.body.guests[0].subdomains, ['plex'], 'inventory write must still persist');
@@ -140,7 +140,7 @@ test('PATCH /api/inventory/guests/:name still saves when there is no caddy: true
 test('PATCH /api/inventory/guests/:name updates port independently, leaving subdomains untouched', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', subdomains: ['plex'] }],
   };
   const app = testApp(inventory);
@@ -158,26 +158,42 @@ test('PATCH /api/inventory/guests/:name updates port independently, leaving subd
   assert.equal(invRes.body.guests[0].port, 32400);
 });
 
-test('PATCH /api/inventory/guests/:name updates caddyManual independently, leaving subdomains untouched', async () => {
+test('PATCH /api/inventory/guests/:name updates proxyManual independently, leaving subdomains untouched', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', subdomains: ['caddy'] }],
   };
   const app = testApp(inventory);
-  const res = await request(app).patch('/api/inventory/guests/caddy-lxc').send({ caddyManual: true });
+  const res = await request(app).patch('/api/inventory/guests/caddy-lxc').send({ proxyManual: true });
   assert.equal(res.status, 200);
-  assert.equal(res.body.guest.caddyManual, true);
-  assert.deepEqual(res.body.guest.subdomains, ['caddy'], 'a caddyManual-only PATCH must not touch subdomains');
+  assert.equal(res.body.guest.proxyManual, true);
+  assert.deepEqual(res.body.guest.subdomains, ['caddy'], 'a proxyManual-only PATCH must not touch subdomains');
 
   const invRes = await request(app).get('/api/inventory');
-  assert.equal(invRes.body.guests[0].caddyManual, true);
+  assert.equal(invRes.body.guests[0].proxyManual, true);
+});
+
+test('PATCH /api/inventory/guests/:name ignores the old caddyManual key, leaving proxyManual unset', async () => {
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
+    guests: [{ name: 'app-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', subdomains: ['app'] }],
+  };
+  const app = testApp(inventory);
+  const res = await request(app).patch('/api/inventory/guests/app-lxc').send({ caddyManual: true });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.guest.proxyManual, undefined);
+  assert.equal(res.body.guest.caddyManual, undefined);
+
+  const invRes = await request(app).get('/api/inventory');
+  assert.equal(invRes.body.guests[0].proxyManual, undefined);
 });
 
 test('PATCH /api/inventory/guests/:name updates insecureBackendTls independently, leaving subdomains untouched', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'bentopdf-lxc', type: 'lxc', vmid: 4005, host: 'pve1', ip: '192.168.1.5', subdomains: ['bentopdf'] }],
   };
   const calls: string[] = [];
@@ -199,7 +215,7 @@ test('PATCH /api/inventory/guests/:name updates authGroup independently, leaving
   const inventory: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true },
     ],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
@@ -220,7 +236,7 @@ test('PATCH /api/inventory/guests/:name updates authGroup independently, leaving
 test('PATCH /api/inventory/guests/:name updates unauthenticatedPaths independently, leaving subdomains untouched', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
       { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
@@ -244,7 +260,7 @@ test('PATCH /api/inventory/guests/:name updates unauthenticatedPaths independent
 test('PATCH /api/inventory/guests/:name rejects an unauthenticatedPaths pattern missing a leading slash', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
       { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
@@ -262,7 +278,7 @@ test('PATCH /api/inventory/guests/:name rejects an unauthenticatedPaths pattern 
 test('PATCH /api/inventory/guests/:name clears unauthenticatedPaths when given an empty string', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
       { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users', unauthenticatedPaths: ['/api/*'] },
@@ -277,7 +293,7 @@ test('PATCH /api/inventory/guests/:name clears unauthenticatedPaths when given a
 test('PATCH /api/inventory/guests/:name updates port independently, leaving an existing unauthenticatedPaths untouched when the field is omitted entirely', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
       {
@@ -309,7 +325,7 @@ test('PATCH /api/inventory/guests/:name updates port independently, leaving an e
 test('PATCH /api/inventory/guests/:name probes and sets insecureBackendTls when an edit gives a guest both a port and subdomains', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'authentik-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9' }],
   };
   const calls: string[] = [];
@@ -324,11 +340,11 @@ test('PATCH /api/inventory/guests/:name probes and sets insecureBackendTls when 
   assert.ok(calls.includes('curl -s -o /dev/null --max-time 5 https://192.168.1.9:9443/'));
 });
 
-test('PATCH /api/inventory/guests/:name never probes a caddyManual guest even when port and subdomains are both set', async () => {
+test('PATCH /api/inventory/guests/:name never probes a proxyManual guest even when port and subdomains are both set', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
-    guests: [{ name: 'manual-lxc', type: 'lxc', vmid: 4011, host: 'pve1', ip: '192.168.1.11', caddyManual: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
+    guests: [{ name: 'manual-lxc', type: 'lxc', vmid: 4011, host: 'pve1', ip: '192.168.1.11', proxyManual: true }],
   };
   const calls: string[] = [];
   const app = testApp(inventory, (_t, _u, c) => {
@@ -338,13 +354,13 @@ test('PATCH /api/inventory/guests/:name never probes a caddyManual guest even wh
   const res = await request(app).patch('/api/inventory/guests/manual-lxc').send({ subdomains: 'manual', port: '8443' });
   assert.equal(res.status, 200);
   assert.equal(res.body.guest.insecureBackendTls, undefined);
-  assert.ok(!calls.some((c) => c.startsWith('curl ')), 'a caddyManual guest must never be probed');
+  assert.ok(!calls.some((c) => c.startsWith('curl ')), 'a proxyManual guest must never be probed');
 });
 
 test('PATCH /api/inventory/guests/:name lets a conclusive probe override an insecureBackendTls value submitted in the same request', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'jellyfin-lxc', type: 'lxc', vmid: 4004, host: 'pve1', ip: '192.168.1.4' }],
   };
   const app = testApp(inventory, () => ({ stdout: '', stderr: '', code: 0 }));
@@ -355,11 +371,11 @@ test('PATCH /api/inventory/guests/:name lets a conclusive probe override an inse
   assert.equal(res.body.guest.insecureBackendTls, false, 'the probe (trusted/no-TLS) must win over the true value submitted in the same request');
 });
 
-test('PATCH /api/inventory/guests/:name allows subdomains with no ip when caddyManual is already set', async () => {
+test('PATCH /api/inventory/guests/:name allows subdomains with no ip when proxyManual is already set', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
-    guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', caddyManual: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
+    guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', proxyManual: true }],
   };
   const app = testApp(inventory);
   const res = await request(app).patch('/api/inventory/guests/caddy-lxc').send({ subdomains: 'caddy' });
@@ -370,7 +386,7 @@ test('PATCH /api/inventory/guests/:name allows subdomains with no ip when caddyM
 test('PATCH /api/inventory/guests/:name clears port when given an empty string', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', port: 32400 }],
   };
   const app = testApp(inventory);
@@ -382,7 +398,7 @@ test('PATCH /api/inventory/guests/:name clears port when given an empty string',
 test('PATCH /api/inventory/guests/:name rejects an invalid port without writing anything', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3' }],
   };
   const app = testApp(inventory);
@@ -633,7 +649,7 @@ test('GET /api/inventory returns every host/guest unfiltered when the caller is 
 test('PATCH /api/inventory/guests/:name returns 403 for a restricted group targeting a blocked guest', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'stash-lxc', type: 'lxc', vmid: 4001, host: 'pve1', ip: '192.168.1.3' }],
   };
   const app = testApp(inventory);
@@ -653,7 +669,7 @@ test('PATCH /api/inventory/guests/:name returns 403 for a restricted group targe
 test('PATCH /api/inventory/guests/:name still succeeds for a restricted group targeting an allowed guest', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'plex-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.4' }],
   };
   const app = testApp(inventory);
@@ -713,7 +729,7 @@ test('PATCH /api/inventory/guests/:name reports an Authentik slug conflict in th
   const inventory: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true },
     ],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
@@ -734,7 +750,7 @@ test('PATCH /api/inventory/guests/:name reports an Authentik slug conflict in th
 test('PATCH /api/inventory/guests/:name omits authentikConflicts entirely when there are none', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [{ name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'] }],
   };
   const app = testApp(inventory);
@@ -749,7 +765,7 @@ test('PATCH /api/inventory/guests/:name omits authentikConflicts entirely when t
 test('PATCH /api/inventory/guests/:name reports only its own Authentik conflict, not another entry\'s', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
       { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'] },
@@ -781,7 +797,7 @@ test('PATCH /api/inventory/guests/:name reports only its own Authentik conflict,
 test('PATCH /api/inventory/guests/:name reports only its own Authentik off-ladder warning, not another entry\'s', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
       // Both already gated with an authGroup that is not in
@@ -993,7 +1009,7 @@ test('PATCH guest authGroup + unauthenticatedPaths rejects adding a path while g
 function oidcInventory(overrides: Partial<Inventory['guests'][number]> = {}): Inventory {
   return {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
     guests: [
       {
         name: 'sonarr',
@@ -1087,7 +1103,7 @@ test('PATCH guest authMode/oidcRedirectUris omits oidcDiscoveryFailures when dis
 test('PATCH guest authMode/oidcRedirectUris reports only its own oidcDiscoveryFailures, not another entry\'s', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true, authentik: true, ip: '192.168.1.5' }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
     guests: [
       {
         name: 'sonarr',

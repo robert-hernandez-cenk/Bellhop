@@ -23,7 +23,7 @@ console.log = console.error;
 // AUTHENTIK_GROUP_LADDER at DB-open time.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 // CLOUDFLARE_DNS_API_TOKEN for the stale _acme-challenge prune (#162) that
-// syncCaddyLive runs after a guest edit or provisioning apply -- same file
+// syncProxyLive runs after a guest edit or provisioning apply -- same file
 // src/web/server.ts and src/cli.ts load. A missing file leaves the prune
 // skipped, never failing the operation.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });

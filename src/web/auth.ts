@@ -153,7 +153,7 @@ export function requireRealAdminGroup(req: Request, res: Response, next: NextFun
 // Axis 2 of issue #123's design: gates the routes that need Authentik's REST
 // API, not merely a forward-auth header. Without this they surfaced
 // UnconfiguredAuthentikClient's throw as a generic 500 at best, and in
-// syncCaddyLive's case broke an unrelated operation entirely.
+// syncProxyLive's case broke an unrelated operation entirely.
 //
 // Takes the actual AuthentikClient instance mounted into the app rather than
 // re-reading process.env, so this gate can never disagree with what the

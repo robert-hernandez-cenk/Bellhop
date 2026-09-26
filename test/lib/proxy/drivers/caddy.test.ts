@@ -10,7 +10,7 @@ import type { Inventory } from '../../../../src/lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../../../src/lib/proxy/routes.ts';
 import { render } from '../../../../src/lib/proxy/drivers/caddy.ts';
 
-// buildCaddyBlock itself is gone from src/commands/networking/sync-caddy.ts
+// buildCaddyBlock itself is gone from src/commands/networking/sync-proxy.ts
 // as of T010 (it now delegates to this same buildRoutes/buildProxyContext/
 // render pipeline) -- this helper reproduces its old single-string return
 // shape so the rest of this file (written against that shape) needs no
@@ -24,8 +24,8 @@ function buildCaddyBlock(inventory: Inventory): string {
 // buildCaddyBlock reads authentikConfig().outpostPort from
 // AUTHENTIK_OUTPOST_PORT, so it's pinned here (and restored after) rather
 // than left to whatever the developer's shell happens to have set --
-// same convention as the "sync-caddy emits the configured Authentik
-// outpost port" test in test/commands/sync-caddy.test.ts.
+// same convention as the "sync-proxy emits the configured Authentik
+// outpost port" test in test/commands/sync-proxy.test.ts.
 const ORIGINAL_OUTPOST_PORT = process.env.AUTHENTIK_OUTPOST_PORT;
 
 function withPinnedOutpostPort(fn: () => void): void {
@@ -48,13 +48,13 @@ function withPinnedOutpostPort(fn: () => void): void {
 //   - a forward-gated guest with exempt paths in both forms
 //     (/health, /api/*) -- api-lxc
 //   - an OIDC-mode gated guest with oidcRedirectUris -- sso-app-lxc
-//   - a caddyManual entry with subdomains (no block) -- manual-lxc
+//   - a proxyManual entry with subdomains (no block) -- manual-lxc
 //   - an entry with no subdomains (no block) -- internal-lxc
 //   - the authentik: true guest with an ip -- auth-lxc
 const inventory: Inventory = {
   domain: 'example.com',
   hosts: [
-    { name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', caddy: true },
+    { name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true },
     {
       name: 'pve2',
       ssh_target: '192.0.2.2',
@@ -105,7 +105,7 @@ const inventory: Inventory = {
       host: 'pve1',
       ip: '192.0.2.23',
       subdomains: ['manual'],
-      caddyManual: true,
+      proxyManual: true,
     },
     { name: 'internal-lxc', type: 'lxc', vmid: 124, host: 'pve1', ip: '192.0.2.24' },
     { name: 'auth-lxc', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.0.2.9', authentik: true },
@@ -214,7 +214,7 @@ test('buildCaddyBlock output is pinned byte-for-byte against the full characteri
 test('buildCaddyBlock throws the missing-authentik error text when a forward-gated entry has no authentik:true ip', () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
     guests: [
       {
         name: 'app-lxc',

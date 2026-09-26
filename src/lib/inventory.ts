@@ -89,13 +89,13 @@ export const HostEntrySchema = z.object({
   // later as an opaque sshd auth failure.
   ssh_identity_file: z.string().min(1).optional(),
   midScheme: MidSchemeSchema.optional(),
-  caddy: z.boolean().optional(),
+  proxy: z.boolean().optional(),
   subdomains: z.array(z.string()).optional(),
-  // When true, this entry's Caddy config is hand-authored elsewhere (e.g. a
-  // block outside sync-caddy's managed markers) -- buildCaddyBlock skips
-  // generating a site block for it entirely, even though its subdomains[]
+  // When true, this entry's proxy config is hand-authored elsewhere (e.g. a
+  // block outside sync-proxy's managed markers) -- buildRoutes skips
+  // generating a route for it entirely, even though its subdomains[]
   // still drives the Dashboard's service link.
-  caddyManual: z.boolean().optional(),
+  proxyManual: z.boolean().optional(),
   ip: z.string().optional(),
   port: z.number().optional(),
   // The reverse-proxied service's own backend speaks HTTPS with a
@@ -121,8 +121,8 @@ export const HostEntrySchema = z.object({
   // 'oidc' and the entry has subdomains).
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
   unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
-  // Marks this entry as the Authentik instance itself -- mirrors caddy:
-  // true's "exactly one entry" role. sync-caddy resolves this entry's ip
+  // Marks this entry as the Authentik instance itself -- mirrors proxy:
+  // true's "exactly one entry" role. sync-proxy resolves this entry's ip
   // to address the embedded outpost's forward_auth target.
   authentik: z.boolean().optional(),
   bridges: z.array(BridgeEntrySchema).optional(),
@@ -146,8 +146,8 @@ export const GuestEntrySchema = z.object({
   ip: z.string().optional(),
   port: z.number().optional(),
   subdomains: z.array(z.string()).optional(),
-  // See HostEntrySchema's caddyManual for what this does.
-  caddyManual: z.boolean().optional(),
+  // See HostEntrySchema's proxyManual for what this does.
+  proxyManual: z.boolean().optional(),
   insecureBackendTls: z.boolean().optional(),
   authGroup: z.string().min(1).optional(),
   // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
@@ -155,7 +155,7 @@ export const GuestEntrySchema = z.object({
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
   unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
   authentik: z.boolean().optional(),
-  caddy: z.boolean().optional(),
+  proxy: z.boolean().optional(),
   unprivileged: z.boolean().optional(),
   // The community-scripts slug this guest was installed from (e.g. "plex"),
   // set once by install-app's apply step -- preserved the same way `port` is:
@@ -202,10 +202,10 @@ export const ExternalSiteSchema = z.object({
   // rung and every rung above it (see AUTHENTIK_GROUP_LADDER in
   // src/lib/authentik-config.ts), and sync-caddy emits the forward_auth
   // directive. Absent means ungated. A no-op on an entry with no subdomains
-  // (no candidate to gate) in both commands. caddyManual only silences
+  // (no candidate to gate) in both commands. proxyManual only silences
   // sync-caddy (which skips generating any block for such an entry) --
   // sync-authentik still creates/maintains the Provider/Application
-  // regardless of caddyManual, since a hand-authored Caddy block may still
+  // regardless of proxyManual, since a hand-authored Caddy block may still
   // want to route through it. Ladder membership is deliberately NOT
   // validated here or in validateInventory: sync-authentik reports an
   // off-ladder value instead, so an AUTHENTIK_GROUP_LADDER edit can never
@@ -239,10 +239,7 @@ export const SettingsSchema = z.object({
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // Which reverse-proxy driver src/lib/proxy/index.ts's getDriver() hands
-  // back -- unset means the 'caddy' default (issue #10). set-config/the web
-  // Settings page's own tests and UI arrive in a later batch (T021); this
-  // schema entry only needs to exist now so driverDeps() (T012) can read it
-  // typed.
+  // back -- unset means the 'caddy' default (issue #10).
   proxyDriver: z.enum(PROXY_DRIVER_IDS).optional(),
   // Overrides the active driver's own defaultConfigPath (issue #10) -- unset
   // means driverDeps() falls back to that default.
@@ -304,8 +301,8 @@ const SCHEMA = `
     ssh_user TEXT NOT NULL,
     ssh_port INTEGER,
     ssh_identity_file TEXT,
-    caddy INTEGER NOT NULL DEFAULT 0,
-    caddy_manual INTEGER,
+    proxy INTEGER NOT NULL DEFAULT 0,
+    proxy_manual INTEGER,
     ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
     bridges_json TEXT,
     storages_json TEXT,
@@ -320,8 +317,8 @@ const SCHEMA = `
     vmid INTEGER NOT NULL,
     host TEXT NOT NULL REFERENCES hosts(name),
     ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-    caddy INTEGER NOT NULL DEFAULT 0,
-    caddy_manual INTEGER,
+    proxy INTEGER NOT NULL DEFAULT 0,
+    proxy_manual INTEGER,
     unprivileged INTEGER, app TEXT,
     unauthenticated_paths_json TEXT,
     auth_mode TEXT,
@@ -340,7 +337,7 @@ const SCHEMA = `
     owner_type TEXT NOT NULL,
     owner_name TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS caddy_owner (
+  CREATE TABLE IF NOT EXISTS proxy_owner (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     owner_type TEXT NOT NULL, owner_name TEXT NOT NULL
   );
@@ -396,8 +393,8 @@ function migrateRequiresAuthToAuthGroup(db: Database.Database, table: string): v
 
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
-  ensureColumn(db, 'hosts', 'caddy_manual', 'caddy_manual INTEGER');
-  ensureColumn(db, 'guests', 'caddy_manual', 'caddy_manual INTEGER');
+  ensureColumn(db, 'hosts', 'proxy_manual', 'proxy_manual INTEGER');
+  ensureColumn(db, 'guests', 'proxy_manual', 'proxy_manual INTEGER');
   ensureColumn(db, 'guests', 'vpn_gateway', 'vpn_gateway TEXT');
   ensureColumn(db, 'guests', 'vpn', 'vpn TEXT');
   ensureColumn(db, 'hosts', 'auth_group', 'auth_group TEXT');
@@ -430,13 +427,13 @@ export function validateInventory(inv: Inventory): string[] {
   const errors: string[] = [];
   const hostNames = new Set(inv.hosts.map((h) => h.name));
 
-  const caddyNames = [
-    ...inv.hosts.filter((h) => h.caddy).map((h) => h.name),
-    ...inv.guests.filter((g) => g.caddy).map((g) => g.name),
+  const proxyNames = [
+    ...inv.hosts.filter((h) => h.proxy).map((h) => h.name),
+    ...inv.guests.filter((g) => g.proxy).map((g) => g.name),
   ];
-  if (caddyNames.length > 1) {
+  if (proxyNames.length > 1) {
     errors.push(
-      `Inventory validation: multiple entries flagged 'caddy: true' (only one is allowed): ${caddyNames.join(' ')}`
+      `Inventory validation: multiple entries flagged 'proxy: true' (only one is allowed): ${proxyNames.join(' ')}`
     );
   }
 
@@ -504,16 +501,16 @@ export function validateInventory(inv: Inventory): string[] {
     }
   }
 
-  const allEntries: Array<{ name: string; subdomains?: string[]; ip?: string; caddyManual?: boolean }> = [
+  const allEntries: Array<{ name: string; subdomains?: string[]; ip?: string; proxyManual?: boolean }> = [
     ...inv.hosts,
     ...inv.guests,
     ...(inv.externalSites ?? []),
   ];
   for (const entry of allEntries) {
-    // A caddyManual entry never produces a reverse_proxy target
-    // (buildCaddyBlock skips it outright), so it doesn't need an ip the way
+    // A proxyManual entry never produces a reverse_proxy target
+    // (buildRoutes skips it outright), so it doesn't need an ip the way
     // a normally-managed entry with subdomains does.
-    if (entry.caddyManual) continue;
+    if (entry.proxyManual) continue;
     if (entry.subdomains && entry.subdomains.length > 0 && !entry.ip) {
       errors.push(
         `Inventory validation: entry '${entry.name}' has 'subdomains' set but no 'ip' (would produce a broken reverse_proxy target)`
@@ -679,8 +676,8 @@ interface HostRow {
   ssh_port: number | null;
   ssh_identity_file: string | null;
   mid_scheme_json: string | null;
-  caddy: number;
-  caddy_manual: number | null;
+  proxy: number;
+  proxy_manual: number | null;
   ip: string | null;
   port: number | null;
   insecure_backend_tls: number | null;
@@ -706,8 +703,8 @@ interface GuestRow {
   auth_mode: string | null;
   oidc_redirect_uris_json: string | null;
   authentik: number | null;
-  caddy: number;
-  caddy_manual: number | null;
+  proxy: number;
+  proxy_manual: number | null;
   unprivileged: number | null;
   app: string | null;
   app_source: string | null;
@@ -763,8 +760,8 @@ export function loadInventory(path: string): Inventory {
       ssh_port: row.ssh_port ?? undefined,
       ssh_identity_file: row.ssh_identity_file ?? undefined,
       midScheme: row.mid_scheme_json ? JSON.parse(row.mid_scheme_json) : undefined,
-      caddy: row.caddy ? true : undefined,
-      caddyManual: row.caddy_manual ? true : undefined,
+      proxy: row.proxy ? true : undefined,
+      proxyManual: row.proxy_manual ? true : undefined,
       subdomains: subdomainsFor('host', row.name),
       ip: row.ip ?? undefined,
       port: row.port ?? undefined,
@@ -792,8 +789,8 @@ export function loadInventory(path: string): Inventory {
       authMode: (row.auth_mode ?? undefined) as 'forward' | 'oidc' | undefined,
       oidcRedirectUris: row.oidc_redirect_uris_json ? JSON.parse(row.oidc_redirect_uris_json) : undefined,
       authentik: row.authentik ? true : undefined,
-      caddy: row.caddy ? true : undefined,
-      caddyManual: row.caddy_manual ? true : undefined,
+      proxy: row.proxy ? true : undefined,
+      proxyManual: row.proxy_manual ? true : undefined,
       unprivileged: row.unprivileged === null ? undefined : !!row.unprivileged,
       app: row.app ?? undefined,
       appSource: (row.app_source ?? undefined) as 'custom' | undefined,
@@ -954,7 +951,7 @@ export function saveInventory(path: string, inv: Inventory): void {
   try {
     const tx = db.transaction((data: Inventory) => {
       db.prepare('DELETE FROM subdomains').run();
-      db.prepare('DELETE FROM caddy_owner').run();
+      db.prepare('DELETE FROM proxy_owner').run();
       db.prepare('DELETE FROM guests').run();
       db.prepare('DELETE FROM external_sites').run();
       db.prepare('DELETE FROM hosts').run();
@@ -974,14 +971,14 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertHost = db.prepare(`
-        INSERT INTO hosts (name, ssh_target, ssh_user, ssh_port, ssh_identity_file, caddy, caddy_manual, ip, port, insecure_backend_tls, bridges_json, storages_json, nfs_mounts_json, auth_group, auth_mode, oidc_redirect_uris_json, authentik, mid_scheme_json, unauthenticated_paths_json)
-        VALUES (@name, @ssh_target, @ssh_user, @ssh_port, @ssh_identity_file, @caddy, @caddy_manual, @ip, @port, @insecure_backend_tls, @bridges_json, @storages_json, @nfs_mounts_json, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @mid_scheme_json, @unauthenticated_paths_json)
+        INSERT INTO hosts (name, ssh_target, ssh_user, ssh_port, ssh_identity_file, proxy, proxy_manual, ip, port, insecure_backend_tls, bridges_json, storages_json, nfs_mounts_json, auth_group, auth_mode, oidc_redirect_uris_json, authentik, mid_scheme_json, unauthenticated_paths_json)
+        VALUES (@name, @ssh_target, @ssh_user, @ssh_port, @ssh_identity_file, @proxy, @proxy_manual, @ip, @port, @insecure_backend_tls, @bridges_json, @storages_json, @nfs_mounts_json, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @mid_scheme_json, @unauthenticated_paths_json)
       `);
       const insertSubdomain = db.prepare(
         'INSERT INTO subdomains (subdomain, owner_type, owner_name) VALUES (?, ?, ?)'
       );
-      const insertCaddyOwner = db.prepare(
-        'INSERT INTO caddy_owner (id, owner_type, owner_name) VALUES (1, ?, ?)'
+      const insertProxyOwner = db.prepare(
+        'INSERT INTO proxy_owner (id, owner_type, owner_name) VALUES (1, ?, ?)'
       );
 
       for (const host of data.hosts) {
@@ -991,8 +988,8 @@ export function saveInventory(path: string, inv: Inventory): void {
           ssh_user: host.ssh_user,
           ssh_port: host.ssh_port ?? null,
           ssh_identity_file: host.ssh_identity_file ?? null,
-          caddy: host.caddy ? 1 : 0,
-          caddy_manual: host.caddyManual ? 1 : null,
+          proxy: host.proxy ? 1 : 0,
+          proxy_manual: host.proxyManual ? 1 : null,
           ip: host.ip ?? null,
           port: host.port ?? null,
           insecure_backend_tls: host.insecureBackendTls == null ? null : host.insecureBackendTls ? 1 : 0,
@@ -1006,13 +1003,13 @@ export function saveInventory(path: string, inv: Inventory): void {
           mid_scheme_json: host.midScheme ? JSON.stringify(host.midScheme) : null,
           unauthenticated_paths_json: host.unauthenticatedPaths ? JSON.stringify(host.unauthenticatedPaths) : null,
         });
-        if (host.caddy) insertCaddyOwner.run('host', host.name);
+        if (host.proxy) insertProxyOwner.run('host', host.name);
         for (const subdomain of host.subdomains ?? []) insertSubdomain.run(subdomain, 'host', host.name);
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, caddy, caddy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @caddy, @caddy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -1023,8 +1020,8 @@ export function saveInventory(path: string, inv: Inventory): void {
           ip: guest.ip ?? null,
           port: guest.port ?? null,
           insecure_backend_tls: guest.insecureBackendTls == null ? null : guest.insecureBackendTls ? 1 : 0,
-          caddy: guest.caddy ? 1 : 0,
-          caddy_manual: guest.caddyManual ? 1 : null,
+          proxy: guest.proxy ? 1 : 0,
+          proxy_manual: guest.proxyManual ? 1 : null,
           unprivileged: guest.unprivileged === undefined ? null : guest.unprivileged ? 1 : 0,
           app: guest.app ?? null,
           app_source: guest.appSource ?? null,
@@ -1036,7 +1033,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           authentik: guest.authentik ? 1 : null,
           unauthenticated_paths_json: guest.unauthenticatedPaths ? JSON.stringify(guest.unauthenticatedPaths) : null,
         });
-        if (guest.caddy) insertCaddyOwner.run('guest', guest.name);
+        if (guest.proxy) insertProxyOwner.run('guest', guest.name);
         for (const subdomain of guest.subdomains ?? []) insertSubdomain.run(subdomain, 'guest', guest.name);
       }
 
@@ -1065,10 +1062,10 @@ export function saveInventory(path: string, inv: Inventory): void {
   }
 }
 
-// The single entry flagged `caddy: true` -- where Caddy actually runs.
+// The single entry flagged `proxy: true` -- where the reverse proxy runs.
 // Shared by render-status-page and scripts/windows-service.ts (whose
 // firewall rule scopes inbound access to that entry's ip), so neither has
 // to re-derive it or hardcode an address.
-export function findCaddyEntry(inv: Inventory): HostEntry | GuestEntry | undefined {
-  return [...inv.hosts, ...inv.guests].find((e) => e.caddy);
+export function findProxyEntry(inv: Inventory): HostEntry | GuestEntry | undefined {
+  return [...inv.hosts, ...inv.guests].find((e) => e.proxy);
 }

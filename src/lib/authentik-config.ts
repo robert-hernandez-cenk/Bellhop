@@ -1,7 +1,7 @@
 // Every Authentik-instance-specific value this toolkit needs, in one place.
 // Before issue #123 these were several hardcoded literals spread across
 // src/web/auth.ts, src/commands/networking/sync-authentik.ts,
-// src/commands/networking/sync-caddy.ts, src/lib/authentik-client.ts, and
+// src/commands/networking/sync-proxy.ts, src/lib/authentik-client.ts, and
 // two web-client files -- the two admin group names alone had five
 // independent copies. Defaults reproduce those literals exactly, so an
 // operator who sets none of these sees no behavior change at all.

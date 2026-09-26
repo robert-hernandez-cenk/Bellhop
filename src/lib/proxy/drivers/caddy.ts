@@ -9,11 +9,11 @@ const END_MARKER = '# END bellhop-managed';
 // Cloudflare (the API token is a Caddy-side env var this generator never
 // needs to see) with these two resolvers. Not inventory-configurable --
 // there's one domain, one DNS provider, one operator. Moved here verbatim
-// from src/commands/networking/sync-caddy.ts (issue #10, T010).
+// from src/commands/networking/sync-proxy.ts (issue #10, T010).
 const TLS_BLOCK = ['    tls {', '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}', '        resolvers 1.1.1.1 8.8.8.8', '    }'];
 
 // Renders every route into one Caddyfile managed section -- ported
-// verbatim from buildCaddyBlock (src/commands/networking/sync-caddy.ts)
+// verbatim from buildCaddyBlock (src/commands/networking/sync-proxy.ts)
 // with two changes: it reads the proxy-neutral ProxyRoute/ProxyContext
 // shapes instead of walking raw inventory entries directly (buildRoutes/
 // buildProxyContext have already done that derivation, including the

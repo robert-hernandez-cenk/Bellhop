@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import { MAINTENANCE_ACTIONS } from '../../../src/web/commands-meta.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -114,10 +115,10 @@ test('POST /api/maintenance/update-all/run marks the job failed when a target ha
   assert.match(job?.errorMessage ?? '', /unknown package manager: pve1/);
 });
 
-test('POST /api/maintenance/sync-caddy/preview returns the generated block without applying', async () => {
-  const inventoryWithCaddy: Inventory = {
+test('POST /api/maintenance/sync-proxy/preview returns the generated configuration without applying', async () => {
+  const inventoryWithProxy: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [],
   };
   const jobStore = new JobStore(':memory:');
@@ -125,9 +126,9 @@ test('POST /api/maintenance/sync-caddy/preview returns the generated block witho
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
-  saveInventory(inventoryPath, inventoryWithCaddy);
+  saveInventory(inventoryPath, inventoryWithProxy);
   const app = buildApp({
-    inventory: inventoryWithCaddy,
+    inventory: inventoryWithProxy,
     baseSsh: ssh,
     jobStore,
     jobLog,
@@ -135,9 +136,19 @@ test('POST /api/maintenance/sync-caddy/preview returns the generated block witho
     inventoryPath,
     authentik: new FakeAuthentikClient(),
   });
-  const res = await asAdmin(request(app).post('/api/maintenance/sync-caddy/preview')).send({});
+  const res = await asAdmin(request(app).post('/api/maintenance/sync-proxy/preview')).send({});
   assert.equal(res.status, 200);
   assert.match(res.body.preview, /BEGIN bellhop-managed/);
+
+  const old = await asAdmin(request(app).post('/api/maintenance/sync-caddy/preview')).send({});
+  assert.equal(old.status, 404, 'the old sync-caddy id is not an alias');
+});
+
+test('the maintenance command list offers Sync Proxy and no Sync Caddy', () => {
+  const ids = MAINTENANCE_ACTIONS.map((c) => c.id);
+  assert.ok(ids.includes('sync-proxy'));
+  assert.ok(!ids.includes('sync-caddy'));
+  assert.equal(MAINTENANCE_ACTIONS.find((c) => c.id === 'sync-proxy')?.label, 'Sync Proxy');
 });
 
 test('POST /api/maintenance/guest-power enqueues a job that runs pct start on the parent host', async () => {
@@ -221,7 +232,7 @@ test('POST /api/maintenance/push-ssh-key/apply enqueues a job with no single tar
   assert.equal(job?.status, 'success');
   // No single resource target -- a comma-joined guest list would never
   // match a permission rule, so this is left null (fleet-wide/admin-only),
-  // same as update-all/sync-inventory/sync-caddy. See isJobVisible.
+  // same as update-all/sync-inventory/sync-proxy. See isJobVisible.
   assert.equal(job?.target, null);
 });
 

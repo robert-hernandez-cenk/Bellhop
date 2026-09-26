@@ -7,7 +7,7 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 const inventory: Inventory = {
   domain: 'example.com',
   statusPagePath: '/usr/share/caddy/index.html',
-  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
   guests: [],
 };
 
@@ -18,12 +18,12 @@ test('buildStatusPageHtml embeds both files in <pre> blocks, HTML-escaped', () =
   assert.match(html, /<title>Homelab status<\/title>/);
 });
 
-test('runRenderStatusPage throws when no entry has caddy: true', async () => {
-  const noCaddy: Inventory = { ...inventory, hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }] };
+test('runRenderStatusPage throws when no entry has proxy: true', async () => {
+  const noProxy: Inventory = { ...inventory, hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }] };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   await assert.rejects(
-    () => runRenderStatusPage({}, { ssh, inventory: noCaddy }, 'domain: example.com'),
-    /No inventory entry has 'caddy: true'/
+    () => runRenderStatusPage({}, { ssh, inventory: noProxy }, 'domain: example.com'),
+    /No inventory entry has 'proxy: true'/
   );
 });
 
@@ -77,7 +77,7 @@ test('runRenderStatusPage throws when writing the status page fails', async () =
 test('runRenderStatusPage throws when statusPagePath is unset', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [],
   };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
@@ -91,7 +91,7 @@ test('runRenderStatusPage writes to the configured path', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
     statusPagePath: '/var/www/status.html',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [],
   };
   const ssh = new FakeSSHClient(() => ({ stdout: 'example.com { }', stderr: '', code: 0 }));
@@ -104,7 +104,7 @@ test('runRenderStatusPage single-quotes a statusPagePath containing a space', as
   const inventory: Inventory = {
     domain: 'example.com',
     statusPagePath: '/var/www/my status/index.html',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [],
   };
   const ssh = new FakeSSHClient(() => ({ stdout: 'example.com { }', stderr: '', code: 0 }));
@@ -112,32 +112,34 @@ test('runRenderStatusPage single-quotes a statusPagePath containing a space', as
   assert.ok(ssh.history.some((h) => h.command.includes("cat > '/var/www/my status/index.html'")));
 });
 
-test('runRenderStatusPage reads the Caddyfile from the given caddyfilePath', async () => {
+test('runRenderStatusPage reads the deployed configuration from the proxyConfigPath setting', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
     statusPagePath: '/var/www/status.html',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    proxyConfigPath: '/opt/caddy/Caddyfile',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [],
   };
   const ssh = new FakeSSHClient(() => ({ stdout: 'example.com { }', stderr: '', code: 0 }));
   await runRenderStatusPage(
-    { apply: false, caddyfilePath: '/opt/caddy/Caddyfile' },
+    { apply: false },
     { ssh, inventory },
     'domain: example.com\n'
   );
   assert.ok(ssh.history.some((h) => h.command === "cat '/opt/caddy/Caddyfile'"));
 });
 
-test('runRenderStatusPage single-quotes a caddyfilePath containing a space', async () => {
+test('runRenderStatusPage single-quotes a proxyConfigPath containing a space', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
     statusPagePath: '/var/www/status.html',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', caddy: true }],
+    proxyConfigPath: '/opt/my caddy/Caddyfile',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [],
   };
   const ssh = new FakeSSHClient(() => ({ stdout: 'example.com { }', stderr: '', code: 0 }));
   await runRenderStatusPage(
-    { apply: false, caddyfilePath: '/opt/my caddy/Caddyfile' },
+    { apply: false },
     { ssh, inventory },
     'domain: example.com\n'
   );

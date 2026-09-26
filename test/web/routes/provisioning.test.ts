@@ -30,7 +30,7 @@ const inventory: Inventory = {
       ssh_target: 'pve1.local',
       ssh_user: 'root',
       midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' },
-      caddy: true,
+      proxy: true,
       storages: [
         { name: 'local', type: 'dir', content: ['vztmpl'], active: true },
         { name: 'local-lvm', type: 'lvmthin', content: ['rootdir', 'images'], active: true },
@@ -908,7 +908,7 @@ test('POST /api/provisioning/install-app/apply fails with a 400 and does not wri
 test('POST /api/provisioning/delete-guest/preview returns the labeled destroy script without mutating anything', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'media', type: 'lxc', vmid: 4020, host: 'pve1' }],
   };
   const calls: string[] = [];
@@ -926,7 +926,7 @@ test('POST /api/provisioning/delete-guest/preview returns the labeled destroy sc
 test('POST /api/provisioning/delete-guest/apply destroys a stopped guest with no subdomains, removing it from inventory without touching Caddy', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'media', type: 'lxc', vmid: 4020, host: 'pve1' }],
   };
   const { app, jobStore } = isolatedApp(inv, (_t, _u, c) => {
@@ -945,7 +945,7 @@ test('POST /api/provisioning/delete-guest/apply destroys a stopped guest with no
 test('POST /api/provisioning/delete-guest/apply removes a subdomains-bearing guest and re-syncs Caddy', async () => {
   const inv: Inventory = {
     domain: 'example.com',
-    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true }],
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
     guests: [{ name: 'media', type: 'lxc', vmid: 4020, host: 'pve1', ip: '192.168.1.20', subdomains: ['media'] }],
   };
   const caddyCalls: string[] = [];
@@ -968,7 +968,7 @@ test('POST /api/provisioning/delete-guest/apply removes a gated guest\'s Authent
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true },
       { name: 'auth-lxc', ssh_target: 'auth.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' },
     ],
     guests: [
@@ -989,7 +989,7 @@ test('POST /api/provisioning/delete-guest/apply removes a gated guest\'s Authent
   });
 
   // Seed inventory's current gated state into Authentik first, the same way
-  // a real prior syncCaddyLive would have.
+  // a real prior syncProxyLive would have.
   await runSyncAuthentik({ apply: true }, { authentik, inventory: inv });
   assert.equal((await authentik.listApplications()).length, 1, 'sanity check: the Application must exist before deletion');
 
@@ -1012,7 +1012,7 @@ test('POST /api/provisioning/delete-guest/apply succeeds for a gated guest when 
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [
-      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, caddy: true },
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true },
       { name: 'auth-lxc', ssh_target: 'auth.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' },
     ],
     guests: [
@@ -1030,8 +1030,8 @@ test('POST /api/provisioning/delete-guest/apply succeeds for a gated guest when 
   // Before issue #123's fix wave, this call site called runSyncAuthentik
   // unconditionally -- UnconfiguredAuthentikClient.listApplications() then
   // rejects, failing the whole delete job even though the guest's Caddy
-  // config still needs to be torn down. Mirrors syncCaddyLive's own
-  // isConfigured() guard in src/web/caddy-sync.ts.
+  // config still needs to be torn down. Mirrors syncProxyLive's own
+  // isConfigured() guard in src/web/proxy-sync.ts.
   const { app, jobStore } = isolatedApp(
     inv,
     (_t, _u, c) => {
@@ -1049,11 +1049,11 @@ test('POST /api/provisioning/delete-guest/apply succeeds for a gated guest when 
   assert.ok(!invRes.body.guests.some((g: any) => g.name === 'sonarr'));
 });
 
-test('POST /api/provisioning/delete-guest/apply refuses to delete the caddy: true guest', async () => {
+test('POST /api/provisioning/delete-guest/apply refuses to delete the proxy: true guest', async () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' } }],
-    guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4010, host: 'pve1', caddy: true, ip: '192.168.1.10' }],
+    guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4010, host: 'pve1', proxy: true, ip: '192.168.1.10' }],
   };
   const { app, jobStore } = isolatedApp(inv, () => ({ stdout: 'status: stopped', stderr: '', code: 0 }));
   const res = await request(app).post('/api/provisioning/delete-guest/apply').send({ guest: 'caddy-lxc' });
@@ -1431,7 +1431,7 @@ test('POST /api/provisioning/migrate-guest/apply migrates the guest, updates inv
         ssh_target: 'pve-main.local',
         ssh_user: 'root',
         midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' },
-        caddy: true,
+        proxy: true,
         storages: [
           { name: 'local-lvm', type: 'lvmthin', content: ['rootdir', 'images'], active: true },
           { name: 'nas-proxmox', type: 'nfs', content: ['backup', 'rootdir', 'images'], active: true },

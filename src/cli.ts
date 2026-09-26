@@ -16,7 +16,7 @@ import { runGuestPower } from './commands/maintenance/guest-power.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from './commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/push-ssh-key.ts';
 import { runSetConfig } from './commands/maintenance/set-config.ts';
-import { runSyncCaddy } from './commands/networking/sync-caddy.ts';
+import { runSyncProxy } from './commands/networking/sync-proxy.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
 import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
 import { runOidcCredentials, formatOidcCredentials } from './commands/networking/oidc-credentials.ts';
@@ -52,10 +52,6 @@ dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
 export function fstabPath(): string | undefined {
   return process.env.FSTAB_PATH;
-}
-
-export function caddyfilePath(): string | undefined {
-  return process.env.CADDYFILE_PATH;
 }
 
 export function nfsServer(): string | undefined {
@@ -273,20 +269,20 @@ program
   );
 
 program
-  .command('sync-caddy')
-  .description('Generate and write Caddy reverse_proxy blocks from inventory subdomains')
-  .option('--apply', 'write the Caddyfile and reload Caddy (default: dry run)')
+  .command('sync-proxy')
+  .description('Generate and write reverse-proxy configuration from inventory subdomains')
+  .option('--apply', 'write the proxy configuration and reload the proxy (default: dry run)')
   .action(
     action(async (opts: { apply?: boolean }) => {
       const inventory = loadInventory(inventoryPath());
       const ssh = new Ssh2SSHClient();
-      const result = await runSyncCaddy({ ...opts, caddyfilePath: caddyfilePath() }, { ssh, inventory });
+      const result = await runSyncProxy(opts, { ssh, inventory });
       if (!result.applied) {
-        logInfo(`[DRY RUN] Generated managed block for ${result.caddyHost}:`);
-        console.log(result.block);
+        logInfo(`[DRY RUN] Generated ${result.driver} configuration for ${result.proxyHost}:`);
+        console.log(result.preview);
         return;
       }
-      logInfo(`Wrote managed block to ${result.caddyHost}`);
+      logInfo(`Wrote ${result.driver} configuration to ${result.proxyHost}`);
     })
   );
 
@@ -362,20 +358,20 @@ program
 
 program
   .command('render-status-page')
-  .description('Regenerate the LAN-only status page (bellhop.db + active Caddyfile) served on the Caddy host')
+  .description('Regenerate the LAN-only status page (bellhop.db + deployed proxy configuration) served on the proxy host')
   .option('--apply', 'write the status page (default: dry run)')
   .action(
     action(async (opts: { apply?: boolean }) => {
       const inventory = loadInventory(inventoryPath());
       const inventorySnapshot = stringify(inventory);
       const ssh = new Ssh2SSHClient();
-      const result = await runRenderStatusPage({ ...opts, caddyfilePath: caddyfilePath() }, { ssh, inventory }, inventorySnapshot);
+      const result = await runRenderStatusPage(opts, { ssh, inventory }, inventorySnapshot);
       if (!result.applied) {
-        logInfo(`[DRY RUN] Generated status page for ${result.caddyHost}:`);
+        logInfo(`[DRY RUN] Generated status page for ${result.proxyHost}:`);
         console.log(result.html);
         return;
       }
-      logInfo(`Wrote status page to ${result.caddyHost}`);
+      logInfo(`Wrote status page to ${result.proxyHost}`);
     })
   );
 

@@ -32,7 +32,7 @@ export interface AppDeps {
   jobRunner: JobRunner;
   inventoryPath: string;
   authentik: AuthentikClient;
-  // Used only by syncCaddyLive's stale _acme-challenge prune (issue #162).
+  // Used only by syncProxyLive's stale _acme-challenge prune (issue #162).
   // Optional and defaulted to unconfigured below, same as impersonationStore,
   // so tests that don't care about Cloudflare need no changes. server.ts
   // always passes buildCloudflareClient()'s result.
