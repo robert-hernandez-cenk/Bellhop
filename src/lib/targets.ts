@@ -45,8 +45,7 @@ export async function runRemote(
   ssh: SSHClient,
   inv: Inventory,
   name: string,
-  command: string,
-  opts?: { vmTimeoutSeconds?: number }
+  command: string
 ): Promise<ExecResult> {
   const target = resolveTarget(inv, name);
   switch (target.kind) {
@@ -60,12 +59,7 @@ export async function runRemote(
       return ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
     }
     case 'vm': {
-      // Per-call override of the default 60s wait (issue #2 code review R2)
-      // -- callers running a package install/upgrade command pass a much
-      // longer value, since apt et al. routinely outlast 60s and a
-      // dishonestly-short wait now reports a still-running install as
-      // failed while leaving its lock held for the next attempt.
-      const timeoutSeconds = opts?.vmTimeoutSeconds ?? VM_EXEC_TIMEOUT_SECONDS;
+      const timeoutSeconds = VM_EXEC_TIMEOUT_SECONDS;
       const remoteCmd = `qm guest exec ${target.guest.vmid} --timeout ${timeoutSeconds} -- sh -c ${shellQuote(command)}`;
       const result = await ssh.exec(hostSshTarget(target.parentHost), remoteCmd);
       if (result.code !== 0) {

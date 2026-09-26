@@ -16,7 +16,7 @@ export function MaintenancePage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [targetMode, setTargetMode] = useState<TargetMode>('host');
   const [targetHost, setTargetHost] = useState('');
-  const [targetGroup, setTargetGroup] = useState<'pve' | 'lxc' | 'vm'>('lxc');
+  const [targetGroup, setTargetGroup] = useState<'pve' | 'lxc'>('lxc');
   const [preview, setPreview] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [report, setReport] = useState<string | null>(null);
@@ -143,7 +143,6 @@ export function MaintenancePage() {
             <select className="field-input" value={targetGroup} onChange={(e) => setTargetGroup(e.target.value as any)}>
               <option value="pve">pve</option>
               <option value="lxc">lxc</option>
-              <option value="vm">vm</option>
             </select>
           )}
         </div>

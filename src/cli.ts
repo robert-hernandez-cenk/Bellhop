@@ -172,10 +172,10 @@ program
 
 program
   .command('update-all')
-  .description('Update OS packages on selected host(s)/guest(s)')
-  .option('--host <name>', 'target a single host or guest')
-  .option('--all', 'target every host and guest')
-  .option('--group <pve|lxc|vm>', 'target every entry of one type')
+  .description('Update OS packages on selected host(s)/guest(s) (VMs are never updated)')
+  .option('--host <name>', 'target a single host or guest (not a VM)')
+  .option('--all', 'target every host and every LXC guest (VMs are silently excluded)')
+  .option('--group <pve|lxc>', 'target every entry of one type (VMs are never updated)')
   .action(
     action(async (opts: { host?: string; all?: boolean; group?: 'pve' | 'lxc' | 'vm' }) => {
       const inventory = loadInventory(inventoryPath());

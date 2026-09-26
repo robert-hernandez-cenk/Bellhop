@@ -81,28 +81,41 @@ an `Error` naming the target, the manager (for install), the exit status, and tr
 `action()` wrapper already turns a thrown error into a logged message and exit code 1, and a
 thrown `apply()` already fails the web/MCP job, so throwing is the whole integration.
 
-## R6. Per-call VM wait for package commands (code review, issue #2)
+## R6. VMs are excluded from package update/install entirely (operator PR review, issue #2)
 
-**Decision**: `runRemote` takes an optional fourth argument, `opts?: { vmTimeoutSeconds?: number
-}`, used only by the `vm` branch (both the `qm guest exec --timeout <N>` flag and the timeout
-failure message); every other branch ignores it. It defaults to the existing 60s
-(`VM_EXEC_TIMEOUT_SECONDS`). A new exported constant, `PACKAGE_COMMAND_VM_TIMEOUT_SECONDS = 1800`
-(`src/lib/package-manager.ts`), is passed by `update-all`'s update call and
-`configure-guest`'s install call — the two places that send a package command to a VM — but not
-by `detectPackageManager`'s probe, which keeps the default 60s on every caller.
+**Decision**: neither `update-all` nor `configure-guest --packages` ever sends a package command
+to a VM. `selectUpdateTargets` (`src/commands/maintenance/update-all.ts`) is the one place
+`update-all`'s targets are decided: `{ all: true }` silently drops every `vm` guest from the
+result (hosts and lxc guests only); `{ group: 'vm' }` and `{ host: <vm-name> }` are explicit
+requests to target a VM, so both reject outright with a named error rather than silently
+resolving to nothing. `configure-guest --packages` on a guest of type `vm` throws before any
+remote call, in both dry run and apply — `--ssh-key` alone still works against a VM, since that
+step is unrelated to package management. Both `runUpdateAll` and `runConfigureGuest` call this
+check before doing anything else, so the operations-layer preview (which must equal apply) sees
+the same rejection/exclusion the CLI does.
 
-**Rationale**: once a VM timeout is honestly reported as a failure (FR-010) rather than the old
-`parsed.exitcode ?? 0` silent success, a flat 60s wait turns every ordinary `apt-get upgrade`/
-`apt-get install` on a VM into a false failure — apt routinely runs past a minute, and a failed
-`qm guest exec` leaves the dpkg lock held for whatever attempt runs next. Raising the *global*
-60s default instead was rejected: it would make any hung ordinary VM command (a stuck `pct
-config` scan, a bad `curl` probe, anything not package-related) block for 30 minutes before
-failing, trading one false-failure mode for a much longer hang on unrelated commands. A per-call
-option scopes the longer wait to exactly the two call sites that need it.
+This replaces the previous decision (a per-call `vmTimeoutSeconds` override on `runRemote`,
+defaulting to 60s and raised to `PACKAGE_COMMAND_VM_TIMEOUT_SECONDS = 1800` for a package
+command) — `runRemote`'s optional fourth argument and the exported timeout constant are both
+removed, since no caller sends a package command to a VM anymore. `runRemote`'s `vm` branch
+keeps its existing, non-package-specific handling of `VM_EXEC_TIMEOUT_SECONDS` (60s, unconfigurable
+per call), its timeout-envelope failure reporting, and its signal-killed-command failure
+reporting (R7 below) — those apply to every command still routed to a VM through `runRemote`
+(e.g. `guest-power`, `set-guest-vpn`), just no longer to a package command.
 
-**Alternatives considered**: a second `runRemoteLongTimeout` function (duplicates the whole `vm`
-branch for one differing constant); a `PackageManager`-keyed timeout table (no manager needs a
-different wait from another — the packages themselves, not the manager, are what run long).
+**Rationale**: the operator reviewing PR #23 asked that the package update/install mechanism
+never act on VMs at all, rather than working around the fact that a VM's package manager
+routinely outlasts a reasonable `qm guest exec` wait. Excluding VMs outright is simpler than
+tuning a timeout for them: there is no wait long enough to be both safe for a hung, unrelated VM
+command and comfortable for a full `apt-get upgrade`, and a VM's own packages are better updated
+from inside the VM itself (e.g. via a scheduled task, or interactively), which this toolkit does
+not model.
+
+**Alternatives considered**: keeping the per-call timeout override (rejected — it does not
+address the operator's actual objection, which is that this toolkit should not be in the business
+of blindly running package commands inside a VM at all); silently excluding a `--host`/`--group
+vm` selector too instead of rejecting it (rejected — an operator naming a VM explicitly has made
+a mistake worth surfacing, unlike `--all`, which is a request for "everything safe to update").
 
 ## R7. Signal-killed VM command (code review, issue #2)
 

@@ -102,17 +102,23 @@ command exits non-zero.
 - When both `--packages` and `--ssh-key` are given and the package step fails, the SSH key step
   does not run; the command fails at the first failure.
 - A package name containing shell metacharacters is still passed as a single quoted argument.
-- A VM guest command that outlives `qm guest exec`'s wait is reported as a failure naming
-  the timeout, not a success — this applies to every command routed to a VM through `runRemote`,
-  including `update-all`, not just `configure-guest`. That wait is 60s for an ordinary command
-  and 30 minutes (1800s) for a package install/upgrade command specifically — package operations
-  routinely outlast 60s, and a wait that short would report a still-running apt/dnf/etc. as
-  failed while leaving its lock held for the next attempt.
+- A VM guest command that outlives `qm guest exec`'s 60s wait is reported as a failure naming
+  the timeout, not a success — this applies to every command still routed to a VM through
+  `runRemote` (e.g. `guest-power`, `set-guest-vpn`). Package commands no longer reach this path
+  on a VM at all (see FR-011): neither `update-all` nor `configure-guest --packages` ever sends
+  one, so the 60s wait is never stretched for them.
 - A VM guest command killed by a signal (e.g. `kill -9`) returns an `exited: 1` envelope with a
   `signal` number and no `exitcode` at all — a shape distinct from the pid-only "still running"
   timeout envelope above. This is reported as a failure naming the killing signal, with whatever
   stdout/stderr the command produced before being killed, not misreported as a timeout with the
   output dropped.
+- `configure-guest --packages` on a VM rejects before any remote call is made, in both dry run
+  and apply; `--ssh-key` given alongside `--packages` on the same VM also sends nothing at all,
+  since the rejection happens before the SSH-key step runs. `--ssh-key` alone on a VM is
+  unaffected and still works.
+- `update-all --all` silently excludes every VM guest (hosts and lxc guests only); naming a VM
+  explicitly via `--host <vm-name>` or `--group vm` is treated as an operator mistake and rejects
+  with a named error rather than silently resolving to nothing.
 
 ## Requirements *(mandatory)*
 
@@ -138,15 +144,23 @@ command exits non-zero.
 - **FR-009**: The web UI and MCP `configure-guest` operation MUST pick up the new behavior
   without an interface change: preview shows the manager-specific command, and a failure fails
   the job.
-- **FR-010**: A VM guest command that outlives `qm guest exec`'s wait MUST be reported as a
+- **FR-010**: A VM guest command that outlives `qm guest exec`'s 60s wait MUST be reported as a
   failure naming the timeout, never as a success — `runRemote`'s `vm` branch MUST NOT treat a
-  timeout envelope (pid only, no `exitcode`) the same as a completed one. That wait MUST be
-  configurable per call (`runRemote`'s optional `vmTimeoutSeconds`), defaulting to 60s for an
-  ordinary command; `update-all`'s update command and `configure-guest`'s install command MUST
-  pass 30 minutes (1800s) instead, since package operations routinely outlast 60s. A VM guest
-  command killed by a signal (an `exited: 1` envelope carrying a `signal` number and no
-  `exitcode`) MUST be reported as a failure naming the signal, with whatever output the command
-  produced, rather than being treated as the timeout case above.
+  timeout envelope (pid only, no `exitcode`) the same as a completed one. A VM guest command
+  killed by a signal (an `exited: 1` envelope carrying a `signal` number and no `exitcode`) MUST
+  be reported as a failure naming the signal, with whatever output the command produced, rather
+  than being treated as the timeout case above.
+- **FR-011**: Neither `update-all` nor `configure-guest --packages` MUST ever send a package
+  command to a VM (operator decision on PR review, issue #2). `update-all`'s `--all` MUST
+  silently exclude every `vm` guest from its target list (hosts and lxc guests only); `--group
+  vm` and `--host <name>` naming a VM MUST both reject with a named error rather than silently
+  targeting nothing. `configure-guest --packages` on a guest of type `vm` MUST reject before any
+  remote call, in both dry run and apply; `--ssh-key` given in the same invocation MUST NOT run
+  either — the command fails outright rather than running the SSH-key step alone. `--ssh-key`
+  given without `--packages` MUST continue to work against a VM unchanged. This selection logic
+  MUST live in one place (`selectUpdateTargets` for `update-all`) so the operations-layer preview
+  and apply can never disagree (mirrors FR-009's "no interface change, but preview and apply
+  agree" requirement).
 
 ### Key Entities
 
@@ -179,3 +193,8 @@ command exits non-zero.
   preview (operator decision during design).
 - `configure-guest` is also reachable against a Proxmox host entry (its name lookup accepts
   hosts); detection applies there the same way.
+- VMs are excluded from package update/install entirely (FR-011) — an operator decision made
+  during PR #23's review, after the initial design (R6 in `research.md`) instead tried a longer
+  per-call `qm guest exec` wait for package commands sent to a VM. This toolkit does not manage
+  a VM's own packages at all going forward; updating them is left to whatever the VM itself runs
+  internally.

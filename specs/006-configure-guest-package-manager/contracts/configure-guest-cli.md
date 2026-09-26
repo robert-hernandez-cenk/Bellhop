@@ -31,10 +31,23 @@ unchanged (`[DRY RUN] Would ensure SSH key present on media`).
 | --- | --- |
 | Unknown inventory entry | `Unknown inventory entry: <name>` (unchanged) |
 | Neither flag | `Specify at least one of --packages or --ssh-key` (unchanged) |
+| `--packages` targets a VM | `configure-guest --packages does not install on VMs (<name> is a VM); install packages inside the VM itself` — thrown before any remote call, in dry run and apply; `--ssh-key` given in the same invocation also does not run |
 | Unrecognized OS | `UnknownPackageManagerError`: `No known package manager on media (tried apt-get, dnf, apk, pacman, zypper); install the packages on media by hand` |
 | Probe exits non-zero | `Package-manager probe failed on media (exit 127): <stderr or "no output">` |
 | Install exits non-zero | `Package install failed on media (apk, exit 1): <stderr or "no output">` |
 | SSH-key step exits non-zero | `Adding SSH key on media failed (exit 1): <stderr or "no output">` |
 | Connection failure | the `runRemote` error, as today |
 
-The first failure stops the run: if `--packages` fails, `--ssh-key` is not attempted.
+The first failure stops the run: if `--packages` fails, `--ssh-key` is not attempted. A VM
+target's `--packages` rejection happens before any remote call at all, so it counts as the first
+failure even ahead of the probe. `--ssh-key` given alone (no `--packages`) is unaffected by a VM
+target and still runs.
+
+## `update-all` (companion command, same VM exclusion)
+
+`--group <pve|lxc>` (no longer accepts `vm`); `--host <name>` naming a VM guest rejects with
+`update-all does not update VMs (<name> is a VM); update packages inside the VM itself`;
+`--group vm` rejects with `update-all does not update VMs; update packages inside the VM
+itself`; `--all` silently excludes every VM guest from its target list. The web/MCP `update-all`
+operation's `group` field is narrowed to the same two values, and its preview calls the same
+`selectUpdateTargets` function apply uses, so preview and apply can never disagree.

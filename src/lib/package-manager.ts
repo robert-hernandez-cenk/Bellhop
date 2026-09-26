@@ -19,17 +19,6 @@ const PACKAGE_MANAGERS: readonly PackageManager[] = ['apt', 'dnf', 'apk', 'pacma
 //
 // apt-get is tested first so Debian/Ubuntu -- every guest currently in this
 // homelab -- short-circuits on the first test.
-// runRemote's default 60s VM wait (VM_EXEC_TIMEOUT_SECONDS, src/lib/
-// targets.ts) is honest about a still-running command now that it's
-// reported as a failure rather than silently coerced to success -- but
-// package upgrades/installs routinely outlast 60s, and a wait that short
-// would report a still-running apt as failed while leaving its lock held
-// for the next attempt. UPDATE_COMMANDS/INSTALL_COMMANDS below pass this
-// via runRemote's `vmTimeoutSeconds` option (issue #2 code review R2) for
-// the actual package command; the package-manager probe itself keeps the
-// default 60s.
-export const PACKAGE_COMMAND_VM_TIMEOUT_SECONDS = 1800;
-
 export const PROBE_COMMAND = [
   'if command -v apt-get >/dev/null 2>&1; then echo apt',
   'elif command -v dnf >/dev/null 2>&1; then echo dnf',

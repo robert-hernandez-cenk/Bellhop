@@ -236,21 +236,51 @@ test('runConfigureGuest rejects when the ssh-key step exits non-zero, naming the
   );
 });
 
-// Issue #2 code review R2: a VM guest's package install routinely outlasts
-// runRemote's default 60s qm guest exec wait, so configure-guest passes the
-// longer PACKAGE_COMMAND_VM_TIMEOUT_SECONDS for the install command itself
-// -- the package-manager probe ahead of it keeps the default 60s.
-test('runConfigureGuest sends the 1800s package-command VM timeout for a vm guest install, keeping the probe at 60s', async () => {
-  const ssh = new FakeSSHClient((_target, _user, cmd) => {
-    if (cmd.includes('command -v apt-get')) {
-      return { stdout: JSON.stringify({ exitcode: 0, 'out-data': 'apt\n', 'err-data': '' }), stderr: '', code: 0 };
-    }
-    return { stdout: JSON.stringify({ exitcode: 0, 'out-data': '', 'err-data': '' }), stderr: '', code: 0 };
-  });
-  await runConfigureGuest({ guest: 'windows-guest', packages: 'curl', apply: true }, { ssh, inventory });
-  assert.equal(ssh.history.length, 2, 'probe, install');
-  assert.match(ssh.history[0].command, /--timeout 60 --/);
-  assert.match(ssh.history[1].command, /--timeout 1800 --/);
+// Issue #2 (operator PR feedback): configure-guest --packages must never
+// install on a VM -- the check runs before any remote call, in both dry run
+// and apply.
+test('runConfigureGuest --packages on a VM rejects with no remote call at all (dry run)', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'windows-guest', packages: 'curl' }, { ssh, inventory }),
+    /configure-guest --packages does not install on VMs \(windows-guest is a VM\); install packages inside the VM itself/
+  );
+  assert.equal(ssh.history.length, 0, 'no probe, no install -- rejected before any remote call');
+});
+
+test('runConfigureGuest --packages on a VM rejects with no remote call at all (apply)', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runConfigureGuest({ guest: 'windows-guest', packages: 'curl', apply: true }, { ssh, inventory }),
+    /configure-guest --packages does not install on VMs \(windows-guest is a VM\); install packages inside the VM itself/
+  );
+  assert.equal(ssh.history.length, 0, 'no probe, no install -- rejected before any remote call');
+});
+
+test('runConfigureGuest --packages and --ssh-key together on a VM reject, sending nothing at all', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () =>
+      runConfigureGuest(
+        { guest: 'windows-guest', packages: 'curl', sshKey: 'ssh-ed25519 AAAA test', apply: true },
+        { ssh, inventory }
+      ),
+    /configure-guest --packages does not install on VMs \(windows-guest is a VM\); install packages inside the VM itself/
+  );
+  assert.equal(ssh.history.length, 0, 'neither the install nor the ssh-key command is sent');
+});
+
+test('runConfigureGuest --ssh-key alone still works on a VM, sending its one command', async () => {
+  // windows-guest is a vm target, so runRemote's vm branch expects a qm
+  // guest exec JSON envelope on stdout, not a bare ExecResult.
+  const ssh = new FakeSSHClient(() => ({
+    stdout: JSON.stringify({ exitcode: 0, 'out-data': '', 'err-data': '' }),
+    stderr: '',
+    code: 0,
+  }));
+  await runConfigureGuest({ guest: 'windows-guest', sshKey: 'ssh-ed25519 AAAA test', apply: true }, { ssh, inventory });
+  assert.equal(ssh.history.length, 1, 'the ssh-key command still runs on a VM');
+  assert.match(ssh.history[0].command, /authorized_keys/);
 });
 
 test('runConfigureGuest with both flags never sends the ssh-key command when the install fails', async () => {
