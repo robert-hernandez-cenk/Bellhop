@@ -72,17 +72,18 @@ cancelled.
 **Acceptance Scenarios**:
 
 1. **Given** a running job owned by an MCP process, **When** the operator presses Stop, **Then**
-   the job ends as cancelled, the web UI receives a success response, and the job's log records that
-   the stop was requested from the web UI and by whom.
+   the web UI gets an immediate "requested" response, the job ends as cancelled shortly after (seen
+   on the live page), and the job's log records that the stop was requested from the web UI and by
+   whom.
 2. **Given** a job owned by an MCP process that is paused on a prompt, **When** the operator
    submits an answer, **Then** the answer reaches the installer, the job resumes, and the log
    records where the answer came from and by whom (never the answer text itself, which may be a
    secret).
 3. **Given** the same paused job, **When** the operator dismisses the prompt, **Then** the job
    resumes watching without anything being sent to the installer.
-4. **Given** a job owned by an MCP process that already finished, or is not paused on a prompt,
-   **When** the operator stops, answers or dismisses it, **Then** they get the same "nothing to
-   cancel/answer/dismiss" refusal a web-owned job in that state gives.
+4. **Given** a job owned by an MCP process that the jobs database already shows as finished, or as
+   not paused on a prompt, **When** the operator stops, answers or dismisses it, **Then** they get
+   the same "nothing to cancel/answer/dismiss" refusal a web-owned job in that state gives.
 5. **Given** a job whose owning MCP process is no longer running, **When** the operator tries to
    act on it, **Then** the request is refused immediately with a message saying the owning process
    has exited, rather than waiting.
@@ -103,25 +104,27 @@ ends as cancelled.
 **Acceptance Scenarios**:
 
 1. **Given** a running job owned by the web service, **When** the MCP stop tool is called on it,
-   **Then** the web service cancels it and the tool reports success.
+   **Then** the tool reports the stop as requested and the web service cancels the job shortly
+   after.
 2. **Given** a web-owned job paused on a prompt, **When** the MCP answer or dismiss tool is called
-   on it, **Then** the web service applies it and the tool reports success; the web UI's open
-   job page updates as it would for a local answer.
+   on it, **Then** the tool reports it as requested, the web service applies it, and the web UI's
+   open job page updates as it would for a local answer.
 3. **Given** a job owned by another process, **When** the MCP wait tool is called on it, **Then**
    it is still refused as not owned by this process (waiting and relaying prompts through the
    assistant stay limited to the owning process).
 
 ### Edge Cases
 
-- The owning process is alive but does not act on a request (hung, or busy past the wait limit):
-  the requester gets a clear timeout error naming the owner and saying the request may still be
-  applied later, rather than hanging.
+- The owning process is alive but slow to act on a request: the requester has already been told the
+  request was recorded, and nothing waits on the owner. The request is applied when the owner next
+  checks, or never, if the job finishes first.
 - The owning process exits while a request is waiting: the request is never applied; the job is
   closed out as interrupted by the existing orphan cleanup, and a later request is refused as
   "owner has exited".
 - Two requests for the same job arrive close together (for example, Stop pressed in the web UI
-  while an assistant answers the prompt): each is applied in the order received, and the second
-  gets whatever result applies at that point ("nothing to answer" if the job was already stopped).
+  while an assistant answers the prompt): each is applied in the order received; one that no
+  longer applies when its turn comes (an answer to a job already stopped) is dropped, and the owner
+  records that it was not applied.
 - A prompt is answered from one process just as it was replaced by a new prompt: the answer goes
   to whichever prompt is pending when the owner applies it. This is the same seconds-long race
   today's in-process answer path already has and is accepted.
@@ -162,15 +165,18 @@ ends as cancelled.
 - **FR-009**: A request for a job owned by another process MUST be recorded durably in the shared
   jobs database, and the owning process MUST pick it up and apply it using the same stop, answer
   and dismiss behavior it uses for its own local requests.
-- **FR-010**: The owning process MUST record the outcome of each request it picks up (applied, or
-  not applicable because the job is not in a state for it), and the requester MUST report that
-  outcome with the same success or "nothing to do" result a local request would give.
+- **FR-010**: Before recording a request, the requester MUST check the job's current state in the
+  shared jobs database and refuse, with the same "nothing to cancel/answer/dismiss" result a local
+  request gives, when the job is already finished (stop) or not paused on a prompt (answer,
+  dismiss). Otherwise it MUST record the request and return at once, reporting it as requested; it
+  MUST NOT wait for the owner to act. The owning process MUST mark each request handled, noting
+  whether it was applied or no longer applicable.
 - **FR-011**: The owning process MUST check for new requests often enough that a request is applied
   within about one second in normal conditions. It MUST NOT do this work while it has no queued,
   running or paused jobs.
-- **FR-012**: The requester MUST wait a bounded time (about five seconds) for the outcome. If none
-  arrives, it MUST return a clear error naming the owner and noting the request may still be
-  applied.
+- **FR-012**: The result of a request on a job owned by another process MUST be observable through
+  the job itself (its status, prompt state and log, including the live view in FR-001 to FR-003).
+  The owner does not acknowledge a request back to the requester.
 - **FR-013**: A request for a job whose owner is an MCP process that is no longer running MUST be
   refused immediately with a message saying the owning process has exited.
 - **FR-014**: A request MUST only be applied to a job that is still queued, running or paused; a
@@ -206,8 +212,8 @@ ends as cancelled.
 
 - **SC-001**: For a job started over MCP, the web UI job page reflects new output, status changes and
   prompt changes within 2 seconds, with no reload, in 100% of trials in the automated tests.
-- **SC-002**: Stop, answer and dismiss on a job owned by another live process take effect and report
-  their outcome to the requester within 2 seconds in normal conditions.
+- **SC-002**: Stop, answer and dismiss on a job owned by another live process return to the requester
+  at once (under half a second) and take effect within 2 seconds in normal conditions.
 - **SC-003**: A request aimed at a job whose owning MCP process has exited is refused in under
   half a second, without waiting for a timeout.
 - **SC-004**: No regression: every existing job, streaming and control test for jobs owned by the
