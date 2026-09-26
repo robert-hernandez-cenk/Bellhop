@@ -38,7 +38,13 @@ and no-PR branches untouched.
    git -C <worktree-path> status --short
    ```
    Non-empty output means uncommitted work — stop and ask the user rather
-   than discarding it.
+   than discarding it. The one exception is the Spec Kit bridge state the
+   speckit-superpowers bridge leaves untracked in a worktree —
+   `.specify/bridge-events.jsonl`, `.specify/bridge-snapshots/`, and
+   `.specify/superpowers-handoff.json`, shown as `??` lines. Those don't
+   count as uncommitted work: once the PR has merged into `main`, delete
+   them and carry on (`git worktree remove` refuses a worktree with
+   untracked files).
 
 5. **Remove worktree, then local branch** (use `-d`, not `-D` — a
    fully-merged check protects against deleting unmerged work):
@@ -71,3 +77,6 @@ and no-PR branches untouched.
   auto-delete already ran.
 - Force-removing a worktree (`git worktree remove --force`) without
   checking `git status --short` first.
+- Leaving a merged worktree in place because its only changes are the
+  untracked Spec Kit bridge files — delete them and prune. Tracked
+  `.specify/` changes, or any other untracked file, still block pruning.
