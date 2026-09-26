@@ -73,6 +73,21 @@ test('checkCapabilities: mirror message for an OIDC route on a forward-only driv
   );
 });
 
+test('checkCapabilities: never suggests the other auth mode when the driver cannot enforce that one either', () => {
+  const driver = fakeDriver('ungated-only', []);
+  const errors = checkCapabilities(
+    [route('forward-app', { mode: 'forward', exemptPaths: [], rawExemptPaths: [] }), route('oidc-app', { mode: 'oidc' })],
+    driver
+  );
+  assert.deepEqual(
+    errors.map((e) => e.message),
+    [
+      "Entry 'forward-app' uses forward-auth gating, but the 'ungated-only' proxy driver cannot enforce it -- clear authGroup or choose a proxyDriver that supports it",
+      "Entry 'oidc-app' uses OIDC gating, but the 'ungated-only' proxy driver cannot enforce it -- clear authGroup or choose a proxyDriver that supports it",
+    ]
+  );
+});
+
 test('checkCapabilities: one error per offending route, in route order', () => {
   const driver = fakeDriver('oidc-only', ['oidc']);
   const routes = [
