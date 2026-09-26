@@ -114,6 +114,13 @@ bellhop migrate-guest --guest media --to-host pve2 --apply
 bellhop migrate-guest --guest media --to-host pve2 --mid 15 --backup-storage nas-proxmox --storage local-lvm --apply
 ```
 
+`configure-guest --packages` detects the guest's own package manager
+(apt/dnf/apk/pacman/zypper) and installs with it, rather than assuming
+`apt-get` — even the dry run makes one live SSH call to the guest to show
+the exact install command it would run (e.g. `[DRY RUN] Would install on
+media (apk): apk update && apk add 'curl' 'vim'`). An unrecognized OS, a
+failed probe, or a failed install all exit 1 rather than reporting success.
+
 `--mid <N>` (1-254) is required by `create-lxc`, `create-vm`, and
 `install-app`. It derives both the VMID and the guest's IP/gateway from the
 target host's `midScheme` in inventory: `vmid = midScheme.vmidBase + N`, `ip

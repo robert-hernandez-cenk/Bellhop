@@ -434,6 +434,17 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   rather than an inventory field: Proxmox's own `ostype` is a
   creation-time label (and a useless generic `l26` for every VM), while
   `command -v` is ground truth and self-corrects if a guest's OS changes.
+  As of issue #2 the probe-then-classify step itself is shared:
+  `detectPackageManager` (`src/lib/package-manager.ts`) runs
+  `PROBE_COMMAND` and classifies the result, and both `update-all` and
+  `configure-guest --packages` call it — only the *reaction* to an
+  unrecognized OS differs, left to the caller: `update-all` still buckets
+  it into `failUnknownPm` and keeps going across its many targets, while
+  `configure-guest` (a single-target command) throws
+  `UnknownPackageManagerError` instead. `configure-guest --packages`
+  installs the requested packages with the detected manager via
+  `INSTALL_COMMANDS`, an `UPDATE_COMMANDS`-shaped table of install (rather
+  than upgrade) commands living alongside it in the same file.
 - **Dry-run convention**: anything that mutates infrastructure or the
   inventory file (`create-lxc`, `create-vm`, `configure-guest`,
   `sync-caddy`, `migrate-nfs-mount`, `attach-nfs-mount`, `sync-inventory`)
@@ -452,7 +463,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   resolution already established (`resolveNfsMountPath` makes a live
   `pvesh get /storage/<id>` call during preview when NFS options are
   given), except this one happens unconditionally on every dry run, not
-  just when an optional flag is set.
+  just when an optional flag is set. `configure-guest --packages`'s dry
+  run (issue #2) joins this same group: it now also makes one live probe
+  call (`detectPackageManager`, above) against the target guest before
+  printing its preview line, so a dry run names the exact detected
+  package manager and install command apply would send rather than
+  guessing `apt-get` — a `--ssh-key`-only dry run still makes no remote
+  calls at all, since only `--packages` has anything to detect.
 - **`sync-caddy`** (`src/commands/networking/sync-caddy.ts`) writes into a
   delimited managed section of the Caddyfile
   (`# BEGIN bellhop-managed` / `# END bellhop-managed`) on whichever

@@ -84,9 +84,9 @@ responder pattern in `test/commands/update-all.test.ts` (probe calls are recogni
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T013 [P] Update `README.md`'s `configure-guest` section: packages install with the guest's detected manager (apt/dnf/apk/pacman/zypper), the dry run contacts the guest to show the exact command, failures exit 1
-- [ ] T014 [P] Update `CLAUDE.md`: the "Targeting flags" bullet (package-manager detection is now shared by `update-all` and `configure-guest`), and the "Dry-run convention" bullet (`configure-guest --packages` dry run now makes one live probe call, like `create-lxc`/`install-app`)
-- [ ] T015 Run `npm run typecheck`, `npm test`, and `npm run web:build`; all pass (quickstart.md, automated section)
+- [x] T013 [P] Update `README.md`'s `configure-guest` section: packages install with the guest's detected manager (apt/dnf/apk/pacman/zypper), the dry run contacts the guest to show the exact command, failures exit 1
+- [x] T014 [P] Update `CLAUDE.md`: the "Targeting flags" bullet (package-manager detection is now shared by `update-all` and `configure-guest`), and the "Dry-run convention" bullet (`configure-guest --packages` dry run now makes one live probe call, like `create-lxc`/`install-app`)
+- [x] T015 Run `npm run typecheck`, `npm test`, and `npm run web:build`; all pass (quickstart.md, automated section)
 
 ---
 
