@@ -100,7 +100,7 @@ export function SettingsPage() {
 
   return (
     <div>
-      <h1>Settings</h1>
+      <h2>Settings</h2>
       <PageDescription>
         Inventory-wide values a few commands read. Every one of them is optional -- each field
         below says what happens while it is unset. The same values can be set from the CLI with{' '}
@@ -143,7 +143,7 @@ export function SettingsPage() {
           </div>
         ))}
       </div>
-      <h2>Derived (read-only)</h2>
+      <h3>Derived (read-only)</h3>
       <PageDescription>
         Not configured anywhere -- read from inventory itself. Shown so it is clear what these
         resolve to today.
