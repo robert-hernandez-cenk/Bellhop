@@ -4,6 +4,7 @@ import { runRemote } from '../../lib/targets.ts';
 import { parseNfsLines } from '../../lib/nfs.ts';
 import { logWarn } from '../../lib/log.ts';
 import { errorMessage, exitCodeError, type TargetFailure } from '../../lib/target-failure.ts';
+import { settingFix } from '../../lib/settings-hint.ts';
 
 export interface SyncInventoryOptions {
   apply?: boolean;
@@ -91,7 +92,7 @@ export async function runSyncInventory(
   // maintenance.ts), which would otherwise give no indication at all that
   // the scan was skipped.
   if (nfsMountsSkipped) {
-    logWarn('nfsServer is not set -- skipping NFS mount discovery -- run: bellhop set-config nfsServer <ip> --apply');
+    logWarn(`nfsServer is not set -- skipping NFS mount discovery -- ${settingFix('nfsServer', '<ip>')}`);
   }
   const finalGuests: GuestEntry[] = [];
   const newEntries: string[] = [];
@@ -313,7 +314,7 @@ export function formatSyncInventory(result: SyncInventoryResult): string {
     }
   }
   if (result.nfsMountsSkipped) {
-    lines.push('NFS mounts: skipped -- nfsServer is not set -- run: bellhop set-config nfsServer <ip> --apply');
+    lines.push(`NFS mounts: skipped -- nfsServer is not set -- ${settingFix('nfsServer', '<ip>')}`);
   } else {
     const okNfsMountHosts = result.hosts.length - result.nfsMountFailures.length;
     lines.push(`NFS fstab mounts refreshed for ${okNfsMountHosts}/${result.hosts.length} host(s)`);

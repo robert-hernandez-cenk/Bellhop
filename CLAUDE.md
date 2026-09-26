@@ -246,7 +246,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   or two commands that read the first four fail with a named error
   pointing at `set-config` rather than silently falling back to this repo
   author's values, since a wrong IP is worse than a missing one for any
-  other operator. `customScriptsRepo`/`customScriptsBranch` are validated
+  other operator. That error also names the web UI's Settings page,
+  via the shared `settingFix(key, valueHint)` helper
+  (`src/lib/settings-hint.ts`, issue #20) every such message ends with, so
+  a CLI reader and a web-UI-only operator get the same two remedies no
+  matter which front end raised it. `customScriptsRepo`/`customScriptsBranch` are validated
   individually by `SettingsSchema` (owner/repo shape; git branch-name
   shape) but their both-or-neither cross-field rule is deliberately *not*
   in the schema — `set-config` writes one key at a time, so a schema-level

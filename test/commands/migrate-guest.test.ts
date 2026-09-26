@@ -127,7 +127,7 @@ test('runMigrateGuest throws when backupStorage is unset and no flag is given', 
         { guest: 'media', toHost: 'pve-secondary' },
         { ssh, inventory: inv, inventoryPath: tempInventoryPath() }
       ),
-    /backupStorage is not set/
+    /backupStorage is not set -- run: bellhop set-config backupStorage <storage-id> --apply, or set it on the web UI's Settings page, or pass --backup-storage/
   );
   assert.equal(ssh.history.length, 0);
 });

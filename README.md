@@ -61,6 +61,22 @@ other than `import-yaml-inventory` — everything else reads
 `inventory/bellhop.db`, so re-run the import command above any time you
 change the hand-edited `hosts.yaml` copy.
 
+### Inventory-wide settings (before your first sync)
+
+A few operator-specific values — your NAS's `nfsServer` IP chief among
+them — live in the inventory database rather than in code, and are unset
+by default. Set them before your first `sync-inventory`, so it can do
+things like discover NFS mounts right away instead of skipping that scan
+and printing a reminder:
+
+```bash
+bellhop set-config nfsServer <ip> --apply
+```
+
+The web UI's Settings page sets the same values, for anyone who'd rather
+not use the CLI. See "Inventory-wide settings" below for the full list and
+what happens when a value stays unset.
+
 ## Usage
 
 All commands are run as `bellhop <command> [flags]` (after `npm link`)

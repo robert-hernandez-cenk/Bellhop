@@ -51,22 +51,22 @@ None. The three stories touch disjoint files except README.md and CLAUDE.md, whi
 
 **Independent Test**: `test/lib/settings-hint.test.ts` and the tightened command tests pass. The README Setup section shows the settings step before any `sync-inventory` instruction.
 
-- [ ] T005 [P] [US2] Write a failing test in test/lib/settings-hint.test.ts: `settingFix('nfsServer', '<ip>')` returns exactly `run: bellhop set-config nfsServer <ip> --apply, or set it on the web UI's Settings page`.
-- [ ] T006 [US2] Implement `settingFix(key: SettingKey, valueHint: string): string` in src/lib/settings-hint.ts. Type `key` from `SETTINGS_KEYS` in src/lib/inventory.ts (`(typeof SETTINGS_KEYS)[number]`, or the existing exported key type if there is one). Make T005 pass.
-- [ ] T007 [P] [US2] Tighten these assertions so each also requires `or set it on the web UI's Settings page`, and confirm they fail first:
+- [x] T005 [P] [US2] Write a failing test in test/lib/settings-hint.test.ts: `settingFix('nfsServer', '<ip>')` returns exactly `run: bellhop set-config nfsServer <ip> --apply, or set it on the web UI's Settings page`.
+- [x] T006 [US2] Implement `settingFix(key: SettingKey, valueHint: string): string` in src/lib/settings-hint.ts. Type `key` from `SETTINGS_KEYS` in src/lib/inventory.ts (`(typeof SETTINGS_KEYS)[number]`, or the existing exported key type if there is one). Make T005 pass.
+- [x] T007 [P] [US2] Tighten these assertions so each also requires `or set it on the web UI's Settings page`, and confirm they fail first:
   - test/commands/sync-inventory.test.ts: the summary line, plus the warning line if one is captured.
   - test/commands/migrate-nfs-mount.test.ts
   - test/commands/set-guest-vpn.test.ts
   - test/commands/migrate-guest.test.ts: also keep asserting `or pass --backup-storage`.
   - test/commands/render-status-page.test.ts: the thrown error, and the skip-line helper if it is exported and tested.
-- [ ] T008 [US2] Replace the hand-written fix phrase with `settingFix(...)` in each message below. Keep the lead-ins exactly as in contracts/ui-and-messages.md, then make T007 pass.
+- [x] T008 [US2] Replace the hand-written fix phrase with `settingFix(...)` in each message below. Keep the lead-ins exactly as in contracts/ui-and-messages.md, then make T007 pass.
   - src/commands/maintenance/sync-inventory.ts: warning (line ~94) and summary (line ~316)
   - src/commands/provisioning/migrate-nfs-mount.ts (~25)
   - src/commands/provisioning/set-guest-vpn.ts (~91)
   - src/commands/provisioning/migrate-guest.ts (~169): `, or pass --backup-storage` tail kept
   - src/commands/networking/render-status-page.ts: skip line (~41) and thrown error (~68)
-- [ ] T009 [US2] Grep the other test and source files (`test/`, `src/`) for the old exact strings (e.g. `set-config nfsServer <ip> --apply'`, or full-string equality on these messages) and update any that the new suffix breaks.
-- [ ] T010 [US2] README.md Setup: after the import-inventory step, add a short "Inventory-wide settings (before your first sync)" step. It shows `bellhop set-config nfsServer <ip> --apply`, says the web UI's Settings page sets the same values, explains that setting `nfsServer` first lets the first `sync-inventory` discover NFS mounts, and links to the full "Inventory-wide settings" section (research R5). In CLAUDE.md, where it says the commands reading these settings "fail with a named error pointing at `set-config`", add that the message also names the web UI's Settings page, via `settingFix` in `src/lib/settings-hint.ts`.
+- [x] T009 [US2] Grep the other test and source files (`test/`, `src/`) for the old exact strings (e.g. `set-config nfsServer <ip> --apply'`, or full-string equality on these messages) and update any that the new suffix breaks.
+- [x] T010 [US2] README.md Setup: after the import-inventory step, add a short "Inventory-wide settings (before your first sync)" step. It shows `bellhop set-config nfsServer <ip> --apply`, says the web UI's Settings page sets the same values, explains that setting `nfsServer` first lets the first `sync-inventory` discover NFS mounts, and links to the full "Inventory-wide settings" section (research R5). In CLAUDE.md, where it says the commands reading these settings "fail with a named error pointing at `set-config`", add that the message also names the web UI's Settings page, via `settingFix` in `src/lib/settings-hint.ts`.
 
 **Checkpoint**: `npm run typecheck && npm test` pass.
 
