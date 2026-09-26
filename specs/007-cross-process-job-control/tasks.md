@@ -178,10 +178,16 @@ request; state refusals and dead-owner refusal return 409; a second runner ownin
 - [x] T018 [P] Update `README.md` "MCP server" section with one short paragraph: jobs the MCP server
   starts appear in the web UI's Job History with live output and working Stop/answer controls, and
   the MCP control tools can act on web-started jobs.
-- [ ] T019 Run `npm --prefix <worktree> run typecheck`, `npm --prefix <worktree> test`,
+- [x] T019 Run `npm --prefix <worktree> run typecheck`, `npm --prefix <worktree> test`,
   `npm --prefix <worktree> run web:build`; all pass.
-- [ ] T020 Manual quickstart (`quickstart.md` "Manual" section) against the real web service and MCP
+- [x] T020 Manual quickstart (`quickstart.md` "Manual" section) against the real web service and MCP
   server where available, including desktop and ≤640px viewports; record anything not verifiable.
+  Done 2026-09-26 with the real web service and a second process owning the job through a real
+  `JobRunner` (`mcp:<pid>` owner, fake SSH, temporary `WEB_DATA_DIR`): live backlog, numbered prompt
+  banner, answer from the web UI applied by the owner (attribution line, no answer text), live
+  output afterwards, Stop → cancelled with attribution, both request rows `applied` with text
+  cleared. Not verified: the ≤640px viewport (the browser window could not be resized; no web-client
+  code changed), and a real `npm run mcp` session against real infrastructure.
 
 ---
 
