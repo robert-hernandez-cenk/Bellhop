@@ -13,6 +13,9 @@ import {
   effectiveAuth,
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
+import { buildRoutes } from '../lib/proxy/routes.ts';
+import { getDriver } from '../lib/proxy/index.ts';
+import { checkCapabilities } from '../lib/proxy/driver.ts';
 import { syncProxyLive } from '../web/proxy-sync.ts';
 import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
@@ -118,6 +121,23 @@ export async function commitGuestEdit(
   // own doc comment -- so this is the one write path that enforces it.
   const oidcErrors = oidcConfigErrors(updated);
   if (oidcErrors.length > 0) throw new GuestEditValidationError(oidcErrors.join('\n'));
+
+  // Capability enforcement (issue #10, FR-012): refuse before probing or
+  // saving when the active proxy driver cannot enforce the edited guest's
+  // own resulting auth mode -- filtered to just this guest's route, so an
+  // unrelated forward-gated entry's mismatch never blocks an edit to a
+  // different guest (that entry's own mismatch is still caught the next
+  // time it is itself synced or edited, or by the push-live step below).
+  // buildRoutes may still throw the unrelated missing-authentik error for
+  // another entry here -- accepted, since the push-live step's own
+  // sync-proxy call would throw that same error anyway.
+  const updatedInventory = { ...inventory, guests };
+  const capabilityErrors = checkCapabilities(buildRoutes(updatedInventory), getDriver(updatedInventory)).filter(
+    (e) => e.owner.type === 'guest' && e.owner.name === name
+  );
+  if (capabilityErrors.length > 0) {
+    throw new GuestEditValidationError(capabilityErrors.map((e) => e.message).join('\n'));
+  }
 
   // Only when this edit actually touched subdomains or port (an
   // insecureBackendTls/proxyManual/authGroup-only edit never

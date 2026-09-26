@@ -79,10 +79,10 @@ Inventory field names stay `caddy`/`caddyManual` throughout this phase; the rena
 
 **Independent test**: spec US3 acceptance scenarios with a test-only driver.
 
-- [ ] T034 [US3] Write failing tests in `test/commands/sync-proxy.test.ts`: with a registered fake driver whose `authModes` is `['oidc']` selected, a forward-gated entry makes `runSyncProxy` throw the capability message for both dry run and apply, with zero `FakeSSHClient` calls; the thrown message joins every offending entry.
-- [ ] T035 [US3] Call `checkCapabilities` in `runSyncProxy` (`src/commands/networking/sync-proxy.ts`) after `buildRoutes`, before `plan`. Make T034 pass.
-- [ ] T036 [US3] Write failing tests in `test/operations/edit-guest.test.ts`: with the fake driver active, an edit leaving the edited guest forward-gated is rejected as a 400-class error with the capability message and the inventory file unchanged; an edit to a different, ungated guest succeeds even though another entry is forward-gated; `loadInventory` with `proxyDriver` pointing at the fake driver still loads (FR-013).
-- [ ] T037 [US3] In `commitGuestEdit` (`src/operations/edit-guest.ts`), after the edit is applied in memory and validated and before saving, run `checkCapabilities(buildRoutes(updatedInventory), getDriver(updatedInventory))` filtered to the edited guest's owner and reject with the existing 400 error shape. Make T036 pass; confirm `test/web/routes/dashboard.test.ts` shows the 400 through the route.
+- [x] T034 [US3] Write failing tests in `test/commands/sync-proxy.test.ts`: with a registered fake driver whose `authModes` is `['oidc']` selected, a forward-gated entry makes `runSyncProxy` throw the capability message for both dry run and apply, with zero `FakeSSHClient` calls; the thrown message joins every offending entry.
+- [x] T035 [US3] Call `checkCapabilities` in `runSyncProxy` (`src/commands/networking/sync-proxy.ts`) after `buildRoutes`, before `plan`. Make T034 pass.
+- [x] T036 [US3] Write failing tests in `test/operations/edit-guest.test.ts`: with the fake driver active, an edit leaving the edited guest forward-gated is rejected as a 400-class error with the capability message and the inventory file unchanged; an edit to a different, ungated guest succeeds even though another entry is forward-gated; `loadInventory` with `proxyDriver` pointing at the fake driver still loads (FR-013).
+- [x] T037 [US3] In `commitGuestEdit` (`src/operations/edit-guest.ts`), after the edit is applied in memory and validated and before saving, run `checkCapabilities(buildRoutes(updatedInventory), getDriver(updatedInventory))` filtered to the edited guest's owner and reject with the existing 400 error shape. Make T036 pass; confirm `test/web/routes/dashboard.test.ts` shows the 400 through the route.
 
 ## Phase 6: User Story 4 — Portable path exemptions (P3)
 

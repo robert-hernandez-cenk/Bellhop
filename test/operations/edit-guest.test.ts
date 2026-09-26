@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { applyGuestEdits, runEditGuest, GuestEditValidationError } from '../../src/operations/edit-guest.ts';
+import { applyGuestEdits, commitGuestEdit, runEditGuest, GuestEditValidationError } from '../../src/operations/edit-guest.ts';
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
@@ -11,6 +11,9 @@ import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import type { OperationDeps } from '../../src/operations/types.ts';
+import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
+import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
+import type { ProxyDriverId } from '../../src/lib/proxy/ids.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -27,6 +30,149 @@ function deps(ssh = new FakeSSHClient(defaultResponder)): OperationDeps {
   saveInventory(inventoryPath, inventory);
   return { ssh, inventory: loadInventory(inventoryPath), inventoryPath, authentik: new UnconfiguredAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() };
 }
+
+// --- Capability enforcement (issue #10, US3) -------------------------------
+//
+// A driver that declares no forward-auth support -- exercises FR-012's
+// edit-time refusal path. `id` is cast through ProxyDriverId since
+// PROXY_DRIVER_IDS only lists 'caddy' this round (src/lib/proxy/ids.ts);
+// same convention as test/lib/proxy/{driver,index}.test.ts's own fakeDriver.
+function oidcOnlyDriver(): ReverseProxyDriver {
+  return {
+    id: 'fake-oidc-only' as ProxyDriverId,
+    capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: false },
+    defaultConfigPath: '/etc/fake/fake.conf',
+    async plan(): Promise<ProxyPlan> {
+      return { preview: '', payload: undefined };
+    },
+    async apply(): Promise<void> {},
+    async snapshot(): Promise<string> {
+      return '';
+    },
+  };
+}
+
+// An inventory with: an Authentik outpost (auth-lxc), an ungated entry with
+// no gate yet (sonarr, the one this batch's tests gate and then reject the
+// edit on), an entry that is *already* forward-gated and unrelated to the
+// edits under test (gated-other), and an entry with no subdomains at all
+// (ungated-app, edited in the "different guest" test). Saved and loaded
+// through a real temp bellhop.db exactly like deps() above.
+const capabilityInventory: Inventory = {
+  domain: 'example.com',
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+  guests: [
+    { name: 'auth-lxc', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'] },
+    {
+      name: 'gated-other',
+      type: 'lxc',
+      vmid: 121,
+      host: 'pve1',
+      ip: '192.168.1.21',
+      subdomains: ['radarr'],
+      authGroup: 'bellhop-users',
+    },
+    { name: 'ungated-app', type: 'lxc', vmid: 122, host: 'pve1', ip: '192.168.1.22' },
+  ],
+};
+
+// Builds OperationDeps against a fresh copy of capabilityInventory, loaded
+// through loadInventory (which succeeds here -- proxyDriver is unset on
+// disk, so it defaults to 'caddy', a schema-valid id -- FR-013), then points
+// the in-memory object at the fake driver's id. That id is never persisted:
+// PROXY_DRIVER_IDS only lists 'caddy' this round, so the schema would reject
+// any other value on a real load -- this mutation happens strictly after
+// loadInventory already returned successfully, which is exactly the
+// distinction the brief draws between "a capability mismatch on a valid,
+// registered driver" (FR-013's guarantee) and "an id no registered driver
+// has" (a separate, schema-level misconfiguration, not tested here).
+function capabilityDeps(driver: ReverseProxyDriver): OperationDeps {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-capability-')), 'bellhop.db');
+  saveInventory(inventoryPath, capabilityInventory);
+  const loaded = loadInventory(inventoryPath); // must not throw -- FR-013
+  loaded.proxyDriver = driver.id;
+  return {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loaded,
+    inventoryPath,
+    authentik: new UnconfiguredAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+}
+
+test('loadInventory still loads an inventory containing a forward-gated entry, regardless of which driver capabilities later apply to it (FR-013)', () => {
+  // No throw: loadInventory performs no capability check at all -- the
+  // mismatch below is only ever detected by an explicit checkCapabilities
+  // call (sync-proxy, commitGuestEdit), never by loading itself.
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-capability-load-')), 'bellhop.db');
+  saveInventory(inventoryPath, capabilityInventory);
+  const loaded = loadInventory(inventoryPath);
+  assert.equal(loaded.guests.find((g) => g.name === 'gated-other')?.authGroup, 'bellhop-users');
+  // Pointing the in-memory object at a driver that cannot enforce that
+  // gate does not retroactively invalidate the load that already happened.
+  loaded.proxyDriver = oidcOnlyDriver().id;
+  assert.equal(loaded.proxyDriver, 'fake-oidc-only');
+});
+
+test('commitGuestEdit rejects an edit that leaves the edited guest forward-gated when the active driver cannot enforce forward-auth (FR-012), leaving the inventory file unchanged', async () => {
+  const driver = oidcOnlyDriver();
+  const unregister = registerDriverForTests(driver);
+  try {
+    const d = capabilityDeps(driver);
+    const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
+    const updated = applyGuestEdits(current, { authGroup: 'bellhop-users' });
+    await assert.rejects(
+      () => commitGuestEdit(d, 'sonarr', updated, false),
+      (err: unknown) => {
+        assert.ok(err instanceof GuestEditValidationError);
+        assert.match(
+          (err as Error).message,
+          /Entry 'sonarr' uses forward-auth gating, but the 'fake-oidc-only' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup/
+        );
+        return true;
+      }
+    );
+    assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'sonarr')?.authGroup, undefined);
+  } finally {
+    unregister();
+  }
+});
+
+test('commitGuestEdit does not block an edit to a different, ungated guest even though an unrelated entry is forward-gated and the driver cannot enforce it', async () => {
+  const driver = oidcOnlyDriver();
+  const unregister = registerDriverForTests(driver);
+  try {
+    const d = capabilityDeps(driver);
+    const current = d.inventory.guests.find((g) => g.name === 'ungated-app')!;
+    const updated = applyGuestEdits(current, { subdomains: ['ungated'], port: 8080 });
+    // Must not throw: the capability mismatch belongs to 'gated-other', an
+    // entry this edit never touches. Checked against d.inventory (which
+    // commitGuestEdit updates in place after saving) rather than a fresh
+    // loadInventory(d.inventoryPath) call -- the saved file's proxyDriver is
+    // the test-only fake id at this point (mutated in memory above, then
+    // persisted verbatim by saveInventory's `{ ...inventory }` spread), which
+    // InventorySchema's real enum would reject on a real reload; that's a
+    // property of bypassing the schema this way in a test, not of
+    // production behavior, where proxyDriver only ever reaches saveInventory
+    // through a schema-validated setter.
+    const result = await commitGuestEdit(d, 'ungated-app', updated, true);
+    assert.deepEqual(d.inventory.guests.find((g) => g.name === 'ungated-app')?.subdomains, ['ungated']);
+    // The unrelated mismatch is still real -- the whole-inventory push-live
+    // step (which runs sync-proxy over every entry, 'gated-other' included)
+    // legitimately fails on it, reported here as proxySynced: false rather
+    // than as a rejection of this edit.
+    assert.equal(result.proxySynced, false);
+    if (!result.proxySynced) {
+      assert.match(
+        result.proxyError,
+        /Entry 'gated-other' uses forward-auth gating, but the 'fake-oidc-only' proxy driver cannot enforce it/
+      );
+    }
+  } finally {
+    unregister();
+  }
+});
 
 test('applyGuestEdits accepts form strings and typed arrays/numbers alike', () => {
   const current = inventory.guests[1];

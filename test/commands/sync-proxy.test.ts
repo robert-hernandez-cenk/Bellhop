@@ -2,7 +2,29 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
 import { runSyncProxy } from '../../src/commands/networking/sync-proxy.ts';
+import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
+import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
+import type { ProxyDriverId } from '../../src/lib/proxy/ids.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
+
+// A driver that declares no forward-auth support -- exercises T034/FR-011's
+// refusal path. `id` is cast through ProxyDriverId since PROXY_DRIVER_IDS
+// only lists 'caddy' this round (src/lib/proxy/ids.ts); same convention as
+// test/lib/proxy/{driver,index}.test.ts's own fakeDriver.
+function oidcOnlyDriver(): ReverseProxyDriver {
+  return {
+    id: 'fake-oidc-only' as ProxyDriverId,
+    capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: false },
+    defaultConfigPath: '/etc/fake/fake.conf',
+    async plan(): Promise<ProxyPlan> {
+      return { preview: '', payload: undefined };
+    },
+    async apply(): Promise<void> {},
+    async snapshot(): Promise<string> {
+      return '';
+    },
+  };
+}
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -333,6 +355,84 @@ test('sync-proxy (caddy driver) does not require an authentik: true entry when t
     ],
   };
   await buildBlock(inv);
+});
+
+test('runSyncProxy refuses (dry run) with the capability message, and makes zero SSH calls, when the active driver cannot enforce a forward-gated entry (FR-011)', async () => {
+  const driver = oidcOnlyDriver();
+  const unregister = registerDriverForTests(driver);
+  try {
+    const inv: Inventory = {
+      domain: 'example.com',
+      proxyDriver: driver.id,
+      hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+      guests: [
+        { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      ],
+    };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    await assert.rejects(
+      () => runSyncProxy({}, { ssh, inventory: inv }),
+      /Entry 'sonarr' uses forward-auth gating, but the 'fake-oidc-only' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup/
+    );
+    assert.equal(ssh.history.length, 0);
+  } finally {
+    unregister();
+  }
+});
+
+test('runSyncProxy refuses (apply) the same way, before writing anything, with zero SSH calls', async () => {
+  const driver = oidcOnlyDriver();
+  const unregister = registerDriverForTests(driver);
+  try {
+    const inv: Inventory = {
+      domain: 'example.com',
+      proxyDriver: driver.id,
+      hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+      guests: [
+        { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      ],
+    };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    await assert.rejects(
+      () => runSyncProxy({ apply: true }, { ssh, inventory: inv }),
+      /Entry 'sonarr' uses forward-auth gating, but the 'fake-oidc-only' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup/
+    );
+    assert.equal(ssh.history.length, 0);
+  } finally {
+    unregister();
+  }
+});
+
+test('runSyncProxy joins every offending entry\'s message into one thrown Error', async () => {
+  const driver = oidcOnlyDriver();
+  const unregister = registerDriverForTests(driver);
+  try {
+    const inv: Inventory = {
+      domain: 'example.com',
+      proxyDriver: driver.id,
+      hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+      guests: [
+        { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+        { name: 'radarr', type: 'lxc', vmid: 121, host: 'pve1', ip: '192.168.1.21', subdomains: ['radarr'], authGroup: 'bellhop-users' },
+      ],
+    };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    let thrown: unknown;
+    try {
+      await runSyncProxy({}, { ssh, inventory: inv });
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof Error, 'expected runSyncProxy to throw');
+    assert.match((thrown as Error).message, /'sonarr'/);
+    assert.match((thrown as Error).message, /'radarr'/);
+    assert.equal(ssh.history.length, 0);
+  } finally {
+    unregister();
+  }
 });
 
 test('sync-proxy emits the configured Authentik outpost port', async () => {

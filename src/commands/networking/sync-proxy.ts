@@ -2,6 +2,7 @@ import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../lib/proxy/routes.ts';
 import { getDriver, driverDeps } from '../../lib/proxy/index.ts';
+import { checkCapabilities } from '../../lib/proxy/driver.ts';
 import type { DriverDeps } from '../../lib/proxy/driver.ts';
 
 export interface SyncProxyOptions {
@@ -32,6 +33,16 @@ export async function runSyncProxy(
   const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);
 
   const routes = buildRoutes(deps.inventory);
+
+  // Capability enforcement (issue #10, FR-011): refuse before previewing or
+  // writing anything -- for both a dry run and --apply -- when any route
+  // needs an auth mode the active driver cannot enforce. Every offending
+  // entry's message is joined into one thrown Error.
+  const capabilityErrors = checkCapabilities(routes, driver);
+  if (capabilityErrors.length > 0) {
+    throw new Error(capabilityErrors.map((e) => e.message).join('\n'));
+  }
+
   const ctx = buildProxyContext(deps.inventory);
   const plan = await driver.plan(routes, ctx, resolvedDeps);
 
