@@ -16,11 +16,11 @@ export interface FileSpec {
 const BEGIN_MARKER = '# BEGIN bellhop-managed';
 const END_MARKER = '# END bellhop-managed';
 
-// Local single-quote escaping for embedding a path or command into the
-// generated remote shell script -- same convention as
-// sync-caddy.ts's own singleQuote(), duplicated rather than imported since
-// that file's copy is deleted once T013 rewrites it onto this driver.
-function singleQuote(value: string): string {
+// Single-quote escaping for embedding a path or command into the generated
+// remote shell script -- exported so every other file-configured driver
+// (src/lib/proxy/drivers/caddy.ts today) shares this one implementation
+// rather than keeping its own duplicate copy.
+export function singleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 

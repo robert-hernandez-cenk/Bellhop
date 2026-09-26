@@ -1,6 +1,6 @@
 import type { ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
-import { fileDriver } from '../file-driver.ts';
+import { fileDriver, singleQuote } from '../file-driver.ts';
 
 const BEGIN_MARKER = '# BEGIN bellhop-managed';
 const END_MARKER = '# END bellhop-managed';
@@ -11,14 +11,6 @@ const END_MARKER = '# END bellhop-managed';
 // there's one domain, one DNS provider, one operator. Moved here verbatim
 // from src/commands/networking/sync-caddy.ts (issue #10, T010).
 const TLS_BLOCK = ['    tls {', '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}', '        resolvers 1.1.1.1 8.8.8.8', '    }'];
-
-// Local single-quote escaping for embedding a path into the generated
-// validate command -- same convention as file-driver.ts's own singleQuote,
-// duplicated rather than imported since that's a module-private helper
-// there, not exported.
-function singleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
 
 // Renders every route into one Caddyfile managed section -- ported
 // verbatim from buildCaddyBlock (src/commands/networking/sync-caddy.ts)

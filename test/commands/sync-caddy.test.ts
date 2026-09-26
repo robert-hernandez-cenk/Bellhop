@@ -133,6 +133,14 @@ test('runSyncCaddy writes the managed block on the caddy host when apply is set'
   assert.match(ssh.history[0].command, /systemctl reload caddy/);
 });
 
+test('runSyncCaddy rejects, naming the stderr, when the remote apply script exits non-zero', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'caddy validate failed; restored previous configuration', code: 1 }));
+  await assert.rejects(
+    () => runSyncCaddy({ apply: true }, { ssh, inventory }),
+    /Failed to apply proxy configuration on 'pve1': caddy validate failed; restored previous configuration/
+  );
+});
+
 test('buildCaddyBlock adds a forward_auth directive and outpost passthrough when authGroup is set', async () => {
   const inv: Inventory = {
     domain: 'example.com',
