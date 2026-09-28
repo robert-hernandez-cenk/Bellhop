@@ -106,3 +106,8 @@ test('.data-table tbody td inside the 640px mobile media block declares overflow
   assert.match(decl, /overflow-wrap:\s*anywhere/);
   assert.match(decl, /text-align:\s*right/);
 });
+
+test('.prompt-banner-freetext input declares min-width: 0', () => {
+  const decl = ruleDeclarations(css, '.prompt-banner-freetext input ');
+  assert.match(decl, /min-width:\s*0/);
+});

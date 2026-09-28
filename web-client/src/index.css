@@ -157,7 +157,8 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .prompt-banner-actions-stall > .button:not(:last-child):hover:not(:disabled), .prompt-banner-actions-stall .prompt-banner-freetext .button:hover:not(:disabled) { background: rgba(0, 0, 0, 0.08); }
 .prompt-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .prompt-banner-freetext { display: flex; gap: 8px; flex: 1; min-width: 200px; }
-.prompt-banner-freetext input { flex: 1; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.2); font: inherit; }
+/* issue #5: the input's intrinsic minimum width otherwise stretches the prompt banner past a 320px screen. */
+.prompt-banner-freetext input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.2); font: inherit; }
 .preview-pane { background: var(--bg-tertiary); color: var(--text-primary); padding: 10px; border-radius: 6px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); }
 .job-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .job-log {
