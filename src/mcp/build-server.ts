@@ -13,7 +13,8 @@ import { parseOperationInput, previewAndEnqueue, scrubSecretValues } from '../op
 import { runEditGuest, EDIT_GUEST_SHAPE } from '../operations/edit-guest.ts';
 import { runOidcClientInfo } from '../commands/networking/oidc-credentials.ts';
 import { checkAppUrl } from '../operations/app-check.ts';
-import { MAX_LOG_CHUNK, json, pageLog, requireOwned as requireOwnedJob, summarizeJob, text } from './job-helpers.ts';
+import { MAX_LOG_CHUNK, json, pageLog, summarizeJob, text } from './job-helpers.ts';
+import { requestJobControl } from '../web/jobs/job-control.ts';
 import { PromptTracker } from './elicitation.ts';
 import { WAIT_FOR_JOB_SHAPE, waitForJob, type ToolExtra, type WaitForJobArgs } from './wait-for-job.ts';
 
@@ -218,36 +219,61 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
         }))
   );
 
-  const requireOwned = (id: number) => requireOwnedJob(deps, id);
+  // Issue #6 (US3): a job owned by another process (the web service, or a
+  // different MCP server instance) used to be an outright refusal here
+  // (job-helpers.ts's requireOwned: "job N is owned by X; control it from
+  // there"). These three tools now go through the same requestJobControl
+  // the web routes use
+  // (src/web/jobs/job-control.ts, research.md R5): applied directly when
+  // this server's own jobRunner owns the job, queued as a control request
+  // the owning process polls for and applies otherwise, or refused up front
+  // when nothing could ever come of asking (a dead-pid owner, or a status
+  // that already rules the action out). wait_for_job is the one job tool
+  // that keeps requireOwned (job-helpers.ts) unchanged -- it needs the job's
+  // own in-memory controller/events to block on, which only the owning
+  // process ever holds.
+  const applyControl = (id: number, action: 'cancel' | 'answer' | 'dismiss', requestText?: string) => {
+    const job = deps.jobStore.get(id);
+    if (!job) throw new Error(`Unknown job id: ${id}`);
+    const result = requestJobControl({ jobStore: deps.jobStore, jobRunner: deps.jobRunner }, { job, action, text: requestText });
+    if (result.kind === 'done') {
+      return action === 'cancel' ? { cancelled: true } : action === 'answer' ? { answered: true } : { dismissed: true };
+    }
+    if (result.kind === 'requested') {
+      return {
+        requested: true,
+        owner: result.owner,
+        note: 'The owning process applies this within about a second if it is running; check get_job for the result.',
+      };
+    }
+    throw new Error(result.message);
+  };
 
   server.registerTool(
     'answer_job_prompt',
-    { description: "Send an answer (a newline is appended) to a job's pending interactive prompt.", inputSchema: { id: z.number().int(), text: z.string() } },
-    async (args: { id: number; text: string }) => {
-      requireOwned(args.id);
-      if (!deps.jobRunner.answerPrompt(args.id, args.text)) throw new Error(`Job ${args.id} is not awaiting input — nothing to answer`);
-      return json({ answered: true });
-    }
+    {
+      description: "Send an answer (a newline is appended) to a job's pending interactive prompt, whichever process owns it.",
+      inputSchema: { id: z.number().int(), text: z.string() },
+    },
+    async (args: { id: number; text: string }) => json(applyControl(args.id, 'answer', args.text))
   );
 
   server.registerTool(
     'dismiss_job_prompt',
-    { description: 'Resume a job whose detected prompt was a false positive, without sending input.', inputSchema: { id: z.number().int() } },
-    async (args: { id: number }) => {
-      requireOwned(args.id);
-      if (!deps.jobRunner.dismissPrompt(args.id)) throw new Error(`Job ${args.id} is not awaiting input — nothing to dismiss`);
-      return json({ dismissed: true });
-    }
+    {
+      description: 'Resume a job whose detected prompt was a false positive, without sending input, whichever process owns it.',
+      inputSchema: { id: z.number().int() },
+    },
+    async (args: { id: number }) => json(applyControl(args.id, 'dismiss'))
   );
 
   server.registerTool(
     'cancel_job',
-    { description: 'Cancel a queued or running job. Remote work already done is not rolled back.', inputSchema: { id: z.number().int() } },
-    async (args: { id: number }) => {
-      const job = requireOwned(args.id);
-      if (!deps.jobRunner.cancel(args.id)) throw new Error(`Job ${args.id} is already ${job.status} — nothing to cancel`);
-      return json({ cancelled: true });
-    }
+    {
+      description: 'Cancel a queued or running job, whichever process owns it. Remote work already done is not rolled back.',
+      inputSchema: { id: z.number().int() },
+    },
+    async (args: { id: number }) => json(applyControl(args.id, 'cancel'))
   );
 
   return server;

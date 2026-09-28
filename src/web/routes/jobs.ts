@@ -1,13 +1,41 @@
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { WebSocketServer } from 'ws';
 import type { Server } from 'node:http';
-import type { JobStore, JobRow } from '../jobs/job-store.ts';
+import type { JobStore, JobRow, JobStatus } from '../jobs/job-store.ts';
 import type { JobLog } from '../jobs/job-log.ts';
 import type { JobRunner } from '../jobs/job-runner.ts';
+import { createForeignJobTail } from '../jobs/job-tail.ts';
+import { requestJobControl } from '../jobs/job-control.ts';
 import { resolveAuthUser } from '../auth.ts';
 import { isAdmin } from '../access.ts';
 import { loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
 import type { ImpersonationStore } from '../impersonation.ts';
+
+const TERMINAL_JOB_STATUSES: JobStatus[] = ['success', 'failed', 'cancelled', 'interrupted'];
+
+// A log file another process is actively appending to can be read mid-write
+// (issue #6): readBytes(name, 0) may return a trailing UTF-8 sequence that's
+// only partially written. Returns how many leading bytes of `buffer` form
+// complete UTF-8 characters, so the backlog sent to the client never
+// contains a torn character -- the foreign-job tailer's own persistent
+// StringDecoder (job-tail.ts) picks up the remaining bytes, whole, on a
+// later tick once the rest of the sequence has been written.
+export function completeUtf8Length(buffer: Buffer): number {
+  let i = buffer.length - 1;
+  let continuationBytes = 0;
+  while (i >= 0 && (buffer[i] & 0xc0) === 0x80) {
+    continuationBytes++;
+    i--;
+  }
+  if (i < 0) return 0;
+  const leadByte = buffer[i];
+  let seqLen = 1;
+  if ((leadByte & 0x80) === 0) seqLen = 1;
+  else if ((leadByte & 0xe0) === 0xc0) seqLen = 2;
+  else if ((leadByte & 0xf0) === 0xe0) seqLen = 3;
+  else if ((leadByte & 0xf8) === 0xf0) seqLen = 4;
+  return continuationBytes + 1 < seqLen ? i : buffer.length;
+}
 
 // A job's `target` is either a host name (provisioning's guest-creating
 // commands) or a guest name (everything else that has one) -- JobRow
@@ -43,19 +71,6 @@ export function isJobVisible(rules: Map<string, GroupPermission>, groups: string
 export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRunner, inventoryPath: string): Router {
   const router = Router();
 
-  // Issue #16: a job may be owned by another process (an MCP server) whose
-  // JobRunner holds its live exec channel -- this process can't cancel,
-  // answer, or dismiss it. Returns true (after sending a 409 naming the
-  // owner, same wording as src/mcp/build-server.ts's requireOwned) when the
-  // job isn't ours, rather than letting the runner's "nothing to cancel"
-  // failure produce a misleading error.
-  const rejectForeignOwner = (job: JobRow, res: Response): boolean => {
-    const owner = job.owner ?? 'web';
-    if (owner === jobRunner.owner) return false;
-    res.status(409).json({ error: `job ${job.id} is owned by ${owner}; control it from there` });
-    return true;
-  };
-
   router.get('/', (req, res) => {
     const groups = req.user?.groups ?? [];
     const rules = loadPermissionRules(inventoryPath);
@@ -74,6 +89,32 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
     res.json({ job, log: jobLog.read(job.logFile) });
   });
 
+  // Issue #6 (US2): a job may be owned by another process (an MCP server)
+  // whose JobRunner holds its live exec channel -- this process can't
+  // cancel/answer/dismiss it directly. requestJobControl (shared with the
+  // MCP tools, src/web/jobs/job-control.ts) decides what happens: applied
+  // locally when this route's own jobRunner owns the job, queued as a
+  // control request for the owning process to poll and apply otherwise, or
+  // refused up front when nothing could ever come of asking (a dead-pid
+  // owner, or a job whose status already rules the action out). The
+  // requesting user recorded is the real identity (research.md R6), same as
+  // triggeredByUsername elsewhere.
+  const applyControl = (req: Request, res: Response, job: JobRow, action: 'cancel' | 'answer' | 'dismiss', text?: string) => {
+    const result = requestJobControl(
+      { jobStore, jobRunner },
+      { job, action, text, requestedByUsername: (req.realUser ?? req.user)?.username }
+    );
+    if (result.kind === 'done') {
+      res.json(action === 'cancel' ? { cancelled: true } : action === 'answer' ? { answered: true } : { dismissed: true });
+      return;
+    }
+    if (result.kind === 'requested') {
+      res.status(202).json({ requested: true, owner: result.owner });
+      return;
+    }
+    res.status(409).json({ error: result.message });
+  };
+
   router.post('/:id/cancel', (req, res) => {
     const id = Number(req.params.id);
     const job = jobStore.get(id);
@@ -83,12 +124,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
-    if (rejectForeignOwner(job, res)) return;
-    if (!jobRunner.cancel(id)) {
-      res.status(409).json({ error: `Job ${id} is already ${job.status} — nothing to cancel` });
-      return;
-    }
-    res.json({ cancelled: true });
+    applyControl(req, res, job, 'cancel');
   });
 
   router.post('/:id/answer', (req, res) => {
@@ -100,13 +136,8 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
-    if (rejectForeignOwner(job, res)) return;
     const text = typeof req.body?.text === 'string' ? req.body.text : '';
-    if (!jobRunner.answerPrompt(id, text)) {
-      res.status(409).json({ error: `Job ${id} is not awaiting input — nothing to answer` });
-      return;
-    }
-    res.json({ answered: true });
+    applyControl(req, res, job, 'answer', text);
   });
 
   router.post('/:id/dismiss-prompt', (req, res) => {
@@ -118,12 +149,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
-    if (rejectForeignOwner(job, res)) return;
-    if (!jobRunner.dismissPrompt(id)) {
-      res.status(409).json({ error: `Job ${id} is not awaiting input — nothing to dismiss` });
-      return;
-    }
-    res.json({ dismissed: true });
+    applyControl(req, res, job, 'dismiss');
   });
 
   return router;
@@ -135,9 +161,15 @@ export function attachJobsWebSocket(
   jobStore: JobStore,
   jobLog: JobLog,
   inventoryPath: string,
-  impersonationStore: ImpersonationStore
+  impersonationStore: ImpersonationStore,
+  // isPidAlive: overridable for tests (see job-tail.ts) so a route-level
+  // test can deterministically exercise the dead-owner path without
+  // depending on a real pid ever being dead. Left unset in production, so
+  // createForeignJobTail's own defaultIsPidAlive is used.
+  options: { tailIntervalMs?: number; isPidAlive?: (pid: number) => boolean } = {}
 ): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+  const tailIntervalMs = options.tailIntervalMs ?? 1000;
 
   server.on('upgrade', (req, socket, head) => {
     const user = resolveAuthUser(req.headers);
@@ -166,8 +198,25 @@ export function attachJobsWebSocket(
       socket.destroy();
       return;
     }
+    // Issue #6: a job owned by another process (an MCP server) has no
+    // in-memory state in *this* process's jobRunner -- its 'chunk'/'status'/
+    // 'prompt'/'prompt-cleared' events never fire for it. Such a job still
+    // streams live, just via the polling foreign-job tailer below instead of
+    // jobRunner.events.
+    const foreign = job !== undefined && (job.owner ?? 'web') !== jobRunner.owner;
+    // Only meaningful when `foreign` -- the offset into the log file the
+    // backlog below ended at, and where the tail's first tick starts reading
+    // from.
+    let foreignTailOffset = 0;
+
     wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.send(JSON.stringify({ type: 'backlog', text: job ? jobLog.read(job.logFile) : '' }));
+      if (job && foreign) {
+        const backlogBytes = jobLog.readBytes(job.logFile, 0);
+        foreignTailOffset = completeUtf8Length(backlogBytes);
+        ws.send(JSON.stringify({ type: 'backlog', text: backlogBytes.subarray(0, foreignTailOffset).toString('utf8') }));
+      } else {
+        ws.send(JSON.stringify({ type: 'backlog', text: job ? jobLog.read(job.logFile) : '' }));
+      }
       // The job may already have finished before this socket connected (a
       // fast job can complete before the WS handshake does) -- without this,
       // a late-connecting client would wait forever for a 'status' event
@@ -197,6 +246,40 @@ export function attachJobsWebSocket(
             matchedIndex: job.promptMatchedIndex,
           })
         );
+      }
+
+      if (job && foreign) {
+        // No jobRunner.events registration for a foreign job -- those never
+        // fire for it (see the `foreign` comment above). Skip the tail
+        // entirely for a job that's already terminal by connect time, same
+        // as the local path needs no event listeners for one either.
+        if (!TERMINAL_JOB_STATUSES.includes(job.status)) {
+          const tail = createForeignJobTail({
+            jobStore,
+            jobLog,
+            jobId,
+            initial: { offset: foreignTailOffset, row: job },
+            send: (msg) => ws.send(JSON.stringify(msg)),
+            isPidAlive: options.isPidAlive,
+          });
+          const interval = setInterval(() => {
+            tail.tick();
+            // A stopped tail always means no more messages are coming --
+            // whether the job reached a terminal status (the client already
+            // has the final 'status' message) or the tail gave up early (a
+            // throwing tick, a row that vanished). Either way, closing the
+            // socket here is what lets the client's own reconnect/HTTP-
+            // polling fallback (it only triggers on 'close'/'error') take
+            // over instead of the connection sitting open with nothing left
+            // to feed it forever.
+            if (tail.stopped) {
+              clearInterval(interval);
+              ws.close();
+            }
+          }, tailIntervalMs);
+          ws.on('close', () => clearInterval(interval));
+        }
+        return;
       }
 
       const onChunk = (payload: { jobId: number; stream: string; text: string }) => {

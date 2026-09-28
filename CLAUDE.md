@@ -410,7 +410,32 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   branch and was never wrapped either way. `qm guest exec`'s always-exits-0-on-successful-agent-call
   quirk (the real exit code and output are a JSON envelope on stdout,
   `{"exitcode":N,"out-data":"...","err-data":"..."}`) is parsed and
-  translated into the real `ExecResult` by `runRemote`'s `vm` branch.
+  translated into the real `ExecResult` by `runRemote`'s `vm` branch, with a
+  timeout named as a constant (`VM_EXEC_TIMEOUT_SECONDS`, 60, used to build
+  both the `--timeout` flag and the failure message below) rather than a
+  bare literal repeated in two places — fixed at 60s for every command
+  routed to a VM, with no per-call override (issue #2 operator PR review:
+  package commands are never sent to a VM at all as of that decision, so
+  the per-call `vmTimeoutSeconds` override this constant briefly grew, and
+  the longer wait it existed for, were both removed rather than kept around
+  unused — see the `update-all`/`configure-guest` bullets below). Three
+  envelope shapes besides the normal `{"exitcode":...}`
+  one are reported as failures (`code: 1`), never silently coerced to
+  success the way an old `parsed.exitcode ?? 0` used to: a command that
+  outlives the wait gets a pid-only envelope with no `exitcode` at all
+  (`{"pid":N}`) — the command is still running in the guest when `qm guest
+  exec` gives up waiting on it; a command killed by a signal gets an
+  `exited: 1` envelope carrying a `signal` number instead of a `pid` (also
+  no `exitcode`) — reported with whatever `out-data`/`err-data` it produced
+  plus `killed by signal <N>` appended to stderr, rather than being
+  misreported as the pid-only timeout case above and having its output
+  dropped (this check runs first, since both shapes share the "no
+  `exitcode`" test); and one that fails to
+  parse as JSON at all (a plain `JSON.parse`, no pre-processing needed —
+  verified live 2026-09-26 that real `qm guest exec` output is strict JSON,
+  including a completed command's own embedded newlines, which come through
+  as a properly-escaped `\n` inside `"out-data"`/`"err-data"` rather than a
+  raw control character).
   `Ssh2SSHClient.exec()` (`src/lib/ssh-client.ts`) authenticates the same way
   a plain `ssh`/git-bash client does when no agent is running: it reads a
   default identity file directly (`~/.ssh/id_ed25519`, `id_ecdsa`, or
@@ -467,9 +492,33 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   same `midScheme.vmidBase` or `midScheme.ipPrefix`, since either would let
   `resolveMid` hand out colliding VMIDs/IPs across two different hosts.
 - **Targeting flags**: `update-all` uses `--host <name>` / `--all` /
-  `--group pve|lxc|vm`, implemented once by `selectTargets` in
-  `src/lib/targets.ts`. As of issue #120 it no longer runs one hardcoded
-  apt command against every target: it probes each one first
+  `--group pve|lxc`, implemented once by `selectTargets` in
+  `src/lib/targets.ts`. As of issue #2 (operator PR review) `update-all`
+  never acts on a VM at all: `selectUpdateTargets`
+  (`src/commands/maintenance/update-all.ts`) is the one place its targets
+  are decided, and both `runUpdateAll` and the `update-all` operation's
+  `preview` (`src/operations/maintenance.ts`) call it rather than
+  `selectTargets` directly, so preview and apply can never disagree.
+  `{ all: true }` silently drops every `vm` guest from the result (hosts
+  and lxc guests only — an operator running `--all` wants everything this
+  toolkit can safely update, not a failure over a VM that happens to be in
+  inventory); `{ group: 'vm' }` and `{ host: <vm-name> }` are explicit
+  requests to target a VM, so both reject outright (`update-all does not
+  update VMs...`) instead of silently resolving to nothing — naming a VM
+  explicitly is treated as an operator mistake worth surfacing. Every other
+  selector shape delegates to the unchanged `selectTargets`, including its
+  unknown-host error. `TargetSelector`'s own `group` field
+  (`src/lib/targets.ts`) still accepts `'vm'` (other callers, like
+  `selectTargets` itself, use the full type), and the CLI's `--group`
+  flag still accepts any string at the commander layer — it's
+  `selectUpdateTargets`'s runtime check that actually rejects `vm`, not a
+  narrower CLI-level type. The web/MCP `update-all` operation's own `group`
+  field (`src/operations/maintenance.ts`) *is* narrowed to
+  `z.enum(['pve', 'lxc'])`, so a `vm` value is rejected at input-parsing
+  time there, before `selectUpdateTargets` ever runs.
+
+  As of issue #120, `update-all` no longer runs one hardcoded apt command
+  against every target: it probes each one first
   (`PROBE_COMMAND` in `src/lib/package-manager.ts`, a `command -v` chain)
   and dispatches to `UPDATE_COMMANDS`, a five-entry table covering
   `apt`/`dnf`/`apk`/`pacman`/`zypper`. A target whose OS isn't recognized
@@ -479,6 +528,24 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   rather than an inventory field: Proxmox's own `ostype` is a
   creation-time label (and a useless generic `l26` for every VM), while
   `command -v` is ground truth and self-corrects if a guest's OS changes.
+  As of issue #2 the probe-then-classify step itself is shared:
+  `detectPackageManager` (`src/lib/package-manager.ts`) runs
+  `PROBE_COMMAND` and classifies the result, and both `update-all` and
+  `configure-guest --packages` call it — only the *reaction* to an
+  unrecognized OS differs, left to the caller: `update-all` still buckets
+  it into `failUnknownPm` and keeps going across its many targets, while
+  `configure-guest` (a single-target command) throws
+  `UnknownPackageManagerError` instead. `configure-guest --packages`
+  installs the requested packages with the detected manager via
+  `INSTALL_COMMANDS`, an `UPDATE_COMMANDS`-shaped table of install (rather
+  than upgrade) commands living alongside it in the same file.
+  `configure-guest --packages` also refuses a guest of type `vm` outright
+  (issue #2 operator PR review, the same VM exclusion `update-all` applies
+  above) — checked before any remote call, in both dry run and apply, so
+  neither the probe nor the install ever reaches a VM; `--ssh-key` given in
+  the same invocation is not run either, since the whole command fails
+  before reaching that step. `--ssh-key` given alone (no `--packages`) is
+  unaffected and still works against a VM.
 - **Dry-run convention**: anything that mutates infrastructure or the
   inventory file (`create-lxc`, `create-vm`, `configure-guest`,
   `sync-proxy`, `migrate-nfs-mount`, `attach-nfs-mount`, `sync-inventory`)
@@ -497,7 +564,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   resolution already established (`resolveNfsMountPath` makes a live
   `pvesh get /storage/<id>` call during preview when NFS options are
   given), except this one happens unconditionally on every dry run, not
-  just when an optional flag is set.
+  just when an optional flag is set. `configure-guest --packages`'s dry
+  run (issue #2) joins this same group: it now also makes one live probe
+  call (`detectPackageManager`, above) against the target guest before
+  printing its preview line, so a dry run names the exact detected
+  package manager and install command apply would send rather than
+  guessing `apt-get` — a `--ssh-key`-only dry run still makes no remote
+  calls at all, since only `--packages` has anything to detect.
 - **Reverse-proxy driver interface** (`src/lib/proxy/`, issue #10) is a
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
@@ -1765,10 +1838,46 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   an `owner` on every job (`'web'`, or `'mcp:<pid>'`), and orphan cleanup
   (`JobStore.interruptOrphaned`) only touches the caller's own rows plus
   rows of MCP processes whose pid is dead, so neither process's startup
-  interrupts the other's in-flight jobs. Cancel/answer/dismiss only work
-  from the process that owns the job (the controller lives in its memory);
-  MCP-started jobs show in the web UI's Job History ("Triggered by: mcp")
-  but without live streaming or controls there (issue #165). stdout is the
+  interrupts the other's in-flight jobs. A job owned by the *other* process
+  is nonetheless fully watchable and controllable from here (issue #6):
+  `/ws/jobs/:id` (`src/web/routes/jobs.ts`) recognizes a job
+  whose row `owner` differs from this process's own `JobRunner.owner` and,
+  since that runner's events never fire for it, runs a per-connection
+  foreign-job tailer (`src/web/jobs/job-tail.ts`) instead -- a `setInterval`
+  that polls the shared job row and log file once a second and emits the
+  same `chunk`/`status`/`prompt`/`prompt-cleared` messages a local job
+  would, so a client sees no protocol difference. It also stops (and the
+  socket closes) once it sees the owning MCP process has died -- checked
+  via the row's `mcp:<pid>` owner, same liveness check as orphan cleanup --
+  rather than polling a stuck row forever; the job row itself is only ever
+  closed out by orphan cleanup at the next web-service start. Control
+  (cancel/answer/dismiss) of a foreign job goes through the shared
+  `requestJobControl` (`src/web/jobs/job-control.ts`), used by both the
+  three web routes and the three matching MCP tools: a local job is still
+  applied directly; a foreign job is refused up front the same way a local
+  one would be (a terminal job's cancel, a not-`awaiting_input` job's
+  answer/dismiss) plus one foreign-only case (an `mcp:<pid>` owner whose
+  process has died), and otherwise is recorded as a row in the new
+  `job_control_requests` table and returned immediately -- 202 on the web,
+  `{ requested: true }` from MCP -- without waiting on the owner. The
+  owning `JobRunner` runs its own poll timer (`processControlRequests()`,
+  500ms, running only while it has active jobs) that applies each pending
+  row through its ordinary `cancel`/`answerPrompt`/`dismissPrompt`, appends
+  an attribution line to the job log (`Stop requested from web UI by
+  <user>`, `Answer sent from MCP (mcp:<pid>)`, etc. -- never the answer text
+  itself) and marks the row handled, or marks it `not-applicable` if the
+  job isn't one this runner still has a controller for. Because a request
+  can outlive its target (the MCP process that queued it exits, or the job
+  finishes before the owner ever polls again), `JobStore
+  .closeStaleControlRequests()` -- run at the top of every poll pass and
+  from `reconcileOrphanedJobs()` -- closes any pending request whose job is
+  terminal or whose `mcp:<pid>` owner is dead, from any process, so a
+  request aimed at a since-exited MCP server or a since-restarted web
+  service never sits with its answer text lingering. `wait_for_job` is the
+  one exception, unchanged and still owner-only (`requireOwned` in
+  `src/mcp/job-helpers.ts`, now its only remaining caller) -- it blocks on
+  the job's in-memory controller/events, which only the owning process
+  ever holds. stdout is the
   protocol channel, so `src/mcp/server.ts` redirects `console.log` to
   stderr at startup. On stdin close it cancels its jobs and exits; a job
   still running when the client session ends is therefore interrupted.

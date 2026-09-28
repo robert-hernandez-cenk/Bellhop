@@ -74,6 +74,87 @@ test('runRemote returns the raw failure when ssh/qm itself fails for a vm target
   assert.equal(result.code, 255);
 });
 
+// Final fix wave F1: a command that outlives `qm guest exec`'s --timeout 60
+// returns a pid-only envelope with no `exitcode` at all -- the old
+// `parsed.exitcode ?? 0` silently reported that as a successful command while
+// it was still running in the guest. Captured live 2026-09-26 through
+// Ssh2SSHClient.exec on the parent host (pid redacted to 12345, shape
+// unchanged): `qm guest exec <vmid> --timeout 2 -- sh -c 'sleep 5; echo done'`.
+test('runRemote reports a vm guest exec timeout envelope (pid only, no exitcode) as a failure naming the pid', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "pid" : 12345\n}\n',
+    stderr: 'timeout reached, returning pid\n',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', "sleep 5; echo done");
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(
+    result.stderr,
+    'qm guest exec timed out after 60s; the command is still running in the guest (pid 12345)'
+  );
+  assert.match(ssh.history[0].command, /--timeout 60 --/);
+});
+
+// Captured live 2026-09-26: `qm guest exec <vmid> --timeout 60 -- sh -c
+// 'echo ok; exit 3'` -- a normal completed-with-nonzero-exit envelope. Real
+// `qm guest exec` output is strict JSON: the command's own trailing newline
+// in "out-data" is a proper JSON escape (a literal backslash-n, `\\n` in
+// this TS source) rather than a raw embedded newline, so a plain
+// `JSON.parse` -- no sanitizing pass -- handles it correctly.
+test('runRemote parses the captured completed-nonzero-exit envelope verbatim', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "exitcode" : 3,\n   "exited" : 1,\n   "out-data" : "ok\\n"\n}\n',
+    stderr: '',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'echo ok; exit 3');
+  assert.equal(result.code, 3);
+  assert.equal(result.stdout, 'ok\n');
+  assert.equal(result.stderr, '');
+});
+
+// Issue #2 code review R1: a process killed by a signal returns `exited: 1`
+// + `signal` and no `exitcode` at all -- a shape distinct from the pid-only
+// "still running" timeout envelope above. The old `typeof parsed.exitcode
+// !== 'number'` check sent this down the timeout path too, misreporting a
+// signal-killed command as still running and dropping its output. Captured
+// live 2026-09-26 through Ssh2SSHClient.exec on the parent host: `qm guest
+// exec <vmid> --timeout 10 -- sh -c 'echo before; echo oops >&2; kill -9
+// $$'`.
+test('runRemote reports a vm guest exec signal-killed envelope as a failure with its output, not a timeout', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: '{\n   "err-data" : "oops\\n",\n   "exited" : 1,\n   "out-data" : "before\\n",\n   "signal" : 9\n}\n',
+    stderr: '',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', "echo before; echo oops >&2; kill -9 $$");
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, 'before\n');
+  assert.equal(result.stderr, 'oops\nkilled by signal 9');
+});
+
+test('runRemote reports a signal-killed envelope with no err-data as just "killed by signal N"', async () => {
+  const ssh = new FakeSSHClient(() => ({
+    stdout: JSON.stringify({ exited: 1, 'out-data': 'before\n', signal: 9 }),
+    stderr: '',
+    code: 0,
+  }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'kill -9 $$');
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, 'before\n');
+  assert.equal(result.stderr, 'killed by signal 9');
+});
+
+test('runRemote reports an unparseable vm guest exec envelope as a failure including the trimmed raw stdout', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '  not json at all  ', stderr: '', code: 0 }));
+  const result = await runRemote(ssh, inventory, 'windows-test', 'echo hi');
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /qm guest exec output could not be parsed as JSON/);
+  assert.match(result.stderr, /not json at all/);
+});
+
 test('selectTargets --host validates existence', () => {
   assert.deepEqual(selectTargets(inventory, { host: 'media' }), ['media']);
   assert.throws(() => selectTargets(inventory, { host: 'nope' }), /Unknown host\/guest: nope/);

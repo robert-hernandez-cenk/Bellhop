@@ -90,7 +90,7 @@ or `npm run bellhop -- <command> [flags]`.
 ```bash
 bellhop update-all --host pve1
 bellhop update-all --group lxc
-bellhop update-all --all
+bellhop update-all --all        # every host and every lxc guest; VMs are never updated
 bellhop sync-inventory          # dry run: prints new/updated/removed guests
 bellhop sync-inventory --apply  # writes inventory/bellhop.db's hosts[] and guests[]
 bellhop update-app --guest plex --app plex --apply
@@ -99,6 +99,11 @@ bellhop guest-power --guest plex --state shutdown --apply
 bellhop audit-nfs-mounts        # report NFS mounts across all lxc guests
 bellhop audit-nfs-mounts --host plex-lxc  # just one guest
 ```
+
+`update-all --group` only accepts `pve` or `lxc` (not `vm`), and `--host`
+naming a VM guest fails with an error rather than doing nothing — this
+toolkit's package update/install mechanism never acts on a VM at all;
+update a VM's own packages from inside the VM itself.
 
 `sync-inventory` queries every Proxmox host in inventory for its actual
 LXC containers and VMs (via `pvesh`) and reconciles `guests[]` with
@@ -133,6 +138,19 @@ bellhop delete-guest --guest old-lxc --backup --backup-storage nas-proxmox --app
 bellhop migrate-guest --guest media --to-host pve2 --apply
 bellhop migrate-guest --guest media --to-host pve2 --mid 15 --backup-storage nas-proxmox --storage local-lvm --apply
 ```
+
+`configure-guest --packages` detects the guest's own package manager
+(apt/dnf/apk/pacman/zypper) and installs with it, rather than assuming
+`apt-get` — even the dry run makes one live SSH call to the guest to show
+the exact install command it would run (e.g. `[DRY RUN] Would install on
+media (apk): apk update && apk add 'curl' 'vim'`). An unrecognized OS, a
+failed probe, or a failed install all exit 1 rather than reporting success.
+On Arch, the install runs `pacman -Syu`, so it also upgrades the whole
+system alongside the requested packages — Arch supports no partial
+upgrade. `--packages` is never sent to a VM guest — it fails immediately,
+before any remote call, naming the guest; install packages inside the VM
+itself instead. `--ssh-key` is unaffected by this and still works against
+a VM.
 
 `--mid <N>` (1-254) is required by `create-lxc`, `create-vm`, and
 `install-app`. It derives both the VMID and the guest's IP/gateway from the
@@ -522,6 +540,12 @@ your client can't show the form, or you leave it unanswered for 10 minutes,
 the assistant sees the question and can answer it with
 `answer_job_prompt`.
 It manages the inventory and `data/` directory of the checkout it runs from.
+
+A job the MCP server starts isn't siloed to it: it shows up live in the web
+UI's Job History with the same streaming output, and Stop/answer controls
+work from there just as they would for a job started in the web UI. The
+same goes in reverse — the MCP control tools can stop or answer a job that
+was started from the web UI.
 
 Register it with Claude Code from the checkout you want it to manage:
 

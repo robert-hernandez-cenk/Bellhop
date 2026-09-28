@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
-import { runUpdateAll, formatUpdateAll } from '../../src/commands/maintenance/update-all.ts';
+import { runUpdateAll, formatUpdateAll, selectUpdateTargets } from '../../src/commands/maintenance/update-all.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { captureWarnings } from '../support/capture-warnings.ts';
 
@@ -15,6 +15,7 @@ const inventory: Inventory = {
     { name: 'unreachable-guest', type: 'lxc', vmid: 108, host: 'pve1' },
     { name: 'broken-guest', type: 'lxc', vmid: 109, host: 'pve1' },
     { name: 'probe-broken-guest', type: 'lxc', vmid: 110, host: 'pve1' },
+    { name: 'windows-guest', type: 'vm', vmid: 201, host: 'pve1' },
   ],
 };
 
@@ -97,6 +98,73 @@ test('runUpdateAll counts a probe that exits nonzero as a command failure, not a
   assert.deepEqual(result.failCommand, ['probe-broken-guest']);
   assert.deepEqual(result.failUnknownPm, []);
   assert.equal(ssh.history.length, 1, 'probe only -- no update attempted');
+});
+
+// Issue #2 (operator PR feedback): update-all must never act on VMs.
+// `selectUpdateTargets` is the one place update-all's targets are decided --
+// runUpdateAll delegates to it rather than the generic selectTargets.
+test('selectUpdateTargets with --all returns every host and every non-vm guest, excluding VMs', () => {
+  assert.deepEqual(selectUpdateTargets(inventory, { all: true }), [
+    'pve1',
+    'apt-guest',
+    'apk-guest',
+    'unknown-guest',
+    'unreachable-guest',
+    'broken-guest',
+    'probe-broken-guest',
+  ]);
+});
+
+test('selectUpdateTargets with --group vm rejects outright', () => {
+  assert.throws(
+    () => selectUpdateTargets(inventory, { group: 'vm' }),
+    /update-all does not update VMs; update packages inside the VM itself/
+  );
+});
+
+test('selectUpdateTargets with --host naming a VM rejects, naming the guest', () => {
+  assert.throws(
+    () => selectUpdateTargets(inventory, { host: 'windows-guest' }),
+    /update-all does not update VMs \(windows-guest is a VM\); update packages inside the VM itself/
+  );
+});
+
+test('selectUpdateTargets with --host naming an lxc guest or --group lxc/pve delegates to selectTargets unchanged', () => {
+  assert.deepEqual(selectUpdateTargets(inventory, { host: 'apt-guest' }), ['apt-guest']);
+  assert.deepEqual(selectUpdateTargets(inventory, { group: 'pve' }), ['pve1']);
+  assert.deepEqual(
+    selectUpdateTargets(inventory, { group: 'lxc' }),
+    inventory.guests.filter((g) => g.type === 'lxc').map((g) => g.name)
+  );
+});
+
+test('selectUpdateTargets with an unknown --host still throws the unknown-host error', () => {
+  assert.throws(() => selectUpdateTargets(inventory, { host: 'nope' }), /Unknown host\/guest: nope/);
+});
+
+test('runUpdateAll with --group vm rejects and makes no remote calls', async () => {
+  const ssh = new FakeSSHClient(responder);
+  await assert.rejects(
+    () => runUpdateAll({ group: 'vm' }, { ssh, inventory }),
+    /update-all does not update VMs; update packages inside the VM itself/
+  );
+  assert.equal(ssh.history.length, 0);
+});
+
+test('runUpdateAll with --host naming a VM rejects and makes no remote calls', async () => {
+  const ssh = new FakeSSHClient(responder);
+  await assert.rejects(
+    () => runUpdateAll({ host: 'windows-guest' }, { ssh, inventory }),
+    /update-all does not update VMs \(windows-guest is a VM\); update packages inside the VM itself/
+  );
+  assert.equal(ssh.history.length, 0);
+});
+
+test('runUpdateAll with --all never targets the VM guest', async () => {
+  const ssh = new FakeSSHClient(responder);
+  const result = await runUpdateAll({ all: true }, { ssh, inventory });
+  const allTargets = [...result.pass, ...result.failConnect.map((f) => f.target), ...result.failCommand, ...result.failUnknownPm];
+  assert.ok(!allTargets.includes('windows-guest'), `windows-guest must never be targeted, got: ${JSON.stringify(allTargets)}`);
 });
 
 test('runUpdateAll throws when no targets match', async () => {

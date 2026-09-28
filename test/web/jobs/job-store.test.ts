@@ -348,3 +348,173 @@ test('interruptOrphaned called by an mcp process leaves web-owned and legacy row
 test('defaultIsPidAlive reports the current process alive', () => {
   assert.equal(defaultIsPidAlive(process.pid), true);
 });
+
+// Cross-process job control request queue (#6) -- see research.md R2-R4.
+// A non-owning process writes a row here instead of calling
+// cancel/answerPrompt/dismissPrompt directly (those only exist in the
+// owning JobRunner's in-memory state, in a different process).
+
+test('createControlRequest returns an id', () => {
+  const store = new JobStore(':memory:');
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const requestId = store.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+  assert.equal(typeof requestId, 'number');
+  store.close();
+});
+
+test('pendingControlRequests(owner) returns only unhandled rows for jobs that owner owns, in id order', () => {
+  const store = new JobStore(':memory:');
+  const mcpJob = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const webJob = store.createJob({ command: 'sync-caddy', category: 'maintenance', argsJson: '{}', owner: 'web' });
+  // No owner at all -- predates #16, and counts as 'web' the same way
+  // isOrphanFor already treats a null owner.
+  const legacyJob = store.createJob({ command: 'sync-inventory', category: 'maintenance', argsJson: '{}' });
+
+  const forMcpFirst = store.createControlRequest({ jobId: mcpJob, action: 'cancel', requestedByOwner: 'web' });
+  const forWeb = store.createControlRequest({ jobId: webJob, action: 'dismiss', requestedByOwner: 'mcp:4242' });
+  const forLegacy = store.createControlRequest({ jobId: legacyJob, action: 'cancel', requestedByOwner: 'mcp:4242' });
+  const forMcpSecond = store.createControlRequest({ jobId: mcpJob, action: 'answer', text: 'y', requestedByOwner: 'web' });
+
+  const pendingForMcp = store.pendingControlRequests('mcp:4242');
+  assert.deepEqual(pendingForMcp.map((r) => r.id), [forMcpFirst, forMcpSecond]);
+  assert.equal(pendingForMcp[0].jobId, mcpJob);
+  assert.equal(pendingForMcp[0].action, 'cancel');
+  assert.equal(pendingForMcp[1].action, 'answer');
+  assert.equal(pendingForMcp[1].text, 'y');
+
+  const pendingForWeb = store.pendingControlRequests('web').map((r) => r.id).sort((a, b) => a - b);
+  assert.deepEqual(pendingForWeb, [forWeb, forLegacy].sort((a, b) => a - b));
+  store.close();
+});
+
+test('markControlRequestHandled sets handledAt/result, clears text, and removes the row from pending', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-control-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const requestId = store.createControlRequest({
+    jobId,
+    action: 'answer',
+    text: 'y',
+    requestedByOwner: 'web',
+    requestedByUsername: 'admin',
+  });
+
+  store.markControlRequestHandled(requestId, 'applied');
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242'), []);
+
+  // Inspect the raw row (via a second connection to the same file -- WAL
+  // allows this while `store`'s own connection is still open) to confirm
+  // handledAt/result/text, none of which pendingControlRequests can show
+  // once the row is no longer pending.
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'applied');
+  assert.equal(row.text, null);
+  raw.close();
+
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// closeStaleControlRequests (fix round 1, SC-005): a pending request whose
+// owner never gets a chance to poll it again -- the owning MCP process
+// exits after the requester's own liveness check, or a job finishes in the
+// gap between that check and the row being written -- must not keep its
+// answer text forever. This closes it regardless of who would have applied
+// it.
+
+test('closeStaleControlRequests closes a pending request whose job is terminal, clearing its text', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-stale-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'web' });
+  store.markRunning(jobId);
+  store.markFinished(jobId, { status: 'success', exitCode: 0 });
+  const requestId = store.createControlRequest({ jobId, action: 'answer', text: 'y', requestedByOwner: 'mcp:111' });
+
+  store.closeStaleControlRequests();
+
+  assert.deepEqual(store.pendingControlRequests('web'), []);
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'not-applicable');
+  assert.equal(row.text, null);
+  raw.close();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('closeStaleControlRequests closes a pending request whose job id does not exist', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-stale-missing-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store = new JobStore(dbPath);
+  // No job with this id was ever created -- jobs has no cascading delete
+  // today, but a future one, or a hand-edited database, could leave exactly
+  // this shape (a control request row whose job_id no longer resolves).
+  const requestId = store.createControlRequest({ jobId: 999999, action: 'cancel', requestedByOwner: 'web' });
+
+  store.closeStaleControlRequests();
+
+  const raw = new Database(dbPath);
+  const row = raw.prepare('SELECT * FROM job_control_requests WHERE id = ?').get(requestId) as any;
+  assert.ok(row.handled_at);
+  assert.equal(row.result, 'not-applicable');
+  raw.close();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('closeStaleControlRequests closes a pending request whose job owner is a dead mcp process, regardless of job status', () => {
+  const store = new JobStore(':memory:');
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  store.markRunning(jobId); // still non-terminal -- the process died, not the job
+  const requestId = store.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+
+  store.closeStaleControlRequests(() => false);
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242'), []);
+  store.close();
+});
+
+test('closeStaleControlRequests leaves a pending request alone when its job is non-terminal and its owner is alive', () => {
+  const store = new JobStore(':memory:');
+  const jobId = store.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  store.markRunning(jobId);
+  const requestId = store.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+
+  store.closeStaleControlRequests(() => true);
+
+  assert.deepEqual(store.pendingControlRequests('mcp:4242').map((r) => r.id), [requestId]);
+  store.close();
+});
+
+test('job_control_requests survives reopening the same database file (constructor is idempotent)', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-control-reopen-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const store1 = new JobStore(dbPath);
+  const jobId = store1.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: 'mcp:4242' });
+  const requestId = store1.createControlRequest({ jobId, action: 'cancel', requestedByOwner: 'web' });
+  store1.close();
+
+  const store2 = new JobStore(dbPath);
+  const pending = store2.pendingControlRequests('mcp:4242');
+  assert.deepEqual(pending.map((r) => r.id), [requestId]);
+  store2.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// M4 (fix wave, SC-005): a cleared answer's text shouldn't survive on disk
+// in a freed database page after markControlRequestHandled/
+// closeStaleControlRequests overwrites it with NULL. JobStore has no
+// public accessor for its own connection, so this reaches the private
+// field directly rather than adding a test-only accessor just for this.
+test('JobStore turns on secure_delete so cleared answer text is scrubbed, not just unlinked', () => {
+  const store = new JobStore(':memory:');
+  const db = (store as unknown as { db: Database.Database }).db;
+  assert.equal(db.pragma('secure_delete', { simple: true }), 1);
+  store.close();
+});

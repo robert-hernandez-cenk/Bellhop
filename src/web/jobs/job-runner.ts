@@ -1,10 +1,33 @@
 import { EventEmitter } from 'node:events';
 import type { SSHClient } from '../../lib/ssh-client.ts';
-import type { JobStore, JobRow } from './job-store.ts';
+import type { JobStore, JobRow, ControlAction } from './job-store.ts';
 import type { JobLog } from './job-log.ts';
 import { JobSSHClient } from './job-ssh-client.ts';
 import type { PromptOrigin } from './job-ssh-client.ts';
 import { withCapturedConsole } from '../console-capture.ts';
+import { logWarn } from '../../lib/log.ts';
+
+// The attribution line processControlRequests appends to the job log once
+// a request is applied (research.md R4) -- source is "web UI" for the web
+// service's own owner string, "MCP (mcp:<pid>)" for an MCP server's, and
+// " by <user>" is omitted entirely when no username was recorded (an MCP
+// requester never has one).
+function controlSource(owner: string): string {
+  return owner === 'web' ? 'web UI' : `MCP (${owner})`;
+}
+
+function controlAttributionLine(action: ControlAction, requestedByOwner: string, requestedByUsername: string | null): string {
+  const source = controlSource(requestedByOwner);
+  const suffix = requestedByUsername ? ` by ${requestedByUsername}` : '';
+  switch (action) {
+    case 'cancel':
+      return `Stop requested from ${source}${suffix}`;
+    case 'answer':
+      return `Answer sent from ${source}${suffix}`;
+    case 'dismiss':
+      return `Prompt dismissed from ${source}${suffix}`;
+  }
+}
 
 export interface JobDefinition {
   command: string;
@@ -37,6 +60,10 @@ export interface JobRunnerOptions {
   // Stamped on every job this runner creates, and the scope of its orphan
   // cleanup. 'web' for the web service; the MCP server passes 'mcp:<pid>' (#16).
   owner?: string;
+  // How often processControlRequests() polls while this runner has active
+  // jobs (#6). Overridable only for tests -- production always uses the
+  // 500ms default.
+  controlPollMs?: number;
 }
 
 const DEFAULT_ABANDON_PROMPT_MS = 15 * 60 * 1000;
@@ -58,6 +85,11 @@ export class JobRunner {
   private promptExpectedSilenceMs?: number;
   private promptStallMs?: number;
   private promptScheduleCheck?: (fn: () => void, ms: number) => { cancel: () => void };
+  private controlPollMs: number;
+  // Only runs while this.controllers is non-empty (see ensureControlPoller/
+  // clearControlPoller) -- FR-011's "no work while idle", and what makes
+  // hasControlPoller() a meaningful test accessor.
+  private controlPollTimer: NodeJS.Timeout | undefined;
 
   constructor(
     private store: JobStore,
@@ -71,6 +103,7 @@ export class JobRunner {
     this.promptExpectedSilenceMs = options.promptExpectedSilenceMs;
     this.promptStallMs = options.promptStallMs;
     this.promptScheduleCheck = options.promptScheduleCheck;
+    this.controlPollMs = options.controlPollMs ?? 500;
   }
 
   enqueue(def: JobDefinition): number {
@@ -87,8 +120,80 @@ export class JobRunner {
     const logFile = this.store.get(id)!.logFile;
     const controller = new AbortController();
     this.controllers.set(id, controller);
+    this.ensureControlPoller();
     void this.execute(id, logFile, def, controller);
     return id;
+  }
+
+  // One pass over this runner's own pending control requests (#6) --
+  // production calls this from the poller timer below; tests call it
+  // directly to avoid depending on wall-clock timing (research.md R4/R7).
+  // A row for a job id this runner doesn't currently hold a controller for
+  // (finished, or created directly in the store) is marked not-applicable
+  // and left otherwise untouched -- covers both "the job is already over"
+  // and "this row predates this process's own lifetime."
+  //
+  // Fix round 1: the whole pass is wrapped in a try/catch (a setInterval
+  // callback that throws becomes an uncaughtException that kills the
+  // whole process -- SQLITE_BUSY from the shared DB, or a failure inside
+  // the pending-rows read itself, must never escape from here), and each
+  // row's own apply step gets its own inner try/catch (write() into an
+  // exec channel that's already closing throws from inside
+  // answerPrompt() -- without this, that row would stay pending and
+  // re-throw on every single poll tick forever instead of ever being
+  // marked handled).
+  processControlRequests(): void {
+    try {
+      this.store.closeStaleControlRequests();
+      for (const req of this.store.pendingControlRequests(this.owner)) {
+        if (!this.controllers.has(req.jobId)) {
+          this.store.markControlRequestHandled(req.id, 'not-applicable');
+          continue;
+        }
+        try {
+          const applied =
+            req.action === 'cancel'
+              ? this.cancel(req.jobId)
+              : req.action === 'answer'
+                ? this.answerPrompt(req.jobId, req.text ?? '')
+                : this.dismissPrompt(req.jobId);
+          this.store.markControlRequestHandled(req.id, applied ? 'applied' : 'not-applicable');
+          if (applied) {
+            const job = this.store.get(req.jobId);
+            if (job) {
+              this.emitLogChunk(req.jobId, job.logFile, controlAttributionLine(req.action, req.requestedByOwner, req.requestedByUsername), 'stdout');
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logWarn(`Control request ${req.id} for job ${req.jobId} (${req.action}) failed to apply: ${message} -- marking not-applicable`);
+          this.store.markControlRequestHandled(req.id, 'not-applicable');
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn(`processControlRequests failed: ${message}`);
+    }
+  }
+
+  private ensureControlPoller(): void {
+    if (this.controlPollTimer) return;
+    const timer = setInterval(() => this.processControlRequests(), this.controlPollMs);
+    timer.unref();
+    this.controlPollTimer = timer;
+  }
+
+  private clearControlPoller(): void {
+    if (this.controlPollTimer) {
+      clearInterval(this.controlPollTimer);
+      this.controlPollTimer = undefined;
+    }
+  }
+
+  // Test accessor (research.md R7) -- lets a test assert the poller is
+  // actually running/stopped without depending on its interval firing.
+  hasControlPoller(): boolean {
+    return this.controlPollTimer !== undefined;
   }
 
   // Returns false when the job isn't queued/running (already finished, or
@@ -137,6 +242,12 @@ export class JobRunner {
           : `Interrupted: service restarted while this job was ${row.status}. Remote work may have completed — check the log above and verify manually.\n`;
       this.log.append(row.logFile, note);
     }
+    // Runs after interruptOrphaned so a job just flipped to 'interrupted'
+    // above already counts as terminal here -- closes any pending control
+    // request left behind for it (or for any other stale job/dead-mcp-owner
+    // row system-wide; see JobStore.closeStaleControlRequests), rather than
+    // leaving it to sit unhandled forever (#6 fix round 1, SC-005).
+    this.store.closeStaleControlRequests();
   }
 
   // For a process that is exiting (the MCP server's stdin closing, #16):
@@ -149,14 +260,20 @@ export class JobRunner {
     while (this.controllers.size > 0 && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    this.clearControlPoller();
     this.reconcileOrphanedJobs();
   }
 
+  // Shared by execute()'s own emitChunk closure and processControlRequests'
+  // attribution line, so a local WebSocket viewer sees the latter too (both
+  // append to the log and emit the same 'chunk' event).
+  private emitLogChunk(jobId: number, logFile: string, text: string, stream: 'stdout' | 'stderr'): void {
+    this.log.append(logFile, text.endsWith('\n') ? text : `${text}\n`);
+    this.events.emit('chunk', { jobId, stream, text });
+  }
+
   private async execute(id: number, logFile: string, def: JobDefinition, controller: AbortController): Promise<void> {
-    const emitChunk = (text: string, stream: 'stdout' | 'stderr') => {
-      this.log.append(logFile, text.endsWith('\n') ? text : `${text}\n`);
-      this.events.emit('chunk', { jobId: id, stream, text });
-    };
+    const emitChunk = (text: string, stream: 'stdout' | 'stderr') => this.emitLogChunk(id, logFile, text, stream);
 
     const onPromptDetected = (
       text: string,
@@ -233,6 +350,25 @@ export class JobRunner {
       if (timer) {
         clearTimeout(timer);
         this.abandonTimers.delete(id);
+      }
+      if (this.controllers.size === 0) {
+        // Fix wave (#6): an answer/cancel/dismiss control request can be
+        // written to job_control_requests in the gap between this job
+        // becoming this runner's last active one and this finally block
+        // running -- with the poller about to stop (see clearControlPoller
+        // just below), nothing would ever pick that row up again, leaving
+        // it pending (with answer text still attached) indefinitely. One
+        // last sweep here closes it out the same way reconcileOrphanedJobs/
+        // shutdown already do, guarded the same way processControlRequests
+        // guards its own call so a failure here can never take the whole
+        // finally block (and therefore this job's own cleanup) down with it.
+        try {
+          this.store.closeStaleControlRequests();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logWarn(`closeStaleControlRequests failed: ${message}`);
+        }
+        this.clearControlPoller();
       }
     }
   }
