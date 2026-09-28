@@ -111,3 +111,8 @@ test('.prompt-banner-freetext input declares min-width: 0', () => {
   const decl = ruleDeclarations(css, '.prompt-banner-freetext input ');
   assert.match(decl, /min-width:\s*0/);
 });
+
+test('.prompt-banner-actions inside the 640px mobile media block declares flex-wrap: nowrap', () => {
+  const decl = ruleDeclarations(css, '.prompt-banner-actions ', '@media (max-width: 640px)');
+  assert.match(decl, /flex-wrap:\s*nowrap/);
+});
