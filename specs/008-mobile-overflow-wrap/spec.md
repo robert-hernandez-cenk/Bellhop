@@ -64,6 +64,7 @@ Every table in the web UI switches to the same card layout on a phone (Dashboard
 - A card row whose value is an interactive control (input, dropdown, button, badge) keeps the control usable; a control is never squeezed to zero width.
 - The status badge is the widest single unbreakable item in the job header (about 120px for `AWAITING INPUT`), well under the narrowest supported width, so keeping it on one line never causes overflow on its own.
 - The job log area already wraps long lines and is not changed.
+- A job waiting for input shows an answer banner with a free-text field and a Submit button side by side. At 320px the field's built-in minimum width made the banner about 5px wider than the screen, even with a short target, so the field must be allowed to narrow to fit.
 
 ## Requirements *(mandatory)*
 
@@ -78,6 +79,7 @@ Every table in the web UI switches to the same card layout on a phone (Dashboard
 - **FR-007**: Values MUST be shown in full; truncating them with an ellipsis is not an acceptable fix.
 - **FR-008**: At desktop widths, table layout and the job header's appearance MUST be unchanged for values of ordinary length.
 - **FR-009**: The fix MUST NOT change what data is shown or introduce a new breakpoint.
+- **FR-010**: The answer banner on a job waiting for input MUST fit within the screen width down to 320px, with the free-text field narrowing so that it and its Submit button stay side by side inside the banner.
 
 ## Success Criteria *(mandatory)*
 

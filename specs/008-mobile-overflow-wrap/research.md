@@ -13,6 +13,8 @@ Measured in headless Chrome with an explicit device-metrics override against a l
 
 The root cause is the same in both places. A flex item's default `min-width: auto` resolves to its min-content width, which is its longest unbreakable word. `.job-header` doesn't wrap, and its title `<div>` can't shrink below that word. Each mobile card `td` is `display: flex`, and its value, an anonymous flex item or a child element, can't shrink below its longest word either. Values with hyphens or spaces already break, which is why the problem only shows up with single-word names.
 
+A third instance of the same cause turned up during implementation, once the header fix was in (see R5). At 320px an `awaiting_input` job's prompt banner is still 325px wide, even with a short target.
+
 ## R1: Wrapping versus truncation
 
 **Decision**: wrap, breaking inside a word only when there's no other break point.
@@ -58,3 +60,11 @@ The behavioral proof is the browser measurement in `quickstart.md`, recorded in 
 **Alternatives considered**:
 - A jsdom-based test. jsdom doesn't do layout, so `scrollWidth` is always 0 and the test would prove nothing.
 - A Playwright/Chrome test. It adds a browser dependency to CI, and the spec lists visual-regression tooling as a non-goal.
+
+## R5: Prompt banner answer field
+
+**Finding**: after the header fix, `/jobs/:id` for an `awaiting_input` job still measures `.content` scrollWidth 325 at a 320px viewport. The offenders are the banner's buttons and the `.prompt-banner-freetext` form, all 293px wide against 256px of available space (320 minus 20px content padding each side, minus 12px banner padding each side). Below the breakpoint the actions column stretches its children, and the form's own minimum width is the `<input>`'s intrinsic width (about 203px, the browser default for a text field), plus the 8px gap and the 82px Submit button. `.prompt-banner-freetext { min-width: 0 }` at the breakpoint (issue #160 follow-up) lets the form shrink, but not the input inside it.
+
+**Decision**: add `min-width: 0` to `.prompt-banner-freetext input`. The input already has `flex: 1`, so it takes whatever the Submit button leaves, and the field and button stay side by side.
+
+**Alternatives considered**: stacking the input above Submit at the breakpoint. It costs a row of height on the screen that holds the most time-sensitive control, and it isn't needed at any supported width.

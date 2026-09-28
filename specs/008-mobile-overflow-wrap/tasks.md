@@ -59,6 +59,8 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
   - add a `.job-header-main { min-width: 0; overflow-wrap: anywhere; }` rule after it, with a short comment explaining why (issue #5: an unbreakable target name otherwise widens the page)
   - add `white-space: nowrap;` to `.job-status-badge`
 - [x] T004 [US1] In `web-client/src/pages/JobView.tsx`, give the header's title/subtitle wrapper `<div>` (the first child of `.job-header`) `className="job-header-main"`. Run `npm test` and `npm run typecheck`, and confirm the T002 tests pass.
+- [ ] T011 [US1] (Added during implementation; spec FR-010, research R5.) In `test/web-client/mobile-overflow-css.test.ts`, add a failing test asserting that the top-level `.prompt-banner-freetext input` rule declares `min-width: 0`. Confirm it fails.
+- [ ] T012 [US1] In `web-client/src/index.css`, add `min-width: 0;` to the existing top-level `.prompt-banner-freetext input` rule, with a short comment: the input's intrinsic minimum width otherwise stretches the prompt banner past a 320px screen (issue #5). Run `npm test` and confirm T011 passes.
 
 **Checkpoint**: US1 is complete and testable on its own.
 
