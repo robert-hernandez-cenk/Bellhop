@@ -65,6 +65,17 @@ The behavioral proof is the browser measurement in `quickstart.md`, recorded in 
 
 **Finding**: after the header fix, `/jobs/:id` for an `awaiting_input` job still measures `.content` scrollWidth 325 at a 320px viewport. The offenders are the banner's buttons and the `.prompt-banner-freetext` form, all 293px wide against 256px of available space (320 minus 20px content padding each side, minus 12px banner padding each side). Below the breakpoint the actions column stretches its children, and the form's own minimum width is the `<input>`'s intrinsic width (about 203px, the browser default for a text field), plus the 8px gap and the 82px Submit button. `.prompt-banner-freetext { min-width: 0 }` at the breakpoint (issue #160 follow-up) lets the form shrink, but not the input inside it.
 
-**Decision**: add `min-width: 0` to `.prompt-banner-freetext input`. The input already has `flex: 1`, so it takes whatever the Submit button leaves, and the field and button stay side by side.
+**Decision (first attempt, incomplete)**: add `min-width: 0` to `.prompt-banner-freetext input`. Re-measuring after this change still gave 325, and every child of the actions column was still 293px wide.
+
+**Root cause, measured**: `.prompt-banner-actions` keeps its base `flex-wrap: wrap` when the mobile rule switches it to `flex-direction: column`. A wrapping flex container is multi-line, and a multi-line container sizes each line's cross size (the width, in a column) from its items' own sizes rather than from the container. So the line takes the form's 293px, and `align-items: stretch` widens every child to that, overflowing the 256px container. Injected-style checks at 320px:
+
+| Change | `.content` scrollWidth | Form width | Input width |
+| --- | --- | --- | --- |
+| `flex-wrap: nowrap` and input `min-width: 0` | 320 | 256 | 166 |
+| `flex-wrap: nowrap` only (input `min-width: auto`) | 325 | 256 | 203 |
+
+**Decision**: both declarations are needed.
+- Add `flex-wrap: nowrap` to the mobile `.prompt-banner-actions` rule. A single-line column wraps nothing anyway, so the base rule's wrapping only matters on desktop, which keeps it.
+- Keep `min-width: 0` on `.prompt-banner-freetext input`. Its min-content (about 177px) exceeds the 166px left beside Submit.
 
 **Alternatives considered**: stacking the input above Submit at the breakpoint. It costs a row of height on the screen that holds the most time-sensitive control, and it isn't needed at any supported width.
