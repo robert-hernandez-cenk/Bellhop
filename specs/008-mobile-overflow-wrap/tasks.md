@@ -101,8 +101,8 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [x] T008 [P] Update the "Web UI responsiveness/theming" bullet in `CLAUDE.md` with one sentence: mobile card cells wrap long values (`overflow-wrap: anywhere`, right-aligned) rather than truncating, and a flex row holding a user-supplied name needs `min-width: 0` plus `overflow-wrap: anywhere` on the shrinking item (see `.job-header-main`). Check whether `CONTRIBUTING.md` restates this convention; update it only if it does.
-- [ ] T009 Run the full quickstart.md measurement for `/jobs`, `/jobs/<long-target id>`, `/jobs/<hyphenated id>` and `/` at 390px, 320px and 1280px. Record the scrollWidth and viewport numbers and save screenshots for the PR.
-- [ ] T010 Run `npm run typecheck`, `npm test` and `npm run web:build`, and confirm all pass.
+- [x] T009 Run the full quickstart.md measurement for `/jobs`, `/jobs/<long-target id>`, `/jobs/<hyphenated id>` and `/` at 390px, 320px and 1280px. Record the scrollWidth and viewport numbers and save screenshots for the PR.
+- [x] T010 Run `npm run typecheck`, `npm test` and `npm run web:build`, and confirm all pass.
 
 ---
 
