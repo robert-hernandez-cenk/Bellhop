@@ -164,13 +164,55 @@ test('a detected prompt shows in get_job and answer_job_prompt resumes the job',
   assert.equal(jobStore.get(id)?.status, 'success');
 });
 
-test('job control on another process\'s job is refused with the owner named', async () => {
+// Issue #6 (US3): cancel_job/answer_job_prompt/dismiss_job_prompt now go
+// through the same requestJobControl requireOwned's callers used to refuse
+// outright with (research.md R5) -- a job owned by another live process (the
+// web service, in these fixtures) gets a queued control request instead of
+// a flat refusal, applied asynchronously by whichever process owns it.
+// wait_for_job is the one tool that keeps requireOwned unchanged (FR-017):
+// it needs the job's own in-memory controller/events to block on, which only
+// the owning process ever holds, so there is nothing for a queued request to
+// help it wait on.
+test('cancel_job on a running job owned by another live process queues a control request instead of refusing', async () => {
+  const { call, jobStore, jobRunner } = await setup();
+  const id = jobStore.createJob({ command: 'sync-caddy', category: 'maintenance', argsJson: '{}', owner: 'web' });
+  jobStore.markRunning(id);
+
+  const result = await call('cancel_job', { id });
+  assert.equal(result.isError, undefined);
+  const body = parse(result);
+  assert.equal(body.requested, true);
+  assert.equal(body.owner, 'web');
+  assert.equal(body.note, 'The owning process applies this within about a second if it is running; check get_job for the result.');
+
+  const pending = jobStore.pendingControlRequests('web');
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].jobId, id);
+  assert.equal(pending[0].action, 'cancel');
+  assert.equal(pending[0].requestedByOwner, jobRunner.owner);
+  assert.equal(pending[0].requestedByUsername, null);
+});
+
+test('answer_job_prompt on a running (not awaiting-input) job owned by another live process is refused, not queued', async () => {
   const { call, jobStore } = await setup();
   const id = jobStore.createJob({ command: 'sync-caddy', category: 'maintenance', argsJson: '{}', owner: 'web' });
   jobStore.markRunning(id);
-  const result = await call('cancel_job', { id });
+
+  const result = await call('answer_job_prompt', { id, text: 'y' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /not awaiting input — nothing to answer/);
+  assert.deepEqual(jobStore.pendingControlRequests('web'), []);
+});
+
+test('wait_for_job still refuses a job owned by another process outright, never queuing a request', async () => {
+  const { call, jobStore } = await setup();
+  const id = jobStore.createJob({ command: 'sync-caddy', category: 'maintenance', argsJson: '{}', owner: 'web' });
+  jobStore.markRunning(id);
+
+  const result = await call('wait_for_job', { id });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /owned by web/);
+  assert.deepEqual(jobStore.pendingControlRequests('web'), []);
 });
 
 test('edit_guest writes inventory and reports the caddy sync outcome', async () => {

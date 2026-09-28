@@ -25,9 +25,13 @@ export function summarizeJob(job: JobRow) {
   };
 }
 
-// Cancel/answer/dismiss/wait need the job's in-memory controller and events,
-// which live only in the process that owns it. Cross-process control is
-// issue #165.
+// wait_for_job needs the job's in-memory controller and events, which live
+// only in the process that owns it, so it alone still refuses a foreign job
+// outright (FR-017, research.md R5) rather than going through
+// requestJobControl -- there is nothing a queued control request could help
+// it wait on. cancel_job/answer_job_prompt/dismiss_job_prompt used to share
+// this same refusal but now call requestJobControl instead (issue #6, US3):
+// this guard now has exactly one caller.
 export function requireOwned(deps: { jobStore: JobStore; jobRunner: Pick<JobRunner, 'owner'> }, id: number): JobRow {
   const job = deps.jobStore.get(id);
   if (!job) throw new Error(`Unknown job id: ${id}`);

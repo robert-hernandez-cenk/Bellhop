@@ -450,6 +450,12 @@ the assistant sees the question and can answer it with
 `answer_job_prompt`.
 It manages the inventory and `data/` directory of the checkout it runs from.
 
+A job the MCP server starts isn't siloed to it: it shows up live in the web
+UI's Job History with the same streaming output, and Stop/answer controls
+work from there just as they would for a job started in the web UI. The
+same goes in reverse — the MCP control tools can stop or answer a job that
+was started from the web UI.
+
 Register it with Claude Code from the checkout you want it to manage:
 
 ```bash

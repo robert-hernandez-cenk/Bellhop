@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import { buildApp } from '../../../src/web/app.ts';
-import { JobStore } from '../../../src/web/jobs/job-store.ts';
+import { JobStore, defaultIsPidAlive } from '../../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../../src/web/jobs/job-log.ts';
 import type { JobLog } from '../../../src/web/jobs/job-log.ts';
 import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
@@ -15,9 +15,10 @@ import path from 'node:path';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import http from 'node:http';
 import { WebSocket } from 'ws';
-import { attachJobsWebSocket } from '../../../src/web/routes/jobs.ts';
+import { attachJobsWebSocket, completeUtf8Length } from '../../../src/web/routes/jobs.ts';
 import { savePermissionGroup } from '../../../src/lib/permissions.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import Database from 'better-sqlite3';
 
 const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
 
@@ -171,10 +172,11 @@ function startWsServer(
   jobStore: JobStore,
   jobLog: JobLog,
   inventoryPath: string,
-  impersonationStore: ImpersonationStore = new Map()
+  impersonationStore: ImpersonationStore = new Map(),
+  options?: { tailIntervalMs?: number; isPidAlive?: (pid: number) => boolean }
 ): Promise<{ server: http.Server; port: number }> {
   const server = http.createServer();
-  attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, impersonationStore);
+  attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, impersonationStore, options);
   return new Promise((resolve) => {
     server.listen(0, () => {
       const address = server.address();
@@ -791,25 +793,422 @@ test('GET /api/jobs/:id exposes the prompt origin and matched index for an await
   jobStore.close();
 });
 
-// Issue #16: a job owned by another process (an MCP server) can't be
-// controlled from this web process's JobRunner -- say so, instead of the
-// misleading "already running — nothing to cancel".
+// Issue #6 (US1): a job owned by another process (an MCP server) still
+// streams live over this process's WebSocket -- it just can't come from
+// jobRunner.events (those never fire for a job this process didn't start).
+// attachJobsWebSocket instead runs a foreign-job tailer (job-tail.ts) that
+// polls the shared job row and log file on a short interval. The rows are
+// seeded directly rather than run through a real JobRunner/FakeSSHClient job
+// (see G4-brief.md): a paused job's 15-minute abandon timer belongs to
+// whichever JobRunner owns it, and this job is deliberately owned by
+// 'mcp:4242', not this test's own jobRunner.
+test('WS /ws/jobs/:id streams a job owned by another process via polling, not jobRunner.events', async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobs-'));
+  const jobLog: JobLog = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+
+    await waitFor(() => messages.some((m) => m.type === 'backlog'));
+    assert.equal(messages.find((m) => m.type === 'backlog').text, 'starting\n');
+    assert.ok(messages.some((m) => m.type === 'status' && m.status === 'running'));
+
+    jobLog.append(jobStore.get(id)!.logFile, 'more output\n');
+    jobStore.markAwaitingInput(id, 'Continue? (y/N) ', 'heuristic', null);
+    await waitFor(() => messages.some((m) => m.type === 'prompt'));
+    assert.ok(messages.some((m) => m.type === 'chunk' && m.text === 'more output\n'));
+    const prompt = messages.find((m) => m.type === 'prompt');
+    assert.equal(prompt.text, 'Continue? (y/N) ');
+    assert.equal(prompt.origin, 'heuristic');
+
+    jobStore.markRunning(id);
+    await waitFor(() => messages.some((m) => m.type === 'prompt-cleared'));
+
+    jobStore.markFinished(id, { status: 'success', exitCode: 0 });
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'success'));
+
+    // jobRunner never touched this job at all -- it was never enqueued
+    // through it, so there is nothing in jobRunner.events for this test to
+    // have relied on; the assertions above are only satisfiable through the
+    // polling tail.
+    ws.close();
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+    jobStore.close();
+  }
+});
+
+test('WS /ws/jobs/:id still refuses a foreign job a restricted group cannot see', async () => {
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({
+    command: 'guest-power',
+    category: 'maintenance',
+    target: 'stash-lxc',
+    argsJson: '{}',
+    owner: 'mcp:4242',
+  });
+  jobStore.markRunning(id);
+  savePermissionGroup(inventoryPath, 'family', { mode: 'block-list', resources: [{ type: 'guest', name: 'stash-lxc' }] });
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
+  try {
+    const outcome = await connect(port, { 'x-authentik-username': 'kid', 'x-authentik-groups': 'family' }, id);
+    assert.equal(outcome, 'refused');
+  } finally {
+    server.close();
+  }
+});
+
+// Fix wave (M2): the foreign-job tailer's setInterval used to clearInterval
+// on a stopped tail but leave the socket itself open. The client's own
+// useJobStream only falls back to HTTP polling on the socket's 'close'/
+// 'error' event, so a tail that stopped for a non-terminal reason (a
+// throwing tick, a vanished row) left the client stuck watching a socket
+// that would never send anything again. Both cases -- and the ordinary
+// terminal-status case -- must now close the socket once the tail stops.
+test('WS /ws/jobs/:id closes the socket when the foreign job tail stops from a throwing tick', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobstore-'));
+  const dbPath = path.join(dir, 'jobs.sqlite3');
+  const jobStore = new JobStore(dbPath);
+  const logDir = mkdtempSync(path.join(tmpdir(), 'joblog-'));
+  const jobLog = createJobLog(logDir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'running'));
+
+    // Directly corrupt expected_prompts_json (not writable through any
+    // JobStore method -- createJob is the only place it's ever set) via a
+    // second connection to the same file, then flip the row into
+    // awaiting_input in the same statement so the tail's next tick sees a
+    // genuine prompt-state change and actually attempts to JSON.parse the
+    // corrupted column, throwing inside tick()'s try/catch.
+    const raw = new Database(dbPath);
+    raw
+      .prepare(
+        `UPDATE jobs SET status = 'awaiting_input', prompt_text = ?, prompt_origin = ?, prompt_matched_index = NULL, expected_prompts_json = ? WHERE id = ?`
+      )
+      .run('Continue? (y/N) ', 'heuristic', 'not valid json', id);
+    raw.close();
+
+    // The tail's throwing tick sets stopped = true; the interval callback
+    // must then close the socket rather than leaving it open forever.
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+  } finally {
+    server.close();
+    jobStore.close();
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('WS /ws/jobs/:id closes the socket after a foreign job reaches a terminal status', async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobs-'));
+  const jobLog: JobLog = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'running'));
+
+    jobStore.markFinished(id, { status: 'success', exitCode: 0 });
+    await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'success'));
+
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+    jobStore.close();
+  }
+});
+
+// Fix wave (this file's dead-owner counterpart to job-tail.test.ts's own
+// unit-level coverage): the foreign-job tailer must also stop -- and this
+// socket must close -- once the owning MCP process has crashed, rather than
+// polling a stuck row forever. isPidAlive: () => false stands in for a real
+// dead pid so this is deterministic.
+test("WS /ws/jobs/:id closes the socket once the foreign job's owning MCP process has died", async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobs-'));
+  const jobLog: JobLog = createJobLog(dir);
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const inventoryPath = seededInventoryPath();
+
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:4242' });
+  jobLog.append(jobStore.get(id)!.logFile, 'starting\n');
+  jobStore.markRunning(id);
+
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => false });
+  try {
+    const { ws, messages } = await connectCollectingMessages(
+      port,
+      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      id
+    );
+
+    await waitFor(() => ws.readyState === WebSocket.CLOSED);
+
+    // The row itself was never touched (FR-004) -- still 'running', not
+    // flipped to some invented terminal status, and no 'status' message
+    // beyond the initial backlog-time one was ever sent for it.
+    assert.equal(jobStore.get(id)!.status, 'running');
+    assert.deepEqual(
+      messages.filter((m) => m.type === 'status'),
+      [{ type: 'status', status: 'running' }]
+    );
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+    jobStore.close();
+  }
+});
+
+// Issue #6 (US2): a job owned by another live process is no longer a flat
+// 409 "control it from there" -- the requester writes a control-request row
+// the owning process polls for and applies asynchronously through its own
+// JobRunner methods (requestJobControl, research.md R3). The route itself
+// can't tell whether that async apply will actually succeed (it never
+// touches the job), so it only ever previews the *synchronous* refusal
+// cases requestJobControl decides up front: a dead-pid owner, or a job
+// whose current status rules the action out entirely.
 for (const action of ['cancel', 'answer', 'dismiss-prompt'] as const) {
-  test(`POST /api/jobs/:id/${action} 409s naming the owner for a job owned by another process`, async () => {
+  const controlAction = action === 'dismiss-prompt' ? 'dismiss' : action;
+
+  test(`POST /api/jobs/:id/${action} 202s and records a control request for a job owned by another live process`, async () => {
     const jobStore = new JobStore(':memory:');
     const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
     const jobRunner = new JobRunner(jobStore, jobLog, ssh);
     const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
-    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner: 'mcp:123' });
+    const owner = `mcp:${process.pid}`;
+    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+    if (action === 'cancel') jobStore.markRunning(id);
+    else jobStore.markAwaitingInput(id, 'Continue? (y/N) ', 'heuristic', null);
 
     const res = await request(app)
       .post(`/api/jobs/${id}/${action}`)
       .send({ text: 'y' })
       .set('x-authentik-username', 'admin')
       .set('x-authentik-groups', 'bellhop-admins');
+
+    assert.equal(res.status, 202);
+    assert.deepEqual(res.body, { requested: true, owner });
+
+    const pending = jobStore.pendingControlRequests(owner);
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].jobId, id);
+    assert.equal(pending[0].action, controlAction);
+    assert.equal(pending[0].requestedByOwner, 'web');
+    assert.equal(pending[0].requestedByUsername, 'admin');
+  });
+
+  test(`POST /api/jobs/:id/${action} 409s naming the exited owner for a job owned by a dead process`, async () => {
+    const jobStore = new JobStore(':memory:');
+    const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+
+    const deadPid = 2147483646;
+    assert.equal(defaultIsPidAlive(deadPid), false, 'test assumes this pid is not a real running process');
+    const owner = `mcp:${deadPid}`;
+    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+    if (action === 'cancel') jobStore.markRunning(id);
+    else jobStore.markAwaitingInput(id, 'Continue? (y/N) ', 'heuristic', null);
+
+    const res = await request(app)
+      .post(`/api/jobs/${id}/${action}`)
+      .send({ text: 'y' })
+      .set('x-authentik-username', 'admin')
+      .set('x-authentik-groups', 'bellhop-admins');
+
     assert.equal(res.status, 409);
-    assert.equal(res.body.error, `job ${id} is owned by mcp:123; control it from there`);
+    assert.equal(res.body.error, `job ${id}'s owning process ${owner} has exited`);
+    assert.deepEqual(jobStore.pendingControlRequests(owner), []);
   });
 }
+
+test('POST /api/jobs/:id/cancel 409s "nothing to cancel" for a terminal job owned by another live process', async () => {
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+
+  const owner = `mcp:${process.pid}`;
+  const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+  jobStore.markFinished(id, { status: 'success', exitCode: 0 });
+
+  const res = await request(app)
+    .post(`/api/jobs/${id}/cancel`)
+    .set('x-authentik-username', 'admin')
+    .set('x-authentik-groups', 'bellhop-admins');
+
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, `Job ${id} is already success — nothing to cancel`);
+  assert.deepEqual(jobStore.pendingControlRequests(owner), []);
+});
+
+for (const action of ['answer', 'dismiss-prompt'] as const) {
+  const verb = action === 'dismiss-prompt' ? 'dismiss' : 'answer';
+
+  test(`POST /api/jobs/:id/${action} 409s "nothing to ${verb}" for a running (not awaiting-input) job owned by another live process`, async () => {
+    const jobStore = new JobStore(':memory:');
+    const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+
+    const owner = `mcp:${process.pid}`;
+    const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
+    jobStore.markRunning(id);
+
+    const res = await request(app)
+      .post(`/api/jobs/${id}/${action}`)
+      .send({ text: 'y' })
+      .set('x-authentik-username', 'admin')
+      .set('x-authentik-groups', 'bellhop-admins');
+
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, `Job ${id} is not awaiting input — nothing to ${verb}`);
+    assert.deepEqual(jobStore.pendingControlRequests(owner), []);
+  });
+}
+
+// End-to-end (T013): a second JobRunner standing in for a real MCP server
+// process, sharing this JobStore/JobLog. The web app's cancel route can't
+// touch this job directly (different owner) -- it only writes a control
+// request; the owning runner's own processControlRequests() is what
+// actually cancels it and appends the attribution line, exactly as it
+// would on its own poll timer.
+test('POST /api/jobs/:id/cancel on a job owned by a second JobRunner ends it cancelled once that runner polls', async () => {
+  const jobStore = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'joblog-'));
+  const jobLog = createJobLog(dir);
+  const webSsh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const webRunner = new JobRunner(jobStore, jobLog, webSsh);
+  const app = buildApp({
+    inventory,
+    baseSsh: webSsh,
+    jobStore,
+    jobLog,
+    jobRunner: webRunner,
+    inventoryPath: seededInventoryPath(),
+    authentik: new FakeAuthentikClient(),
+  });
+
+  const owner = `mcp:${process.pid}`;
+  const mcpSsh = new HangingSSHClient();
+  const secondRunner = new JobRunner(jobStore, jobLog, mcpSsh, { owner });
+
+  const id = secondRunner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async (s) => {
+      await s.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
+    },
+  });
+
+  await waitFor(() => jobStore.get(id)?.status === 'running');
+
+  const res = await request(app)
+    .post(`/api/jobs/${id}/cancel`)
+    .set('x-authentik-username', 'admin')
+    .set('x-authentik-groups', 'bellhop-admins');
+
+  assert.equal(res.status, 202);
+  assert.deepEqual(res.body, { requested: true, owner });
+
+  secondRunner.processControlRequests();
+
+  await waitFor(() => jobStore.get(id)?.status === 'cancelled');
+  assert.match(jobLog.read(jobStore.get(id)!.logFile), /Stop requested from web UI by admin/);
+
+  rmSync(dir, { recursive: true, force: true });
+  jobStore.close();
+});
+
+// completeUtf8Length (T, fix wave): a log file another process is actively
+// appending to can be read mid-write, so a byte chunk handed to the backlog
+// send can end with a torn multi-byte UTF-8 character. This is the table of
+// cases the function's own comment promises to handle.
+test('completeUtf8Length excludes only a torn trailing multi-byte character, never a complete one', () => {
+  const euroComplete = Buffer.from('ab€'); // 'ab' + complete 3-byte €
+  const euroTorn2of3 = euroComplete.subarray(0, euroComplete.length - 1); // 'ab' + first 2 of €'s 3 bytes
+  const euroTorn1of3 = euroComplete.subarray(0, euroComplete.length - 2); // 'ab' + first 1 of €'s 3 bytes
+  const emoji4byte = Buffer.from('ab\u{1f600}', 'utf8'); // 'ab' + complete 4-byte emoji
+  const emojiTorn1of4 = Buffer.concat([Buffer.from('ab'), emoji4byte.subarray(2, 3)]); // 'ab' + emoji's first byte only
+  const allContinuation = Buffer.from([0x80, 0x81, 0x82]); // no lead byte at all
+
+  const cases: { name: string; buffer: Buffer; expected: number }[] = [
+    { name: 'empty buffer', buffer: Buffer.alloc(0), expected: 0 },
+    { name: 'plain ASCII ending', buffer: Buffer.from('hello'), expected: 5 },
+    { name: 'complete 3-byte character (€) ending', buffer: euroComplete, expected: euroComplete.length },
+    // Torn 2-of-3 bytes of €: the lead byte and one continuation byte
+    // are present but the sequence is incomplete, so both are excluded --
+    // the returned length stops right before the lead byte ('ab'.length).
+    { name: 'torn 2-of-3 bytes of € excludes both torn bytes', buffer: euroTorn2of3, expected: 2 },
+    // Torn 1-of-3 bytes: only the lead byte is present, no continuation
+    // bytes at all -- still excluded the same way.
+    { name: 'torn 1-of-3 bytes of € (lead byte only) excludes it', buffer: euroTorn1of3, expected: 2 },
+    { name: 'complete 4-byte emoji ending', buffer: emoji4byte, expected: emoji4byte.length },
+    // Torn 1-of-4 bytes of a 4-byte emoji: just its first (lead) byte,
+    // with no continuation bytes following -- excluded the same way.
+    { name: "torn 1-of-4 bytes of a 4-byte emoji (lead byte only) excludes it", buffer: emojiTorn1of4, expected: 2 },
+    // All-continuation-bytes buffer: the backward scan never finds a lead
+    // byte, so i goes negative and the function returns 0 -- as implemented,
+    // this treats the whole buffer as incomplete rather than throwing or
+    // returning some partial length.
+    { name: 'buffer of only continuation bytes returns 0', buffer: allContinuation, expected: 0 },
+  ];
+
+  for (const { name, buffer, expected } of cases) {
+    assert.equal(completeUtf8Length(buffer), expected, name);
+  }
+});
