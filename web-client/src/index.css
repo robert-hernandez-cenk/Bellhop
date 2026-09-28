@@ -171,11 +171,13 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
   font-size: 13px;
   line-height: 1.5;
 }
-.job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px 12px; }
+/* A target name with no break points (e.g. a long lxc/vm name) otherwise sets the header's minimum width past the screen at phone widths (issue #5); wrapping moves the status/actions below the title when they don't fit. */
+.job-header-main { min-width: 0; overflow-wrap: anywhere; }
 .job-header-actions { display: flex; align-items: center; gap: 10px; }
 .job-title { font-weight: 600; }
 .job-subtitle { color: var(--text-secondary); font-size: 12px; }
-.job-status-badge { padding: 4px 10px; border-radius: 12px; color: white; font-weight: 600; font-size: 12px; }
+.job-status-badge { padding: 4px 10px; border-radius: 12px; color: white; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .check-status { margin-left: 6px; font-weight: 700; }
 .check-ok { color: var(--success); }
 .check-missing { color: var(--error); }

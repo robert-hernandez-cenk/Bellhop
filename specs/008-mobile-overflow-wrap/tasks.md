@@ -30,7 +30,7 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 
 **Purpose**: Create the test file that both stories extend.
 
-- [ ] T001 Create `test/web-client/mobile-overflow-css.test.ts` with a small helper that reads `web-client/src/index.css` and returns the declarations of a named rule. It takes an optional `@media (max-width: 640px)` scope and matches the selector text exactly as written in the file. Use `node:test` and `node:assert/strict`, like `test/web-client/admin-nav.test.ts`, and resolve paths from `import.meta.url`.
+- [x] T001 Create `test/web-client/mobile-overflow-css.test.ts` with a small helper that reads `web-client/src/index.css` and returns the declarations of a named rule. It takes an optional `@media (max-width: 640px)` scope and matches the selector text exactly as written in the file. Use `node:test` and `node:assert/strict`, like `test/web-client/admin-nav.test.ts`, and resolve paths from `import.meta.url`.
 
 **Checkpoint**: the helper exists; story tests can be added.
 
@@ -44,7 +44,7 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 
 ### Tests for User Story 1
 
-- [ ] T002 [US1] In `test/web-client/mobile-overflow-css.test.ts`, add failing tests asserting that:
+- [x] T002 [US1] In `test/web-client/mobile-overflow-css.test.ts`, add failing tests asserting that:
   - `.job-header` declares `flex-wrap: wrap`
   - `.job-header-main` declares `min-width: 0` and `overflow-wrap: anywhere`
   - `.job-status-badge` declares `white-space: nowrap`
@@ -54,11 +54,11 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 
 ### Implementation for User Story 1
 
-- [ ] T003 [US1] In `web-client/src/index.css`:
+- [x] T003 [US1] In `web-client/src/index.css`:
   - add `flex-wrap: wrap; gap: 8px 12px;` to `.job-header`
   - add a `.job-header-main { min-width: 0; overflow-wrap: anywhere; }` rule after it, with a short comment explaining why (issue #5: an unbreakable target name otherwise widens the page)
   - add `white-space: nowrap;` to `.job-status-badge`
-- [ ] T004 [US1] In `web-client/src/pages/JobView.tsx`, give the header's title/subtitle wrapper `<div>` (the first child of `.job-header`) `className="job-header-main"`. Run `npm test` and `npm run typecheck`, and confirm the T002 tests pass.
+- [x] T004 [US1] In `web-client/src/pages/JobView.tsx`, give the header's title/subtitle wrapper `<div>` (the first child of `.job-header`) `className="job-header-main"`. Run `npm test` and `npm run typecheck`, and confirm the T002 tests pass.
 
 **Checkpoint**: US1 is complete and testable on its own.
 
