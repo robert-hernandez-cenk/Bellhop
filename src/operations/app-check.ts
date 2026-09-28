@@ -19,7 +19,7 @@ export interface AppDefaults {
 // Every script also ends with a hardcoded "Access it using the following
 // URL" echo of the form http(s)://${IP}[:PORT][/path] -- that's the actual
 // port the installed app listens on (Plex 32400, Jellyfin 8096, ...), which
-// is what sync-caddy needs for a working reverse_proxy, not a generic
+// is what sync-proxy needs for a working reverse_proxy, not a generic
 // fallback. Take the first such line (a script with more than one, e.g. an
 // app plus a bundled Portainer, lists the primary app first) and default to
 // the scheme's standard port (80/443) when none is given, same as a browser

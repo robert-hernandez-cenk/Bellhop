@@ -1,6 +1,6 @@
 import { EditableAuthGroup } from './EditableAuthGroup';
 import { EditableAuthMode, EditableOidcRedirectUris } from './EditableAuthMode';
-import { EditableCaddyManual } from './EditableCaddyManual';
+import { EditableProxyManual } from './EditableProxyManual';
 import { EditableInsecureBackendTls } from './EditableInsecureBackendTls';
 import { EditablePort } from './EditablePort';
 import { EditableSubdomains } from './EditableSubdomains';
@@ -59,9 +59,9 @@ export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClos
             </div>
           </div>
           <div className="form-row">
-            <div className="form-row-label">read-only caddy</div>
+            <div className="form-row-label">read-only proxy</div>
             <div className="form-row-value">
-              <EditableCaddyManual guest={guest} onSaved={onSaved} />
+              <EditableProxyManual guest={guest} onSaved={onSaved} />
             </div>
           </div>
           <div className="form-row">

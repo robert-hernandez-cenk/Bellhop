@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { caddyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../../web-client/src/lib/settings-display.ts';
+import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../../web-client/src/lib/settings-display.ts';
 
-test('caddyHostText returns "<name> (<ip>)" for a set caddy entry', () => {
-  assert.equal(caddyHostText({ name: 'proxy', ip: '10.0.0.2' }), 'proxy (10.0.0.2)');
+test('proxyHostText returns "<name> (<ip>)" for a set proxy entry', () => {
+  assert.equal(proxyHostText({ name: 'proxy', ip: '10.0.0.2' }), 'proxy (10.0.0.2)');
 });
 
-test('caddyHostText explains the empty state for null', () => {
-  assert.equal(caddyHostText(null), 'not set — no inventory entry has caddy: true with an IP yet');
+test('proxyHostText explains the empty state for null', () => {
+  assert.equal(proxyHostText(null), 'not set — no inventory entry has proxy: true with an IP yet');
 });
 
 test('LAN_GATEWAYS_EMPTY_TEXT explains the empty state', () => {

@@ -11,7 +11,7 @@ interface Props {
   onSaved: () => void;
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'caddy-error' | 'error';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'proxy-error' | 'error';
 
 function sameList(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((s, i) => s === b[i]);
@@ -32,8 +32,8 @@ export function EditableSubdomains({ guest, hosts, guests, onSaved }: Props) {
     try {
       const res = await apiPatch<{
         guest: GuestEntry;
-        caddySynced: boolean;
-        caddyError?: string;
+        proxySynced: boolean;
+        proxyError?: string;
         authentikConflicts?: string[];
         authentikConflictAdoptable?: true;
       }>(
@@ -42,11 +42,11 @@ export function EditableSubdomains({ guest, hosts, guests, onSaved }: Props) {
       );
       setConflicts(res.authentikConflicts ?? []);
       setConflictAdoptable(res.authentikConflictAdoptable === true);
-      if (res.caddySynced) {
+      if (res.proxySynced) {
         setStatus('saved');
       } else {
-        setStatus('caddy-error');
-        setError(`Saved, but Caddy sync failed: ${res.caddyError}`);
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
       }
       onSaved();
     } catch (err) {
@@ -75,8 +75,8 @@ export function EditableSubdomains({ guest, hosts, guests, onSaved }: Props) {
         className="inline-input"
       />
       {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
-      {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
       <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} />
     </div>

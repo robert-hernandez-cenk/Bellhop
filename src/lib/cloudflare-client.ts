@@ -8,7 +8,7 @@ const API_BASE = 'https://api.cloudflare.com/client/v4';
 export const CLOUDFLARE_UNCONFIGURED_MESSAGE =
   'Cloudflare API not configured (set CLOUDFLARE_DNS_API_TOKEN in data/cloudflare-api.env)';
 
-// Applied to every request via AbortSignal.timeout(): syncCaddyLive awaits
+// Applied to every request via AbortSignal.timeout(): syncProxyLive awaits
 // this client inside the Dashboard guest-PATCH handler, so a Cloudflare
 // endpoint that accepts the connection and then stalls must not hang that
 // request for minutes.
@@ -29,7 +29,7 @@ export interface CloudflareDnsRecord {
 
 export interface CloudflareClient {
   // Whether there is a real token behind this client -- checked by
-  // syncCaddyLive so an unconfigured operator gets a skip line, not a warning.
+  // syncProxyLive so an unconfigured operator gets a skip line, not a warning.
   isConfigured(): boolean;
   findZoneId(domain: string): Promise<string | undefined>;
   listTxtRecords(zoneId: string): Promise<CloudflareDnsRecord[]>;

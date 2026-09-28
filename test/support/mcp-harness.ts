@@ -31,7 +31,7 @@ export const MCP_TEST_INVENTORY: Inventory = {
     },
   ],
   guests: [
-    { name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', caddy: true },
+    { name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', proxy: true },
     { name: 'app-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3' },
   ],
 };

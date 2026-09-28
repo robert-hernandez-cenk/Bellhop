@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { SettingsResponse, SettingsValues } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
-import { caddyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../lib/settings-display';
+import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
 
@@ -32,7 +32,19 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
     key: 'statusPagePath',
     label: 'Status page path',
     placeholder: '/usr/share/caddy/index.html',
-    help: 'Absolute path on the Caddy host where the status page is written. Unset: the status page is never rendered.',
+    help: 'Absolute path on the proxy host where the status page is written. Unset: the status page is never rendered.',
+  },
+  {
+    key: 'proxyDriver',
+    label: 'Proxy driver',
+    placeholder: 'caddy',
+    help: 'Which reverse-proxy driver sync-proxy/render-status-page use. Unset: the caddy default (the only driver that ships today).',
+  },
+  {
+    key: 'proxyConfigPath',
+    label: 'Proxy config path',
+    placeholder: '/etc/caddy/Caddyfile',
+    help: "Overrides the active driver's own default config path. Unset: that default.",
   },
   {
     key: 'customScriptsRepo',
@@ -158,7 +170,7 @@ export function SettingsPage() {
         ) : (
           <li>{LAN_GATEWAYS_EMPTY_TEXT}</li>
         )}
-        <li>Caddy host (firewall scope): {caddyHostText(data?.derived.caddy ?? null)}</li>
+        <li>Proxy IP (firewall scope): {proxyHostText(data?.derived.proxy ?? null)}</li>
       </ul>
     </div>
   );

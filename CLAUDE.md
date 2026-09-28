@@ -36,7 +36,12 @@ library rather than shelling out to a system `ssh` client. See any file
 under `test/commands/` for the pattern: build a `FakeSSHClient` with a
 `(sshTarget, sshUser, command) => ExecResult` responder, pass it as `ssh` in
 the command function's `deps` argument, and assert on `ssh.history` and the
-function's return value.
+function's return value. The one exception is a file-configured proxy
+driver's generated shell script (`src/lib/proxy/file-driver.ts`): it may be
+executed locally under `sh` with that proxy's own binaries (e.g. `caddy`,
+`systemctl`) stubbed on `PATH`, to prove its backup/restore control flow
+actually restores — see `test/lib/proxy/file-driver.test.ts` — distinct
+from the SSH/exec layer above, which stays `FakeSSHClient`-only.
 
 `src/lib/ssh-client.ts`'s `Ssh2SSHClient` is the only file that actually
 opens an SSH connection; it has no automated test (verify it manually
@@ -85,17 +90,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (issue #122 scoped them out) — use an agent for one. `ProxyJump`/bastion
   tunneling is likewise out of scope.
   Guests reference their parent host by name and carry a `vmid`. Optional
-  `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive Caddy
-  reverse-proxy generation — `subdomains` is a list (a host or guest can
-  front more than one subdomain; `sync-caddy` emits one `reverse_proxy`
-  block per entry in the list, all pointing at the same `ip`/`port`);
-  `insecureBackendTls` — see `sync-caddy` below; `caddyManual` (optional,
-  hosts and guests only) marks an entry whose real Caddy config is
-  hand-authored elsewhere (outside `sync-caddy`'s managed markers) —
-  `buildCaddyBlock` skips generating a site block for it entirely, even
+  `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive reverse-proxy
+  generation through whichever driver is active (issue #10 — see the
+  "Reverse-proxy driver interface" bullet below; Caddy is the only driver
+  that ships today) — `subdomains` is a list (a host or guest can
+  front more than one subdomain; `sync-proxy` emits one route per entry in
+  the list, all pointing at the same `ip`/`port`);
+  `insecureBackendTls` — see the driver-interface bullet below;
+  `proxyManual` (optional, hosts and guests only, renamed from `caddyManual`
+  in issue #10) marks an entry whose real proxy config is
+  hand-authored elsewhere (outside `sync-proxy`'s managed markers) —
+  `buildRoutes` skips deriving a route for it entirely, even
   though its `subdomains[]` still drives the Dashboard's service link; set
   by hand for a host (there's no web UI for host editing) or via the
-  Dashboard's "read-only caddy" column checkbox for a guest;
+  Dashboard's "read-only proxy" column checkbox for a guest;
   `authGroup` (optional, hosts/guests/external_sites -- issue #158
   replaced the earlier `requiresAuth` boolean with this field) names one
   rung of an ordered Authentik group ladder (`AUTHENTIK_GROUP_LADDER`, see
@@ -104,10 +112,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   same semantics `requiresAuth: false` used to have.
   `authMode` (optional, hosts/guests/external_sites, issue #1) names *how*
   a gated entry's tier is enforced: `forward` (absent means this, the
-  original behavior) puts Caddy's `forward_auth` in front of it, addressed
+  original behavior) puts the active proxy driver's forward-auth in front
+  of it (Caddy's `forward_auth`, today's only driver), addressed
   at whichever entry has `authentik: true`; `oidc` instead gives the entry
   its own Authentik OpenID Connect client, so the app itself checks the
-  login rather than Caddy. Every consumer (`buildCaddyBlock`,
+  login rather than the proxy. Every consumer (`buildRoutes`,
   `sync-authentik`, the Dashboard's edit-confirmation rule) reads
   `effectiveAuth(entry)` (returns `'ungated' | 'forward' | 'oidc'`) rather
   than `authMode` directly, since `authMode` is meaningless without
@@ -137,27 +146,31 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   app's own admin-gating OR-check from issue #86) are both gone, replaced
   by the top rung. This description covers `authMode: 'forward'` (or
   unset) -- see the `sync-authentik` bullet below for what an entry in
-  `authMode: 'oidc'` gets instead of a Proxy Provider. `sync-caddy` emits
-  the `forward_auth` directive addressed at
-  whichever entry has `authentik: true` (mirrors `caddy: true`'s
+  `authMode: 'oidc'` gets instead of a Proxy Provider. For a forward-mode
+  entry, the active driver addresses its rendered forward-auth directive at
+  whichever entry has `authentik: true` (mirrors `proxy: true`'s
   single-entry role, marking which host/guest actually runs the Authentik
   instance); a no-op on an entry with no `subdomains` (no candidate to
-  gate) in both commands, but `caddyManual` only silences `sync-caddy`
-  (`buildCaddyBlock` skips generating any block, `forward_auth` included,
-  for a `caddyManual` entry) — it is *not* a no-op for `sync-authentik`,
+  gate) in both `sync-proxy` and `sync-authentik`, but `proxyManual` only
+  silences `sync-proxy`
+  (`buildRoutes` skips deriving a route, `forward_auth` included,
+  for a `proxyManual` entry) — it is *not* a no-op for `sync-authentik`,
   which still creates/maintains that entry's Authentik Provider/
-  Application/bindings regardless of `caddyManual`, since the
-  operator's hand-authored Caddy block may still want to route through
+  Application/bindings regardless of `proxyManual`, since the
+  operator's hand-authored proxy block may still want to route through
   Authentik forward-auth on its own;
   `unauthenticatedPaths` (optional, hosts/guests/external_sites, same
-  placement as `authGroup`) is a list of Caddy path-matcher globs (e.g.
-  `/api/*`) that `sync-caddy` exempts from the `forward_auth` check on a
+  placement as `authGroup`) is a list of proxy path-matcher globs (e.g.
+  `/api/*`) that `sync-proxy` exempts from the `forward_auth` check on a
   gated entry -- added for issue #113, where an *arr-style
   app's server-to-server API calls (Prowlarr -> Whisparr) were getting
   redirected to an Authentik login the same as a browser request. A no-op
-  when `authGroup` is unset or the entry is `caddyManual`, same as
+  when `authGroup` is unset or the entry is `proxyManual`, same as
   `insecureBackendTls`'s existing "inert when not applicable" precedent.
-  Deliberately Caddy-side only, not an Authentik Proxy Provider setting --
+  Restricted (issue #10, US4) to an exact path or a path ending in `/*`
+  (parsed by `parsePathPattern`/`isValidUnauthenticatedPath` -- see the
+  driver-interface bullet below) since that is the common subset every
+  analysed proxy can express; not an Authentik Proxy Provider setting --
   Authentik's own native equivalent (`skip_path_regex` / "Unauthenticated
   Paths") has a confirmed, closed-as-wontfix bug
   (goauthentik/authentik#6563) where it leaks across providers sharing one
@@ -170,7 +183,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `pct config <vmid>` privilege status as of the last manual check —
   informational only, not enforced or auto-synced by any command (though
   `sync-inventory` does preserve it on existing entries via its `{
-  ...existing }` spread, same as `subdomains`/`port`/`caddy`); `app`
+  ...existing }` spread, same as `subdomains`/`port`/`proxy`); `app`
   (optional, set once by `install-app`'s apply step, never hand-edited)
   records the community-scripts slug the guest was installed from — drives
   the Dashboard's community-scripts quick-open link, preserved across
@@ -189,10 +202,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   community-scripts.org one (research R8 in
   `specs/003-custom-script-repo/research.md`); falls back to no link at
   all if the custom settings are later unset, since there's no repository
-  left to point at. `caddy: true`
-  on exactly one entry marks where Caddy runs — this
+  left to point at. `proxy: true` (renamed from `caddy: true` in issue #10)
+  on exactly one entry marks where the reverse proxy runs — this
   cross-field rule (along with "every guest's `host` resolves to a real
-  entry", "non-empty `subdomains` requires `ip` unless `caddyManual` is
+  entry", "non-empty `subdomains` requires `ip` unless `proxyManual` is
   set", and "no two entries claim the same subdomain") lives in
   `validateInventory()`
   alongside the schema, since it spans multiple entries rather than
@@ -204,7 +217,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (Datacenter -> node -> System -> Network), defaulting to `'LAN'` when a
   bridge has no comment yet — the toolkit never writes that comment back to
   Proxmox, it only mirrors it, so there is nothing to "preserve" the way
-  guest `subdomains`/`port`/`caddy` are preserved. Each host also carries an
+  guest `subdomains`/`port`/`proxy` are preserved. Each host also carries an
   optional `storages[]` (`StorageEntrySchema`: `name`/`type`/`content[]`/
   `active`), refreshed the same way from `/nodes/<node>/storage` -- `active`
   combines Proxmox's own `active` (currently reachable) and `enabled`
@@ -231,13 +244,18 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `subdomains` (one row per subdomain, `owner_type`/`owner_name` pointing
   back at the host/guest/external_site that claims it — the normalized form
   of what used to be an inline `subdomains[]` array field on each entry),
-  `caddy_owner` (a single-row, `CHECK (id = 1)`-enforced table recording
-  which one entry has `caddy: true`; written by `saveInventory` but not
-  currently read back by `loadInventory`, which instead reads the `caddy`
+  `proxy_owner` (renamed from `caddy_owner` in issue #10; a single-row,
+  `CHECK (id = 1)`-enforced table recording
+  which one entry has `proxy: true`; written by `saveInventory` but not
+  currently read back by `loadInventory`, which instead reads the `proxy`
   boolean column already present directly on the owning `hosts`/`guests`
-  row), and `meta` (`domain` plus six optional operator-specific scalars,
+  row), and `meta` (`domain` plus eight optional operator-specific scalars,
   issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`,
-  plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch`
+  plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch` and the
+  issue #10 pair `proxyDriver`/`proxyConfigPath` (which reverse-proxy
+  driver `src/lib/proxy/index.ts`'s `getDriver()` hands back, and its
+  configuration-file location — see the "Reverse-proxy driver interface"
+  bullet below)
   — see `SettingsSchema`/`SETTINGS_KEYS` in
   `src/lib/inventory.ts`, spread into `InventorySchema` rather than nested
   under their own key, same flat placement as `domain`). Each used to be a
@@ -269,10 +287,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   configured, so they never appear here: the LAN gateway `set-guest-vpn
   --vpn none` restores comes from the guest's parent host's own
   `midScheme.gateway`, and the Windows service's firewall `remoteip=`
-  scope (`scripts/windows-service.ts`'s `resolveCaddyIp`) comes from
-  whichever entry has `caddy: true`. `saveInventory`
+  scope (`scripts/windows-service.ts`'s `resolveProxyIp`, renamed from
+  `resolveCaddyIp` in issue #10) comes from
+  whichever entry has `proxy: true`. `saveInventory`
   runs as a single `db.transaction`: it deletes every row from five
-  tables (in FK-safe order: `subdomains`/`caddy_owner`/`guests`/
+  tables (in FK-safe order: `subdomains`/`proxy_owner`/`guests`/
   `external_sites`/`hosts`) and re-inserts everything fresh, and separately
   upserts the `meta` table key-by-key (`domain` plus each defined
   `SETTINGS_KEYS` value) via INSERT ... ON CONFLICT DO UPDATE, and
@@ -307,7 +326,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   API happens to return guests/interfaces/storage pools in — remains the
   only thing that could otherwise drift between two identical runs. The
   `subdomains` table is the one place row order is operator-meaningful
-  rather than purely cosmetic (`sync-caddy` treats an entry's first
+  rather than purely cosmetic (`sync-proxy` treats an entry's first
   subdomain as its canonical hostname), so it's read back `ORDER BY rowid`
   rather than alphabetically — `saveInventory` always fully clears that
   table and re-inserts each owner's subdomains in their original array
@@ -339,6 +358,28 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   three that do today are `src/cli.ts`, `src/web/server.ts`, and
   `scripts/windows-service.ts` -- or a custom ladder never takes effect for
   the migration and the fail-closed top-rung default is used instead.
+  A second one-time, self-idempotent migration sits right next to it
+  (`migrateCaddyToProxy`, issue #10's full Caddy-to-proxy rename): the
+  first time `hosts`/`guests` are opened while they still carry a `caddy`
+  or `caddy_manual` column, each is renamed in place (`ALTER TABLE …
+  RENAME COLUMN`, SQLite 3.25+, available in the bundled `better-sqlite3`)
+  to `proxy`/`proxy_manual`, and any existing `caddy_owner` table is
+  dropped outright rather than renamed onto `proxy_owner` — `caddy_owner`
+  is written by `saveInventory` on every save but never read back by
+  `loadInventory`, so nothing is lost by dropping it, and the very next
+  save fills `proxy_owner` fresh. It runs before the schema's own
+  `ensureColumn(..., 'proxy_manual', ...)` calls, since by the time those
+  run `CREATE TABLE IF NOT EXISTS proxy_owner` has already created an
+  empty table this migration would otherwise collide with, and because
+  `ensureColumn` adding `proxy_manual` first would make the rename fail
+  with a duplicate-column error. Same guarded (`PRAGMA table_info`),
+  self-idempotent, log-only-when-something-changed, **forward-only**
+  pattern as #158's migration above — each column is checked
+  independently, so a database that predates `caddy_manual` entirely just
+  skips that rename and gets `proxy_manual` from `ensureColumn` instead,
+  and a database created fresh by current code has none of
+  `caddy`/`caddy_manual`/`caddy_owner` to migrate at all, so the guards
+  are false from the start and nothing is ever logged for it.
 - **Target resolution** (`resolveTarget`/`runRemote` in `src/lib/targets.ts`):
   a `pve` entry is reached by a direct SSH exec; an `lxc`/`vm` guest is
   reached by SSHing to its *parent host* and running `pct exec <vmid> --`/
@@ -507,10 +548,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   unaffected and still works against a VM.
 - **Dry-run convention**: anything that mutates infrastructure or the
   inventory file (`create-lxc`, `create-vm`, `configure-guest`,
-  `sync-caddy`, `migrate-nfs-mount`, `attach-nfs-mount`, `sync-inventory`)
+  `sync-proxy`, `migrate-nfs-mount`, `attach-nfs-mount`, `sync-inventory`)
   defaults to printing what it would do and only executes with `--apply`.
   `create-lxc`/`create-vm`/`configure-guest` use the shared
-  `confirmOrDryRun` function (`src/lib/dry-run.ts`); `sync-caddy`/
+  `confirmOrDryRun` function (`src/lib/dry-run.ts`); `sync-proxy`/
   `migrate-nfs-mount`/`attach-nfs-mount` hand-roll the check instead since
   they need to return a multi-line block/script for the CLI layer to print
   rather than a single command line; `sync-inventory` always computes and
@@ -530,69 +571,166 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   package manager and install command apply would send rather than
   guessing `apt-get` — a `--ssh-key`-only dry run still makes no remote
   calls at all, since only `--packages` has anything to detect.
-- **`sync-caddy`** (`src/commands/networking/sync-caddy.ts`) writes into a
-  delimited managed section of the Caddyfile
-  (`# BEGIN bellhop-managed` / `# END bellhop-managed`) on whichever
-  inventory entry is flagged `caddy: true`, so anything hand-edited outside
-  the markers survives repeated runs. `buildCaddyBlock` emits one site block
-  per entry (its `subdomains[]` joined into a single comma-separated address
-  list, e.g. `sonarr.example.com, shows.example.com { ... }` — matching the
-  hand-authored style already live rather than repeating the same directives
-  once per alias) across `hosts[]`, `guests[]`, *and* `externalSites[]`
-  (`ExternalSiteSchema` in `src/lib/inventory.ts` — a Caddy reverse-proxy
+- **Reverse-proxy driver interface** (`src/lib/proxy/`, issue #10) is a
+  driver seam between the inventory and whichever reverse proxy is actually
+  running, put in place so a second proxy can be added by writing one
+  driver rather than untangling Caddy-specific code throughout the toolkit.
+  Caddy is the only driver that ships this round -- an admin-API Caddy
+  driver, and drivers for nginx/Nginx Proxy Manager/HAProxy, are follow-up
+  issues (its shape was checked against all four on paper first; see
+  `specs/006-reverse-proxy-driver/research.md`). Single-operator-assumption
+  update: this toolkit is no longer hard-wired to Caddy -- exactly one
+  driver is active per deployment (`proxyDriver`, a per-deployment choice,
+  not a per-entry one), and a future driver only has to declare what it
+  supports rather than fit into Caddy-shaped code. The one single-operator
+  assumption this round deliberately keeps is `TLS_BLOCK`'s hardcoded
+  Cloudflare DNS-01 with fixed resolvers (one domain, one DNS provider,
+  one operator) -- unchanged in effect, just now confined entirely inside
+  the Caddy driver instead of spread through a Caddy-specific generator.
+  Four files split the
+  responsibility: `routes.ts`'s `buildRoutes(inventory)` derives a
+  proxy-neutral `ProxyRoute[]` from `hosts[]`/`guests[]`/`externalSites[]`
+  -- the exact derivation rules the old Caddy-specific generator applied
+  directly (skip `proxyManual`/no-`subdomains` entries; default `port` to
+  `80`; throw the same missing-authentik error when a forward-gated route
+  exists but no entry has `authentik: true` with an `ip`) -- and
+  `buildProxyContext(inventory)` derives the shared `ProxyContext` (the
+  Authentik outpost's `ip`/`port`, and the fixed `externalPort` `443`); a
+  route never carries its auth *tier*, only its `mode`
+  (`'ungated' | 'forward' | 'oidc'`, plus a forward route's parsed
+  (`PathPattern[]`) and raw (`string[]`, stored order) `unauthenticatedPaths`)
+  -- tier enforcement stays entirely Authentik's job, in `sync-authentik`
+  below. `driver.ts` defines the `ReverseProxyDriver` interface itself
+  (`id`, `capabilities`, `defaultConfigPath`, `plan()`/`apply()`/
+  `snapshot()`) and `checkCapabilities(routes, driver)`; `file-driver.ts`'s
+  `fileDriver(...)` is a shared builder for any driver configured by files
+  (Caddy today; nginx/HAProxy are candidates -- three of the five analysed
+  mechanisms have no file at all, e.g. Caddy's own admin API, so the
+  top-level contract is "reconcile these routes" rather than "render this
+  file", with `fileDriver` supplying everything a file-configured driver
+  needs on top of that); `index.ts`'s `getDriver(inventory)` resolves the
+  `proxyDriver` setting (unset means `'caddy'`, the only registered id;
+  an id no registered driver has -- only reachable by hand-editing
+  `bellhop.db`, since the schema's own zod enum already rejects any other
+  value at load time -- throws `"Unknown proxyDriver '<id>' -- run: bellhop
+  set-config proxyDriver caddy --apply"`) to a driver instance, and
+  `driverDeps(inventory, ssh, driver)` resolves the rest of what
+  `plan()`/`apply()`/`snapshot()` need (`proxyHost` from the entry flagged
+  `proxy: true`, throwing `"No inventory entry has 'proxy: true'"` if none
+  is; `configPath` from the `proxyConfigPath` setting, else the driver's
+  own `defaultConfigPath`).
+
+  **Capability enforcement** (FR-011/FR-012): `checkCapabilities` returns
+  one `CapabilityError` per route whose `auth.mode` isn't in the active
+  driver's `capabilities.authModes` (an `'ungated'` route is never a
+  candidate). The message suggests switching to the other auth mode only
+  when the driver can enforce that one; otherwise it suggests clearing
+  `authGroup` or choosing a `proxyDriver` that supports the mode.
+  `runSyncProxy` (`src/commands/networking/sync-proxy.ts`)
+  joins every message into one thrown `Error` and refuses to preview or
+  write anything -- for both a dry run and `--apply`; `commitGuestEdit`
+  (`src/operations/edit-guest.ts`) runs the same check against the
+  *edited* guest's own route only, derived alone by `buildRouteForEntry`
+  (`routes.ts`), so nothing about another entry -- its own capability
+  mismatch, a missing authentik ip, a bad exempt path -- can block a
+  different guest's edit; it still surfaces the next time that entry is
+  itself synced or edited, or by the push-live step's own `sync-proxy`
+  call, reported as `proxySynced: false`. This check runs only where a route is
+  about to become live configuration or a specific entry is being saved --
+  never from `validateInventory()` itself (FR-013), so changing
+  `proxyDriver` can never make an already-saved inventory fail to load;
+  Caddy supports both modes, so this never actually triggers today, but it
+  is the guarantee every future driver inherits.
+
+  **`fileDriver(def)`** owns the full render -> back up -> write ->
+  validate -> restore-or-reload cycle for a proxy configured by files, so
+  a new file-configured driver only supplies `render()`, its validate
+  command, and its reload command (`configFiles()` optionally overrides
+  which paths `snapshot()` reads; defaults to `[configPath]`). `apply()`
+  builds one POSIX `sh` script (`buildFileDriverScript`, run via
+  `runRemote` on the proxy host) that: backs up every target file first
+  (or records that it didn't exist); installs one `trap ... EXIT` once
+  every backup exists, so *any* non-zero exit from that point on -- a
+  write-phase command failing under `set -e`, or the validate command
+  itself failing -- restores every backup (removing files that didn't
+  exist before) through that one trap handler, not a restore block
+  duplicated at each failure site -- and, since an EXIT trap does not run
+  when the shell is killed by a signal, a second trap on HUP/INT/TERM that
+  clears every trap, runs the same restore, and exits 1; writes each file (`'owned'` replaces it
+  whole, `'managed-section'` removes any existing
+  `# BEGIN bellhop-managed`…`# END bellhop-managed` block and appends the
+  new one, creating the file if absent); runs the validate command,
+  printing a named failure message and exiting non-zero if it fails (the
+  trap performs the actual restore); disarms every trap together
+  (`trap - EXIT HUP INT TERM`), removes the backups, and reloads. The
+  `bellhop-managed` markers are defined once, in `file-driver.ts`: a
+  driver's `render()` returns only a `'managed-section'` file's body, and
+  `plan()` wraps it with `wrapManagedSection` before previewing it or
+  putting it in the payload, so the preview is still exactly what
+  `apply()` writes. `apply()` itself throws on a non-zero exit, with
+  stderr in the message -- this is a behavior fix, not just a rename
+  (issue #10): the former `sync-caddy` validated a *temporary copy* before
+  ever overwriting the real Caddyfile and reported a failed validate as a
+  successful apply regardless; now a failed remote validate or write
+  throws all the way up, so `syncProxyLive` (the Dashboard guest edit,
+  provisioning jobs) surfaces the failure to its caller. `migrate-guest`'s
+  post-move push is the exception: by then the source guest is destroyed
+  and inventory saved, so it catches the failure and logs a `logWarn`
+  saying the migration succeeded, the proxy sync failed (with the error),
+  and to retry with `bellhop sync-proxy --apply`, rather than failing a
+  migration that already happened. For a Dashboard guest edit specifically, this
+  means the inventory write has already happened (`commitGuestEdit` saves
+  before calling `syncProxyLive`) by the time a proxy failure is caught,
+  so the response reports it separately as `proxySynced: false, proxyError:
+  <message>` rather than rejecting the whole request. `snapshot()` never
+  calls `buildRoutes`/`buildProxyContext`/`render` -- it only `cat`s the
+  resolved `configFiles()` paths -- so a read-only status-page request
+  still succeeds when the current inventory is itself invalid (a bad
+  `unauthenticatedPaths` entry, a missing `authentik` ip) the same a real
+  `sync-proxy` run would fail on.
+- **Caddy driver** (`src/lib/proxy/drivers/caddy.ts`) is the one driver
+  that ships this round, built with `fileDriver`: `capabilities: {
+  authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true }`,
+  `defaultConfigPath: '/etc/caddy/Caddyfile'`, `validateCommand: caddy
+  validate --adapter caddyfile --config <path>`, `reloadCommand:
+  systemctl reload caddy`. Its `render()` is the old `buildCaddyBlock`
+  ported over verbatim minus the markers (`fileDriver` adds those), now reading the proxy-neutral `ProxyRoute[]`/
+  `ProxyContext` `buildRoutes`/`buildProxyContext` already derived rather
+  than walking raw inventory entries itself, and emitting
+  `unauthenticatedPaths` from a route's raw stored strings (in stored
+  order) rather than reconstructing them from the parsed `PathPattern[]`
+  -- byte-identical output was the whole point of this refactor (FR-010,
+  SC-001), and reusing the raw strings verbatim is what keeps a
+  forward-gated route's `not path ...` line identical to what it always
+  rendered. Everything the old generator did to the Caddyfile block itself
+  is unchanged and now lives entirely inside this one driver file: one
+  site block per entry (hostnames joined into a comma-separated address
+  list, canonical first, matching the hand-authored style rather than
+  repeating directives per alias) across hosts, guests, and external
+  sites (`ExternalSiteSchema` in `src/lib/inventory.ts` — a reverse-proxy
   target that isn't a Proxmox host or guest at all, e.g. a NAS; never an
-  SSH/exec target, only `sync-caddy` ever reads it), each getting the same
-  hardcoded Cloudflare DNS-01 `tls {}` clause (not inventory-configurable —
-  one domain, one DNS provider, one operator). Every generated
-  `reverse_proxy` is always emitted in block form (`reverse_proxy ip:port {
-  ... }`), never the bare one-line form the generator used to fall back to
-  for the common case — every block unconditionally includes a `header_up
-  X-Forwarded-Port 443` line (hardcoded constant `EXTERNAL_PORT`, sitting
-  next to `TLS_BLOCK`) so backends that build absolute external URLs from
-  that header (e.g. Dispatcharr's VOD cover art, issue #91) get the real
-  external port instead of their own internal listen port, rather than
-  Caddy's default of not setting `X-Forwarded-Port` at all. This is
-  unconditional and independent of `insecureBackendTls` — when that entry
-  also sets `insecureBackendTls: true`, its block additionally gets a
-  `transport http { tls_insecure_skip_verify }` line alongside `header_up`
-  in the same block, for backends that serve HTTPS with a
-  self-signed/untrusted cert (Proxmox's own web UI, a NAS's web UI).
-  Content outside the managed markers (a static `file_server` block for
-  Caddy's own landing page, say) is never touched, but also never generated
-  — the managed section only knows how to emit `reverse_proxy` blocks, so a
-  site that isn't reverse-proxying to something stays permanently hand-edited.
-  On a Caddyfile with no `# BEGIN bellhop-managed` marker yet (i.e. one
-  hand-authored before this command was ever run against it), `--apply`
-  *appends* the managed block rather than replacing anything — any
-  hand-written block for a subdomain inventory now also covers becomes a
-  duplicate site definition until the operator removes the old one by hand.
-  When an entry with an `authGroup` set also has `unauthenticatedPaths`
-  set, `buildCaddyBlock` wraps its `forward_auth` directive in a named Caddy
-  matcher (`@auth_required { not path <patterns...> }`) so a request
-  matching any listed pattern skips the Authentik check and falls straight
-  through to the block's already-unconditional `reverse_proxy` -- the
-  app's own API-key auth remains the real protection on those paths. No
-  matcher is emitted when the list is empty, so existing gated entries
-  with no exceptions configured are unaffected. The emitted config for a
-  gated entry is otherwise byte-identical to before issue #158 introduced
-  the group ladder -- which *tier* an entry sits at is enforced entirely by
-  Authentik's policy bindings (see `sync-authentik` below), never by Caddy,
-  so `forward_auth` itself doesn't vary by rung. That whole
-  `forward_auth`/`@auth_required`/outpost-passthrough stanza is gated on
-  `effectiveAuth(entry) === 'forward'` (`gatedForward`, from
-  `src/lib/inventory.ts` -- native OIDC gating, issue #1): an entry whose
-  `authMode` is `'oidc'` gets the same unconditional `reverse_proxy` block
-  every entry gets and nothing else -- no `forward_auth` check, no outpost
-  passthrough, and no `@auth_required` path-exemption matcher at all.
-  `unauthenticatedPaths` on an OIDC-mode entry is therefore inert the same
-  way it already is on an ungated one, since there is no `forward_auth` to
-  exempt anything from -- the app's own login is the only check in front of
-  it. `buildCaddyBlock`'s `authentikEntry?.ip` guard (the error thrown
-  when a gated entry has no `authentik: true` host/guest to address) only
-  fires for a forward-mode entry too, for the same reason: an OIDC-mode
-  entry never needs the outpost's address at all.
+  SSH/exec target, only ever the source of a `ProxyRoute`); the same
+  hardcoded Cloudflare DNS-01 `tls {}` clause on every block (`TLS_BLOCK`,
+  not inventory-configurable -- one domain, one DNS provider, one
+  operator -- the single-operator assumption this refactor deliberately
+  keeps, now contained inside this one driver instead of spread across a
+  Caddy-specific generator); every `reverse_proxy` always in block form
+  with an unconditional `header_up X-Forwarded-Port 443` (`EXTERNAL_PORT`,
+  from `ProxyContext`, so backends building absolute external URLs --
+  e.g. Dispatcharr's VOD cover art, issue #91 -- get the real external
+  port); `insecureTls: true` adding a `transport http {
+  tls_insecure_skip_verify }` line in the same block; content outside the
+  managed markers never touched, never generated, and appended rather than
+  replacing anything on a Caddyfile with no marker yet; a forward-gated
+  route with exempt paths wrapping `forward_auth` in a named
+  `@auth_required { not path <patterns...> }` matcher, omitted when the
+  list is empty; and no `forward_auth`/`@auth_required`/outpost-passthrough
+  at all for an `'oidc'`-mode route -- `render()`'s outpost-address access
+  is only reached for a `'forward'` route, since `buildRoutes` already
+  throws the missing-authentik error before producing one with no outpost
+  to address.
 - **`sync-authentik`**
-  (`src/commands/networking/sync-authentik.ts`) is `sync-caddy`'s
+  (`src/commands/networking/sync-authentik.ts`) is `sync-proxy`'s
   counterpart for the Authentik side of issue #80's per-app forward-auth:
   REST-only (no SSH), it reconciles Authentik Proxy Providers/
   Applications/policy bindings/embedded-outpost membership against every
@@ -648,10 +786,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   applied) is set requires the caller to actually be able to reach that
   app -- admin, or membership in that rung or any rung above it
   (`rungsAtOrAbove`), otherwise 403. It is a no-op, and therefore
-  unchecked, on an entry with no `authGroup` at all: `buildCaddyBlock` only
-  emits the `@auth_required` matcher inside its `if (entry.authGroup)`
-  branch, so an exemption on an ungated entry never reaches the Caddyfile --
-  there is nothing to widen. A non-admin may add path exemptions to an
+  unchecked, on an entry with no `authGroup` at all: the Caddy driver's
+  `render()` only emits the `@auth_required` matcher inside its
+  `if (entry.authGroup)` branch (mirroring `buildRoutes`'s own
+  `route.auth.mode === 'forward'` gate), so an exemption on an ungated
+  entry never reaches the deployed proxy configuration -- there is nothing
+  to widen. A non-admin may add path exemptions to an
   ungated entry (permitted, since the field is inert) and subsequently gate
   that entry (permitted as a "raise" of an ungated entry), producing a gated
   entry whose paths are all exempt -- not an escalation because the entry was
@@ -673,12 +813,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Application this command does not own, creating one would fail Authentik's
   unique-slug constraint -- that entry is skipped and reported in the
   result's `conflicts` list
-  (printed by the CLI; returned by `syncCaddyLive` as
+  (printed by the CLI; returned by `syncProxyLive` as
   `authentikConflicts` and echoed in the Dashboard guest-PATCH response
   (filtered there to the edited guest's own subdomain -- the list itself is
   inventory-wide),
   where `EditableAuthGroup`/`EditableSubdomains` render it as a warning
-  banner -- that route calls `syncCaddyLive` straight from its Express
+  banner -- that route calls `syncProxyLive` straight from its Express
   handler, outside any job, so a `logWarn` alone would only reach the
   service's stderr; the `logWarn` is still emitted for the
   provisioning-job callers, which do run inside `withCapturedConsole`)
@@ -697,7 +837,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   entry gets, bound to the same rung-and-above rule via the same
   `planBindingChanges` (exported, and shared with `adopt-oidc-client.ts` --
   see below) -- but never added to the forward-auth outpost, since an OIDC
-  entry's app is reached directly, not through Caddy's `forward_auth`.
+  entry's app is reached directly, not through the proxy's `forward_auth`.
   Ownership of an OAuth2-backed Application needs more than the #154
   slug-match rule a Proxy-backed one needs: `ownedProviderKind` (exported)
   only recognizes it as Bellhop's when its provider also carries
@@ -812,8 +952,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   backed by a Proxy Provider or by nothing is not, and stays a plain,
   unresolvable conflict (`resolve-by-hand`). `conflictExplanation(slug,
   result)` is the one place the wording is chosen, used by
-  `formatSyncAuthentik`, `syncCaddyLive`'s job-log warnings, and
-  delete-guest's pre-removal sync; `syncCaddyLive` also returns
+  `formatSyncAuthentik`, `syncProxyLive`'s job-log warnings, and
+  delete-guest's pre-removal sync; `syncProxyLive` also returns
   `authentikAdoptableConflicts`, which `commitGuestEdit` narrows to the
   edited guest as `authentikConflictAdoptable: true`, so the Dashboard's
   shared `AuthentikConflictBanner` (`AuthentikSyncBanners.tsx`) offers
@@ -834,7 +974,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   over a merely incomplete entry (`missing-redirect-uris`,
   `provider-name-taken`), since those are one entry's own unfinished
   configuration rather than something the sync itself got wrong.
-  `syncCaddyLive` surfaces the same failures as a Dashboard warning
+  `syncProxyLive` surfaces the same failures as a Dashboard warning
   (`oidcDiscoveryFailures`, see `edit-guest.ts` below) instead of failing
   the save (FR-013).
 
@@ -843,7 +983,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   backed by `GET /api/auth-groups` -- authenticated but deliberately not
   admin-gated, since a non-admin needs the rung options to raise a tier)
   reaches this the same way subdomain edits
-  reach `sync-caddy`: via `syncCaddyLive`, which now runs `sync-caddy`,
+  reach `sync-proxy`: via `syncProxyLive`, which now runs `sync-proxy`,
   `render-status-page`, and `sync-authentik` back to back, then
   `prune-acme-challenges` (below), as one combined push-live step.
 
@@ -851,7 +991,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`EditableAuthMode.tsx`/`EditableOidcRedirectUris.tsx`) is admin-only in
   both directions with no raise/lower exception (FR-018, unlike
   `authGroup`'s own asymmetry) -- switching *to* OIDC removes the
-  forward-auth gate Caddy would otherwise enforce, and the callback URL
+  forward-auth gate the active proxy driver would otherwise enforce, and
+  the callback URL
   decides where a completed login is sent, so getting either wrong is never
   a purely narrowing edit. `editDeletesOidcClient`/
   `OIDC_CLIENT_DELETION_CONFIRMATION_ERROR` (`src/operations/edit-guest.ts`)
@@ -869,17 +1010,17 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   flag set; if the server still rejects a confirmed save (a concurrent edit
   changed something first), it reopens the same modal rather than
   surfacing a raw error. A successful guest-PATCH save runs the same
-  combined `syncCaddyLive` push-live step every subdomain/`authGroup` edit
+  combined `syncProxyLive` push-live step every subdomain/`authGroup` edit
   already triggers, so an OIDC entry's client is created/updated/deleted
   live in the same request; any post-apply discovery-check failures for the
   caller's own guest are echoed back as `oidcDiscoveryFailures` and
   rendered as a warning banner, the OIDC counterpart to the existing
   `authentikConflicts` banner. The same goes for why the sync left the
-  guest alone: `syncCaddyLive` returns both `authentikOidcSkipped` and
+  guest alone: `syncProxyLive` returns both `authentikOidcSkipped` and
   `authentikForwardSkipped`, and `commitGuestEdit` echoes the edited
   guest's own entries from both as one `oidcSkipped` list (rendered by
   `AuthentikSkipBanner`). That matters because the push-live step writes
-  Caddy *before* it syncs Authentik: switching to OIDC drops the
+  the proxy configuration *before* it syncs Authentik: switching to OIDC drops the
   `forward_auth` gate first, so a skipped or failed sync leaves the app
   ungated at the edge until the next successful one.
 - **OIDC credentials and adoption**
@@ -930,8 +1071,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
 - **`prune-acme-challenges`**
   (`src/commands/networking/prune-acme-challenges.ts`, issue #162) deletes
   `_acme-challenge` TXT records left behind in the inventory `domain`'s
-  Cloudflare zone by Caddy's DNS-01 `TLS_BLOCK` (an aborted issuance, a
-  restart mid-challenge, a removed or renamed subdomain). REST-only via
+  Cloudflare zone by the Caddy driver's DNS-01 `TLS_BLOCK` (an aborted
+  issuance, a restart mid-challenge, a removed or renamed subdomain).
+  The command's own name and behavior are unchanged by issue #10 -- only
+  *when it runs inside `syncProxyLive`* is now gated on a driver
+  capability (see below), since a driver without
+  `capabilities.acmeDns01ViaCloudflare` (nginx, HAProxy -- neither ships
+  today) never leaves one of these records behind in the first place.
+  REST-only via
   `CloudflareClient` (`src/lib/cloudflare-client.ts`, the same
   real/unconfigured null-object pattern as `AuthentikClient`). Ownership is
   deliberately **age-based and zone-wide, not inventory-scoped** -- unlike
@@ -963,32 +1110,38 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   endpoint that accepts the connection and then stalls can't hang the caller
   indefinitely -- a timeout surfaces as a thrown `Error` like any other
   request failure. Dry run by default, `--apply` deletes, a failed
-  delete is reported and the rest proceed (CLI exit 1). In `syncCaddyLive`
-  it is the last step and **never fails the caller** (the 10s timeout on
-  every request bounds how long that can take): unconfigured logs one
-  skip line, and any thrown error (bad token, outage, zone not found,
-  timeout) becomes a `logWarn`; `SyncCaddyLiveResult` carries nothing for
-  it, since there is no Dashboard action to ask for. `syncCaddyLive` is
+  delete is reported and the rest proceed (CLI exit 1). In `syncProxyLive`
+  (`src/web/proxy-sync.ts`) it is the last step and **never fails the
+  caller** (the 10s timeout on every request bounds how long that can
+  take): a driver without `acmeDns01ViaCloudflare` (checked via
+  `getDriver(inventory)`) logs one skip line and returns before ever
+  touching Cloudflare (`pruneAcmeDriverSkipMessage`); an unconfigured
+  client logs its own skip line; and any thrown error (bad token, outage,
+  zone not found, timeout) becomes a `logWarn`; `SyncProxyLiveResult`
+  carries nothing for either case, since there is no Dashboard action to
+  ask for. `syncProxyLive` is
   reached through the shared operations layer (`src/operations/edit-guest.ts`
   and `src/operations/provisioning.ts`), so the web UI and the MCP server
   both run it. `cloudflare` is **required** on `OperationDeps`
-  (`src/operations/types.ts`): `syncCaddyLive` treats a missing client as
+  (`src/operations/types.ts`): `syncProxyLive` treats a missing client as
   unconfigured and skips the prune silently, so a required field is what
   turns a forgotten deps literal into a compile error instead of a
   cleanup that quietly never runs. It stays optional on `AppDeps` and
-  `syncCaddyLive`'s own deps (defaulting to `UnconfiguredCloudflareClient`,
+  `syncProxyLive`'s own deps (defaulting to `UnconfiguredCloudflareClient`,
   like `impersonationStore`) only so tests that don't care need no change;
   `src/web/server.ts` and `src/mcp/server.ts` always pass
   `buildCloudflareClient()`. Only the guest-edit and create/install/
-  delete-guest paths prune: `sync-caddy`, `render-status-page`, and
-  `migrate-guest` -- CLI, web, and MCP alike -- call `runSyncCaddy`/
-  `runRenderStatusPage` directly rather than `syncCaddyLive`, so a guest
-  migration or a manual Caddy push never cleans up stale TXT records.
+  delete-guest paths prune: `sync-proxy`, `render-status-page`, and
+  `migrate-guest` -- CLI, web, and MCP alike -- call `runSyncProxy`/
+  `runRenderStatusPage` directly rather than `syncProxyLive`, so a guest
+  migration or a manual proxy push never cleans up stale TXT records.
 - **`render-status-page`** (`src/commands/networking/render-status-page.ts`)
   regenerates a static HTML page and writes it to the operator-configured
-  `statusPagePath` (issue #124) on whichever entry is `caddy: true` — the
+  `statusPagePath` (issue #124) on whichever entry is `proxy: true` — the
   document root Caddy's hand-authored `caddy.example.com` block already
-  serves via `file_server`. Opt-in entirely: an operator who hasn't set
+  serves via `file_server` (that block itself is hand-authored outside any
+  driver's managed section, so it stays named after Caddy regardless of
+  which driver is active). Opt-in entirely: an operator who hasn't set
   `statusPagePath` never gets a page rendered anywhere. The standalone CLI
   command itself throws, naming the `set-config statusPagePath
   </absolute/path> --apply` fix; the two automated callers below treat an
@@ -1000,24 +1153,31 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   passes that string in as plain text — `inventory/bellhop.db` itself has no
   text form to `cat`, so this is a live re-render rather than a raw file
   read the way the old `inventory/hosts.yaml` version worked) and the
-  *actual* currently-deployed Caddyfile, read from `CADDYFILE_PATH` (same
-  env var `sync-caddy` reads/writes, defaulting to `/etc/caddy/Caddyfile`)
-  rather than a path hardcoded separately from it. As a standalone CLI
-  command it's still manual, on-demand — the CLI's own `sync-caddy` never
-  calls it. The web UI is the exception: `src/web/caddy-sync.ts`'s
-  `syncCaddyLive` (used by both `create-lxc`/`create-vm`/`install-app`
+  "Deployed proxy configuration" section, read via the active driver's own
+  `snapshot()` (issue #10, T014) rather than a hardcoded `cat` of a
+  driver-specific config path — `CADDYFILE_PATH` is gone; the driver's
+  `configFiles()` (defaulting to `[configPath]`, where `configPath` comes
+  from the `proxyConfigPath` setting, else the driver's own
+  `defaultConfigPath`) is what resolves the path(s) now, so this page shows
+  whatever the active driver actually manages and its own failure message
+  comes from that one shared implementation (`src/lib/proxy/file-driver.ts`)
+  instead of being duplicated here. As a standalone CLI
+  command it's still manual, on-demand — the CLI's own `sync-proxy` never
+  calls it. The web UI is the exception: `src/web/proxy-sync.ts`'s
+  `syncProxyLive` (used by both `create-lxc`/`create-vm`/`install-app`
   apply when the Subdomains field was used, and the Dashboard's
   guest-subdomains PATCH endpoint — see below and "Reading/writing the
-  inventory database") calls `sync-caddy` then `render-status-page`
+  inventory database") calls `sync-proxy` then `render-status-page`
   back to back on every web-UI-driven subdomains change, so the two never
   drift the way a CLI-only workflow could, unless `statusPagePath` is unset,
-  in which case only `sync-caddy` runs. `migrate-guest` (below) skips it the
-  same opt-in way on its own post-move Caddy push. That `caddy.example.com`
+  in which case only `sync-proxy` runs. `migrate-guest` (below) skips it the
+  same opt-in way on its own post-move proxy push. That `caddy.example.com`
   block is hand-restricted to LAN/internal ranges only (a Caddy `@internal
   remote_ip` matcher + `handle`/`handle` pair, 403 otherwise) since the page
   shows real internal hostnames/IPs — neither `render-status-page` nor
-  `syncCaddyLive` has any opinion on that restriction, they only ever touch
-  `index.html`/the managed Caddyfile section, never the site block itself.
+  `syncProxyLive` has any opinion on that restriction, they only ever touch
+  `index.html`/the managed proxy-configuration section, never the site
+  block itself.
 - **`attach-nfs-mount`** (`src/commands/provisioning/attach-nfs-mount.ts`)
   is the way to give an *existing* guest access to a NAS share — there is
   no direct-mount path anymore (see below). `create-lxc`/`install-app` also
@@ -1054,9 +1214,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   command that never exercises `runRemote`'s `pct`/`qm` wrapping path) via
   `pvesh get /nodes/$(hostname)/{lxc,qemu}` and reconciles `guests[]` with
   live state, keyed by `(host, vmid)`: existing entries keep
-  `name`/`subdomains`/`port`/`caddy` but get `type`/`ip` refreshed (IP parsed
+  `name`/`subdomains`/`port`/`proxy` but get `type`/`ip` refreshed (IP parsed
   from the guest's `net0`/`ipconfig0` config, mask stripped); new guests are
-  added with no `subdomains`/`port`/`caddy` (unless the web UI's create-lxc/
+  added with no `subdomains`/`port`/`proxy` (unless the web UI's create-lxc/
   create-vm/install-app apply already added the entry itself — see below —
   in which case sync-inventory's `{ ...existing }` merge preserves whatever
   `subdomains` that apply already set); guests no longer present are
@@ -1176,14 +1336,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   routed through it points its `gw=` at, and this command has no
   reconciliation step to fix those dependents back up. On success,
   `inventory/bellhop.db` is updated in place (same `(host, vmid, ip)`
-  rewrite, preserving `subdomains`/`port`/`caddy`/`app`/
+  rewrite, preserving `subdomains`/`port`/`proxy`/`app`/
   `insecureBackendTls`/`authGroup`/etc., that the Dashboard's guest-PATCH
   route already does for in-place edits), and if the guest has
-  `subdomains`, `sync-caddy` runs in the same `--apply` so the managed
-  Caddy config points at the new IP immediately — `render-status-page` runs
+  `subdomains`, `sync-proxy` runs in the same `--apply` so the managed
+  proxy configuration points at the new IP immediately (a failure there
+  only warns -- see the driver-interface bullet above) — `render-status-page`
+  runs
   alongside it too, but only when `statusPagePath` is set (see
   `render-status-page` below for the opt-in behavior it shares with
-  `syncCaddyLive`) —
+  `syncProxyLive`) —
   `sync-authentik` reconciliation is deliberately not run here, since it
   keys off `authGroup`/subdomain identity, never guest IP. Web UI: a
   Provisioning-page form (Guest/Target Host/MID/Backup Storage/Storage),
@@ -1366,7 +1528,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `inventory/bellhop.db` right away — name/type/vmid/host/ip derived from
   the resolved MID, plus any `subdomains` entered in that form's Subdomains
   field — rather than waiting on a separate Sync Inventory run. When
-  `subdomains` were given, it also awaits `syncCaddyLive` (see
+  `subdomains` were given, it also awaits `syncProxyLive` (see
   `render-status-page` below) in the same job, so the whole apply only
   succeeds once those subdomains are actually live.
   The web UI's App field is backed by a cached catalog of every
@@ -1524,7 +1686,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
 - **Live TLS-backend probing** (`src/lib/tls-probe.ts`, issue #100) augments
   the previously fully-manual `insecureBackendTls` checkbox with a live
   probe of the guest's actual running app on two web-UI paths -- the
-  checkbox stays authoritative for hosts, CLI usage, `caddyManual`
+  checkbox stays authoritative for hosts, CLI usage, `proxyManual`
   entries, and any probe attempt that ends inconclusive; only a conclusive
   probe overrides it. `probeInsecureBackendTls`
   runs `curl -s -o /dev/null --max-time 5 https://<ip>:<port>/` via
@@ -1552,8 +1714,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   below. The Dashboard's guest PATCH handler (`src/web/routes/dashboard.ts`)
   probes the same way but single-shot (no retries -- an existing guest
   being edited is presumed already running), only when the edit actually
-  changed `subdomains`/`port` and the resulting entry isn't `caddyManual`
-  (whose Caddy block, and thus `insecureBackendTls`, is never generated).
+  changed `subdomains`/`port` and the resulting entry isn't `proxyManual`
+  (whose proxy config, and thus `insecureBackendTls`, is never generated).
   On both paths, a conclusive probe result always overwrites whatever
   `insecureBackendTls` value the same request also submitted. CLI usage
   keeps today's fully-manual behavior unchanged -- neither the CLI's
@@ -1596,7 +1758,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   swallowed -- the request proceeds with the last known-good in-memory
   copy rather than failing outright. One consequence worth knowing: since
   `inventory` is a shared, mutable object read across `await` points in
-  some handlers (e.g. `src/web/caddy-sync.ts`'s `syncCaddyLive`, which
+  some handlers (e.g. `src/web/proxy-sync.ts`'s `syncProxyLive`, which
   reads `deps.inventory` multiple times across an SSH+Authentik REST
   round trip), a concurrent request's reload can theoretically change it
   mid-handler -- low-probability at this toolkit's single-operator scale,
@@ -1778,12 +1940,22 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   WebSocket would stay fully unauthenticated even after every other route
   was locked down. None of this is meaningfully safe on its own: it all
   depends on the Windows firewall rule `scripts/windows-service.ts`'s
-  `addFirewallRule` installs being scoped to `remoteip=<caddy-lxc's IP>`
-  rather than "any" LAN host — that scope is what prevents something other
+  `addFirewallRule` installs being scoped to `remoteip=<proxy-host's IP>`
+  (`resolveProxyIp`, renamed from `resolveCaddyIp` in issue #10 — it
+  derives the address from `findProxyEntry`/`proxy: true` rather than a
+  hardcoded literal, so the rule follows automatically if the proxy ever
+  moves; its errors name `'proxy: true'`) rather than "any" LAN host —
+  that scope is what prevents something other
   than Caddy from reaching the app directly and spoofing the
   `X-authentik-*` headers it trusts unconditionally. Forward-auth at Caddy
   was a deliberate choice over an app-embedded OIDC client: Authentik and
   Caddy own the session, and this app holds no session state of its own.
+  This bullet still names Caddy specifically, unlike the reverse-proxy
+  driver bullets above: it describes how *this app itself* trusts the
+  forward-auth headers a reverse proxy adds, which today is always Caddy
+  in front of it — `proxyDriver` only selects which driver `sync-proxy`
+  uses to generate configuration for inventory entries, not what fronts
+  the web UI's own auth.
 - **Web UI user/group management** (`src/web/routes/users.ts`,
   `src/web/routes/groups.ts`): full CRUD on Authentik users/groups from
   inside the web UI, gated by a `requireAdminGroup` middleware
@@ -1906,7 +2078,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   tagged with the "wrong" type silently leak the job, since a missing row
   under the untagged type defaults to allowed. Fleet-wide actions with no
   single target (`update-all`, `audit-nfs-mounts`, `sync-ssh-keys`,
-  `push-ssh-key`, `sync-inventory`, `sync-caddy`) stay admin-only via the
+  `push-ssh-key`, `sync-inventory`, `sync-proxy`) stay admin-only via the
   existing `requireAdminGroup` rather than being filtered. External sites
   are out of scope -- they aren't exposed via `GET /api/inventory` or shown
   on the Dashboard at all today. Host and guest rules are independent --
@@ -1975,10 +2147,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   exported `SettingsSchema` — the same schema `set-config` imports — so a
   value rejected by the CLI is rejected identically here, and a `null`/`''`
   submitted value clears the setting the same way `set-config --unset`
-  does. The page also shows the two *derived* values (each host's
-  `midScheme.gateway`, and the `caddy: true` entry's `ip`) read-only, for
+  does. As of issue #10, `SettingsSchema`/the page's field list both add
+  `proxyDriver` (placeholder `caddy`, the only registered id) and
+  `proxyConfigPath` (placeholder `/etc/caddy/Caddyfile`, the Caddy driver's
+  own `defaultConfigPath`) alongside the pre-existing six. The page also
+  shows two *derived* values (`derivedValues()`, `src/web/routes/
+  settings.ts`) read-only, for
   the same reason the Dashboard shows other server-computed state: nothing
-  to edit, just what the toolkit currently resolves them to. Unlike Users
+  to edit, just what the toolkit currently resolves them to -- each host's
+  `midScheme.gateway`, and (labelled "Proxy IP (firewall scope)", renamed
+  from "Caddy host" by issue #10) the `proxy: true` entry's `ip`, from
+  `findProxyEntry`, with an explained empty state for each
+  (`proxyHostText`/`LAN_GATEWAYS_EMPTY_TEXT`,
+  `web-client/src/lib/settings-display.ts`). Unlike Users
   and Permissions, the Settings nav link shows for any admin even without
   Authentik's user directory (issue #20) -- it needs only an identity, not
   Authentik's REST API. `Sidebar.tsx` decides the whole Admin nav group

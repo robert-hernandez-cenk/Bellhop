@@ -1,0 +1,195 @@
+# Contract: Proxy driver interface (`src/lib/proxy/`)
+
+Internal TypeScript contract between the proxy-neutral core and a driver.
+
+## routes.ts
+
+```ts
+export type PathPattern = { kind: 'exact'; path: string } | { kind: 'prefix'; path: string };
+
+export type ProxyAuth =
+  | { mode: 'ungated' }
+  | { mode: 'oidc' }
+  | { mode: 'forward'; exemptPaths: PathPattern[]; rawExemptPaths: string[] };
+
+export interface ProxyRoute {
+  owner: { type: 'host' | 'guest' | 'externalSite'; name: string };
+  hostnames: string[];
+  backend: { ip: string; port: number; insecureTls: boolean };
+  auth: ProxyAuth;
+}
+
+export interface ProxyContext {
+  outpost?: { ip: string; port: number };
+  externalPort: number; // 443
+}
+
+export function parsePathPattern(raw: string): PathPattern;          // throws on an invalid pattern
+export function buildRoutes(inventory: Inventory): ProxyRoute[];      // throws the missing-authentik error
+export function buildProxyContext(inventory: Inventory): ProxyContext;
+// One entry's route from that entry alone (undefined when it gets none);
+// never fails over another entry, and skips the missing-authentik check.
+export function buildRouteForEntry(inventory: Inventory, owner: ProxyRoute['owner']): ProxyRoute | undefined;
+```
+
+`rawExemptPaths` carries the stored strings in stored order, so a driver
+that already accepts them verbatim (Caddy) renders byte-identical output
+without reconstructing them from `exemptPaths`.
+
+## driver.ts
+
+```ts
+export type ProxyAuthMode = 'forward' | 'oidc';
+
+export interface DriverCapabilities {
+  authModes: ProxyAuthMode[];
+  acmeDns01ViaCloudflare: boolean;
+}
+
+export interface DriverDeps {
+  ssh: SSHClient;
+  inventory: Inventory;
+  proxyHost: string;     // name of the proxy: true entry
+  configPath: string;    // inventory.proxyConfigPath ?? driver.defaultConfigPath
+}
+
+export interface ProxyPlan { preview: string; payload: unknown }
+
+export interface ReverseProxyDriver {
+  id: ProxyDriverId;
+  capabilities: DriverCapabilities;
+  defaultConfigPath: string;
+  plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan>;
+  apply(plan: ProxyPlan, deps: DriverDeps): Promise<void>;     // throws on failure
+  snapshot(deps: DriverDeps): Promise<string>;                  // throws on failure
+}
+
+export interface CapabilityError { owner: ProxyRoute['owner']; mode: ProxyAuthMode; message: string }
+export function checkCapabilities(routes: ProxyRoute[], driver: ReverseProxyDriver): CapabilityError[];
+```
+
+Capability error message (one per offending route). When the driver can
+enforce the other auth mode:
+
+```text
+Entry '<name>' uses <forward-auth|OIDC> gating, but the '<driver-id>' proxy driver cannot enforce it -- set its authMode to <oidc|forward> or clear authGroup
+```
+
+When it cannot enforce that one either (suggesting it would be circular):
+
+```text
+Entry '<name>' uses <forward-auth|OIDC> gating, but the '<driver-id>' proxy driver cannot enforce it -- clear authGroup or choose a proxyDriver that supports it
+```
+
+`sync-proxy` joins all messages into one thrown `Error`. `commitGuestEdit`
+returns the edited entry's message as a 400, checking only the edited
+guest's own route (`buildRouteForEntry`), so another entry's problem never
+blocks the save.
+
+## file-driver.ts
+
+```ts
+export interface FileSpec { path: string; content: string; mode: 'owned' | 'managed-section' }
+
+// The managed-section markers are defined once, here. render() returns a
+// managed-section file's body only; plan() wraps it in the markers (an
+// empty body is the two markers alone) before previewing it or putting it
+// in the payload.
+export function wrapManagedSection(body: string): string;
+
+export function fileDriver(def: {
+  id: ProxyDriverId;
+  capabilities: DriverCapabilities;
+  defaultConfigPath: string;
+  render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
+  validateCommand(configPath: string): string;
+  reloadCommand: string;
+  // The absolute paths snapshot() reads, given the resolved configPath.
+  // Defaults to `[configPath]` -- correct for every single-file driver,
+  // Caddy included. Deliberately separate from `render`: snapshot is
+  // read-only, and re-deriving its file list from the live inventory via
+  // buildRoutes/buildProxyContext/render would make a read-only status-page
+  // request fail whenever the inventory is momentarily invalid (a bad
+  // unauthenticatedPaths entry, a missing authentik ip, …) -- the same
+  // failure a real sync-proxy run should surface, but not one a snapshot
+  // should ever be blocked by.
+  configFiles?(configPath: string): string[];
+}): ReverseProxyDriver;
+
+export function buildFileDriverScript(files: FileSpec[], validateCommand: string, reloadCommand: string): string;
+```
+
+Behaviour of the generated POSIX `sh` script, run on the proxy host via
+`runRemote`:
+
+1. `set -e`; for each file, copy it to a backup (or record that it did not
+   exist).
+2. Install a `trap ... EXIT` (once every backup exists) that, on any
+   non-zero exit from this point on, restores every backup (removing files
+   that did not exist before) and re-raises that exit code. This is what
+   makes a write-phase failure (a `cat`/`sed`/`cp` step erroring under
+   `set -e`, before the validate command ever runs) restore correctly, not
+   just a failed validate -- both paths exit non-zero once the trap is
+   installed, and the trap does the one restore either way. An EXIT trap
+   does not run when the shell is killed by a signal, so HUP, INT, and TERM
+   get their own trap: it clears every trap, runs the same restore, prints
+   `interrupted; restored previous configuration`, and exits 1.
+3. Write each file: `owned` replaces it; `managed-section` removes any
+   existing `# BEGIN bellhop-managed`…`# END bellhop-managed` block and
+   appends the new block (creating the file if absent).
+4. Run the validate command. On failure: print
+   `printf '%s failed; restored previous configuration\n' <validate> >&2`
+   (the validate command single-quoted as printf's `%s` argument, not
+   interpolated into a double-quoted string) and exit 1 -- the trap from
+   step 2 performs the actual restore once this exit is seen.
+5. Disarm every trap together (`trap - EXIT HUP INT TERM`, so a reload
+   failure is never treated as a reason to restore), remove backups, run the
+   reload command.
+
+- `plan()` → render, wrap each `managed-section` body with
+  `wrapManagedSection`, then `{ preview: files.map(content).join('\n'),
+  payload: files }` (single file: its content alone, so the Caddy preview
+  equals today's block, markers included).
+- `apply()` → `runRemote(ssh, inventory, proxyHost, script)`; non-zero exit
+  throws with stderr.
+- `snapshot()` → `cat` of each path from `configFiles(configPath)` (default
+  `[configPath]`); more than one file gets a `==> <path> <==` header per
+  file. Never calls `buildRoutes`/`buildProxyContext`/`render` -- a snapshot
+  read must succeed even when the inventory is momentarily invalid.
+
+## index.ts
+
+```ts
+export const PROXY_DRIVER_IDS = ['caddy'] as const;
+export type ProxyDriverId = (typeof PROXY_DRIVER_IDS)[number];
+
+export function getDriver(inventory: Inventory): ReverseProxyDriver;   // proxyDriver ?? 'caddy'
+export function driverDeps(inventory: Inventory, ssh: SSHClient, driver: ReverseProxyDriver): DriverDeps;
+                                                                       // throws "No inventory entry has 'proxy: true'"
+```
+
+Unknown id (only reachable if the DB was edited by hand, since the schema
+rejects it): `Unknown proxyDriver '<id>' -- run: bellhop set-config
+proxyDriver <caddy> --apply`.
+
+## drivers/caddy.ts
+
+`caddyDriver = fileDriver({ id: 'caddy', capabilities: { authModes:
+['forward','oidc'], acmeDns01ViaCloudflare: true }, defaultConfigPath:
+'/etc/caddy/Caddyfile', render, validateCommand: p => \`caddy validate
+--adapter caddyfile --config ${quoted p}\`, reloadCommand: 'systemctl reload
+caddy' })`.
+
+`render` produces one `managed-section` FileSpec whose content is the body of
+today's `buildCaddyBlock` output for the same inventory; once `plan()` wraps
+it in the markers, preview and payload are byte-identical to that output.
+
+## Consumers
+
+| Caller | Uses |
+|---|---|
+| `runSyncProxy` | `getDriver`, `driverDeps`, `buildRoutes`, `buildProxyContext`, `checkCapabilities`, `plan`, `apply` |
+| `syncProxyLive` | `runSyncProxy`; `capabilities.acmeDns01ViaCloudflare` for the prune |
+| `runRenderStatusPage` | `getDriver`, `driverDeps`, `snapshot` |
+| `commitGuestEdit` | `getDriver`, `buildRouteForEntry` (the edited guest only, on the edited inventory), `checkCapabilities` |
+| `sync-authentik`, `adopt-oidc-client`, `buildRoutes` | `publicHostname` (`src/lib/hostname.ts`) |

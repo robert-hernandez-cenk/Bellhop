@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import nodeWindows from 'node-windows';
-import { findCaddyEntry, loadInventory } from '../src/lib/inventory.ts';
+import { findProxyEntry, loadInventory } from '../src/lib/inventory.ts';
 import { dataDir, inventoryPath } from '../src/lib/paths.ts';
 
 const { Service, elevate } = nodeWindows;
@@ -35,11 +35,11 @@ type Action = 'install' | 'uninstall';
 // rule follows automatically if Caddy ever moves.
 const IPV4_ADDRESS = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
-function resolveCaddyIp(): string {
-  const entry = findCaddyEntry(loadInventory(inventoryPath()));
+function resolveProxyIp(): string {
+  const entry = findProxyEntry(loadInventory(inventoryPath()));
   if (!entry?.ip) {
     throw new Error(
-      "Cannot scope the firewall rule: no inventory entry has 'caddy: true' with an ip. " +
+      "Cannot scope the firewall rule: no inventory entry has 'proxy: true' with an ip. " +
         'Refusing to install a rule open to the whole LAN.'
     );
   }
@@ -51,7 +51,7 @@ function resolveCaddyIp(): string {
   // reaches netsh.
   if (!IPV4_ADDRESS.test(entry.ip)) {
     throw new Error(
-      `Cannot scope the firewall rule: the 'caddy: true' entry's ip ("${entry.ip}") is not a valid IPv4 address. ` +
+      `Cannot scope the firewall rule: the 'proxy: true' entry's ip ("${entry.ip}") is not a valid IPv4 address. ` +
         'Refusing to install a rule open to the whole LAN.'
     );
   }
@@ -122,21 +122,21 @@ function removeFirewallRule(): void {
   }
 }
 
-function addFirewallRule(port: number, caddyIp: string): void {
+function addFirewallRule(port: number, proxyIp: string): void {
   removeFirewallRule(); // avoid duplicate rules if install runs more than once
   execSync(
-    `netsh advfirewall firewall add rule name="${FIREWALL_RULE_NAME}" dir=in action=allow protocol=TCP localport=${port} remoteip=${caddyIp} profile=any`,
+    `netsh advfirewall firewall add rule name="${FIREWALL_RULE_NAME}" dir=in action=allow protocol=TCP localport=${port} remoteip=${proxyIp} profile=any`,
     { stdio: 'inherit' }
   );
 }
 
 async function install(): Promise<void> {
   // Resolved before any machine mutation below (build, service install/start,
-  // firewall rule) so an inventory that can't yield a Caddy IP fails the
+  // firewall rule) so an inventory that can't yield a proxy IP fails the
   // install outright rather than leaving a half-installed state — a running
   // service with no firewall rule scoping who can reach it. See
-  // resolveCaddyIp()'s own comment for the security rationale.
-  const caddyIp = resolveCaddyIp();
+  // resolveProxyIp()'s own comment for the security rationale.
+  const proxyIp = resolveProxyIp();
 
   console.log('Building web client...');
   execSync('npm run web:build', { cwd: REPO_ROOT, stdio: 'inherit' });
@@ -174,7 +174,7 @@ async function install(): Promise<void> {
   }
 
   console.log(`Opening firewall for TCP port ${port}...`);
-  addFirewallRule(port, caddyIp);
+  addFirewallRule(port, proxyIp);
 
   console.log(`Done. Service "${SERVICE_NAME}" is installed and listening on port ${port}.`);
 }

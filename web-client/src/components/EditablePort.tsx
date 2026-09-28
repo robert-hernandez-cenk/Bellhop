@@ -7,7 +7,7 @@ interface Props {
   onSaved: () => void;
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'caddy-error' | 'error';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'proxy-error' | 'error';
 
 export function EditablePort({ guest, onSaved }: Props) {
   const [value, setValue] = useState(guest.port != null ? String(guest.port) : '');
@@ -20,15 +20,15 @@ export function EditablePort({ guest, onSaved }: Props) {
     setStatus('saving');
     setError(null);
     try {
-      const res = await apiPatch<{ guest: GuestEntry; caddySynced: boolean; caddyError?: string }>(
+      const res = await apiPatch<{ guest: GuestEntry; proxySynced: boolean; proxyError?: string }>(
         `/inventory/guests/${encodeURIComponent(guest.name)}`,
         { port: value }
       );
-      if (res.caddySynced) {
+      if (res.proxySynced) {
         setStatus('saved');
       } else {
-        setStatus('caddy-error');
-        setError(`Saved, but Caddy sync failed: ${res.caddyError}`);
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
       }
       onSaved();
     } catch (err) {
@@ -52,8 +52,8 @@ export function EditablePort({ guest, onSaved }: Props) {
         onBlur={save}
       />
       {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
-      {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
     </div>
   );

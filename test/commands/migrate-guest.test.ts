@@ -48,14 +48,14 @@ const inventory: Inventory = {
       midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' },
       // 'media' below always carries subdomains, so every apply test that
       // reaches full completion (not just an early-throw test) drives
-      // runMigrateGuest into its final runSyncCaddy/runRenderStatusPage
+      // runMigrateGuest into its final runSyncProxy/runRenderStatusPage
       // step -- same as recordProvisionedGuest/removeGuestEntry's real
-      // production precedent, which never guards that call on a caddy host
-      // actually existing. Without a 'caddy: true' entry here, those tests
-      // would fail on "No inventory entry has 'caddy: true'" for a reason
+      // production precedent, which never guards that call on a proxy host
+      // actually existing. Without a 'proxy: true' entry here, those tests
+      // would fail on "No inventory entry has 'proxy: true'" for a reason
       // unrelated to what they're actually testing (destroy/cleanup/
       // inventory rewrite).
-      caddy: true,
+      proxy: true,
       storages: [
         { name: 'local', type: 'dir', content: ['backup', 'iso', 'vztmpl'], active: true },
         { name: 'local-lvm', type: 'lvmthin', content: ['rootdir', 'images'], active: true },
@@ -319,7 +319,7 @@ function happyPathResponder(overrides: Record<string, { stdout: string; stderr: 
     if (cmd.startsWith('pct config') || cmd.startsWith('qm config')) {
       return { stdout: cmd.startsWith('pct') ? RESTORED_NET0 : RESTORED_IPCONFIG0, stderr: '', code: 0 };
     }
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable's pre-flight probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable's pre-flight probe: free
     if (cmd.includes('status')) {
       // Every plain `pct status`/`qm status` call (the post-vzdump
       // source-guest check and the verify-running poll) reports a genuine,
@@ -352,7 +352,7 @@ function happyPathResponder(overrides: Record<string, { stdout: string; stderr: 
 function orderedStatusResponder(sourceVmid: number, targetVmid: number, opts: { sourceRunning?: boolean } = {}) {
   const sourceRunning = opts.sourceRunning ?? true;
   return (_target: string, _user: string, cmd: string) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     if (cmd === `pct status ${sourceVmid}` || cmd === `qm status ${sourceVmid}`) {
       return sourceRunning
         ? { stdout: 'status: running', stderr: '', code: 0 }
@@ -377,10 +377,10 @@ function orderedStatusResponder(sourceVmid: number, targetVmid: number, opts: { 
       cmd.startsWith('pct destroy') ||
       cmd.startsWith('qm destroy') ||
       cmd.startsWith('rm -f') ||
-      // sync-caddy's remote script and render-status-page's Caddyfile
-      // read/write both run once 'media' (which always has subdomains)
-      // finishes migrating and pve-main's 'caddy: true' entry is found --
-      // see the base inventory fixture's comment above.
+      // sync-proxy's remote script and render-status-page's deployed
+      // proxy-config read/write both run once 'media' (which always has
+      // subdomains) finishes migrating and pve-main's 'proxy: true' entry
+      // is found -- see the base inventory fixture's comment above.
       cmd.startsWith('cat ') ||
       cmd.startsWith('set -e')
     ) {
@@ -446,7 +446,7 @@ test('runMigrateGuest apply backs up, stops the source guest, restores under the
 
 test('runMigrateGuest apply throws and never reaches restore when stopping the still-running source guest fails', async () => {
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: running', stderr: '', code: 0 }; // source still running
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd === 'pct stop 4012') return { stdout: '', stderr: 'container is locked', code: 1 };
@@ -469,7 +469,7 @@ test('runMigrateGuest apply throws and never reaches restore when the post-backu
   // stdout must not be silently read as "not running" -- if we can't prove
   // the source guest is stopped, we must not proceed to restore.
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: '', stderr: 'unable to get PID for CT 4012', code: 2 }; // probe itself failed
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd.startsWith('pct restore')) throw new Error('restore must never run when the source status probe fails');
@@ -502,7 +502,7 @@ test('runMigrateGuest apply skips the stop step when the source guest already re
 test('runMigrateGuest apply preserves a non-default gw= (e.g. a VPN-gateway-routed guest) when rewriting net0', async () => {
   const vpnRoutedNet0 = 'net0: name=eth0,bridge=vmbr0,gw=192.168.1.30,hwaddr=BC:24:11:AA:BB:CC,ip=192.168.1.12/16,type=veth\n';
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: stopped', stderr: '', code: 0 }; // source already stopped
     if (cmd === 'pct status 5012') return { stdout: 'status: running', stderr: '', code: 0 }; // verify poll
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
@@ -525,7 +525,7 @@ test('runMigrateGuest apply preserves a non-default gw= (e.g. a VPN-gateway-rout
 
 test('runMigrateGuest apply throws a clear error when the restored guest has no net0 in its config', async () => {
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: stopped', stderr: '', code: 0 };
     if (cmd.startsWith('vzdump')) return { stdout: VZDUMP_STDOUT, stderr: '', code: 0 };
     if (cmd.startsWith('pct config')) return { stdout: 'arch: amd64\nostype: debian', stderr: '', code: 0 }; // no net0 line
@@ -641,7 +641,7 @@ test('runMigrateGuest apply retries the verify-running poll before giving up', a
   const sleeps: number[] = [];
   let pollCalls = 0;
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable: free
     if (cmd === 'pct status 4012') return { stdout: 'status: stopped', stderr: '', code: 0 }; // source already stopped -- Fix 1 no-op
     if (cmd === 'pct status 5012') {
       pollCalls += 1;
@@ -666,7 +666,7 @@ test('runMigrateGuest apply retries the verify-running poll before giving up', a
 
 test('runMigrateGuest apply throws after exhausting the verify-running retry budget, and never destroys the source guest', async () => {
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     // I1: a genuine `pct status <vmid>` probe of an existing guest reports
     // exit 0 regardless of running/stopped -- Fix 1's source-guest check
     // must see a real, successful "stopped" report here, not a bare
@@ -724,7 +724,7 @@ test('runMigrateGuest never destroys the source guest when verification fails, a
     // Exact match, not startsWith -- see the equivalent comment in Task 3's
     // "exhausts verify-running retry budget" test for why startsWith would
     // misclassify checkVmidAvailable's own compound probe command here.
-    if (cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
+    if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     // I1: the source-guest status check needs a genuine successful "stopped"
     // report (exit 0), not a bare non-zero exit -- see the dedicated
     // "post-backup source status probe itself fails" test for that case.
@@ -803,8 +803,8 @@ test('runMigrateGuest apply renumbers a guest in place on the same host (backup/
   assert.equal(guest?.ip, '192.168.1.50');
 });
 
-test('runMigrateGuest apply re-syncs Caddy when the migrated guest has subdomains', async () => {
-  const caddyCalls: string[] = [];
+test('runMigrateGuest apply re-syncs the proxy when the migrated guest has subdomains', async () => {
+  const proxyCalls: string[] = [];
   // Must be created once, outside the FakeSSHClient callback -- it tracks
   // status-call count across calls to distinguish checkVmidAvailable's probe
   // from the later verify-running poll (see its own doc comment above).
@@ -813,36 +813,36 @@ test('runMigrateGuest apply re-syncs Caddy when the migrated guest has subdomain
   const respondStatus = orderedStatusResponder(4012, 5012);
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
     if (cmd.includes('BEGIN bellhop-managed') || cmd.includes('Caddyfile') || cmd.includes('caddy')) {
-      caddyCalls.push(cmd);
+      proxyCalls.push(cmd);
       return { stdout: '', stderr: '', code: 0 };
     }
     return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
   });
   const inv: Inventory = {
     ...isolatedInventory(),
-    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, caddy: true } : h)),
+    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, proxy: true } : h)),
   };
   const invPath = tempSavedInventoryPath(inv);
   await runMigrateGuest(
     { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
     { ssh, inventory: inv, inventoryPath: invPath }
   );
-  assert.ok(caddyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'Caddy managed block must be regenerated');
+  assert.ok(proxyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'the managed proxy block must be regenerated');
 });
 
-test('runMigrateGuest apply still syncs Caddy but skips the status page when statusPagePath is unset', async () => {
-  const caddyCalls: string[] = [];
+test('runMigrateGuest apply still syncs the proxy but skips the status page when statusPagePath is unset', async () => {
+  const proxyCalls: string[] = [];
   const respondStatus = orderedStatusResponder(4012, 5012);
   const ssh = new FakeSSHClient((_t, _u, cmd) => {
     if (cmd.includes('BEGIN bellhop-managed') || cmd.includes('Caddyfile') || cmd.includes('caddy')) {
-      caddyCalls.push(cmd);
+      proxyCalls.push(cmd);
       return { stdout: '', stderr: '', code: 0 };
     }
     return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
   });
   const inv: Inventory = {
     ...isolatedInventory(),
-    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, caddy: true } : h)),
+    hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, proxy: true } : h)),
   };
   delete inv.statusPagePath;
   const invPath = tempSavedInventoryPath(inv);
@@ -851,16 +851,16 @@ test('runMigrateGuest apply still syncs Caddy but skips the status page when sta
     { ssh, inventory: inv, inventoryPath: invPath }
   );
   assert.equal(result.applied, true);
-  assert.ok(caddyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'Caddy managed block is still regenerated');
+  assert.ok(proxyCalls.some((c) => c.includes('BEGIN bellhop-managed')), 'the managed proxy block is still regenerated');
   // render-status-page's read is an exact 'cat /etc/caddy/Caddyfile' and its
   // write script always contains its 'STATUS_PAGE_EOF' heredoc terminator --
-  // distinct markers from sync-caddy's own 'cat'-using remote script, which
+  // distinct markers from sync-proxy's own 'cat'-using remote script, which
   // this test's other 'BEGIN bellhop-managed' assertion already confirms
   // still ran.
-  assert.ok(!caddyCalls.some((c) => c === 'cat /etc/caddy/Caddyfile' || c.includes('STATUS_PAGE_EOF')), 'the status page read/write must be skipped');
+  assert.ok(!proxyCalls.some((c) => c === 'cat /etc/caddy/Caddyfile' || c.includes('STATUS_PAGE_EOF')), 'the status page read/write must be skipped');
 });
 
-test('runMigrateGuest apply does not touch Caddy for a guest with no subdomains', async () => {
+test('runMigrateGuest apply does not touch the proxy for a guest with no subdomains', async () => {
   const ssh = new FakeSSHClient(orderedStatusResponder(4020, 5020));
   const inv = isolatedInventory();
   const invPath = tempSavedInventoryPath(inv);
@@ -894,6 +894,38 @@ test('runMigrateGuest apply warns but does not throw when destroying the origina
     const saved = loadInventory(invPath);
     assert.equal(saved.guests.find((g) => g.name === 'media')?.host, 'pve-secondary', 'inventory must still be updated');
     assert.ok(warnings.some((w) => w.includes('clean it up by hand')));
+  } finally {
+    console.error = originalWarn;
+  }
+});
+
+test('runMigrateGuest apply warns but completes when the post-move proxy sync fails after the source is destroyed', async () => {
+  const warnings: string[] = [];
+  const originalWarn = console.error;
+  console.error = (msg: string) => warnings.push(String(msg));
+  try {
+    const respondStatus = orderedStatusResponder(4012, 5012);
+    const ssh = new FakeSSHClient((_t, _u, cmd) => {
+      if (cmd.includes('BEGIN bellhop-managed')) return { stdout: '', stderr: 'caddy validate failed', code: 1 };
+      return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
+    });
+    const inv: Inventory = {
+      ...isolatedInventory(),
+      hosts: isolatedInventory().hosts.map((h) => (h.name === 'pve-main' ? { ...h, proxy: true } : h)),
+    };
+    const invPath = tempSavedInventoryPath(inv);
+    const result = await runMigrateGuest(
+      { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+      { ssh, inventory: inv, inventoryPath: invPath }
+    );
+    assert.equal(result.applied, true, 'the migration itself must still count as successful');
+    assert.ok(ssh.history.some((c) => c.command === 'pct destroy 4012'), 'the source was already destroyed');
+    assert.equal(loadInventory(invPath).guests.find((g) => g.name === 'media')?.host, 'pve-secondary');
+    const warning = warnings.find((w) => w.includes('proxy sync failed'));
+    assert.ok(warning, 'a warning must name the failed proxy sync');
+    assert.match(warning!, /migrated successfully/);
+    assert.match(warning!, /caddy validate failed/);
+    assert.match(warning!, /bellhop sync-proxy --apply/);
   } finally {
     console.error = originalWarn;
   }

@@ -3,6 +3,7 @@ import {
   saveInventory,
   SettingsSchema,
   SETTINGS_KEYS,
+  assignSetting,
   type Settings,
 } from '../../lib/inventory.ts';
 import { confirmOrDryRun } from '../../lib/dry-run.ts';
@@ -50,7 +51,7 @@ export function runSetConfig(
     // literal: a `{ ...inv, [key]: value }` spread with a union-typed key
     // widens to an index signature that no longer satisfies Inventory.
     const updated = { ...loadInventory(deps.inventoryPath) };
-    updated[key] = value;
+    assignSetting(updated, key, value);
     saveInventory(deps.inventoryPath, updated);
   }
   return { key, value, applied };

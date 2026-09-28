@@ -14,8 +14,8 @@ interface OidcDiscoveryFailure {
 
 interface PatchResponse {
   guest: GuestEntry;
-  caddySynced: boolean;
-  caddyError?: string;
+  proxySynced: boolean;
+  proxyError?: string;
   authentikConflicts?: string[];
   authentikConflictAdoptable?: true;
   oidcDiscoveryFailures?: OidcDiscoveryFailure[];
@@ -27,13 +27,13 @@ interface Props {
   onSaved: () => void;
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'caddy-error' | 'error';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'proxy-error' | 'error';
 
 function patchGuest(name: string, body: Record<string, unknown>): Promise<PatchResponse> {
   return apiPatch<PatchResponse>(`/inventory/guests/${encodeURIComponent(name)}`, body);
 }
 
-// The "auth mode" row (T021/T022) -- a Forward-auth/OIDC select. Saves
+// The "auth mode" row -- a Forward-auth/OIDC select. Saves
 // immediately on change, admin-only (disabled with an explanatory title
 // otherwise). Switching an OIDC-effective guest (authGroup set, authMode
 // 'oidc') back to forward-auth deletes its OpenID client (FR-022a), so that
@@ -77,11 +77,11 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
       setConflictAdoptable(res.authentikConflictAdoptable === true);
       setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
       setSkipped(res.oidcSkipped ?? []);
-      if (res.caddySynced) {
+      if (res.proxySynced) {
         setStatus('saved');
       } else {
-        setStatus('caddy-error');
-        setError(`Saved, but Caddy sync failed: ${res.caddyError}`);
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
       }
       onSaved();
     } catch (err) {
@@ -144,8 +144,8 @@ export function EditableAuthMode({ guest, onSaved }: Props) {
       </select>
       {!guest.authGroup && <div className="field-note">No auth group set — auth mode has no effect until one is.</div>}
       {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
-      {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
       <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={isAdmin} />
       <AuthentikSkipBanner skipped={skipped} />
@@ -176,7 +176,7 @@ function parseLocal(value: string): string[] {
   return Array.from(new Set(value.split(';').map((s) => s.trim()).filter(Boolean)));
 }
 
-// The "callback urls" row (T021/T022) -- a ';'-separated Callback URLs
+// The "callback urls" row -- a ';'-separated Callback URLs
 // input, saved on blur, admin-only. Never itself triggers the OIDC-client
 // deletion confirmation (only switching modes or clearing the access tier
 // does, per FR-022a) -- the server still validates each URL is an absolute
@@ -212,11 +212,11 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
       setConflictAdoptable(res.authentikConflictAdoptable === true);
       setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
       setSkipped(res.oidcSkipped ?? []);
-      if (res.caddySynced) {
+      if (res.proxySynced) {
         setStatus('saved');
       } else {
-        setStatus('caddy-error');
-        setError(`Saved, but Caddy sync failed: ${res.caddyError}`);
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
       }
       onSaved();
     } catch (err) {
@@ -242,8 +242,8 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
       />
       {!isOidcEffective(guest) && <div className="field-note">Only used in OIDC mode.</div>}
       {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
-      {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
       {error && <div className="warning-banner">{error}</div>}
       <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={isAdmin} />
       <AuthentikSkipBanner skipped={skipped} />

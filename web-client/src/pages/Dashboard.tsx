@@ -10,7 +10,7 @@ import { ExternalLink } from '../components/ExternalLink';
 import { IconStart, IconShutdown, IconDelete } from '../components/icons';
 import { formatStorageSize } from '../lib/storage-size';
 import { useTableView } from '../lib/table-view';
-import { sortGuestsForDisplay, caddyUrl, ipUrl } from '../lib/guest-display';
+import { sortGuestsForDisplay, proxyUrl, ipUrl } from '../lib/guest-display';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -105,11 +105,11 @@ export function Dashboard() {
         command's own apply step is the only other way most of this changes. Click a host row to expand its bridges
         and storage. A bridge's alias mirrors its "Comment" field in Proxmox itself — set it there, not here. A
         guest's subdomains are shown read-only here; click its "advanced" link to edit them, along with its
-        host, vmid, port, app, VPN routing, and Caddy settings — each saved independently on blur/change
+        host, vmid, port, app, VPN routing, and proxy settings — each saved independently on blur/change
         (subdomains checked against every other entry's first). A guest's name links to its live service (if it has a
         subdomain) — omitted when not applicable. Set a port before adding a subdomain to a guest that doesn't
-        have one yet, otherwise Caddy defaults it to 80; checking "Read-only Caddy" keeps a guest's subdomains
-        out of sync-caddy's generated Caddyfile section (for a service whose real Caddy config is
+        have one yet, otherwise the proxy defaults it to 80; checking "Read-only proxy" keeps a guest's subdomains
+        out of sync-proxy's generated section (for a service whose real proxy config is
         hand-authored elsewhere) while still driving its service link above; checking "Insecure Backend TLS"
         wraps that guest's reverse_proxy in a transport that skips TLS verification, for a backend serving its
         own self-signed cert (e.g. an app bundling its own nginx with a generated cert, or the
@@ -235,7 +235,7 @@ export function Dashboard() {
         </thead>
         <tbody>
           {filtered.map((g) => {
-            const service = caddyUrl(g, domain);
+            const service = proxyUrl(g, domain);
             const ipLink = ipUrl(g);
             return (
             <tr key={g.name}>

@@ -11,8 +11,8 @@ import { flag, reqStr } from './fields.ts';
 
 // Operations that existed only as CLI commands before #16. They have no web
 // routes; the MCP server is their only non-CLI caller. Like the web UI's
-// syncCaddyLive, render-status-page uses the command's own default Caddyfile
-// path rather than the CLI's CADDYFILE_PATH override.
+// syncProxyLive, render-status-page reads the deployed configuration from
+// the proxyConfigPath setting, else the active driver's default path.
 export const NETWORKING_OPERATIONS: Record<string, Operation> = {
   'sync-authentik': {
     id: 'sync-authentik',
@@ -52,7 +52,7 @@ export const NETWORKING_OPERATIONS: Record<string, Operation> = {
   'render-status-page': {
     id: 'render-status-page',
     category: 'maintenance',
-    description: 'Regenerate the LAN-only status page on the Caddy host (requires the statusPagePath setting).',
+    description: 'Regenerate the LAN-only status page (inventory + deployed proxy configuration) on the proxy host (requires the statusPagePath setting).',
     shape: {},
     target: () => undefined,
     fleetWide: true,
@@ -64,7 +64,7 @@ export const NETWORKING_OPERATIONS: Record<string, Operation> = {
     },
     apply: async (_i, deps) => {
       const result = await runRenderStatusPage({ apply: true }, deps, stringify(deps.inventory));
-      console.log(`Wrote status page to ${result.caddyHost}`);
+      console.log(`Wrote status page to ${result.proxyHost}`);
     },
   },
   'set-config': {

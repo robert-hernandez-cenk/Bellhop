@@ -29,7 +29,7 @@ import { REPO_ROOT, dataDir, inventoryPath } from '../lib/paths.ts';
 // default instead of this operator's configured ladder.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 
-// CLOUDFLARE_DNS_API_TOKEN for syncCaddyLive's stale _acme-challenge prune
+// CLOUDFLARE_DNS_API_TOKEN for syncProxyLive's stale _acme-challenge prune
 // (issue #162), loaded the same way and for the same reason as
 // authentik.env. Not data/cloudflare.env, which is the cloudflare-ddns
 // container's answer file. Silent no-op if missing: buildCloudflareClient()

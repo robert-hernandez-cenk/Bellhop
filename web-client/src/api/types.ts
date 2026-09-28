@@ -108,7 +108,7 @@ export interface HostEntry {
   ssh_user: string;
   ssh_port?: number;
   midScheme?: { vmidBase: number; ipPrefix: string; cidrSuffix?: number; gateway: string };
-  caddy?: boolean;
+  proxy?: boolean;
   bridges?: BridgeEntry[];
   storages?: StorageEntry[];
   nfsMounts?: NfsMountEntry[];
@@ -123,7 +123,7 @@ export interface GuestEntry {
   ip?: string;
   port?: number;
   subdomains?: string[];
-  caddyManual?: boolean;
+  proxyManual?: boolean;
   insecureBackendTls?: boolean;
   // The Authentik group ladder rung gating this entry, or absent/null when
   // ungated. Mirrors the server's authGroup (src/lib/inventory.ts).
@@ -138,7 +138,7 @@ export interface GuestEntry {
   // sign-in, only meaningful in OIDC mode.
   oidcRedirectUris?: string[];
   unauthenticatedPaths?: string[];
-  caddy?: boolean;
+  proxy?: boolean;
   app?: string;
   // 'custom' when this guest's `app` slug was actually installed from the
   // operator-configured custom script repository (see CustomScripts below),
@@ -267,12 +267,14 @@ export interface SettingsValues {
   statusPagePath?: string;
   customScriptsRepo?: string;
   customScriptsBranch?: string;
+  proxyDriver?: string;
+  proxyConfigPath?: string;
 }
 
 export interface SettingsResponse {
   settings: SettingsValues;
   derived: {
     lanGateways: Array<{ host: string; gateway: string }>;
-    caddy: { name: string; ip: string } | null;
+    proxy: { name: string; ip: string } | null;
   };
 }

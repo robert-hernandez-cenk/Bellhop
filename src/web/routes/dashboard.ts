@@ -47,8 +47,8 @@ function authGroupChangeError(
 }
 
 // unauthenticatedPaths is a bigger audience-widening lever than authGroup
-// itself: buildCaddyBlock exempts a listed path from the forward_auth check
-// entirely, so a request matching it reaches the backend with no login at
+// itself: the caddy driver exempts a listed path from the forward-auth
+// check entirely, so a request matching it reaches the backend with no login at
 // all, regardless of what rung the entry is gated at. Adding a path is
 // therefore the privileged operation -- only adding can make something
 // reachable without permission, removing one only narrows -- so anyone with
@@ -61,9 +61,9 @@ function authGroupChangeError(
 // after-this-request tier, not whatever was stored before it.
 //
 // A no-op, and therefore unchecked, when the resulting entry has no
-// authGroup at all: buildCaddyBlock only emits the @auth_required matcher
-// inside its `if (entry.authGroup)` branch, so an exemption on an ungated
-// entry never reaches the Caddyfile -- there is nothing to widen.
+// authGroup at all: the caddy driver only emits its @auth_required matcher
+// for a forward-gated route, so an exemption on an ungated entry never
+// reaches the deployed proxy configuration -- there is nothing to widen.
 function unauthenticatedPathsChangeError(
   cur: string[] | undefined,
   next: string[] | undefined,
@@ -89,7 +89,7 @@ function unauthenticatedPathsChangeError(
 // authMode/oidcRedirectUris are unconditionally admin-only in both
 // directions (FR-018) -- unlike authGroup's raise/lower asymmetry above,
 // there is no "raise" a non-admin may make unassisted here: switching to
-// OIDC removes the forward-auth gate Caddy would otherwise put in front of
+// OIDC removes the forward-auth gate the proxy would otherwise put in front of
 // the app, and the callback URL decides where Authentik sends a sign-in
 // token after a successful login, so getting either wrong has a bigger
 // blast radius than widening an authGroup rung. Compared against the
@@ -118,7 +118,7 @@ export function dashboardRoutes(
   authentik: AuthentikClient,
   cloudflare: CloudflareClient,
   // Test-only injection point for the post-apply OIDC issuer discovery
-  // check (syncCaddyLive -> runSyncAuthentik), same convention as every
+  // check (syncProxyLive -> runSyncAuthentik), same convention as every
   // other fetchImpl threaded through AppDeps -- unset in production, so
   // commitGuestEdit falls back to the real global fetch exactly as it
   // always has.
@@ -179,14 +179,14 @@ export function dashboardRoutes(
     res.json({ ...result, failures: result.failures.filter((name) => allowedHostNames.has(name)) });
   });
 
-  // Dashboard-driven inline edit of a guest's subdomains/port/caddyManual/
+  // Dashboard-driven inline edit of a guest's subdomains/port/proxyManual/
   // insecureBackendTls -- the only fields editable from there, each its own
-  // input saving independently (subdomains/port on blur, caddyManual/
+  // input saving independently (subdomains/port on blur, proxyManual/
   // insecureBackendTls immediately on change since a checkbox has no blur
   // moment). Lets an operator set a port on a guest that has none yet, then
   // add a subdomain that actually routes to it, instead of silently
   // defaulting to port 80. Field parsing lives in applyGuestEdits;
-  // validation, the TLS probe, the save, and the live Caddy/Authentik push
+  // validation, the TLS probe, the save, and the live proxy/Authentik push
   // live in commitGuestEdit (src/operations/edit-guest.ts), shared with the
   // MCP server's edit_guest tool (#16); this route only owns the
   // caller-identity checks below, which depend on the requesting user and

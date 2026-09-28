@@ -25,8 +25,8 @@ interface OffLadderEntry {
 
 interface PatchResponse {
   guest: GuestEntry;
-  caddySynced: boolean;
-  caddyError?: string;
+  proxySynced: boolean;
+  proxyError?: string;
   authentikConflicts?: string[];
   authentikConflictAdoptable?: true;
   authentikOffLadder?: OffLadderEntry[];
@@ -39,7 +39,7 @@ interface Props {
   onSaved: () => void;
 }
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'caddy-error' | 'error';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'proxy-error' | 'error';
 
 const NONE = '';
 
@@ -56,7 +56,7 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
   // Gating a guest here is also how a forward-auth entry gets skipped for a
   // taken provider name, so this row shows skips too, not just the OIDC rows.
   const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
-  // T035: clearing the tier on an OIDC-effective guest deletes its OpenID
+  // Clearing the tier on an OIDC-effective guest deletes its OpenID
   // client (FR-022a), so that one transition is confirmed first. Every
   // other authGroup change (including lowering to a different rung while
   // staying in OIDC mode) saves straight away, same as before this feature.
@@ -106,11 +106,11 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
       setMissingRungs(res.authentikMissingRungs ?? []);
       setConflictAdoptable(res.authentikConflictAdoptable === true);
       setSkipped(res.oidcSkipped ?? []);
-      if (res.caddySynced) {
+      if (res.proxySynced) {
         setStatus('saved');
       } else {
-        setStatus('caddy-error');
-        setError(`Saved, but Caddy sync failed: ${res.caddyError}`);
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
       }
       onSaved();
     } catch (err) {
@@ -193,14 +193,14 @@ export function EditableAuthGroup({ guest, onSaved }: Props) {
         )}
       </select>
       {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, Caddy synced</span>}
-      {status === 'caddy-error' && <span className="save-status">Saved, Caddy sync failed</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
       {ladder !== null && !ladder.configured && (
         <div className="warning-banner">Authentik is not configured, so auth tiers cannot be changed here.</div>
       )}
       {ladderError && <div className="warning-banner">Could not load auth groups: {ladderError}</div>}
       {error && <div className="warning-banner">{error}</div>}
-      {/* T042: canLower is admin-equivalent (auth-groups.ts derives it
+      {/* canLower is admin-equivalent (auth-groups.ts derives it
           from the same isAdminUser check GET /whoami's isAdmin uses), so
           this reuses it rather than a second /whoami fetch. */}
       <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={canLower} />

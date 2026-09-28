@@ -9,7 +9,7 @@ import { runGuestPower } from '../commands/maintenance/guest-power.ts';
 import { runSetGuestVpn } from '../commands/provisioning/set-guest-vpn.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from '../commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from '../commands/maintenance/push-ssh-key.ts';
-import { runSyncCaddy } from '../commands/networking/sync-caddy.ts';
+import { runSyncProxy } from '../commands/networking/sync-proxy.ts';
 import { formatFailureList } from '../lib/target-failure.ts';
 import type { Operation } from './types.ts';
 import { reqStr, optStr, flag } from './fields.ts';
@@ -52,19 +52,19 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
       deps.inventory.hosts = result.hosts;
     },
   },
-  'sync-caddy': {
-    id: 'sync-caddy',
+  'sync-proxy': {
+    id: 'sync-proxy',
     category: 'maintenance',
-    description: 'Generate and write Caddy reverse_proxy blocks from inventory subdomains, then reload Caddy.',
+    description: 'Generate and write reverse-proxy configuration from inventory subdomains, then reload the proxy.',
     shape: {},
     target: () => undefined,
     fleetWide: true,
     preview: async (_i, deps) => {
-      const { text, result } = await withCapturedConsole(() => runSyncCaddy({ apply: false }, deps));
-      return [text, result.block].filter(Boolean).join('\n');
+      const { text, result } = await withCapturedConsole(() => runSyncProxy({ apply: false }, deps));
+      return [text, result.preview].filter(Boolean).join('\n');
     },
     apply: async (_i, deps) => {
-      await runSyncCaddy({ apply: true }, deps);
+      await runSyncProxy({ apply: true }, deps);
     },
   },
   'update-app': {

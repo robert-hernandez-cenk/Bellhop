@@ -6,7 +6,7 @@ import { confirmOrDryRun } from '../../lib/dry-run.ts';
 import { pickStorage, listBackupStorages } from '../../lib/storage.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
-import { runSyncCaddy } from '../networking/sync-caddy.ts';
+import { runSyncProxy } from '../networking/sync-proxy.ts';
 import { runRenderStatusPage, statusPagePathSkipMessage } from '../networking/render-status-page.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
@@ -341,12 +341,21 @@ export async function runMigrateGuest(
   inventory.guests = guests;
 
   if (guest.subdomains && guest.subdomains.length > 0) {
-    logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via Caddy...`);
-    await runSyncCaddy({ apply: true }, { ssh, inventory });
-    // Same opt-in behavior as syncCaddyLive (src/web/caddy-sync.ts): an
+    logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via the proxy...`);
+    // The migration itself is done by now -- the source is destroyed and
+    // inventory saved -- so a proxy failure here must not report it as
+    // failed. It is a warning with the retry command instead.
+    try {
+      await runSyncProxy({ apply: true }, { ssh, inventory });
+    } catch (err) {
+      logWarn(
+        `'${opts.guest}' migrated successfully to ${opts.toHost} (${newIp}), but the proxy sync failed: ${err instanceof Error ? err.message : String(err)} -- fix the cause and retry with: bellhop sync-proxy --apply`
+      );
+    }
+    // Same opt-in behavior as syncProxyLive (src/web/proxy-sync.ts): an
     // operator who hasn't configured statusPagePath never gets an
     // index.html write attempted, and skipping it is not a failure here
-    // either -- the Caddy config update above is what actually matters for
+    // either -- the proxy config update above is what actually matters for
     // the migrated guest's subdomains to keep working.
     if (inventory.statusPagePath !== undefined) {
       await runRenderStatusPage({ apply: true }, { ssh, inventory }, stringify(inventory));

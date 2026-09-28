@@ -14,7 +14,7 @@ export interface OperationDeps {
   inventory: Inventory;
   inventoryPath: string;
   authentik: AuthentikClient;
-  // Required, not optional: syncCaddyLive treats a missing client as
+  // Required, not optional: syncProxyLive treats a missing client as
   // unconfigured and silently skips the stale _acme-challenge prune (#162),
   // so every place that builds OperationDeps must pass one explicitly.
   cloudflare: CloudflareClient;
@@ -38,7 +38,7 @@ export interface Operation {
   // permission check before parsing (same ordering as before #16).
   target(input: Record<string, any>): string | undefined;
   targetType?: 'host' | 'guest';
-  // No single target: admin-only on the web (sync-inventory, sync-caddy, ...).
+  // No single target: admin-only on the web (sync-inventory, sync-proxy, ...).
   fleetWide?: boolean;
   // Input fields holding credentials -- redacted from stored job args and
   // scrubbed from MCP tool results.

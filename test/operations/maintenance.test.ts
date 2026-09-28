@@ -83,7 +83,8 @@ test('guest-power apply fails when the remote command exits nonzero', async () =
 
 test('fleet-wide maintenance operations are flagged', () => {
   const fleetWide = Object.values(MAINTENANCE_OPERATIONS).filter((o) => o.fleetWide).map((o) => o.id).sort();
-  assert.deepEqual(fleetWide, ['push-ssh-key', 'sync-caddy', 'sync-inventory', 'sync-ssh-keys', 'update-all']);
+  assert.deepEqual(fleetWide, ['push-ssh-key', 'sync-inventory', 'sync-proxy', 'sync-ssh-keys', 'update-all']);
+  assert.ok(!('sync-caddy' in MAINTENANCE_OPERATIONS), 'no sync-caddy alias');
 });
 
 // Issue #16: sync-inventory's apply replaces hosts/guests wholesale from live

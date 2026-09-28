@@ -189,7 +189,7 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
    warning, so it stays plain secondary text rather than .warning-banner's
    error-colored background. */
 .field-note { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
-/* .adopt-oidc-client sits inside a .warning-banner (T042); its own children
+/* .adopt-oidc-client sits inside a .warning-banner; its own children
    (.button, .preview-pane) already set their own colors, so nesting it in
    an error-colored banner doesn't inherit that banner's white text. */
 .adopt-oidc-client { margin-top: 8px; }

@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
 import { authentikConfig } from './authentik-config.ts';
+// From the dependency-free ids.ts, not proxy/index.ts's own registry
+// module -- importing index.ts here would cycle back into this file.
+import { PROXY_DRIVER_IDS } from './proxy/ids.ts';
 
 export const BridgeEntrySchema = z.object({
   name: z.string().min(1),
@@ -52,6 +55,37 @@ const OidcRedirectUriSchema = z.string().refine(isAbsoluteHttpUrl, {
   message: 'must be an absolute http:// or https:// URL',
 });
 
+// The exact message this schema, parseUnauthenticatedPaths below, and
+// proxy/routes.ts's parsePathPattern all throw -- issue #10, US4: every
+// proxy this toolkit could ever drive can express an exact path or a
+// prefix, so a path exemption is restricted to those two forms rather than
+// an arbitrary glob.
+export const UNAUTHENTICATED_PATH_MESSAGE = 'must be an exact path (/health) or a prefix ending in /* (/api/*)';
+
+// The single accept rule for a path exemption (data-model.md
+// "PathPattern"): must start with '/'; '*' may appear only as the final
+// character and only directly after '/'. Exported so proxy/routes.ts's
+// parsePathPattern can call this directly instead of re-implementing the
+// same check -- routes.ts already imports effectiveAuth from this file (the
+// opposite direction would cycle, per this file's own
+// PROXY_DRIVER_IDS-from-ids.ts-not-index.ts import above, but this direction
+// is the one routes.ts already takes), so there is one definition, not two
+// that could drift. Agreement is still exercised by a test that feeds every
+// string this schema accepts through parsePathPattern.
+export function isValidUnauthenticatedPath(raw: string): boolean {
+  if (!raw.startsWith('/')) return false;
+  const starIndex = raw.indexOf('*');
+  if (starIndex === -1) return true;
+  return starIndex === raw.length - 1 && raw[starIndex - 1] === '/';
+}
+
+// Shared by HostEntrySchema/GuestEntrySchema/ExternalSiteSchema's
+// unauthenticatedPaths -- one definition so all three enforce the exact
+// same rule rather than three separately-maintained copies (issue #10, US4).
+export const UnauthenticatedPathSchema = z.string().refine(isValidUnauthenticatedPath, {
+  message: UNAUTHENTICATED_PATH_MESSAGE,
+});
+
 export const MidSchemeSchema = z.object({
   vmidBase: z.number().int().min(0),
   // Dotted octets ending in "." -- e.g. "192.168.1." -- the prefix `mid`
@@ -85,30 +119,31 @@ export const HostEntrySchema = z.object({
   // later as an opaque sshd auth failure.
   ssh_identity_file: z.string().min(1).optional(),
   midScheme: MidSchemeSchema.optional(),
-  caddy: z.boolean().optional(),
+  proxy: z.boolean().optional(),
   subdomains: z.array(z.string()).optional(),
-  // When true, this entry's Caddy config is hand-authored elsewhere (e.g. a
-  // block outside sync-caddy's managed markers) -- buildCaddyBlock skips
-  // generating a site block for it entirely, even though its subdomains[]
+  // When true, this entry's proxy config is hand-authored elsewhere (e.g. a
+  // block outside sync-proxy's managed markers) -- buildRoutes skips
+  // generating a route for it entirely, even though its subdomains[]
   // still drives the Dashboard's service link.
-  caddyManual: z.boolean().optional(),
+  proxyManual: z.boolean().optional(),
   ip: z.string().optional(),
   port: z.number().optional(),
   // The reverse-proxied service's own backend speaks HTTPS with a
   // self-signed/otherwise-untrusted cert (e.g. the Proxmox web UI) -- tells
-  // sync-caddy to add `transport http { tls_insecure_skip_verify }` so Caddy
-  // doesn't refuse to connect to it.
+  // sync-proxy to skip TLS certificate verification for that backend (the
+  // caddy driver emits `transport http { tls_insecure_skip_verify }`) so the
+  // proxy doesn't refuse to connect to it.
   insecureBackendTls: z.boolean().optional(),
   // See ExternalSiteSchema's authGroup for what this does; also settable
   // on a host (e.g. the Proxmox web UI's own reverse-proxied subdomain).
   authGroup: z.string().min(1).optional(),
   // How this entry's gate is enforced when authGroup is set -- 'forward'
-  // (Caddy forward_auth to the embedded outpost, the original behavior) or
+  // (forward-auth to the embedded outpost, the original behavior) or
   // 'oidc' (a native Authentik OpenID client, issue #1). Absent means
   // 'forward'. Meaningless without authGroup -- see effectiveAuth() below,
-  // the single function every consumer (buildCaddyBlock, sync-authentik,
-  // the edit confirmation rule, the web UI) uses so they can't disagree
-  // about which mode an entry is actually in.
+  // the single function every consumer (the proxy driver's route builder,
+  // sync-authentik, the edit confirmation rule, the web UI) uses so they
+  // can't disagree about which mode an entry is actually in.
   authMode: z.enum(['forward', 'oidc']).optional(),
   // Callback addresses Authentik's OpenID client redirects back to after
   // login, one per entry -- only meaningful when authMode is 'oidc'.
@@ -116,9 +151,9 @@ export const HostEntrySchema = z.object({
   // time; oidcConfigErrors requires at least one when effectiveAuth is
   // 'oidc' and the entry has subdomains).
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
-  unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
-  // Marks this entry as the Authentik instance itself -- mirrors caddy:
-  // true's "exactly one entry" role. sync-caddy resolves this entry's ip
+  unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
+  // Marks this entry as the Authentik instance itself -- mirrors proxy:
+  // true's "exactly one entry" role. sync-proxy resolves this entry's ip
   // to address the embedded outpost's forward_auth target.
   authentik: z.boolean().optional(),
   bridges: z.array(BridgeEntrySchema).optional(),
@@ -142,16 +177,16 @@ export const GuestEntrySchema = z.object({
   ip: z.string().optional(),
   port: z.number().optional(),
   subdomains: z.array(z.string()).optional(),
-  // See HostEntrySchema's caddyManual for what this does.
-  caddyManual: z.boolean().optional(),
+  // See HostEntrySchema's proxyManual for what this does.
+  proxyManual: z.boolean().optional(),
   insecureBackendTls: z.boolean().optional(),
   authGroup: z.string().min(1).optional(),
   // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
   authMode: z.enum(['forward', 'oidc']).optional(),
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
-  unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
+  unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
   authentik: z.boolean().optional(),
-  caddy: z.boolean().optional(),
+  proxy: z.boolean().optional(),
   unprivileged: z.boolean().optional(),
   // The community-scripts slug this guest was installed from (e.g. "plex"),
   // set once by install-app's apply step -- preserved the same way `port` is:
@@ -183,10 +218,10 @@ export const GuestEntrySchema = z.object({
   vpn: z.string().optional(),
 });
 
-// A Caddy reverse-proxy target that isn't a Proxmox host or guest at all
+// A reverse-proxy target that isn't a Proxmox host or guest at all
 // (a NAS, a non-Proxmox box on the LAN, ...) -- never an SSH/exec target,
 // never touched by resolveTarget/runRemote/sync-inventory; the only command
-// that ever reads this array is sync-caddy.
+// that ever reads this array is sync-proxy.
 export const ExternalSiteSchema = z.object({
   name: z.string().min(1),
   ip: z.string().min(1),
@@ -196,13 +231,13 @@ export const ExternalSiteSchema = z.object({
   // Names the Authentik group ladder rung that gates this entry's
   // subdomain(s) -- sync-authentik binds the matching Application to that
   // rung and every rung above it (see AUTHENTIK_GROUP_LADDER in
-  // src/lib/authentik-config.ts), and sync-caddy emits the forward_auth
+  // src/lib/authentik-config.ts), and sync-proxy emits the forward-auth
   // directive. Absent means ungated. A no-op on an entry with no subdomains
-  // (no candidate to gate) in both commands. caddyManual only silences
-  // sync-caddy (which skips generating any block for such an entry) --
+  // (no candidate to gate) in both commands. proxyManual only silences
+  // sync-proxy (which skips generating any route for such an entry) --
   // sync-authentik still creates/maintains the Provider/Application
-  // regardless of caddyManual, since a hand-authored Caddy block may still
-  // want to route through it. Ladder membership is deliberately NOT
+  // regardless of proxyManual, since a hand-authored proxy config block may
+  // still want to route through it. Ladder membership is deliberately NOT
   // validated here or in validateInventory: sync-authentik reports an
   // off-ladder value instead, so an AUTHENTIK_GROUP_LADDER edit can never
   // make an already-saved inventory refuse to load.
@@ -210,7 +245,7 @@ export const ExternalSiteSchema = z.object({
   // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
   authMode: z.enum(['forward', 'oidc']).optional(),
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
-  unauthenticatedPaths: z.array(z.string().regex(/^\//, "must start with '/'")).optional(),
+  unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
 });
 
 // Operator-specific scalars that used to be hardcoded literals (issue
@@ -234,6 +269,12 @@ export const SettingsSchema = z.object({
   backupStorage: z.string().min(1).optional(),
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // Which reverse-proxy driver src/lib/proxy/index.ts's getDriver() hands
+  // back -- unset means the 'caddy' default (issue #10).
+  proxyDriver: z.enum(PROXY_DRIVER_IDS).optional(),
+  // Overrides the active driver's own defaultConfigPath (issue #10) -- unset
+  // means driverDeps() falls back to that default.
+  proxyConfigPath: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
   // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
   // the repo name (research R7).
@@ -263,6 +304,17 @@ export const SettingsSchema = z.object({
 export type Settings = z.infer<typeof SettingsSchema>;
 export const SETTINGS_KEYS = Object.keys(SettingsSchema.shape) as (keyof Settings)[];
 
+// Sets one setting through a key only known at runtime. The cast is needed
+// because proxyDriver's value is an enum literal, so Settings[key] is not
+// one type TypeScript can narrow across every key. It is sound only for a
+// value already checked against that key's schema: every caller either
+// validates first (SettingsSchema.safeParse, or copying from an inventory
+// that InventorySchema already accepted) or validates the result after
+// (loadInventory's own InventorySchema.safeParse).
+export function assignSetting(target: Partial<Settings>, key: keyof Settings, value: string | undefined): void {
+  (target as Record<string, string | undefined>)[key] = value;
+}
+
 export const InventorySchema = z.object({
   domain: z.string().min(1),
   ...SettingsSchema.shape,
@@ -291,8 +343,8 @@ const SCHEMA = `
     ssh_user TEXT NOT NULL,
     ssh_port INTEGER,
     ssh_identity_file TEXT,
-    caddy INTEGER NOT NULL DEFAULT 0,
-    caddy_manual INTEGER,
+    proxy INTEGER NOT NULL DEFAULT 0,
+    proxy_manual INTEGER,
     ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
     bridges_json TEXT,
     storages_json TEXT,
@@ -307,8 +359,8 @@ const SCHEMA = `
     vmid INTEGER NOT NULL,
     host TEXT NOT NULL REFERENCES hosts(name),
     ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
-    caddy INTEGER NOT NULL DEFAULT 0,
-    caddy_manual INTEGER,
+    proxy INTEGER NOT NULL DEFAULT 0,
+    proxy_manual INTEGER,
     unprivileged INTEGER, app TEXT,
     unauthenticated_paths_json TEXT,
     auth_mode TEXT,
@@ -327,7 +379,7 @@ const SCHEMA = `
     owner_type TEXT NOT NULL,
     owner_name TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS caddy_owner (
+  CREATE TABLE IF NOT EXISTS proxy_owner (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     owner_type TEXT NOT NULL, owner_name TEXT NOT NULL
   );
@@ -381,10 +433,58 @@ function migrateRequiresAuthToAuthGroup(db: Database.Database, table: string): v
   db.exec(`ALTER TABLE ${table} DROP COLUMN requires_auth`);
 }
 
+// One-time #10 migration: the pre-refactor caddy-specific column/table names
+// (`caddy`, `caddy_manual`, `caddy_owner`) become the proxy-neutral ones the
+// reverse-proxy-driver refactor uses (`proxy`, `proxy_manual`, `proxy_owner`)
+// -- same guarded, self-idempotent, log-only-when-something-changed pattern
+// as #158's migrateRequiresAuthToAuthGroup below. Must run before the
+// `ensureColumn(..., 'proxy_manual', ...)` calls in openInventoryDb: SCHEMA's
+// own `CREATE TABLE IF NOT EXISTS proxy_owner` has already created an empty
+// table by the time this runs, so `caddy_owner` -- never read by
+// loadInventory, only written by saveInventory on every save -- is dropped
+// rather than renamed onto it; the next save fills proxy_owner fresh.
+// Renaming `caddy`/`caddy_manual` *after* ensureColumn had already added
+// `proxy_manual` would collide with a duplicate-column error, hence the
+// ordering requirement (research.md R7). Each column is checked
+// independently (a database predating `caddy_manual` entirely just skips
+// that rename and gets `proxy_manual` from ensureColumn below, same as any
+// other never-had-this-column database). A database created fresh by
+// current code has none of `caddy`/`caddy_manual`/`caddy_owner` at all
+// (SCHEMA already names these `proxy`/`proxy_manual`/`proxy_owner`), so the
+// guards are false from the start and nothing is logged, ever, for it.
+function migrateCaddyToProxy(db: Database.Database): void {
+  const tx = db.transaction(() => {
+    const changed: string[] = [];
+    for (const table of ['hosts', 'guests']) {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (cols.some((c) => c.name === 'caddy')) {
+        db.exec(`ALTER TABLE ${table} RENAME COLUMN caddy TO proxy`);
+        changed.push(`${table}.caddy`);
+      }
+      if (cols.some((c) => c.name === 'caddy_manual')) {
+        db.exec(`ALTER TABLE ${table} RENAME COLUMN caddy_manual TO proxy_manual`);
+        changed.push(`${table}.caddy_manual`);
+      }
+    }
+    const hasCaddyOwner = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'caddy_owner'")
+      .get();
+    if (hasCaddyOwner) {
+      db.exec('DROP TABLE IF EXISTS caddy_owner');
+      changed.push('caddy_owner');
+    }
+    if (changed.length > 0) {
+      logInfo(`Migrated ${changed.join(', ')} from caddy to proxy naming (#10, one-time, irreversible).`);
+    }
+  });
+  tx();
+}
+
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
-  ensureColumn(db, 'hosts', 'caddy_manual', 'caddy_manual INTEGER');
-  ensureColumn(db, 'guests', 'caddy_manual', 'caddy_manual INTEGER');
+  migrateCaddyToProxy(db);
+  ensureColumn(db, 'hosts', 'proxy_manual', 'proxy_manual INTEGER');
+  ensureColumn(db, 'guests', 'proxy_manual', 'proxy_manual INTEGER');
   ensureColumn(db, 'guests', 'vpn_gateway', 'vpn_gateway TEXT');
   ensureColumn(db, 'guests', 'vpn', 'vpn TEXT');
   ensureColumn(db, 'hosts', 'auth_group', 'auth_group TEXT');
@@ -417,13 +517,13 @@ export function validateInventory(inv: Inventory): string[] {
   const errors: string[] = [];
   const hostNames = new Set(inv.hosts.map((h) => h.name));
 
-  const caddyNames = [
-    ...inv.hosts.filter((h) => h.caddy).map((h) => h.name),
-    ...inv.guests.filter((g) => g.caddy).map((g) => g.name),
+  const proxyNames = [
+    ...inv.hosts.filter((h) => h.proxy).map((h) => h.name),
+    ...inv.guests.filter((g) => g.proxy).map((g) => g.name),
   ];
-  if (caddyNames.length > 1) {
+  if (proxyNames.length > 1) {
     errors.push(
-      `Inventory validation: multiple entries flagged 'caddy: true' (only one is allowed): ${caddyNames.join(' ')}`
+      `Inventory validation: multiple entries flagged 'proxy: true' (only one is allowed): ${proxyNames.join(' ')}`
     );
   }
 
@@ -491,16 +591,16 @@ export function validateInventory(inv: Inventory): string[] {
     }
   }
 
-  const allEntries: Array<{ name: string; subdomains?: string[]; ip?: string; caddyManual?: boolean }> = [
+  const allEntries: Array<{ name: string; subdomains?: string[]; ip?: string; proxyManual?: boolean }> = [
     ...inv.hosts,
     ...inv.guests,
     ...(inv.externalSites ?? []),
   ];
   for (const entry of allEntries) {
-    // A caddyManual entry never produces a reverse_proxy target
-    // (buildCaddyBlock skips it outright), so it doesn't need an ip the way
+    // A proxyManual entry never produces a reverse_proxy target
+    // (buildRoutes skips it outright), so it doesn't need an ip the way
     // a normally-managed entry with subdomains does.
-    if (entry.caddyManual) continue;
+    if (entry.proxyManual) continue;
     if (entry.subdomains && entry.subdomains.length > 0 && !entry.ip) {
       errors.push(
         `Inventory validation: entry '${entry.name}' has 'subdomains' set but no 'ip' (would produce a broken reverse_proxy target)`
@@ -509,8 +609,8 @@ export function validateInventory(inv: Inventory): string[] {
   }
 
   // Two entries claiming the same subdomain would silently fight over the
-  // one Caddy site block sync-caddy generates for it -- catch that at
-  // validation time rather than a confusing runtime Caddy behavior.
+  // one route sync-proxy generates for it -- catch that at validation time
+  // rather than a confusing runtime proxy behavior.
   const subdomainOwners = new Map<string, string[]>();
   for (const entry of allEntries) {
     for (const subdomain of entry.subdomains ?? []) {
@@ -538,7 +638,7 @@ export function parseSubdomains(raw: unknown): string[] | undefined {
 
 // The web UI's Port field (free text) -> a validated port number, or
 // undefined when empty so an entry with none doesn't grow a pointless
-// `port: 80` (buildCaddyBlock's own `?? 80` default already covers that).
+// `port: 80` (buildRoutes's own `?? 80` default already covers that).
 // Throws on non-empty-but-invalid input, unlike parseSubdomains, since a
 // silently-dropped bad port is a worse experience than a clear rejection.
 export function parsePort(raw: unknown): number | undefined {
@@ -564,25 +664,27 @@ export function parseAuthGroup(raw: unknown): string | undefined {
 }
 
 // Semicolon-delimited free text (the web UI's Unauthenticated Paths field)
-// -> a deduplicated list of Caddy path-matcher globs, or undefined when
+// -> a deduplicated list of proxy path-matcher globs, or undefined when
 // empty so an entry with none doesn't grow a pointless
-// `unauthenticatedPaths: []`. Throws on a non-empty pattern missing a
-// leading '/', unlike parseSubdomains's silent-drop behavior -- a pattern
-// that silently never matches as intended is a worse experience than a
-// rejected save.
+// `unauthenticatedPaths: []`. Throws on a non-empty pattern that isn't one
+// of the two accepted forms (isValidUnauthenticatedPath -- same rule
+// UnauthenticatedPathSchema enforces, so a guest edit and a schema load can
+// never disagree), unlike parseSubdomains's silent-drop behavior -- a
+// pattern that silently never matches as intended is a worse experience
+// than a rejected save.
 export function parseUnauthenticatedPaths(raw: unknown): string[] | undefined {
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const list = Array.from(new Set(raw.split(';').map((s) => s.trim()).filter(Boolean)));
   for (const pattern of list) {
-    if (!pattern.startsWith('/')) {
-      throw new Error(`Invalid unauthenticated path '${pattern}' (must start with '/')`);
+    if (!isValidUnauthenticatedPath(pattern)) {
+      throw new Error(`Invalid unauthenticated path '${pattern}' (${UNAUTHENTICATED_PATH_MESSAGE})`);
     }
   }
   return list.length > 0 ? list : undefined;
 }
 
 // The single source of truth for whether/how an entry is gated -- every
-// consumer (buildCaddyBlock, sync-authentik, the edit confirmation rule,
+// consumer (buildRoutes, sync-authentik, the edit confirmation rule,
 // the web UI) calls this instead of re-deriving it from authGroup/authMode
 // separately, so they cannot disagree (data-model.md "Derived state").
 // authMode is meaningless without authGroup, so an unset authGroup is
@@ -666,8 +768,8 @@ interface HostRow {
   ssh_port: number | null;
   ssh_identity_file: string | null;
   mid_scheme_json: string | null;
-  caddy: number;
-  caddy_manual: number | null;
+  proxy: number;
+  proxy_manual: number | null;
   ip: string | null;
   port: number | null;
   insecure_backend_tls: number | null;
@@ -693,8 +795,8 @@ interface GuestRow {
   auth_mode: string | null;
   oidc_redirect_uris_json: string | null;
   authentik: number | null;
-  caddy: number;
-  caddy_manual: number | null;
+  proxy: number;
+  proxy_manual: number | null;
   unprivileged: number | null;
   app: string | null;
   app_source: string | null;
@@ -729,7 +831,7 @@ export function loadInventory(path: string): Inventory {
     const guestRows = db.prepare('SELECT * FROM guests ORDER BY host, name').all() as GuestRow[];
     const externalSiteRows = db.prepare('SELECT * FROM external_sites ORDER BY name').all() as ExternalSiteRow[];
     // ORDER BY rowid, not `subdomain` -- array order is operator-meaningful
-    // (sync-caddy treats the first subdomain as an entry's canonical
+    // (sync-proxy treats the first subdomain as an entry's canonical
     // hostname), and saveInventory always fully clears this table and
     // re-inserts every owner's subdomains in their original array order
     // within one transaction, so rowid order == insertion order == authored
@@ -750,8 +852,8 @@ export function loadInventory(path: string): Inventory {
       ssh_port: row.ssh_port ?? undefined,
       ssh_identity_file: row.ssh_identity_file ?? undefined,
       midScheme: row.mid_scheme_json ? JSON.parse(row.mid_scheme_json) : undefined,
-      caddy: row.caddy ? true : undefined,
-      caddyManual: row.caddy_manual ? true : undefined,
+      proxy: row.proxy ? true : undefined,
+      proxyManual: row.proxy_manual ? true : undefined,
       subdomains: subdomainsFor('host', row.name),
       ip: row.ip ?? undefined,
       port: row.port ?? undefined,
@@ -779,8 +881,8 @@ export function loadInventory(path: string): Inventory {
       authMode: (row.auth_mode ?? undefined) as 'forward' | 'oidc' | undefined,
       oidcRedirectUris: row.oidc_redirect_uris_json ? JSON.parse(row.oidc_redirect_uris_json) : undefined,
       authentik: row.authentik ? true : undefined,
-      caddy: row.caddy ? true : undefined,
-      caddyManual: row.caddy_manual ? true : undefined,
+      proxy: row.proxy ? true : undefined,
+      proxyManual: row.proxy_manual ? true : undefined,
       unprivileged: row.unprivileged === null ? undefined : !!row.unprivileged,
       app: row.app ?? undefined,
       appSource: (row.app_source ?? undefined) as 'custom' | undefined,
@@ -804,7 +906,7 @@ export function loadInventory(path: string): Inventory {
     const settings: Settings = {};
     for (const key of SETTINGS_KEYS) {
       const value = meta.get(key);
-      if (value !== undefined) settings[key] = value;
+      if (value !== undefined) assignSetting(settings, key, value);
     }
 
     const assembled = sortInventoryForFile({
@@ -936,7 +1038,7 @@ export function saveInventory(path: string, inv: Inventory): void {
   try {
     const tx = db.transaction((data: Inventory) => {
       db.prepare('DELETE FROM subdomains').run();
-      db.prepare('DELETE FROM caddy_owner').run();
+      db.prepare('DELETE FROM proxy_owner').run();
       db.prepare('DELETE FROM guests').run();
       db.prepare('DELETE FROM external_sites').run();
       db.prepare('DELETE FROM hosts').run();
@@ -956,14 +1058,14 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertHost = db.prepare(`
-        INSERT INTO hosts (name, ssh_target, ssh_user, ssh_port, ssh_identity_file, caddy, caddy_manual, ip, port, insecure_backend_tls, bridges_json, storages_json, nfs_mounts_json, auth_group, auth_mode, oidc_redirect_uris_json, authentik, mid_scheme_json, unauthenticated_paths_json)
-        VALUES (@name, @ssh_target, @ssh_user, @ssh_port, @ssh_identity_file, @caddy, @caddy_manual, @ip, @port, @insecure_backend_tls, @bridges_json, @storages_json, @nfs_mounts_json, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @mid_scheme_json, @unauthenticated_paths_json)
+        INSERT INTO hosts (name, ssh_target, ssh_user, ssh_port, ssh_identity_file, proxy, proxy_manual, ip, port, insecure_backend_tls, bridges_json, storages_json, nfs_mounts_json, auth_group, auth_mode, oidc_redirect_uris_json, authentik, mid_scheme_json, unauthenticated_paths_json)
+        VALUES (@name, @ssh_target, @ssh_user, @ssh_port, @ssh_identity_file, @proxy, @proxy_manual, @ip, @port, @insecure_backend_tls, @bridges_json, @storages_json, @nfs_mounts_json, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @mid_scheme_json, @unauthenticated_paths_json)
       `);
       const insertSubdomain = db.prepare(
         'INSERT INTO subdomains (subdomain, owner_type, owner_name) VALUES (?, ?, ?)'
       );
-      const insertCaddyOwner = db.prepare(
-        'INSERT INTO caddy_owner (id, owner_type, owner_name) VALUES (1, ?, ?)'
+      const insertProxyOwner = db.prepare(
+        'INSERT INTO proxy_owner (id, owner_type, owner_name) VALUES (1, ?, ?)'
       );
 
       for (const host of data.hosts) {
@@ -973,8 +1075,8 @@ export function saveInventory(path: string, inv: Inventory): void {
           ssh_user: host.ssh_user,
           ssh_port: host.ssh_port ?? null,
           ssh_identity_file: host.ssh_identity_file ?? null,
-          caddy: host.caddy ? 1 : 0,
-          caddy_manual: host.caddyManual ? 1 : null,
+          proxy: host.proxy ? 1 : 0,
+          proxy_manual: host.proxyManual ? 1 : null,
           ip: host.ip ?? null,
           port: host.port ?? null,
           insecure_backend_tls: host.insecureBackendTls == null ? null : host.insecureBackendTls ? 1 : 0,
@@ -988,13 +1090,13 @@ export function saveInventory(path: string, inv: Inventory): void {
           mid_scheme_json: host.midScheme ? JSON.stringify(host.midScheme) : null,
           unauthenticated_paths_json: host.unauthenticatedPaths ? JSON.stringify(host.unauthenticatedPaths) : null,
         });
-        if (host.caddy) insertCaddyOwner.run('host', host.name);
+        if (host.proxy) insertProxyOwner.run('host', host.name);
         for (const subdomain of host.subdomains ?? []) insertSubdomain.run(subdomain, 'host', host.name);
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, caddy, caddy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @caddy, @caddy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -1005,8 +1107,8 @@ export function saveInventory(path: string, inv: Inventory): void {
           ip: guest.ip ?? null,
           port: guest.port ?? null,
           insecure_backend_tls: guest.insecureBackendTls == null ? null : guest.insecureBackendTls ? 1 : 0,
-          caddy: guest.caddy ? 1 : 0,
-          caddy_manual: guest.caddyManual ? 1 : null,
+          proxy: guest.proxy ? 1 : 0,
+          proxy_manual: guest.proxyManual ? 1 : null,
           unprivileged: guest.unprivileged === undefined ? null : guest.unprivileged ? 1 : 0,
           app: guest.app ?? null,
           app_source: guest.appSource ?? null,
@@ -1018,7 +1120,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           authentik: guest.authentik ? 1 : null,
           unauthenticated_paths_json: guest.unauthenticatedPaths ? JSON.stringify(guest.unauthenticatedPaths) : null,
         });
-        if (guest.caddy) insertCaddyOwner.run('guest', guest.name);
+        if (guest.proxy) insertProxyOwner.run('guest', guest.name);
         for (const subdomain of guest.subdomains ?? []) insertSubdomain.run(subdomain, 'guest', guest.name);
       }
 
@@ -1047,10 +1149,10 @@ export function saveInventory(path: string, inv: Inventory): void {
   }
 }
 
-// The single entry flagged `caddy: true` -- where Caddy actually runs.
+// The single entry flagged `proxy: true` -- where the reverse proxy runs.
 // Shared by render-status-page and scripts/windows-service.ts (whose
 // firewall rule scopes inbound access to that entry's ip), so neither has
 // to re-derive it or hardcode an address.
-export function findCaddyEntry(inv: Inventory): HostEntry | GuestEntry | undefined {
-  return [...inv.hosts, ...inv.guests].find((e) => e.caddy);
+export function findProxyEntry(inv: Inventory): HostEntry | GuestEntry | undefined {
+  return [...inv.hosts, ...inv.guests].find((e) => e.proxy);
 }

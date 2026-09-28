@@ -2,6 +2,7 @@ import type { AuthentikApplication, AuthentikClient } from '../../lib/authentik-
 import type { Inventory } from '../../lib/inventory.ts';
 import { effectiveAuth } from '../../lib/inventory.ts';
 import { authentikConfig, rungsAtOrAbove } from '../../lib/authentik-config.ts';
+import { publicHostname } from '../../lib/hostname.ts';
 import {
   BELLHOP_META_PUBLISHER,
   MISSING_REDIRECT_URIS_REASON,
@@ -132,7 +133,7 @@ export async function runAdoptOidcClient(
   // never needs the type itself, only this one call.
   const candidate = {
     slug,
-    externalHost: `https://${slug}.${deps.inventory.domain}`,
+    externalHost: `https://${publicHostname(slug, deps.inventory.domain)}`,
     authGroup,
     authMode: entry.authMode,
     oidcRedirectUris: entry.oidcRedirectUris,

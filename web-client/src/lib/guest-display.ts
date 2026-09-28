@@ -36,7 +36,7 @@ export function sortGuestsForDisplay(guests: GuestEntry[]): GuestEntry[] {
 
 // Structural (not GuestEntry-specific) so it also works for a HostEntry --
 // hosts can have subdomains too, they just never have an app.
-export function caddyUrl(entry: { subdomains?: string[] }, domain: string): string | undefined {
+export function proxyUrl(entry: { subdomains?: string[] }, domain: string): string | undefined {
   const subdomain = entry.subdomains?.[0];
   return subdomain ? `https://${subdomain}.${domain}` : undefined;
 }
@@ -68,7 +68,7 @@ export function communityScriptsLinkLabel(guest: GuestEntry, customScripts?: Cus
     : `Open ${guest.app} on community-scripts`;
 }
 
-// Direct ip:port link, bypassing Caddy/subdomains entirely -- https only for
+// Direct ip:port link, bypassing the proxy/subdomains entirely -- https only for
 // the two ports that are conventionally TLS (443, 8443), http otherwise.
 export function ipUrl(guest: GuestEntry): string | undefined {
   if (!guest.ip) return undefined;

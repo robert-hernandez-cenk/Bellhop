@@ -2,7 +2,7 @@ import { stringify } from 'yaml';
 import type { SSHClient } from '../lib/ssh-client.ts';
 import type { Inventory } from '../lib/inventory.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
-import { runSyncCaddy } from '../commands/networking/sync-caddy.ts';
+import { runSyncProxy } from '../commands/networking/sync-proxy.ts';
 import { runRenderStatusPage, statusPagePathSkipMessage } from '../commands/networking/render-status-page.ts';
 import { runSyncAuthentik, conflictExplanation, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
 import type { ForwardSkip, OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
@@ -10,12 +10,13 @@ import { logInfo, logWarn } from '../lib/log.ts';
 import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
 import { runPruneAcmeChallenges } from '../commands/networking/prune-acme-challenges.ts';
+import { getDriver } from '../lib/proxy/index.ts';
 
-export interface SyncCaddyLiveResult {
+export interface SyncProxyLiveResult {
   // Slug conflicts reported by sync-authentik: entries with an authGroup set
   // whose slug is already held in Authentik by an Application this toolkit
   // does not own. Returned rather than only logged because the Dashboard's
-  // guest PATCH calls syncCaddyLive straight from its Express handler,
+  // guest PATCH calls syncProxyLive straight from its Express handler,
   // outside any job context -- logWarn's console.error reaches the service's
   // stderr there and nothing the operator can see.
   authentikConflicts: string[];
@@ -26,7 +27,7 @@ export interface SyncCaddyLiveResult {
   // Entries whose authGroup names a group absent from AUTHENTIK_GROUP_LADDER,
   // and ladder rungs absent from Authentik itself. Surfaced for the same
   // reason as authentikConflicts: the Dashboard's guest PATCH calls
-  // syncCaddyLive straight from its Express handler, outside any job, so a
+  // syncProxyLive straight from its Express handler, outside any job, so a
   // logWarn alone would only reach the service's stderr.
   authentikOffLadder: OffLadderEntry[];
   authentikMissingRungs: string[];
@@ -46,12 +47,26 @@ export interface SyncCaddyLiveResult {
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
 
+// The prune only ever makes sense for a driver that issues certs via ACME
+// DNS-01 through Cloudflare (Caddy's own hardcoded TLS_BLOCK, today). A
+// driver without that capability never leaves stale
+// _acme-challenge TXT records behind in the first place, so there is
+// nothing here for this step to clean up.
+export function pruneAcmeDriverSkipMessage(driverId: string): string {
+  return `prune-acme-challenges: skipped, the '${driverId}' proxy driver does not use ACME DNS-01 via Cloudflare`;
+}
+
 // Last step of the push-live sequence (issue #162). Every failure is turned
 // into a warning: a stale TXT record is harmless, so a Cloudflare outage or a
 // bad token must never fail the Dashboard edit or provisioning job that
-// triggered this. Nothing is added to SyncCaddyLiveResult -- there is no
+// triggered this. Nothing is added to SyncProxyLiveResult -- there is no
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
+  const driver = getDriver(inventory);
+  if (!driver.capabilities.acmeDns01ViaCloudflare) {
+    logInfo(pruneAcmeDriverSkipMessage(driver.id));
+    return;
+  }
   if (!cloudflare.isConfigured()) {
     logInfo(PRUNE_ACME_SKIP_MESSAGE);
     return;
@@ -67,24 +82,24 @@ async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: 
 
 // The one place every auto-sync trigger (a subdomains-bearing create-guest
 // apply, a Dashboard subdomain/authGroup edit) pushes a change live:
-// writes the managed Caddyfile section, regenerates the status page from
-// the now-current inventory + the Caddyfile sync-caddy just wrote,
+// writes the proxy configuration (sync-proxy), regenerates the status page from
+// the now-current inventory + the configuration sync-proxy just wrote,
 // reconciles Authentik's Providers/Applications/policy bindings against
 // the same inventory, then prunes stale _acme-challenge TXT records from
 // Cloudflare -- treated as one combined "push live" step so the artifacts
 // always move together rather than drifting apart. `cloudflare` is optional
 // and defaults to unconfigured, same convention as AppDeps.impersonationStore.
-export async function syncCaddyLive(deps: {
+export async function syncProxyLive(deps: {
   ssh: SSHClient;
   inventory: Inventory;
   authentik: AuthentikClient;
   cloudflare?: CloudflareClient;
   // Passed through to sync-authentik's discovery check; tests inject one.
   fetchImpl?: typeof fetch;
-}): Promise<SyncCaddyLiveResult> {
-  await runSyncCaddy({ apply: true }, deps);
+}): Promise<SyncProxyLiveResult> {
+  await runSyncProxy({ apply: true }, deps);
   // The status page is opt-in: an operator who has not configured a path
-  // never gets an index.html written to their Caddy host. Skipping is not
+  // never gets an index.html written to their proxy host. Skipping is not
   // a failure, so the Authentik reconcile below still runs.
   if (deps.inventory.statusPagePath !== undefined) {
     const inventorySnapshot = stringify(deps.inventory);
@@ -92,7 +107,7 @@ export async function syncCaddyLive(deps: {
   } else {
     logInfo(statusPagePathSkipMessage());
   }
-  let result: SyncCaddyLiveResult = {
+  let result: SyncProxyLiveResult = {
     authentikConflicts: [],
     authentikAdoptableConflicts: [],
     authentikOffLadder: [],

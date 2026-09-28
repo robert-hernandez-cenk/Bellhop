@@ -112,7 +112,7 @@ export interface AuthentikClient {
   // Whether this client instance has a real Authentik API to talk to --
   // every other method call is only meaningful when this is true. Used to
   // gate routes/steps that need the REST API (requireUserDirectory in
-  // src/web/auth.ts, syncCaddyLive in src/web/caddy-sync.ts) against the
+  // src/web/auth.ts, syncProxyLive in src/web/proxy-sync.ts) against the
   // actual injected client rather than re-reading process.env, so the gate
   // can never disagree with what the client itself will do.
   isConfigured(): boolean;
@@ -441,7 +441,7 @@ export class RealAuthentikClient implements AuthentikClient {
   }
 
   // One unfiltered list rather than a per-Application query: this instance
-  // holds a few dozen bindings in total, and syncCaddyLive already makes
+  // holds a few dozen bindings in total, and syncProxyLive already makes
   // several REST calls per Dashboard edit.
   //
   // Unlike every other `?page_size=500` call in this file, a truncated page
@@ -541,7 +541,7 @@ export class RealAuthentikClient implements AuthentikClient {
   // near this limit today, but a missed provider here would read as "not
   // owned yet" and sync-authentik would try to create a duplicate.
   //
-  // T044 live-verification fix: Authentik 2026.8's `GET /api/v3/providers/oauth2/`
+  // Found in live verification: Authentik 2026.8's `GET /api/v3/providers/oauth2/`
   // also returns every proxy provider (ProxyProvider subclasses
   // OAuth2Provider in Authentik's own model, and `meta_model_name`/
   // `component` on the raw response report the OAuth2 values for all of

@@ -9,7 +9,7 @@ interface Props {
 // FR-011a's per-entry "adopt an existing hand-made OpenID client" action,
 // rendered inline inside a conflict banner (EditableAuthGroup.tsx /
 // EditableAuthMode.tsx) only when the conflict belongs to an OIDC-effective
-// guest and the viewer is admin (T042). Preview-then-apply, same shape as
+// guest and the viewer is admin. Preview-then-apply, same shape as
 // every other shared Operation (src/operations/); apply enqueues a job and
 // navigates there, the same apply-then-navigate precedent EditableVpn.tsx
 // already uses for its own job-backed action.

@@ -2,10 +2,11 @@
 
 A self-hosted app store for your Proxmox VE homelab. Bellhop installs
 appliances from [community-scripts](https://github.com/community-scripts/ProxmoxVE)
-into new LXC containers, then handles what comes after: inventory, Caddy
-reverse-proxy routes, Authentik login gating, updates, and migrations
-between hosts. It ships as a web UI, a CLI, and an MCP server, and
-reaches your Proxmox hosts over SSH from your local machine.
+into new LXC containers, then handles what comes after: inventory,
+reverse-proxy routes (Caddy today, through a pluggable driver — see
+"Reverse proxy drivers" below), Authentik login gating, updates, and
+migrations between hosts. It ships as a web UI, a CLI, and an MCP server,
+and reaches your Proxmox hosts over SSH from your local machine.
 
 Bellhop is an independent project, not affiliated with or endorsed by
 Proxmox Server Solutions GmbH. Proxmox is a registered trademark of
@@ -51,7 +52,7 @@ that copy. See the comments in the example file for the schema (`domain`,
 `hosts[]` — each with an `ssh_user` (the SSH login user for that host —
 Proxmox generally only allows `root`) and an optional `midScheme`
 (`vmidBase`/`ipPrefix`/`gateway`) used by `--mid` below — `guests[]`, optional
-`subdomains`/`ip`/`port`/`caddy`/`insecureBackendTls` fields —
+`subdomains`/`ip`/`port`/`proxy`/`insecureBackendTls` fields —
 `subdomains` is a list, so one host/guest can front more than one;
 `insecureBackendTls` is for a backend that serves HTTPS with a
 self-signed cert. A top-level `externalSites[]` covers reverse-proxy
@@ -106,9 +107,9 @@ update a VM's own packages from inside the VM itself.
 
 `sync-inventory` queries every Proxmox host in inventory for its actual
 LXC containers and VMs (via `pvesh`) and reconciles `guests[]` with
-reality: existing entries keep their `name`/`subdomains`/`port`/`caddy` but
+reality: existing entries keep their `name`/`subdomains`/`port`/`proxy` but
 get `type`/`ip` refreshed; newly discovered guests are added (with no
-`subdomains`/`port`/`caddy` — add those by hand); guests no longer present
+`subdomains`/`port`/`proxy` — add those by hand); guests no longer present
 on their host are removed. `--apply` writes the reconciled `hosts[]`/
 `guests[]` back to `inventory/bellhop.db`, a SQLite database (see
 `CLAUDE.md`) — `domain` and `externalSites[]` are left untouched.
@@ -181,7 +182,7 @@ this scaffold command.
 
 After `create-lxc`/`create-vm` provisions a new guest, it must be added to
 `inventory/bellhop.db` **manually** before `configure-guest`, `update-all`,
-or `sync-caddy` can target it — the create commands only create the guest
+or `sync-proxy` can target it — the create commands only create the guest
 on the Proxmox host, they don't touch the inventory database.
 
 `attach-nfs-mount` is the way to give an *existing* guest NAS access —
@@ -253,11 +254,11 @@ destroying), then destroys an `lxc`/`vm` guest on its parent host.
 `--apply` now removes the destroyed guest from `inventory/bellhop.db`
 itself, on both the CLI and web UI paths — no separate `sync-inventory`
 run needed just to drop it from `guests[]`. The Dashboard's Delete button
-in the web UI (see below) additionally re-syncs Caddy and reconciles
-Authentik automatically in the same action; the CLI path doesn't do
-either, so if the deleted guest had `subdomains`/an `authGroup` set, run
-`sync-caddy`/`sync-authentik` by hand afterward to drop the now-gone
-guest's config there too.
+in the web UI (see below) additionally re-syncs the reverse proxy and
+reconciles Authentik automatically in the same action; the CLI path
+doesn't do either, so if the deleted guest had `subdomains`/an `authGroup`
+set, run `sync-proxy`/`sync-authentik` by hand afterward to drop the
+now-gone guest's config there too.
 
 `migrate-guest` moves an existing `lxc`/`vm` guest to the other Proxmox
 host, renumbering its VMID/IP to match the target host's convention. It
@@ -277,16 +278,19 @@ a verification failure leaves both the original guest and the unverified
 new one in place for the operator to debug, with no automatic rollback.
 `--storage` overrides the automatically-picked target guest storage; `--mid`
 defaults to the current VMID's numeric suffix. `inventory/bellhop.db`
-and (if the guest has subdomains) the live Caddy config are updated as
-part of the same `--apply`, no separate `sync-inventory`/`sync-caddy` run
-needed.
+and (if the guest has subdomains) the live reverse-proxy config are
+updated as part of the same `--apply`, no separate
+`sync-inventory`/`sync-proxy` run needed. If that proxy update fails, the
+migration still completes (the original guest is already gone by then) and
+prints a warning with the error; fix the cause and run
+`bellhop sync-proxy --apply`.
 
 **Networking:**
 ```bash
-bellhop sync-caddy          # dry run: prints the generated Caddyfile block
-bellhop sync-caddy --apply  # writes it and reloads Caddy
+bellhop sync-proxy          # dry run: prints the generated reverse-proxy configuration
+bellhop sync-proxy --apply  # writes it and reloads the proxy
 bellhop render-status-page          # dry run: prints the generated status page HTML
-bellhop render-status-page --apply  # writes it to the Caddy host
+bellhop render-status-page --apply  # writes it to the proxy host
 bellhop sync-authentik          # dry run: prints Applications/OpenID clients to create/update/remove
 bellhop sync-authentik --apply  # reconciles Authentik Proxy Providers, OpenID clients, and policy bindings
 bellhop oidc-credentials media           # print an OIDC-gated entry's issuer, client ID, and client secret
@@ -295,27 +299,96 @@ bellhop adopt-oidc-client media --apply  # adopt it as Bellhop-managed, without 
 ```
 
 `render-status-page` regenerates a static, LAN-only status page (raw
-`inventory/hosts.yaml` plus the actual deployed Caddyfile, both fetched
-fresh) on whichever host is flagged `caddy: true`. It's a manual,
+`inventory/hosts.yaml` plus the actual deployed proxy configuration, both
+fetched fresh) on whichever host is flagged `proxy: true`. It's a manual,
 on-demand command on the CLI side — the web UI calls it automatically
-after any change that touches Caddy (see below).
+after any change that touches the reverse proxy (see below).
 
 `sync-authentik` reconciles Authentik Proxy Providers, OpenID (OAuth2)
 clients, Applications, policy bindings, and embedded-outpost membership
 against every inventory entry that has an `authGroup` set — the same
-gated entries `sync-caddy` addresses `forward_auth` at. `oidc-credentials`
+gated entries `sync-proxy` addresses `forward_auth` at. `oidc-credentials`
 and `adopt-oidc-client` are its companions for native OIDC gating; see
 "OIDC mode" below.
+
+## Reverse proxy drivers
+
+`sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
+through a driver, chosen by the `proxyDriver` setting (see "Inventory-wide
+settings" below; unset means `caddy`, the only driver that ships today).
+Exactly one driver is active per deployment: it's a per-deployment choice,
+not a per-entry one, so every gated/reverse-proxied inventory entry is
+served by the same proxy.
+
+A driver declares what it can enforce (`authModes`, e.g. Caddy supports
+both `forward` and `oidc`) and whether it issues TLS certificates itself
+through Cloudflare DNS-01 (`acmeDns01ViaCloudflare`, which gates whether
+`prune-acme-challenges` runs as part of the web UI's push-live step). It
+implements three operations: `plan()` turns the routes derived from
+inventory into a preview and an opaque payload (the dry-run preview is
+always exactly what `--apply` sends); `apply()` sends that payload live and
+reloads the proxy, throwing on failure — a failed validate or write
+restores the proxy's previous configuration rather than leaving it
+half-written or silently reporting success; `snapshot()` reads back
+whatever the proxy currently has deployed, for the status page. Any route
+whose auth mode the active driver can't enforce (e.g. a driver with no
+`oidc` support and an OIDC-gated entry) is refused at both `sync-proxy` and
+guest-edit time, naming the entry, the driver, and the fix — never
+silently dropped, which would leave that entry reachable with no gate in
+front of it.
+
+A driver that's configured through a file (Caddy is; a future
+Caddy-admin-API/Nginx-Proxy-Manager/HAProxy-Data-Plane-API driver might
+not be) is built with a shared `fileDriver` helper: it backs up the
+target file(s), writes the new content in place (either replacing a
+managed section while leaving everything else on the file untouched, or
+replacing a file Bellhop owns outright), runs the proxy's own validation
+command against the real path, restores every backup and fails if
+validation fails, and reloads the proxy otherwise.
+
+**Certificates are the operator's job for a driver that doesn't issue them
+itself.** Caddy issues its own via Cloudflare DNS-01 with no extra setup;
+a driver for a proxy that can't (plain nginx, HAProxy) will need an
+operator-managed certificate tool (`certbot`, `acme.sh`) running
+alongside it — Bellhop itself never issues or renews a certificate.
+
+**Upgrading an existing installation needs no manual steps in most
+cases.** An inventory created by an older version upgrades itself
+automatically the first time it's opened by the new code — pull the new
+code and restart the service, and the upgrade never repeats. Caddy is
+chosen as the driver by default, so the reverse-proxy configuration a
+`sync-proxy --apply` produces afterward is unchanged from before the
+upgrade. The renamed command was `sync-caddy` and the renamed inventory
+flags were `caddy`/`caddyManual`; none of the old names still work, and
+`import-yaml-inventory` refuses a `hosts.yaml` that still uses the old
+flags until they are renamed to `proxy`/`proxyManual`. Two cases do need
+a step by hand:
+
+- **You set `CADDYFILE_PATH`.** That environment variable is gone and is
+  no longer read. If you pointed it anywhere other than
+  `/etc/caddy/Caddyfile`, run
+  `bellhop set-config proxyConfigPath <path> --apply` with the same path.
+- **An `unauthenticatedPaths` value is not an exact path or a `/*`
+  prefix.** Each value must now be an exact path (`/health`) or a path
+  ending in `/*` (`/api/*`); anything else (`/api*`, `/a*b`) makes the
+  inventory refuse to load until that value is edited to one of those
+  two forms. Since nothing can load the inventory meanwhile, edit it in
+  `inventory/bellhop.db` directly: the `unauthenticated_paths_json`
+  column of whichever `hosts`, `guests`, or `external_sites` row holds
+  it.
 
 ### OIDC mode
 
 A gated entry (one with `authGroup` set) is enforced one of two ways,
 chosen per entry with `authMode`: `forward` (the default, and the only
-option before this feature existed) puts Caddy's `forward_auth` in front
-of it, checking every request against Authentik and forwarding a shared,
+option before this feature existed) puts the active proxy driver's
+forward-auth in front of it (Caddy's `forward_auth`, today's only driver),
+checking every request against Authentik and forwarding a shared,
 already-authenticated identity in `X-authentik-*` headers; `oidc` instead
 gives the entry its own Authentik OpenID Connect client and lets the app
-run its own login.
+run its own login. A driver that can't enforce a mode an entry needs is
+refused at sync and edit time rather than silently leaving that entry
+ungated — see "Reverse proxy drivers" above.
 
 Choose `oidc` for an app that already has its own user accounts, roles, or
 permissions and can tell users apart on its own — forward-auth otherwise
@@ -338,7 +411,7 @@ external site is DB/CLI-only, the same as `authGroup` itself. Then run
 the same sync as part of its push-live step) to create the OpenID client
 in Authentik.
 
-A Dashboard save pushes the Caddy change *before* the Authentik sync runs,
+A Dashboard save pushes the proxy configuration change *before* the Authentik sync runs,
 so switching an entry to OIDC removes its `forward_auth` gate first. If the
 sync then skips the entry (a missing signing key, say) or fails, the app is
 reachable with no gate in front of it until the next successful sync — read
@@ -434,9 +507,9 @@ icon and, for guests with an app installed, a second community-script-update
 icon. Changes that touch
 subdomains (a new guest's Subdomains field, editing an existing guest's
 subdomains, deleting a guest that had any) automatically re-run
-`sync-caddy` and `render-status-page` in the same job, so the live
-Caddyfile and status page never drift from what the Dashboard shows. Set
-`PORT` to run it on a port other than 3001.
+`sync-proxy` and `render-status-page` in the same job, so the live
+proxy configuration and status page never drift from what the Dashboard
+shows. Set `PORT` to run it on a port other than 3001.
 
 The deployed web UI can be gated behind Caddy's `forward_auth`, checking
 every request against a self-hosted Authentik instance and forwarding
@@ -509,7 +582,7 @@ claude mcp add --scope user bellhop -- npm --prefix /path/to/bellhop run --silen
 
 ## Inventory-wide settings
 
-Six values live in the inventory database rather than in code, because
+Eight values live in the inventory database rather than in code, because
 they are specific to your network. Set them with `set-config`:
 
 ```bash
@@ -527,8 +600,13 @@ nothing. Admins can set the same values from the web UI's Settings page.
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
+| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | the `caddy` driver (the only one that ships today) |
+| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy) |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
+
+See "Reverse proxy drivers" above for what `proxyDriver` and
+`proxyConfigPath` actually do.
 
 `statusPagePath` unset is a hard failure only for the standalone
 `render-status-page` command; the web UI's combined push-live step and
@@ -638,7 +716,7 @@ verbatim) rather than silently falling back to upstream, per FR-008 above.
 
 Two related values are *derived*, not configured: `set-guest-vpn --vpn
 none` restores the guest's parent host's `midScheme.gateway`, and the
-Windows service's firewall rule scopes to the `caddy: true` entry's `ip`.
+Windows service's firewall rule scopes to the `proxy: true` entry's `ip`.
 This is a real behavior narrowing, not just a literal removed: previously
 `--vpn none` always restored the same hardcoded LAN gateway regardless of
 the guest's host; now it requires that host to have a `midScheme`
@@ -652,11 +730,6 @@ there is no LAN gateway to restore '<guest>' to`) if it doesn't.
   one seeded via `import-yaml-inventory --yaml-path
   inventory/hosts.yaml.example --db-path <temp-path> --apply`), for
   testing without touching real infrastructure.
-- `CADDYFILE_PATH` — path to the Caddyfile that `sync-caddy` reads from
-  and writes to, and that `render-status-page` reads from when snapshotting
-  the "Active Caddyfile" it displays. Defaults to `/etc/caddy/Caddyfile`.
-  Override when Caddy's config lives somewhere nonstandard, or to point at
-  a temp file for testing.
 - `FSTAB_PATH` — path to the guest fstab file `migrate-nfs-mount` reads and
   edits (it's the only command left that touches guest fstab — see
   `audit-nfs-mounts` above, which reads parent-host `pct config` instead).
@@ -737,8 +810,8 @@ there is no LAN gateway to restore '<guest>' to`) if it doesn't.
   `authentik Embedded Outpost`. A mismatch fails `sync-authentik --apply`
   with an error naming this variable.
 - `AUTHENTIK_OUTPOST_PORT` — the outpost's forward-auth port, used in the
-  `forward_auth` directive `sync-caddy` generates. Defaults to `9000`. Must
-  be a positive integer.
+  `forward_auth` directive the active proxy driver's `sync-proxy` output
+  generates (Caddy today). Defaults to `9000`. Must be a positive integer.
 - `AUTHENTIK_AUTHORIZATION_FLOW_SLUG` / `AUTHENTIK_INVALIDATION_FLOW_SLUG` —
   the Authentik flow slugs new Proxy Providers are created against.
   Default to `default-provider-authorization-implicit-consent` and
@@ -798,13 +871,13 @@ disappear from the nav, `POST /api/impersonate` returns 503, and
 `sync-authentik` is skipped by the Dashboard's push-live step instead of
 failing it. The Settings page stays in the nav and reachable, since it
 needs no Authentik. Everything else — the Dashboard, provisioning,
-maintenance, jobs, `sync-caddy`, and every CLI command — works unchanged.
+maintenance, jobs, `sync-proxy`, and every CLI command — works unchanged.
 
 A persistent banner in the UI and a warning line in the server's startup
 log both say so, because in this mode **network reach is the only access
 control**: anyone who can connect to the port gets full provisioning
-rights. The Windows firewall rule this repo installs (scoped to the Caddy
-LXC's IP) is what keeps that boundary meaningful.
+rights. The Windows firewall rule this repo installs (scoped to the
+`proxy: true` entry's IP) is what keeps that boundary meaningful.
 
 To add authentication later, set up Authentik forward-auth in Caddy (see
 "Web UI" below), create `data/authentik.env`, and set

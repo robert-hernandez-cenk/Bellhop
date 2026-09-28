@@ -10,6 +10,7 @@ import type {
 import type { Inventory } from '../../lib/inventory.ts';
 import { effectiveAuth } from '../../lib/inventory.ts';
 import { authentikConfig, rungsAtOrAbove } from '../../lib/authentik-config.ts';
+import { publicHostname } from '../../lib/hostname.ts';
 
 export interface SyncAuthentikOptions {
   apply?: boolean;
@@ -34,7 +35,7 @@ export interface SyncAuthentikResult {
   // Desired entries whose slug is already held in Authentik by an
   // Application this command does not own (not proxy-backed). Creating one
   // would fail Authentik's unique-slug constraint, so it is skipped and
-  // reported rather than attempted -- syncCaddyLive runs this command on
+  // reported rather than attempted -- syncProxyLive runs this command on
   // every Dashboard subdomains edit, and an edit elsewhere in the inventory
   // must not fail over a pre-existing clash.
   conflicts: string[];
@@ -179,7 +180,7 @@ export const OFF_LADDER_EXPLANATION =
 export const MISSING_RUNG_EXPLANATION =
   'this ladder rung does not exist in Authentik; bindings for it were skipped and it was not created';
 
-// Shared by formatSyncAuthentik and src/web/caddy-sync.ts so the CLI and the
+// Shared by formatSyncAuthentik and src/web/proxy-sync.ts so the CLI and the
 // job log describe a conflict the same way. The two React banners
 // deliberately carry their own shorter wording instead -- this string does
 // not fit the Advanced modal's narrow value column (see the
@@ -195,7 +196,7 @@ export const OAUTH2_CONFLICT_EXPLANATION =
   "an OpenID client with this slug already exists in Authentik and is not marked as Bellhop's; run adopt-oidc-client to adopt it";
 
 // The one place a conflict's explanation is chosen (FR-011), shared by
-// formatSyncAuthentik, syncCaddyLive's job-log warnings, and delete-guest's
+// formatSyncAuthentik, syncProxyLive's job-log warnings, and delete-guest's
 // pre-removal sync, so no front end tells an operator to resolve by hand a
 // conflict adopt-oidc-client could take over.
 export function conflictExplanation(slug: string, result: Pick<SyncAuthentikResult, 'adoptableConflicts'>): string {
@@ -232,7 +233,7 @@ export const OIDC_SCOPE_MAPPINGS = [
 export const REPLACED_PROVIDER_SUFFIX = ' (replaced)';
 
 // Same bound as RealCloudflareClient's per-request timeout, so a stalled
-// Authentik cannot hang a Dashboard save that runs this via syncCaddyLive.
+// Authentik cannot hang a Dashboard save that runs this via syncProxyLive.
 const DISCOVERY_TIMEOUT_MS = 10_000;
 
 // `name` is deliberately absent: the Application/Provider display name is
@@ -276,7 +277,7 @@ function candidateEntries(inventory: Inventory): CandidateEntry[] {
     const slug = subdomains[0];
     result.push({
       slug,
-      externalHost: `https://${slug}.${inventory.domain}`,
+      externalHost: `https://${publicHostname(slug, inventory.domain)}`,
       authGroup: owner.authGroup,
       authMode: owner.authMode,
       oidcRedirectUris: owner.oidcRedirectUris,
@@ -381,12 +382,12 @@ export async function runSyncAuthentik(
 
   const candidates = candidateEntries(deps.inventory);
   const candidatesBySlug = new Map(candidates.map((c) => [c.slug, c]));
-  // Truthy, not just !== undefined -- matches sync-caddy's own `entry.authGroup`
-  // gate (buildCaddyBlock) so the two commands never disagree about whether
-  // an authGroup: '' entry is gated. That value is unreachable through the
-  // zod schema but reachable from a hand-built Inventory literal (every test
-  // fixture in this repo is one) -- without this, sync-authentik could create
-  // an Application that sync-caddy never routes forward_auth to.
+  // Truthy, not just !== undefined -- matches sync-proxy's own `entry.authGroup`
+  // gate (the caddy driver's `render()`) so the two commands never disagree
+  // about whether an authGroup: '' entry is gated. That value is unreachable
+  // through the zod schema but reachable from a hand-built Inventory literal
+  // (every test fixture in this repo is one) -- without this, sync-authentik
+  // could create an Application that sync-proxy never routes forward_auth to.
   const desired = candidates.filter((c): c is CandidateEntry & { authGroup: string } => Boolean(c.authGroup));
 
   // Split before anything else. An off-ladder entry is neither created nor

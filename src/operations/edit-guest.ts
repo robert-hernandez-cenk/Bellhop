@@ -13,7 +13,10 @@ import {
   effectiveAuth,
 } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
-import { syncCaddyLive } from '../web/caddy-sync.ts';
+import { buildRouteForEntry } from '../lib/proxy/routes.ts';
+import { getDriver } from '../lib/proxy/index.ts';
+import { checkCapabilities } from '../lib/proxy/driver.ts';
+import { syncProxyLive } from '../web/proxy-sync.ts';
 import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
 
@@ -43,7 +46,7 @@ export function editDeletesOidcClient(current: GuestEntry, updated: GuestEntry):
 export type EditGuestResult =
   | {
       guest: GuestEntry;
-      caddySynced: true;
+      proxySynced: true;
       authentikConflicts?: string[];
       // Set only when this guest's own conflict is one adopt-oidc-client can
       // take over (an unmarked OpenID client holds its slug), so the banner
@@ -63,7 +66,7 @@ export type EditGuestResult =
       // authentikConflicts.
       oidcSkipped?: OidcSkip[];
     }
-  | { guest: GuestEntry; caddySynced: false; caddyError: string };
+  | { guest: GuestEntry; proxySynced: false; proxyError: string };
 
 // The web form sends ';'-joined strings; MCP clients may send arrays and
 // numbers. Normalize to what the parse* helpers accept.
@@ -73,7 +76,7 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   const updated = { ...current };
   if ('subdomains' in body) updated.subdomains = parseSubdomains(asDelimited(body.subdomains));
   if ('port' in body) updated.port = parsePort(typeof body.port === 'number' ? String(body.port) : body.port);
-  if ('caddyManual' in body) updated.caddyManual = !!body.caddyManual;
+  if ('proxyManual' in body) updated.proxyManual = !!body.proxyManual;
   if ('insecureBackendTls' in body) updated.insecureBackendTls = !!body.insecureBackendTls;
   if ('authGroup' in body) updated.authGroup = parseAuthGroup(body.authGroup);
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
@@ -83,10 +86,10 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
 }
 
 // Validated the same way any other inventory write is (subdomains requires
-// ip unless caddyManual is set, no two entries sharing a subdomain) before
+// ip unless proxyManual is set, no two entries sharing a subdomain) before
 // it's ever written to disk. A successful write always also pushes the
-// change live (Caddyfile + status page) via syncCaddyLive -- reported back
-// separately (caddySynced/caddyError) rather than failing the whole
+// change live (proxy configuration + status page) via syncProxyLive -- reported back
+// separately (proxySynced/proxyError) rather than failing the whole
 // request, since the inventory write itself already succeeded and
 // shouldn't be reported as rejected just because the live push failed.
 export async function commitGuestEdit(
@@ -119,11 +122,25 @@ export async function commitGuestEdit(
   const oidcErrors = oidcConfigErrors(updated);
   if (oidcErrors.length > 0) throw new GuestEditValidationError(oidcErrors.join('\n'));
 
+  // Capability enforcement (issue #10, FR-012): refuse before probing or
+  // saving when the active proxy driver cannot enforce the edited guest's
+  // own resulting auth mode. Only this guest's route is derived
+  // (buildRouteForEntry), so nothing about another entry -- its own
+  // capability mismatch, a missing authentik ip, a bad exempt path -- can
+  // block this save; the push-live step below still reports those as
+  // proxySynced: false.
+  const updatedInventory = { ...inventory, guests };
+  const ownRoute = buildRouteForEntry(updatedInventory, { type: 'guest', name });
+  const capabilityErrors = ownRoute ? checkCapabilities([ownRoute], getDriver(updatedInventory)) : [];
+  if (capabilityErrors.length > 0) {
+    throw new GuestEditValidationError(capabilityErrors.map((e) => e.message).join('\n'));
+  }
+
   // Only when this edit actually touched subdomains or port (an
-  // insecureBackendTls/caddyManual/authGroup-only edit never
+  // insecureBackendTls/proxyManual/authGroup-only edit never
   // re-probes), and the resulting entry has a concrete ip+port+
-  // subdomains combo to test, and isn't caddyManual (which never gets
-  // a generated Caddy block at all, so insecureBackendTls on it is
+  // subdomains combo to test, and isn't proxyManual (which never gets
+  // a generated proxy route at all, so insecureBackendTls on it is
   // inert). A conclusive result overwrites updated.insecureBackendTls
   // even if this same request also submitted a value for it --
   // mutating `updated` here is visible through `guests` above since
@@ -134,7 +151,7 @@ export async function commitGuestEdit(
     updated.ip &&
     updated.subdomains &&
     updated.subdomains.length > 0 &&
-    !updated.caddyManual
+    !updated.proxyManual
   ) {
     const probe = await probeInsecureBackendTls(deps.ssh, inventory, updated.host, updated.ip, updated.port);
     if (probe !== 'inconclusive') {
@@ -154,7 +171,7 @@ export async function commitGuestEdit(
       authentikOidcSkipped,
       authentikForwardSkipped,
       authentikOidcDiscoveryFailures,
-    } = await syncCaddyLive({
+    } = await syncProxyLive({
       ssh: deps.ssh,
       inventory,
       authentik: deps.authentik,
@@ -164,8 +181,8 @@ export async function commitGuestEdit(
     // Conflicts are computed inventory-wide, but this response belongs to
     // one guest -- surfacing another entry's conflict here would render a
     // banner on the edited row that is not about it. The full list still
-    // goes to logWarn in syncCaddyLive.
-    // Compared against the slug directly: syncCaddyLive's conflict list
+    // goes to logWarn in syncProxyLive.
+    // Compared against the slug directly: syncProxyLive's conflict list
     // holds bare slugs (issue #156). Rebuilding `<slug>.<domain>` here
     // would match nothing and silently stop rendering the banner.
     const ownConflict = updated.subdomains?.[0];
@@ -184,7 +201,7 @@ export async function commitGuestEdit(
       : [];
     return {
       guest: updated,
-      caddySynced: true,
+      proxySynced: true,
       // Omitted when empty so the ordinary response shape is unchanged
       // for every edit that produces no conflict.
       ...(ownConflicts.length > 0 ? { authentikConflicts: ownConflicts } : {}),
@@ -200,7 +217,7 @@ export async function commitGuestEdit(
       ...(ownSkipped.length > 0 ? { oidcSkipped: ownSkipped } : {}),
     };
   } catch (err) {
-    return { guest: updated, caddySynced: false, caddyError: err instanceof Error ? err.message : String(err) };
+    return { guest: updated, proxySynced: false, proxyError: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -208,18 +225,18 @@ export const EDIT_GUEST_SHAPE = {
   name: z.string().describe('Guest name'),
   subdomains: z.union([z.string(), z.array(z.string())]).optional().describe("Subdomains (array or ';'-separated); empty clears"),
   port: z.union([z.number().int(), z.string()]).optional().describe('Backend port; empty string clears'),
-  caddyManual: z.boolean().optional().describe('Caddy block is hand-authored outside the managed section'),
+  proxyManual: z.boolean().optional().describe('Proxy config for this entry is hand-authored outside the managed section'),
   insecureBackendTls: z.boolean().optional().describe('Backend serves untrusted/self-signed TLS'),
   authGroup: z.string().nullable().optional().describe('Authentik group ladder rung; null or empty clears the gate'),
   unauthenticatedPaths: z
     .union([z.string(), z.array(z.string())])
     .optional()
-    .describe("Caddy path globs exempt from forward-auth (array or ';'-separated)"),
+    .describe("Proxy path globs exempt from forward-auth (array or ';'-separated)"),
   authMode: z
     .enum(['forward', 'oidc'])
     .nullable()
     .optional()
-    .describe("Auth mode when authGroup is set: 'forward' (Caddy forward-auth, default) or 'oidc' (native OIDC); null or empty clears to forward. Admin only."),
+    .describe("Auth mode when authGroup is set: 'forward' (proxy forward-auth, default) or 'oidc' (native OIDC); null or empty clears to forward. Admin only."),
   oidcRedirectUris: z
     .union([z.string(), z.array(z.string())])
     .optional()

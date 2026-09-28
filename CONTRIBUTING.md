@@ -81,7 +81,13 @@ Tests use Node's built-in test runner and live under `test/` as
   `(sshTarget, sshUser, command) => ExecResult`, then assert on
   `ssh.history` and the function's return value. Never mock `ssh`, `pct`
   or `qm` binaries on `PATH`. Any file under `test/commands/` shows the
-  pattern.
+  pattern. The one exception is a file-configured proxy driver's generated
+  shell script (`src/lib/proxy/file-driver.ts`): it may be executed
+  locally under `sh` with that proxy's own binaries (e.g. `caddy`,
+  `systemctl`) stubbed on `PATH`, to prove its backup/restore control flow
+  actually restores — see `test/lib/proxy/file-driver.test.ts`. This is
+  distinct from the SSH/exec layer, which is still tested only through
+  `FakeSSHClient`.
 - **No real inventory.** An inventory-backed test builds a temporary SQLite
   fixture in a `mkdtempSync` directory and points `INVENTORY_FILE` or the
   command's dependencies at it.

@@ -1,7 +1,7 @@
 // Every Authentik-instance-specific value this toolkit needs, in one place.
 // Before issue #123 these were several hardcoded literals spread across
 // src/web/auth.ts, src/commands/networking/sync-authentik.ts,
-// src/commands/networking/sync-caddy.ts, src/lib/authentik-client.ts, and
+// src/commands/networking/sync-proxy.ts, src/lib/authentik-client.ts, and
 // two web-client files -- the two admin group names alone had five
 // independent copies. Defaults reproduce those literals exactly, so an
 // operator who sets none of these sees no behavior change at all.
@@ -86,8 +86,8 @@ export function authentikConfig(env: NodeJS.ProcessEnv = process.env): Authentik
 }
 
 // The one parsed value. Throwing beats coercing: a NaN here would reach the
-// generated Caddyfile as a silently broken forward_auth target. Same spirit
-// as parsePositiveInt in src/cli.ts.
+// generated proxy configuration as a silently broken forward_auth target.
+// Same spirit as parsePositiveInt in src/cli.ts.
 function outpostPort(env: NodeJS.ProcessEnv): number {
   const raw = env.AUTHENTIK_OUTPOST_PORT;
   if (raw === undefined || raw === '') return DEFAULT_OUTPOST_PORT;
