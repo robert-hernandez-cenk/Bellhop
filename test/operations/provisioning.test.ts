@@ -7,6 +7,7 @@ import path from 'node:path';
 import { PROVISIONING_OPERATIONS } from '../../src/operations/provisioning.ts';
 import { MAINTENANCE_OPERATIONS } from '../../src/operations/maintenance.ts';
 import { UPSTREAM_STABLE_BASE, type AppSource } from '../../src/lib/app-source.ts';
+import { UnknownPackageManagerError } from '../../src/lib/package-manager.ts';
 import { PROVISIONING_COMMANDS } from '../../src/web/commands-meta.ts';
 import { parseOperationInput, previewAndEnqueue } from '../../src/operations/core.ts';
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
@@ -33,7 +34,10 @@ const inventory: Inventory = {
       ],
     },
   ],
-  guests: [{ name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', caddy: true }],
+  guests: [
+    { name: 'caddy-lxc', type: 'lxc', vmid: 4002, host: 'pve1', ip: '192.168.1.2', caddy: true },
+    { name: 'media', type: 'lxc', vmid: 4003, host: 'pve1' },
+  ],
 };
 
 function deps(): OperationDeps {
@@ -100,6 +104,33 @@ test('delete-guest apply refuses the caddy guest', async () => {
 test('install-app is the only provisioning operation that watches for prompts', () => {
   const watching = Object.values(PROVISIONING_OPERATIONS).filter((op) => op.watchForPrompts).map((op) => op.id);
   assert.deepEqual(watching, ['install-app']);
+});
+
+// Final fix wave F4: nothing previously exercised
+// PROVISIONING_OPERATIONS['configure-guest'] (FR-009 -- the web UI/MCP
+// operation must pick up issue #2's package-manager detection with no
+// interface change of its own). These run the real operation's preview
+// through a custom FakeSSHClient responder, the same pattern the
+// install-app/update-app tests above use for their own custom ssh.
+test("configure-guest operation preview resolves a live probe result into the manager-specific install command", async () => {
+  const d = deps();
+  d.ssh = new FakeSSHClient((_target, _user, cmd) => {
+    if (cmd.includes('command -v apt-get')) return { stdout: 'apk\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  const op = PROVISIONING_OPERATIONS['configure-guest'];
+  const preview = await op.preview(parseOperationInput(op, { guest: 'media', packages: 'curl' }), d);
+  assert.match(preview, /Would install on media \(apk\): apk update && apk add 'curl'/);
+});
+
+test('configure-guest operation preview rejects with UnknownPackageManagerError on an unrecognized OS', async () => {
+  const d = deps();
+  d.ssh = new FakeSSHClient(() => ({ stdout: 'unknown\n', stderr: '', code: 0 }));
+  const op = PROVISIONING_OPERATIONS['configure-guest'];
+  await assert.rejects(
+    () => op.preview(parseOperationInput(op, { guest: 'media', packages: 'curl' }), d),
+    (err: unknown) => err instanceof UnknownPackageManagerError
+  );
 });
 
 // --- custom script repository (issue #11), real install-app wiring ---

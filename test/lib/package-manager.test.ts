@@ -1,6 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PROBE_COMMAND, UPDATE_COMMANDS, parsePackageManager } from '../../src/lib/package-manager.ts';
+import {
+  PROBE_COMMAND,
+  UPDATE_COMMANDS,
+  INSTALL_COMMANDS,
+  parsePackageManager,
+  detectPackageManager,
+  UnknownPackageManagerError,
+} from '../../src/lib/package-manager.ts';
+import type { Inventory } from '../../src/lib/inventory.ts';
+import { FakeSSHClient } from '../support/fake-ssh-client.ts';
+
+// Shared by the detectPackageManager tests below -- a single lxc guest is
+// enough, since detection itself doesn't care about target kind (that's
+// runRemote's job, already covered by test/commands/update-all.test.ts).
+const inventory: Inventory = {
+  domain: 'example.com',
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+  guests: [{ name: 'media', type: 'lxc', vmid: 105, host: 'pve1' }],
+};
 
 test('parsePackageManager recognizes each supported package manager', () => {
   assert.equal(parsePackageManager('apt\n'), 'apt');
@@ -51,5 +69,77 @@ test('UPDATE_COMMANDS runs every package manager non-interactively', () => {
   assert.equal(
     UPDATE_COMMANDS.zypper,
     'zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive update'
+  );
+});
+
+test('INSTALL_COMMANDS builds the exact install command for each package manager', () => {
+  const pkgs = "'curl' 'vim'";
+  assert.equal(
+    INSTALL_COMMANDS.apt(pkgs),
+    `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkgs}`
+  );
+  assert.equal(INSTALL_COMMANDS.dnf(pkgs), `dnf -y install ${pkgs}`);
+  assert.equal(INSTALL_COMMANDS.apk(pkgs), `apk update && apk add ${pkgs}`);
+  // --needed skips packages already current; -Syu (not a bare -Sy) because
+  // Arch does not support a partial upgrade -- same reason UPDATE_COMMANDS.pacman
+  // is -Syu.
+  assert.equal(INSTALL_COMMANDS.pacman(pkgs), `pacman -Syu --needed --noconfirm ${pkgs}`);
+  // --gpg-auto-import-keys for the same reason UPDATE_COMMANDS.zypper carries
+  // it: --non-interactive alone auto-declines an unknown repo signing key.
+  assert.equal(
+    INSTALL_COMMANDS.zypper(pkgs),
+    `zypper --non-interactive --gpg-auto-import-keys install ${pkgs}`
+  );
+});
+
+test('detectPackageManager returns detected when the probe reports a supported package manager', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'apk\n', stderr: '', code: 0 }));
+
+  const result = await detectPackageManager(ssh, inventory, 'media');
+
+  assert.deepEqual(result, { kind: 'detected', pm: 'apk' });
+});
+
+test('detectPackageManager returns unknown when the probe prints unknown', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'unknown\n', stderr: '', code: 0 }));
+
+  const result = await detectPackageManager(ssh, inventory, 'media');
+
+  assert.deepEqual(result, { kind: 'unknown' });
+});
+
+test('detectPackageManager returns unknown when the probe prints garbage', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'yum\n', stderr: '', code: 0 }));
+
+  const result = await detectPackageManager(ssh, inventory, 'media');
+
+  assert.deepEqual(result, { kind: 'unknown' });
+});
+
+test('detectPackageManager returns probe-failed with the probe\'s own ExecResult when it exits nonzero', async () => {
+  const probeResult = { stdout: '', stderr: 'sh: not found', code: 127 };
+  const ssh = new FakeSSHClient(() => probeResult);
+
+  const result = await detectPackageManager(ssh, inventory, 'media');
+
+  assert.deepEqual(result, { kind: 'probe-failed', result: probeResult });
+});
+
+test('detectPackageManager lets a runRemote connection failure propagate', async () => {
+  const ssh = new FakeSSHClient(() => {
+    throw new Error('connection refused');
+  });
+
+  await assert.rejects(() => detectPackageManager(ssh, inventory, 'media'), /connection refused/);
+});
+
+test('UnknownPackageManagerError is an Error naming the target twice, with the tried-list', () => {
+  const err = new UnknownPackageManagerError('media');
+
+  assert.ok(err instanceof Error);
+  assert.equal(err.target, 'media');
+  assert.equal(
+    err.message,
+    'No known package manager on media (tried apt-get, dnf, apk, pacman, zypper); install the packages on media by hand'
   );
 });

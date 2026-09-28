@@ -42,6 +42,31 @@ test('update-all preview lists the resolved targets without running anything', a
   assert.equal(ssh.history.length, 0);
 });
 
+// Issue #2 (operator PR feedback): update-all must never act on VMs. Preview
+// must call the same selectUpdateTargets used by apply, so preview == apply.
+test('update-all preview with all excludes the VM guest', async () => {
+  const ssh = new FakeSSHClient(defaultResponder);
+  const op = MAINTENANCE_OPERATIONS['update-all'];
+  const preview = await op.preview(parseOperationInput(op, { all: true }), deps(ssh));
+  assert.match(preview, /app-lxc/);
+  assert.match(preview, /pve1/);
+  assert.doesNotMatch(preview, /app-vm/);
+  assert.equal(ssh.history.length, 0);
+});
+
+test('update-all preview with host naming a VM rejects', async () => {
+  const op = MAINTENANCE_OPERATIONS['update-all'];
+  await assert.rejects(
+    () => op.preview(parseOperationInput(op, { host: 'app-vm' }), deps()),
+    /update-all does not update VMs \(app-vm is a VM\); update packages inside the VM itself/
+  );
+});
+
+test("update-all's group field no longer accepts 'vm' at all -- input parsing itself rejects it", () => {
+  const op = MAINTENANCE_OPERATIONS['update-all'];
+  assert.throws(() => parseOperationInput(op, { group: 'vm' }), /Invalid input for update-all/);
+});
+
 test('guest-power preview shows the command without running it', async () => {
   const ssh = new FakeSSHClient(defaultResponder);
   const op = MAINTENANCE_OPERATIONS['guest-power'];

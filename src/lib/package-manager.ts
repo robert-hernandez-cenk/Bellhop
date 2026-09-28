@@ -1,3 +1,7 @@
+import type { Inventory } from './inventory.ts';
+import type { ExecResult, SSHClient } from './ssh-client.ts';
+import { runRemote } from './targets.ts';
+
 // The package managers `update-all` knows how to drive. `yum` is
 // deliberately absent -- a yum-only RHEL 7-era guest reports `unknown`
 // rather than being silently handled by a compatibility shim.
@@ -40,6 +44,27 @@ export const UPDATE_COMMANDS: Record<PackageManager, string> = {
   zypper: 'zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive update',
 };
 
+// `configure-guest --packages`'s counterpart to UPDATE_COMMANDS -- installs
+// specific packages rather than upgrading everything already installed.
+// `<pkgs>` must already be shell-quoted (one quoted argument per package) by
+// the caller; every entry is non-interactive for the same reason
+// UPDATE_COMMANDS is: these run over an exec channel whose stdin is closed.
+export const INSTALL_COMMANDS: Record<PackageManager, (pkgs: string) => string> = {
+  apt: (pkgs) =>
+    `DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkgs}`,
+  dnf: (pkgs) => `dnf -y install ${pkgs}`,
+  apk: (pkgs) => `apk update && apk add ${pkgs}`,
+  // -Syu (not a bare -Sy) for the same reason UPDATE_COMMANDS.pacman is:
+  // Arch does not support a partial upgrade, so a sync-without-upgrade can
+  // leave the system with mismatched libraries. --needed skips packages
+  // already at the target version.
+  pacman: (pkgs) => `pacman -Syu --needed --noconfirm ${pkgs}`,
+  // --gpg-auto-import-keys for the same reason UPDATE_COMMANDS.zypper
+  // carries it: --non-interactive alone auto-declines an unknown repo
+  // signing key rather than prompting.
+  zypper: (pkgs) => `zypper --non-interactive --gpg-auto-import-keys install ${pkgs}`,
+};
+
 // Takes the last non-empty line so a login-shell motd or banner ahead of the
 // probe's own output cannot corrupt the result. Returns undefined for
 // `unknown` and for anything unrecognized -- the caller treats both the same
@@ -51,4 +76,52 @@ export function parsePackageManager(stdout: string): PackageManager | undefined 
     .filter((line) => line.length > 0);
   const last = lines[lines.length - 1];
   return PACKAGE_MANAGERS.find((pm) => pm === last);
+}
+
+// Shared, human-readable tried-list -- both update-all's unknown-OS warning
+// and UnknownPackageManagerError's message quote this exact string, so the
+// two can never drift apart.
+export const PROBED_COMMANDS = 'apt-get, dnf, apk, pacman, zypper';
+
+// The probe-then-classify sequence `update-all` and `configure-guest` both
+// need before they can do anything target-specific -- what differs between
+// them is the *reaction* to each outcome (a result bucket vs. a thrown
+// error), which is left to the caller. A connection-level failure is not a
+// variant here: runRemote throws, and it propagates to the caller uncaught,
+// exactly as it does today.
+export type DetectionResult =
+  | { kind: 'detected'; pm: PackageManager }
+  | { kind: 'unknown' }
+  | { kind: 'probe-failed'; result: ExecResult };
+
+export async function detectPackageManager(
+  ssh: SSHClient,
+  inv: Inventory,
+  target: string
+): Promise<DetectionResult> {
+  const result = await runRemote(ssh, inv, target, PROBE_COMMAND);
+  if (result.code !== 0) {
+    return { kind: 'probe-failed', result };
+  }
+  const pm = parsePackageManager(result.stdout);
+  if (!pm) {
+    return { kind: 'unknown' };
+  }
+  return { kind: 'detected', pm };
+}
+
+// Thrown by configure-guest (a single-target command) for the `unknown`
+// variant, so any caller -- web, MCP, tests -- can tell this case apart from
+// a generic failure with `instanceof`. update-all instead buckets `unknown`
+// into failUnknownPm and keeps going, since it runs across many targets.
+export class UnknownPackageManagerError extends Error {
+  readonly target: string;
+
+  constructor(target: string) {
+    super(
+      `No known package manager on ${target} (tried ${PROBED_COMMANDS}); install the packages on ${target} by hand`
+    );
+    this.name = 'UnknownPackageManagerError';
+    this.target = target;
+  }
 }
