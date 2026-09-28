@@ -309,6 +309,9 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
     justify-content: space-between;
     align-items: center;
     gap: 10px;
+    /* issue #5: `anywhere` (unlike `break-word`) lowers the cell's min-content so the flex value can shrink to fit, and it's inherited, so text in child links/spans wraps too; right alignment keeps wrapped values aligned with single-line ones. */
+    overflow-wrap: anywhere;
+    text-align: right;
   }
   .data-table td::before {
     content: attr(data-label);

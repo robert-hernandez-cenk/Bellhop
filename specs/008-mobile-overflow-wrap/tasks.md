@@ -72,11 +72,11 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 
 ### Tests for User Story 2
 
-- [ ] T005 [US2] In `test/web-client/mobile-overflow-css.test.ts`, add failing tests asserting that the `.data-table tbody td` rule inside `@media (max-width: 640px)` declares `overflow-wrap: anywhere` and `text-align: right`. Confirm they fail.
+- [x] T005 [US2] In `test/web-client/mobile-overflow-css.test.ts`, add failing tests asserting that the `.data-table tbody td` rule inside `@media (max-width: 640px)` declares `overflow-wrap: anywhere` and `text-align: right`. Confirm they fail.
 
 ### Implementation for User Story 2
 
-- [ ] T006 [US2] In `web-client/src/index.css`, add `overflow-wrap: anywhere; text-align: right;` to the existing `.data-table tbody td` rule inside `@media (max-width: 640px)`, with a short comment citing issue #5 and research R2 (`anywhere` lowers min-content; `break-word` doesn't). Run `npm test` and confirm T005 passes.
+- [x] T006 [US2] In `web-client/src/index.css`, add `overflow-wrap: anywhere; text-align: right;` to the existing `.data-table tbody td` rule inside `@media (max-width: 640px)`, with a short comment citing issue #5 and research R2 (`anywhere` lowers min-content; `break-word` doesn't). Run `npm test` and confirm T005 passes.
 
 **Checkpoint**: US1 and US2 both work.
 
@@ -96,7 +96,7 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T008 [P] Update the "Web UI responsiveness/theming" bullet in `CLAUDE.md` with one sentence: mobile card cells wrap long values (`overflow-wrap: anywhere`, right-aligned) rather than truncating, and a flex row holding a user-supplied name needs `min-width: 0` plus `overflow-wrap: anywhere` on the shrinking item (see `.job-header-main`). Check whether `CONTRIBUTING.md` restates this convention; update it only if it does.
+- [x] T008 [P] Update the "Web UI responsiveness/theming" bullet in `CLAUDE.md` with one sentence: mobile card cells wrap long values (`overflow-wrap: anywhere`, right-aligned) rather than truncating, and a flex row holding a user-supplied name needs `min-width: 0` plus `overflow-wrap: anywhere` on the shrinking item (see `.job-header-main`). Check whether `CONTRIBUTING.md` restates this convention; update it only if it does.
 - [ ] T009 Run the full quickstart.md measurement for `/jobs`, `/jobs/<long-target id>`, `/jobs/<hyphenated id>` and `/` at 390px, 320px and 1280px. Record the scrollWidth and viewport numbers and save screenshots for the PR.
 - [ ] T010 Run `npm run typecheck`, `npm test` and `npm run web:build`, and confirm all pass.
 

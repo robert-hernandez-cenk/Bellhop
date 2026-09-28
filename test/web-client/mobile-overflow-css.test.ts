@@ -100,3 +100,9 @@ test('.job-status-badge declares white-space: nowrap', () => {
 test('JobView.tsx contains className="job-header-main"', () => {
   assert.match(jobViewSource, /className="job-header-main"/);
 });
+
+test('.data-table tbody td inside the 640px mobile media block declares overflow-wrap: anywhere and text-align: right', () => {
+  const decl = ruleDeclarations(css, '.data-table tbody td ', '@media (max-width: 640px)');
+  assert.match(decl, /overflow-wrap:\s*anywhere/);
+  assert.match(decl, /text-align:\s*right/);
+});
