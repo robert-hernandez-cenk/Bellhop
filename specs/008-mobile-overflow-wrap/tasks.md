@@ -106,6 +106,10 @@ description: "Task list for the wrap-not-overflow layout fix (issue #5)"
 
 ---
 
+## Code review follow-up
+
+- [x] T015 [US3] (Code review finding.) In `test/web-client/mobile-overflow-css.test.ts`, add a failing test asserting that the `.data-table td.host-detail-cell` rule inside `@media (max-width: 640px)` declares `text-align: start`. Then add `text-align: start;` to that rule in `web-client/src/index.css`. The mobile `text-align: right` on `.data-table tbody td` is inherited and would otherwise right-align whole detail panels and checklists on the Dashboard, Permissions and Users pages. Run the full suite.
+
 ## Dependencies & Execution Order
 
 - T001 comes before T002 and T005.

@@ -61,6 +61,7 @@ Every table in the web UI switches to the same card layout on a phone (Dashboard
 - A value with no break points at all (a long single word, a long email address) must break mid-word rather than overflow.
 - A value that already has break points (hyphens, spaces) keeps breaking at them as it does today.
 - A job with no target shows the command alone in the header; nothing changes for it.
+- A full-width detail panel inside a card (an expanded host's bridges and storage on the Dashboard, a group's rules on Permissions, the Groups and Members checklists on Users) is a block of content, not a single value. It keeps its normal start alignment; only label/value rows are right-aligned.
 - A card row whose value is an interactive control (input, dropdown, button, badge) keeps the control usable; a control is never squeezed to zero width.
 - The status badge is the widest single unbreakable item in the job header (about 120px for `AWAITING INPUT`), well under the narrowest supported width, so keeping it on one line never causes overflow on its own.
 - The job log area already wraps long lines and is not changed.

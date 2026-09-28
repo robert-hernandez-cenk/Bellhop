@@ -320,8 +320,10 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
     color: var(--text-secondary);
     flex-shrink: 0;
   }
+  /* A detail panel (issue #5 code review) is a block of content, not a single value -- the mobile .data-table tbody td rule above sets text-align: right for label/value cells, and since text-align is inherited that was right-aligning whole panels and checklists too. */
   .data-table td.host-detail-cell {
     display: block;
+    text-align: start;
   }
   .data-table td.host-detail-cell::before {
     content: none;
