@@ -100,7 +100,7 @@ Paths are relative to the repository root (the worktree).
 
 ## Phase 6: Polish & cross-cutting
 
-- [ ] T028 [P] Add a short `CLAUDE.md` note under Workflow conventions: the demo instance (`scripts/demo/`) is how screenshots are made, it must stay example-data-only (guarded by `test/scripts/demo/demo-inventory.test.ts`), and a UI change that alters a screenshotted screen regenerates them
+- [x] T028 [P] Add a short `CLAUDE.md` note under Workflow conventions: the demo instance (`scripts/demo/`) is how screenshots are made, it must stay example-data-only (guarded by `test/scripts/demo/demo-inventory.test.ts`), and a UI change that alters a screenshotted screen regenerates them
 - [ ] T029 Run the full gate: `npm run typecheck`, `npm test`, `npm run web:build`
 - [ ] T030 Review the full branch diff (`git diff main...HEAD`), images included, for any real operational data (constitution workflow gate)
 
