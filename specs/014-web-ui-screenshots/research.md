@@ -121,7 +121,7 @@ listing what it tried and the install command.
 Capture settings, fixed for every run: `locale: 'en-US'`, `timezoneId: 'UTC'`,
 `reducedMotion: 'reduce'`, `colorScheme: 'light'` (or `'dark'` for the dark shot, which the
 web UI's default `system` theme follows). Desktop shots use a 1440×900 viewport at device scale
-1; the phone shot uses 390×844 at device scale 2. Each shot waits for a named selector that only
+1; the phone shot uses 390×844 at device scale 1. Each shot waits for a named selector that only
 exists once its data has loaded, with a 15-second timeout, and failure names the shot.
 
 **Rationale**: Chrome and Edge are both commonly installed (both are present on the

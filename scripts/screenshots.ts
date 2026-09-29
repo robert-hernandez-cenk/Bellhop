@@ -74,6 +74,16 @@ export const SCREENSHOTS: ScreenshotDefinition[] = [
     viewport: 'desktop',
     theme: 'dark',
     ready: 'pre.job-log:has-text("install-app completed successfully.")',
+    prepare: async (page) => {
+      // The Job page scrolls its log to the end once it loads; make sure the
+      // page itself starts at the top, so the job title and status badge
+      // are in view above the log.
+      await page.locator('pre.job-log:has-text("install-app completed successfully.")').waitFor({ timeout: 15_000 });
+      await page.evaluate(() => {
+        window.scrollTo(0, 0);
+        document.querySelector('main')?.scrollTo(0, 0);
+      });
+    },
   },
   {
     file: 'update-page.png',
@@ -96,11 +106,13 @@ export const SCREENSHOTS: ScreenshotDefinition[] = [
     theme: 'light',
     ready: 'role=tab[name="Access"][selected=true]',
     prepare: async (page) => {
-      // The demo runs without Authentik, so /api/auth-groups reports
-      // `configured: false` and the auth group dropdown shows a "not
-      // configured" warning -- out of place in docs about a feature that
-      // needs Authentik. Answer it the way a configured deployment whose
-      // ladder groups all exist would.
+      // The demo itself has no Authentik (UnconfiguredAuthentikClient), so
+      // /api/auth-groups reports `configured: false` and the auth group
+      // dropdown shows a "not configured" warning -- out of place in docs
+      // about a feature that needs Authentik. This route answers it the way
+      // a configured deployment whose ladder groups all exist would; it is
+      // registered on this screenshot's own page only, so no other
+      // screenshot and nothing on the demo server is affected.
       await page.route('**/api/auth-groups', async (route) => {
         const response = await route.fetch();
         const body = (await response.json()) as { canLower: boolean; rungs: Array<{ name: string }> };
@@ -130,7 +142,7 @@ export const SCREENSHOTS: ScreenshotDefinition[] = [
       await driver.evaluate((el) => {
         const field = el.closest<HTMLElement>('.settings-field');
         if (!field) return;
-        field.style.scrollMarginTop = '24px';
+        field.style.scrollMarginTop = '12px';
         field.scrollIntoView({ block: 'start' });
       });
     },

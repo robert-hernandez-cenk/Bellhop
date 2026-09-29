@@ -27,7 +27,7 @@ On a phone-width screen (640px or narrower) the sidebar folds into a menu
 button and every table becomes a stack of cards, one per row, each value
 labelled with its column name:
 
-![The Bellhop Dashboard on a phone: a menu button and page title at the top, then each host shown as a card listing its name, MID scheme and SSH target](images/dashboard-phone.png)
+![The Bellhop Dashboard on a phone: a menu button and page title at the top, two host cards listing name, MID scheme and SSH target, then the guest filter and the first guest card with its type, IP address, subdomain and power buttons](images/dashboard-phone.png)
 
 Provisioning actions (create-lxc/create-vm/install-app/deploy-vpn-gateway/
 delete-guest/migrate-guest/attach-nfs-mount/migrate-nfs-mount) and

@@ -1,7 +1,7 @@
 # Contract: the screenshot set
 
 Seven images under `docs/images/`. File names are stable (FR-013). Desktop is 1440×900 at
-device scale 1; phone is 390×844 at device scale 2.
+device scale 1; phone is 390×844 at device scale 1.
 
 | File | Screen | Viewport | Theme | Placed in |
 | --- | --- | --- | --- | --- |

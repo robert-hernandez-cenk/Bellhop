@@ -14,7 +14,7 @@ const IMAGES_DIR = path.join(REPO_ROOT, 'docs', 'images');
 
 const VIEWPORTS: Record<ScreenshotDefinition['viewport'], Pick<BrowserContextOptions, 'viewport' | 'deviceScaleFactor' | 'isMobile' | 'hasTouch'>> = {
   desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
-  phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
+  phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
 };
 
 // Tried in order: installed Chrome, installed Edge, then Playwright's own
