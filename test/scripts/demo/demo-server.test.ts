@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDemoServer } from '../../../scripts/demo/demo-server.ts';
 import { DEMO_CATALOG_SLUGS } from '../../../scripts/demo/demo-fetch.ts';
@@ -25,7 +25,17 @@ test('demo server answers every screenshotted page request as a signed-in admin,
   let closed = false;
   try {
     assert.ok(demo.port > 0);
-    assert.equal(demo.url, `http://localhost:${demo.port}`);
+    // Loopback only: every request is served as an admin, so nothing off
+    // this machine may reach it (and no firewall prompt on Windows).
+    assert.equal(demo.url, `http://127.0.0.1:${demo.port}`);
+    // Actually bound to loopback, not just advertised as it: this machine's
+    // own non-loopback IPv4 address (if it has one) must not answer.
+    const lanAddress = Object.values(networkInterfaces())
+      .flat()
+      .find((a) => a && a.family === 'IPv4' && !a.internal)?.address;
+    if (lanAddress) {
+      await assert.rejects(fetch(`http://${lanAddress}:${demo.port}/api/whoami`, { signal: AbortSignal.timeout(3000) }));
+    }
     assert.ok(isInside(demo.dir, tmpdir()), `demo dir ${demo.dir} is not inside ${tmpdir()}`);
     assert.ok(isInside(demo.inventoryPath, demo.dir), 'inventory path must be inside the demo dir');
     assert.equal(process.env.INVENTORY_FILE, demo.inventoryPath);

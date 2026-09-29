@@ -48,6 +48,10 @@ export interface DemoServer {
   close(): Promise<void>;
 }
 
+// The only address the demo listens on; the returned url uses it too, so
+// the two can never disagree (localhost may resolve to ::1 first).
+const DEMO_HOST = '127.0.0.1';
+
 // The identity a reverse proxy's Authentik forward-auth would add for a
 // signed-in admin (research R4). With these present, the Sidebar shows a
 // normal signed-in admin instead of the "no authentication configured"
@@ -156,7 +160,11 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
       };
       server.once('error', onError);
       server.once('listening', onListening);
-      server.listen(port);
+      // Loopback only: every request is served as a signed-in admin, so the
+      // demo must not be reachable from the LAN -- and an all-interfaces
+      // listener can raise a Windows Defender Firewall prompt that would
+      // stall an unattended docs:screenshots run.
+      server.listen(port, DEMO_HOST);
     });
 
     const actualPort = (server.address() as AddressInfo).port;
@@ -174,7 +182,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
       return closing;
     };
 
-    return { url: `http://localhost:${actualPort}`, port: actualPort, dir, inventoryPath, close };
+    return { url: `http://${DEMO_HOST}:${actualPort}`, port: actualPort, dir, inventoryPath, close };
   } catch (err) {
     jobStore?.close();
     removeDir();
