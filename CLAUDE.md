@@ -2284,6 +2284,26 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   return an OIDC-gated entry's issuer and client ID -- and only those two,
   never the secret (FR-019b) -- with a `secretAvailableFrom` field pointing
   at the Dashboard or the `oidc-credentials` CLI command instead.
+  **VPN gateway runtime tools** (issue #7) add five more:
+  `get_vpn_gateway_status`, `list_vpn_gateway_servers`,
+  `list_vpn_gateway_cities`, `list_vpn_gateway_groups`, and
+  `connect_vpn_gateway`. `src/operations/vpn-gateway.ts` is the one
+  implementation behind both these tools and `/api/networking/gateways/*`
+  (`src/web/routes/networking.ts`, now a thin adapter that keeps
+  `requireResourceAccess` and maps a `GatewayResult`'s `not-found` to 404
+  and `upstream` to 502) -- a shared non-`Operation` action, like
+  `runEditGuest`, since four of the five are plain reads and
+  `connect_vpn_gateway` is deliberately immediate rather than a
+  preview/apply pair, matching the Dashboard's own Connect button, which
+  has no preview either. Each call returns a `GatewayResult`; a tool
+  returns the gateway's own JSON body on success, and on failure throws
+  (surfaced by the SDK as an `isError` result) carrying the exact same
+  message text the web route's error body shows, so a tool failure and a
+  Dashboard failure read identically. Timeouts are unchanged from the web
+  route: 5s for `get_vpn_gateway_status`, 15s for the three list tools,
+  and none for `connect_vpn_gateway` (a VPN reconnect can legitimately
+  take a while, and aborting it partway could tear down a switch that was
+  actually succeeding).
 - **Web UI authentication** (`src/web/auth.ts`): the entire web UI is
   gated behind a global `requireAuth` Express middleware, mounted in
   `src/web/app.ts` ahead of every route mount, that trusts the

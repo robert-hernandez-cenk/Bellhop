@@ -79,8 +79,8 @@ None. No new dependencies or configuration.
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T010 [P] `README.md`: add the five tools to the MCP server's tool list, noting that connect acts immediately.
-- [ ] T011 [P] `CLAUDE.md`: in the "MCP server" bullet, add the five gateway tools and name `src/operations/vpn-gateway.ts` as the shared implementation behind both `/api/networking/gateways/*` and the MCP tools. Note that it is a non-`Operation` shared action like `runEditGuest`, and that connect is immediate by design. Check `CONTRIBUTING.md` and update it only if it restates the MCP tool list.
+- [x] T010 [P] `README.md`: add the five tools to the MCP server's tool list, noting that connect acts immediately.
+- [x] T011 [P] `CLAUDE.md`: in the "MCP server" bullet, add the five gateway tools and name `src/operations/vpn-gateway.ts` as the shared implementation behind both `/api/networking/gateways/*` and the MCP tools. Note that it is a non-`Operation` shared action like `runEditGuest`, and that connect is immediate by design. Check `CONTRIBUTING.md` and update it only if it restates the MCP tool list.
 - [ ] T012 Run `npm run typecheck`, `npm test`, and `npm run web:build`, and paste the results. Then run quickstart.md's manual read-only steps against a real gateway if one is reachable. Record anything unverified for the PR.
 
 ## Dependencies & Execution Order
