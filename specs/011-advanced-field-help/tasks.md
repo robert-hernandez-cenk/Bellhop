@@ -119,8 +119,8 @@ None. The existing `web-client/` app and test layout are used as they are.
   - `FieldHelp` (`web-client/src/components/FieldHelp.tsx`) is the reusable ⓘ disclosure, used instead of a hover-only `title` because `title` never shows on touch.
 
   Check `CONTRIBUTING.md` restates nothing affected.
-- [ ] T012 Follow `specs/011-advanced-field-help/quickstart.md` in a browser at 1280×800 and 375×812, in light and dark themes, including an OIDC-mode guest's `oidc client` row and the last (`app`) row. Save screenshots for the PR.
-- [ ] T013 Run `npm run typecheck`, `npm test` and `npm run web:build`; all must pass.
+- [x] T012 Follow `specs/011-advanced-field-help/quickstart.md` in a browser at 1280×800 and 375×812, in light and dark themes, including an OIDC-mode guest's `oidc client` row and the last (`app`) row. Save screenshots for the PR.
+- [x] T013 Run `npm run typecheck`, `npm test` and `npm run web:build`; all must pass.
 
 ---
 
