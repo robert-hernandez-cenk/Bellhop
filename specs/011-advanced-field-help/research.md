@@ -7,12 +7,15 @@
   the popover, and an accessible name of `About <label>`. Hovering with a mouse
   shows the explanation transiently. Click, tap, Enter or Space toggles a *pinned*
   state. Escape, a pointer-down outside the button and popover, or focus leaving the
-  button closes it.
+  button closes it. The popover is always mounted, `hidden` while closed, and is
+  also the button's `aria-describedby`, so a screen reader reads the explanation.
 - **Rationale**: a `title` attribute is hover-only and never shows on touch. A
   native button gets keyboard focus and Enter/Space activation for free. Hover is
   shown on `pointerenter` only when `pointerType === 'mouse'`. Without that check,
   a tap would fire a hover-open first and then a click-toggle that closes the
-  explanation straight away.
+  explanation straight away. Hover-out is measured on the whole field (button,
+  label and popover) after a 150ms grace delay, so the mouse can cross the gap
+  onto the popover (WCAG 1.4.13, hoverable).
 - **Alternatives considered**: showing the explanation on focus. Rejected: clicking
   a button focuses it, so a focus-open followed by a click-toggle would close it
   again, and a keyboard user tabbing through the modal would get a popover at every
@@ -27,7 +30,8 @@
   below it, with a `z-index` above the following rows, a themed background and
   border, and normal text wrapping.
 - **Rationale**: absolute positioning takes the popover out of the flow, so no row
-  moves (FR-007). Anchoring to the row's full width, not the small button, keeps it
+  moves (FR-007). The Advanced modal's box scrolls on short viewports (15 rows are
+  taller than a phone screen), and an opening popover is scrolled into view. Anchoring to the row's full width, not the small button, keeps it
   inside the modal at any width, which covers FR-008 without measuring the
   viewport.
 - **Alternatives considered**: expanding the text inline below the row. That shifts
@@ -46,16 +50,17 @@
 ## R4: Escape must not close the modal
 
 - **Finding**: `AdvancedGuestModal` has no Escape handler today (only a backdrop
-  click closes it), so FieldHelp's `keydown` Escape handling can't conflict. It
-  still calls `stopPropagation()`, so a future modal-level Escape handler doesn't
-  close the whole modal.
+  click closes it), so FieldHelp's Escape handling can't conflict. While an
+  explanation is open, FieldHelp listens for Escape on the document, since a click
+  does not focus a button in Safari on macOS or on touch devices. It does not stop
+  propagation; a future modal-level Escape handler would need to account for it.
 
 ## R5: Where the text lives and how it stays complete
 
 - **Decision**: `web-client/src/lib/advanced-field-help.ts` exports
-  `ADVANCED_FIELD_HELP: Record<string, string>`, keyed by the exact label text the
-  modal renders. A test reads `AdvancedGuestModal.tsx`'s source and extracts every
-  `<FieldHelp field="...">` / label. It then asserts that the label set equals the
+  `ADVANCED_FIELD_HELP` (`as const`, with `AdvancedFieldLabel` as its key type),
+  keyed by the exact label text the modal renders. A test reads
+  `AdvancedGuestModal.tsx`'s source and extracts every `fieldHelp('...')` call. It then asserts that the label set equals the
   map's key set, so a new field without an explanation fails, and so does a stale
   explanation (SC-005).
 - **Rationale**: FR-009. The lib module has no React import, so `node --test` can
@@ -85,9 +90,11 @@ Verified against the current code and `CLAUDE.md`:
 - subdomains: the first one is canonical. It is the Authentik application slug for
   a gated entry.
 - ip/type: refreshed by `sync-inventory` from Proxmox. `update-all` and
-  `configure-guest --packages` never act on a VM.
+  `configure-guest --packages` never act on a VM (`--all` skips them; naming one
+  is an error).
 - host: changed by `migrate-guest`, not editable here.
 - vmid: unique across the whole cluster, and derived from the host's MID scheme at
   creation.
-- app: recorded by the web/MCP install-app apply. The link opens that app's script,
-  in the configured custom repository when it came from there.
+- app: recorded by the web/MCP install-app apply. The link opens the app's
+  community-scripts.org page, or its `ct/<app>.sh` in the configured custom
+  repository when it came from there (`communityScriptsUrl`).

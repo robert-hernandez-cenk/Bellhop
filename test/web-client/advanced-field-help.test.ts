@@ -7,7 +7,7 @@ import { ADVANCED_FIELD_HELP } from '../../web-client/src/lib/advanced-field-hel
 // specs/011-advanced-field-help/contracts/field-help.md verbatim.
 
 const CONTRACT: Record<string, string> = {
-  type: 'Whether this guest is an LXC container (lxc) or a virtual machine (vm), as reported by Proxmox. Update All and package installs skip VMs.',
+  type: 'Whether this guest is an LXC container (lxc) or a virtual machine (vm), as reported by Proxmox. Update All and package installs never act on a VM.',
   ip: "The guest's LAN address, which the proxy forwards this guest's subdomains to. Sync Inventory refreshes it from the guest's Proxmox network config.",
   subdomains:
     "The hostnames the reverse proxy serves for this guest, all forwarding to its ip and port. The first one is canonical and also names the guest's Authentik application when it is gated.",
@@ -27,9 +27,9 @@ const CONTRACT: Record<string, string> = {
   'oidc client':
     'The issuer, client ID and client secret the app needs for its OIDC login, read live from Authentik. Only admins can reveal them.',
   'unauthenticated paths':
-    'Paths that skip the login check, written exactly or ending in /*, such as an API another app calls. No effect unless the guest is gated with forward-auth.',
+    'Paths that skip the login check, written exactly or ending in /*, such as an API another app calls. No effect unless the guest is gated with forward-auth and read-only proxy is off.',
   vpn: "Routes the guest's internet traffic through a VPN gateway guest, or through the LAN gateway when set to none. Changing it starts a job that reboots the guest.",
-  app: "The community-scripts app this guest was installed from, recorded when Bellhop installed it. The link opens that app's install script.",
+  app: "The community-scripts app this guest was installed from, recorded when Bellhop installed it. The link opens the app's community-scripts page, or its script in your custom script repository.",
 };
 
 test('ADVANCED_FIELD_HELP equals the 15 contract entries verbatim', () => {
@@ -69,16 +69,17 @@ test('FR-003 facts appear in the relevant explanations', () => {
   assert.match(callbackUrls, /OIDC mode/);
 });
 
-// US1: every label rendered by AdvancedGuestModal.tsx must go through
-// FieldHelp with a `field=` matching a key in ADVANCED_FIELD_HELP, and no
-// bare (unwrapped) form-row-label may remain (SC-005).
+// US1: every label rendered by AdvancedGuestModal.tsx must go through the
+// modal's local fieldHelp('<label>') helper with a label matching a key in
+// ADVANCED_FIELD_HELP, and no bare (unwrapped) form-row-label may remain
+// (SC-005).
 
 const modalPath = new URL('../../web-client/src/components/AdvancedGuestModal.tsx', import.meta.url);
 const modalSource = readFileSync(modalPath, 'utf8');
 
 function collectFieldHelpFields(source: string): string[] {
   const fields: string[] = [];
-  const re = /<FieldHelp\b[^>]*?\bfield="([^"]*)"/g;
+  const re = /fieldHelp\('([^']+)'\)/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(source)) !== null) {
     fields.push(match[1]);
@@ -88,19 +89,22 @@ function collectFieldHelpFields(source: string): string[] {
 
 function collectBareLabels(source: string): string[] {
   const bare: string[] = [];
-  const re = /<div className="form-row-label">([^<]*)<\/div>/g;
+  // A label is wrapped only when its whole content is one fieldHelp('...')
+  // call; anything else (plain text, or text beside the call) is bare.
+  const re = /<div className="form-row-label">([\s\S]*?)<\/div>/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(source)) !== null) {
-    bare.push(match[1]);
+    const content = match[1].trim();
+    if (!/^\{fieldHelp\('[^']+'\)\}$/.test(content)) bare.push(content);
   }
   return bare;
 }
 
-test('every form-row-label in AdvancedGuestModal.tsx is wrapped by FieldHelp, one per ADVANCED_FIELD_HELP key, no bare labels (SC-005)', () => {
+test('every form-row-label in AdvancedGuestModal.tsx is wrapped by fieldHelp(), one per ADVANCED_FIELD_HELP key, no bare labels (SC-005)', () => {
   const fields = collectFieldHelpFields(modalSource);
   const bareLabels = collectBareLabels(modalSource);
 
   assert.deepEqual(new Set(fields), new Set(Object.keys(ADVANCED_FIELD_HELP)));
-  assert.equal(fields.length, new Set(fields).size, 'duplicate field= values found');
+  assert.equal(fields.length, new Set(fields).size, 'duplicate fieldHelp() labels found');
   assert.deepEqual(bareLabels, [], 'bare form-row-label divs found, not wrapped by FieldHelp');
 });
