@@ -1707,7 +1707,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   starts once a prompt has already been detected). Every pause carries its
   origin (`expected`/`heuristic`/`stall`) through to the job row and the
   WebSocket, so `JobView` can number a known prompt ("question 2 of up to
-  4") and flag a stall as a guess rather than a detected question.
+  4") and flag a stall as a guess rather than a detected question. The
+  banner's hint text, dismiss-button label, and which controls get the
+  quiet/outline treatment for each origin all come from one
+  `Record<PromptOrigin | 'none', …>` table, `promptBannerView()` in
+  `web-client/src/lib/prompt-banner.ts` (issue #4), so a new origin can't
+  ship without copy for the banner to show.
   The MCP server surfaces the same pauses: its jobs run through the same
   `JobRunner`/`JobSSHClient` detection, and `wait_for_job` relays each one
   through MCP elicitation instead of a WebSocket (see "MCP server" below) --
@@ -1960,7 +1965,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   written to `document.documentElement.dataset.theme`; `index.css` keys its
   dark-mode variable overrides off `:root[data-theme='dark']` rather than
   `@media (prefers-color-scheme: dark)`, so any new themed CSS should target
-  that selector too.
+  that selector too. The guest Advanced modal's field explanations
+  (issue #34) live in `web-client/src/lib/advanced-field-help.ts`, keyed by
+  label and pinned by a test against the modal source, and are shown via
+  `FieldHelp` (`web-client/src/components/FieldHelp.tsx`), a reusable ⓘ
+  disclosure used instead of a hover-only `title` since `title` never shows
+  on touch.
 - **Web UI inventory reload** (`refreshInventory` in `src/lib/inventory.ts`,
   wired into `src/web/app.ts`'s `buildApp`): the web service loads
   `inventory` once at startup (`src/web/server.ts`), but every `/api`
