@@ -1,10 +1,13 @@
 import type {
   AuthentikApplication,
   AuthentikClient,
+  AuthentikFlowStageBinding,
   AuthentikGroup,
   AuthentikOAuth2Provider,
   AuthentikPolicyBinding,
+  AuthentikPolicyRef,
   AuthentikProxyProvider,
+  AuthentikStageRef,
   OAuth2ProviderSettings,
 } from '../../lib/authentik-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
@@ -104,7 +107,30 @@ export interface SyncAuthentikResult {
   forwardSkipped?: ForwardSkip[];
   // Apply only: the post-apply discovery check, one per owned OIDC entry.
   discovery?: OidcDiscoveryResult[];
+  // The mobile consent step (issue #22, data-model.md "Sync result
+  // addition"). Optional in the type like the other OIDC-era fields;
+  // runSyncAuthentik always fills it, empty when nothing is wanted.
+  mobileConsent?: MobileConsentReport;
   applied: boolean;
+}
+
+export interface MobileConsentReport {
+  // The mobile URI set in effect (sorted, deduplicated) -- mobileUriSet.
+  uris: string[];
+  // Planned (dry run) or made (apply). A failed apply lists only the
+  // changes that completed before the failure.
+  changes: MobileConsentChange[];
+  // Human-readable, one per same-named object this command does not own.
+  conflicts: string[];
+  // A reconcile failure (research R9). Fails an --apply run, never a dry run.
+  error?: string;
+}
+
+export interface MobileConsentChange {
+  object: 'stage' | 'binding' | 'policy' | 'policy-binding';
+  action: 'create' | 'update' | 'delete';
+  // Drifted Authentik field names, or the URI count for the policy.
+  detail?: string;
 }
 
 export interface OidcUpdate {
@@ -236,6 +262,26 @@ export const REPLACED_PROVIDER_SUFFIX = ' (replaced)';
 // Authentik cannot hang a Dashboard save that runs this via syncProxyLive.
 const DISCOVERY_TIMEOUT_MS = 10_000;
 
+// Mobile consent step (research.md R4/R5/R7): the fixed names of the two
+// Authentik objects this command owns, and the marker that proves a found
+// expression policy is this command's to reconcile rather than a hand-made
+// same-named one. Stage names are unique across every stage type, so this
+// name alone is enough to find it; the policy is additionally checked for
+// the marker (R7) since a policy name collision is otherwise silent.
+export const MOBILE_CONSENT_STAGE_NAME = 'bellhop-mobile-app-consent';
+export const MOBILE_CONSENT_POLICY_NAME = 'bellhop-consent-on-mobile-redirect';
+export const MOBILE_CONSENT_MARKER = '# Managed by Bellhop (sync-authentik).';
+// meta_model_name values (research R4/R7): what makes a found stage a
+// consent stage, and a found policy an expression policy.
+const CONSENT_STAGE_MODEL = 'authentik_stages_consent.consentstage';
+const EXPRESSION_POLICY_MODEL = 'authentik_policies_expression.expressionpolicy';
+const CONSENT_MODE = 'always_require';
+// The stock explicit-consent flow's consent binding order. Set on create
+// only, so an operator may move it (research R4).
+const CONSENT_BINDING_ORDER = 10;
+const MOBILE_CONSENT_ERROR_HINT =
+  " — check AUTHENTIK_AUTHORIZATION_FLOW_SLUG and the API token's stage/policy/flow permissions (README \"Authentik API token permissions\")";
+
 // `name` is deliberately absent: the Application/Provider display name is
 // the slug verbatim (issue #156), so a second field holding the same value
 // would just be a chance for the two to drift.
@@ -245,6 +291,7 @@ interface CandidateEntry {
   authGroup?: string;
   authMode?: 'forward' | 'oidc';
   oidcRedirectUris?: string[];
+  oidcMobileRedirectUris?: string[];
 }
 
 type SubdomainOwner = {
@@ -252,6 +299,7 @@ type SubdomainOwner = {
   subdomains?: string[];
   authMode?: 'forward' | 'oidc';
   oidcRedirectUris?: string[];
+  oidcMobileRedirectUris?: string[];
 };
 
 // A "candidate" is any entry with at least one subdomain, regardless of
@@ -281,6 +329,7 @@ function candidateEntries(inventory: Inventory): CandidateEntry[] {
       authGroup: owner.authGroup,
       authMode: owner.authMode,
       oidcRedirectUris: owner.oidcRedirectUris,
+      oidcMobileRedirectUris: owner.oidcMobileRedirectUris,
     });
   }
   return result;
@@ -317,6 +366,80 @@ export function ownedProviderKind(
 // two flow ids: those are only sent on create, and AuthentikOAuth2Provider
 // does not report them back, so they are not reconciled.
 export type DesiredOAuth2Settings = Omit<OAuth2ProviderSettings, 'authorizationFlowId' | 'invalidationFlowId'>;
+
+// FR-007: a Bellhop-owned OpenID client's actual callback list is the
+// entry's web list plus its mobile list, deduplicated (first-seen order,
+// web first) -- the mobile list is simply more addresses the same client is
+// allowed to send a signed-in user back to. Callers that decide whether an
+// entry has *any* callback configured at all (the missing-redirect-uris
+// skip in planOidc, adopt-oidc-client's own refusal) deliberately keep
+// testing `entry.oidcRedirectUris` alone instead (FR-004): the web list
+// stays the one that is required, so an entry with only mobile URIs is
+// still incomplete.
+export function clientRedirectUris(entry: { oidcRedirectUris?: string[]; oidcMobileRedirectUris?: string[] }): string[] {
+  return [...new Set([...(entry.oidcRedirectUris ?? []), ...(entry.oidcMobileRedirectUris ?? [])])];
+}
+
+// research.md R5: a Python string literal for one URI, built by iterating
+// CODE POINTS (`for...of` over a string does this natively -- it never
+// splits a surrogate pair), not UTF-16 units. JSON.stringify would emit a
+// surrogate pair as two separate \uD8xx\uDCxx escapes, which Python decodes
+// back into two lone surrogates rather than the original character, so an
+// emoji redirect URI would silently never match. Lowercase hex throughout.
+export function pythonStringLiteral(value: string): string {
+  let out = '"';
+  for (const ch of value) {
+    switch (ch) {
+      case '\\':
+        out += '\\\\';
+        continue;
+      case '"':
+        out += '\\"';
+        continue;
+      case '\n':
+        out += '\\n';
+        continue;
+      case '\r':
+        out += '\\r';
+        continue;
+      case '\t':
+        out += '\\t';
+        continue;
+    }
+    const codePoint = ch.codePointAt(0)!;
+    if (codePoint >= 0x20 && codePoint <= 0x7e) {
+      out += ch;
+    } else if (codePoint <= 0xff) {
+      out += `\\x${codePoint.toString(16).padStart(2, '0')}`;
+    } else if (codePoint <= 0xffff) {
+      out += `\\u${codePoint.toString(16).padStart(4, '0')}`;
+    } else {
+      out += `\\U${codePoint.toString(16).padStart(8, '0')}`;
+    }
+  }
+  out += '"';
+  return out;
+}
+
+// research.md R5: the Authentik expression-policy body for the mobile
+// consent step. The URIs are sorted so the same set always renders the same
+// text -- drift is then a plain string comparison (research.md R8) -- and an
+// empty list renders `set()`, since `{}` is a Python dict literal, not an
+// empty set. `MOBILE_CONSENT_MARKER` is always the expression's first line,
+// which is what `ownedProviderKind`'s policy counterpart (R7) checks to
+// decide whether a found policy is this command's to reconcile.
+export function renderMobileConsentExpression(uris: string[]): string {
+  const sorted = [...uris].sort();
+  const setLiteral =
+    sorted.length === 0 ? 'set()' : ['{', ...sorted.map((uri) => `    ${pythonStringLiteral(uri)},`), '}'].join('\n');
+  return [
+    `${MOBILE_CONSENT_MARKER} Changes made here are overwritten.`,
+    '# Asks for consent only when the login hands off to a mobile app redirect URI.',
+    `MOBILE_REDIRECT_URIS = ${setLiteral}`,
+    'params = request.context.get("goauthentik.io/providers/oauth2/params")',
+    'return getattr(params, "redirect_uri", None) in MOBILE_REDIRECT_URIS',
+  ].join('\n');
+}
 
 export function desiredOAuth2Settings(
   redirectUris: string[],
@@ -621,6 +744,20 @@ export async function runSyncAuthentik(
     forwardSkipped,
   };
 
+  // The mobile consent step (research R6-R9): planned here so the dry run
+  // reports exactly what --apply then executes, and caught on its own so a
+  // failure never blocks the Application/client/binding/outpost work or the
+  // discovery check (FR-017). Executed after all of that, below.
+  const mobileConsent: MobileConsentReport = { uris: mobileUriSet(desired), changes: [], conflicts: [] };
+  let mobilePlan: MobileConsentPlan | undefined;
+  try {
+    mobilePlan = await planMobileConsent(mobileConsent.uris, deps.authentik);
+    mobileConsent.changes = mobilePlan.changes;
+    mobileConsent.conflicts = mobilePlan.conflicts;
+  } catch (err) {
+    mobileConsent.error = `${errorMessage(err)}${MOBILE_CONSENT_ERROR_HINT}`;
+  }
+
   if (!opts.apply) {
     return {
       toCreate: toCreate.map((d) => d.slug),
@@ -632,6 +769,7 @@ export async function runSyncAuthentik(
       bindingChanges,
       ...oidcReport,
       discovery: [],
+      mobileConsent,
       applied: false,
     };
   }
@@ -799,6 +937,18 @@ export async function runSyncAuthentik(
     }
   }
 
+  // After every other write, so its failure can't block them. A failed apply
+  // reports only the changes that completed.
+  if (mobilePlan && mobilePlan.changes.length > 0) {
+    const made: MobileConsentChange[] = [];
+    try {
+      await applyMobileConsent(mobilePlan, deps.authentik, made);
+    } catch (err) {
+      mobileConsent.changes = made;
+      mobileConsent.error = `${errorMessage(err)}${MOBILE_CONSENT_ERROR_HINT}`;
+    }
+  }
+
   // Every OIDC entry that has a Bellhop-owned OpenID client after this
   // apply -- created, switched to, updated, or unchanged -- so an apply
   // always reports current health, not just what it touched. A skipped
@@ -825,6 +975,7 @@ export async function runSyncAuthentik(
     bindingChanges,
     ...oidcReport,
     discovery,
+    mobileConsent,
     applied: true,
   };
 }
@@ -847,6 +998,238 @@ async function listOAuth2ProvidersForRun(
   } catch (err) {
     if (candidates.some((c) => c.authMode === 'oidc')) throw err;
     return [];
+  }
+}
+
+// research R6: the mobile URIs in effect -- the sorted, deduplicated union of
+// every desired (gated) OIDC-mode entry's mobile list, whether or not that
+// entry is off-ladder, in conflict, or skipped this run. A URI with no client
+// behind it can never be a real login's redirect_uri, and counting it keeps
+// the policy stable while the operator fixes the entry.
+export function mobileUriSet(
+  desired: Array<{ authGroup?: string; authMode?: 'forward' | 'oidc'; oidcMobileRedirectUris?: string[] }>
+): string[] {
+  const uris = new Set<string>();
+  for (const entry of desired) {
+    if (effectiveAuth(entry) !== 'oidc') continue;
+    for (const uri of entry.oidcMobileRedirectUris ?? []) uris.add(uri);
+  }
+  return [...uris].sort();
+}
+
+// What planMobileConsent found, alongside what it decided. applyMobileConsent
+// executes `changes` in order against these, so --apply can never do more or
+// less than the dry run reported (FR-016).
+interface MobileConsentPlan {
+  changes: MobileConsentChange[];
+  conflicts: string[];
+  flowId?: string;
+  expression: string;
+  stageId?: string;
+  policyId?: string;
+  binding?: AuthentikFlowStageBinding;
+  policyBindingId?: string;
+}
+
+// research R7/R8. Reads the four objects, applies the ownership rules (a
+// same-named object this command doesn't own stops the plan outright), and
+// lists the creates/updates (something wanted) or deletes (nothing wanted)
+// in execution order. With nothing wanted, a failed read is swallowed and
+// planned as nothing to do (R9): a token without stage/policy/flow access
+// can't have created anything to remove.
+async function planMobileConsent(uris: string[], authentik: AuthentikClient): Promise<MobileConsentPlan> {
+  const wanted = uris.length > 0;
+  const expression = renderMobileConsentExpression(uris);
+  const empty: MobileConsentPlan = { changes: [], conflicts: [], expression };
+
+  let stage: AuthentikStageRef | undefined;
+  let policy: AuthentikPolicyRef | undefined;
+  try {
+    // Independent reads, so fetched together; either failing is handled
+    // the same way below.
+    [stage, policy] = await Promise.all([
+      authentik.findStageByName(MOBILE_CONSENT_STAGE_NAME),
+      authentik.findPolicyByName(MOBILE_CONSENT_POLICY_NAME),
+    ]);
+  } catch (err) {
+    if (wanted) throw err;
+    return empty;
+  }
+
+  const conflicts: string[] = [];
+  if (stage && stage.model !== CONSENT_STAGE_MODEL) {
+    conflicts.push(
+      `stage '${MOBILE_CONSENT_STAGE_NAME}' exists but is not a consent stage Bellhop created — rename or delete it in Authentik`
+    );
+  }
+  if (policy && !(policy.model === EXPRESSION_POLICY_MODEL && policy.expression?.startsWith(MOBILE_CONSENT_MARKER))) {
+    conflicts.push(
+      `policy '${MOBILE_CONSENT_POLICY_NAME}' exists but was not created by Bellhop — rename or delete it in Authentik`
+    );
+  }
+  if (conflicts.length > 0) return { ...empty, conflicts };
+
+  // The flow is only needed to create a binding or to find an existing one,
+  // and a binding can only exist while the stage does.
+  let flowId: string | undefined;
+  let binding: AuthentikFlowStageBinding | undefined;
+  let policyBindingId: string | undefined;
+  let stageMode: string | undefined;
+  try {
+    if (wanted || stage) flowId = await authentik.getDefaultAuthorizationFlowId();
+    if (stage) {
+      // Bindings of this stage on other flows are ignored; with several on
+      // this flow, the first is reconciled and the rest left alone.
+      binding = (await authentik.listFlowStageBindings(flowId!)).find((b) => b.stageId === stage.id);
+      if (wanted) stageMode = (await authentik.getConsentStage(stage.id)).mode;
+    }
+    if (binding && policy) {
+      // Listed by the PolicyBindingModel pk, but each result's targetId
+      // reports the binding's own pk (research R4), so either id matches.
+      const targetIds = new Set([binding.id, binding.policyBindingModelId]);
+      policyBindingId = (await authentik.listPolicyBindingsForTarget(binding.policyBindingModelId)).find(
+        (b) => b.policyId === policy.id && targetIds.has(b.targetId)
+      )?.id;
+    }
+  } catch (err) {
+    if (wanted) throw err;
+    return empty;
+  }
+
+  const changes: MobileConsentChange[] = [];
+  if (wanted) {
+    if (!stage) changes.push({ object: 'stage', action: 'create' });
+    else if (stageMode !== CONSENT_MODE) changes.push({ object: 'stage', action: 'update', detail: 'mode' });
+    const uriCount = `${uris.length} mobile redirect URI(s)`;
+    if (!policy) changes.push({ object: 'policy', action: 'create', detail: uriCount });
+    else if (policy.expression !== expression) {
+      changes.push({ object: 'policy', action: 'update', detail: `expression (${uriCount})` });
+    }
+    if (!binding) changes.push({ object: 'binding', action: 'create' });
+    else {
+      const drift = [
+        ...(binding.evaluateOnPlan !== false ? ['evaluate_on_plan'] : []),
+        ...(binding.reEvaluatePolicies !== true ? ['re_evaluate_policies'] : []),
+      ];
+      if (drift.length > 0) changes.push({ object: 'binding', action: 'update', detail: drift.join(', ') });
+    }
+    if (!policyBindingId) changes.push({ object: 'policy-binding', action: 'create' });
+  } else {
+    // Only owned objects reach here; deleted in R8's order.
+    if (policyBindingId) changes.push({ object: 'policy-binding', action: 'delete' });
+    if (binding) changes.push({ object: 'binding', action: 'delete' });
+    if (policy) changes.push({ object: 'policy', action: 'delete' });
+    if (stage) changes.push({ object: 'stage', action: 'delete' });
+  }
+
+  return {
+    changes,
+    conflicts,
+    flowId,
+    expression,
+    stageId: stage?.id,
+    policyId: policy?.id,
+    binding,
+    policyBindingId,
+  };
+}
+
+// Executes a plan's changes in order, pushing each onto `made` as it
+// completes (so a failure partway reports only what happened). Cached flow
+// plans are cleared once after any binding or policy change (FR-015) --
+// including when a later step failed, since the changes already made are
+// live either way.
+async function applyMobileConsent(
+  plan: MobileConsentPlan,
+  authentik: AuthentikClient,
+  made: MobileConsentChange[]
+): Promise<void> {
+  let { stageId, policyId, binding } = plan;
+  let failed = true;
+  // A binding was created and then deleted again: a flow plan may have been
+  // cached in between, so the cache is cleared even if nothing else remains.
+  let rolledBack = false;
+  try {
+    for (const change of plan.changes) {
+      const key = `${change.object}:${change.action}`;
+      switch (key) {
+        case 'stage:create':
+          stageId = (await authentik.createConsentStage({ name: MOBILE_CONSENT_STAGE_NAME, mode: CONSENT_MODE })).id;
+          break;
+        case 'stage:update':
+          await authentik.updateConsentStage(stageId!, { mode: CONSENT_MODE });
+          break;
+        case 'stage:delete':
+          await authentik.deleteStage(stageId!);
+          break;
+        case 'policy:create':
+          policyId = (
+            await authentik.createExpressionPolicy({ name: MOBILE_CONSENT_POLICY_NAME, expression: plan.expression })
+          ).id;
+          break;
+        case 'policy:update':
+          await authentik.updateExpressionPolicy(policyId!, { expression: plan.expression });
+          break;
+        case 'policy:delete':
+          await authentik.deletePolicy(policyId!);
+          break;
+        case 'binding:create':
+          binding = await authentik.createFlowStageBinding({
+            flowId: plan.flowId!,
+            stageId: stageId!,
+            order: CONSENT_BINDING_ORDER,
+            evaluateOnPlan: false,
+            reEvaluatePolicies: true,
+          });
+          break;
+        case 'binding:update':
+          await authentik.updateFlowStageBinding(binding!.id, { evaluateOnPlan: false, reEvaluatePolicies: true });
+          break;
+        case 'binding:delete':
+          await authentik.deleteFlowStageBinding(binding!.id);
+          break;
+        case 'policy-binding:create':
+          try {
+            await authentik.createPolicyToTargetBinding({ targetId: binding!.policyBindingModelId, policyId: policyId! });
+          } catch (err) {
+            // A stage binding with no policy on it runs for every login. If
+            // this run created it, take it back out rather than leave
+            // consent on every browser sign-in until the next run. A binding
+            // that existed before the run is left alone (repair case).
+            const created = made.findIndex((c) => c.object === 'binding' && c.action === 'create');
+            if (created < 0) throw err;
+            try {
+              await authentik.deleteFlowStageBinding(binding!.id);
+            } catch (rollbackErr) {
+              throw new Error(
+                `${errorMessage(err)}; removing the new stage binding also failed (${errorMessage(rollbackErr)}), so every login on the flow shows the consent page until the next successful run`
+              );
+            }
+            made.splice(created, 1);
+            rolledBack = true;
+            throw err;
+          }
+          break;
+        case 'policy-binding:delete':
+          await authentik.deletePolicyBinding(plan.policyBindingId!);
+          break;
+        default:
+          throw new Error(`unknown mobile consent change: ${key}`);
+      }
+      made.push(change);
+    }
+    failed = false;
+  } finally {
+    // A stage-only change (a mode repair) needs no clear: the consent stage
+    // reads its mode when it executes, not from the cached plan.
+    if (rolledBack || made.some((c) => c.object !== 'stage')) {
+      try {
+        await authentik.clearFlowCache();
+      } catch (err) {
+        // A failed clear after a failed step must not hide the original error.
+        if (!failed) throw err;
+      }
+    }
   }
 }
 
@@ -980,7 +1363,7 @@ async function planOidc(
   const { signingKeyId, scopeMappingIds } = instance;
 
   for (const entry of withUris) {
-    const settings = desiredOAuth2Settings(entry.oidcRedirectUris, signingKeyId, scopeMappingIds);
+    const settings = desiredOAuth2Settings(clientRedirectUris(entry), signingKeyId, scopeMappingIds);
     const application = managedBySlug.get(entry.slug);
     if (application && ownedKindBySlug.get(entry.slug) === 'oauth2') {
       // Owned as OAuth2, so this lookup always succeeds.
@@ -1173,10 +1556,12 @@ function errorMessage(err: unknown): string {
 // only on --apply, and only for a failed discovery check or instance-wide
 // misconfiguration (a missing signing key or scope mapping). A missing
 // callback URL is one entry's incomplete setup and a dry run only previews,
-// so neither fails the run.
+// so neither fails the run. A mobile consent-step failure fails it too
+// (research R9); a consent-step conflict alone does not.
 export function syncAuthentikFailed(result: SyncAuthentikResult): boolean {
   if (!result.applied) return false;
   return (
+    Boolean(result.mobileConsent?.error) ||
     (result.discovery ?? []).some((d) => !d.ok) ||
     (result.oidcSkipped ?? []).some((s) => s.kind === 'missing-signing-key' || s.kind === 'missing-scope-mapping')
   );
@@ -1327,6 +1712,25 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
     lines.push(`OIDC entries skipped: ${oidcSkipped.length}`);
     for (const skip of oidcSkipped) lines.push(`  ! ${skip.slug} — ${skip.reason}`);
   }
+  // Mobile consent-step sections (issue #22, contracts/interfaces.md §2):
+  // printed only when non-empty, so a result with no mobile URIs and
+  // nothing to remove -- absent or empty `mobileConsent` alike -- formats
+  // byte-identically to before this feature (FR-016). Placed after every
+  // other reconcile section but before discovery, which stays last.
+  const mobileConsent = result.mobileConsent;
+  if (mobileConsent) {
+    if (mobileConsent.changes.length > 0) {
+      lines.push(
+        `Mobile consent step: ${mobileConsent.changes.length} change(s) for ${mobileConsent.uris.length} mobile redirect URI(s)`
+      );
+      for (const change of mobileConsent.changes) lines.push(formatMobileConsentChange(change));
+    }
+    if (mobileConsent.conflicts.length > 0) {
+      lines.push(`Mobile consent conflicts: ${mobileConsent.conflicts.length}`);
+      for (const conflict of mobileConsent.conflicts) lines.push(`  ! ${conflict}`);
+    }
+    if (mobileConsent.error) lines.push(`Mobile consent step failed: ${mobileConsent.error}`);
+  }
   const discovery = result.discovery ?? [];
   if (discovery.length > 0) {
     lines.push(`OIDC discovery: ${discovery.length}`);
@@ -1335,4 +1739,28 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
     }
   }
   return lines.join('\n');
+}
+
+// The human-readable name for a mobile consent-step object (contracts/
+// interfaces.md §2): the stage/policy names Bellhop owns are fixed
+// constants, the binding names the configured authorization flow it's
+// attached to, and the policy-binding has no name of its own to add.
+function mobileConsentObjectLabel(object: MobileConsentChange['object']): string {
+  switch (object) {
+    case 'stage':
+      return `stage ${MOBILE_CONSENT_STAGE_NAME}`;
+    case 'policy':
+      return `policy ${MOBILE_CONSENT_POLICY_NAME}`;
+    case 'binding':
+      return `binding on ${authentikConfig().authorizationFlowSlug}`;
+    case 'policy-binding':
+      return 'policy-binding';
+  }
+}
+
+function formatMobileConsentChange(change: MobileConsentChange): string {
+  const label = mobileConsentObjectLabel(change.object);
+  if (change.action === 'create') return `  + ${label}`;
+  if (change.action === 'delete') return `  - ${label}`;
+  return `  ~ ${label}: ${change.detail ?? ''}`;
 }

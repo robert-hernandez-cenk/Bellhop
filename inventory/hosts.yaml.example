@@ -102,6 +102,11 @@ guests:
     # to configure the OpenID client's accepted redirects.
     oidcRedirectUris:
       - https://bookstack.example.com/oidc/callback
+    # oidcMobileRedirectUris: optional, alongside oidcRedirectUris -- extra
+    # callback URIs for the app's own mobile client (custom URL schemes are
+    # fine; adds a one-time consent click to mobile sign-ins only).
+    oidcMobileRedirectUris:
+      - app.example:///oauth-callback
 
 # Only for a subdomain whose own backend serves HTTPS with a self-signed/
 # otherwise-untrusted cert (e.g. a NAS's web UI, Proxmox's own web UI) --

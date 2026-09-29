@@ -223,6 +223,19 @@ test('edit_guest writes inventory and reports the proxy sync outcome', async () 
   assert.deepEqual(loadInventory(inventoryPath).guests.find((g) => g.name === 'app-lxc')?.subdomains, ['app']);
 });
 
+// T007 (issue #22): edit_guest also saves the distinct
+// oidcMobileRedirectUris field, mirroring the oidcRedirectUris edit above.
+test('edit_guest saves oidcMobileRedirectUris', async () => {
+  const { call, inventoryPath } = await setup();
+  const result = JSON.parse(
+    (await call('edit_guest', { name: 'app-lxc', oidcMobileRedirectUris: ['app.example:///oauth-callback'] })).content[0].text
+  );
+  assert.equal(result.proxySynced, true);
+  assert.deepEqual(loadInventory(inventoryPath).guests.find((g) => g.name === 'app-lxc')?.oidcMobileRedirectUris, [
+    'app.example:///oauth-callback',
+  ]);
+});
+
 test('set_config accepts the proxyDriver and proxyConfigPath keys', async () => {
   const { client } = await setup();
   const tool = (await client.listTools()).tools.find((t) => t.name === 'set_config')!;

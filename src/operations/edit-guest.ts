@@ -8,6 +8,7 @@ import {
   parseUnauthenticatedPaths,
   parseAuthMode,
   parseOidcRedirectUris,
+  parseOidcMobileRedirectUris,
   oidcConfigErrors,
   validateInventory,
   effectiveAuth,
@@ -65,12 +66,26 @@ export type EditGuestResult =
       // did not change as asked (FR-015). Scoped and omitted-when-empty like
       // authentikConflicts.
       oidcSkipped?: OidcSkip[];
+      // The mobile consent step's conflicts/errors (issue #22, final review
+      // F3). Instance-wide rather than about this guest, so echoed only when
+      // this edit changed oidcMobileRedirectUris -- the admin who just saved a
+      // mobile URI is the one who needs to know the consent step didn't
+      // follow. Omitted when empty, like authentikConflicts.
+      mobileConsentProblems?: string[];
     }
   | { guest: GuestEntry; proxySynced: false; proxyError: string };
 
 // The web form sends ';'-joined strings; MCP clients may send arrays and
 // numbers. Normalize to what the parse* helpers accept.
 const asDelimited = (v: unknown): unknown => (Array.isArray(v) ? v.join(';') : v);
+
+// Order-sensitive, like the lists themselves: resending the same list is
+// not a change.
+function sameUriList(a: string[] | undefined, b: string[] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
 
 export function applyGuestEdits(current: GuestEntry, body: Record<string, unknown>): GuestEntry {
   const updated = { ...current };
@@ -82,6 +97,7 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
   if ('authMode' in body) updated.authMode = parseAuthMode(body.authMode);
   if ('oidcRedirectUris' in body) updated.oidcRedirectUris = parseOidcRedirectUris(asDelimited(body.oidcRedirectUris));
+  if ('oidcMobileRedirectUris' in body) updated.oidcMobileRedirectUris = parseOidcMobileRedirectUris(asDelimited(body.oidcMobileRedirectUris));
   return updated;
 }
 
@@ -119,7 +135,13 @@ export async function commitGuestEdit(
   // callback URL, or Authentik has nowhere to send a sign-in token back to.
   // Deliberately not part of validateInventory() -- see oidcConfigErrors's
   // own doc comment -- so this is the one write path that enforces it.
-  const oidcErrors = oidcConfigErrors(updated);
+  // The web/mobile duplicate rule applies only when this edit touched one of
+  // the two lists (final review F10), so a duplicate already in the database
+  // never blocks an unrelated edit.
+  const current = inventory.guests[idx];
+  const webChanged = !sameUriList(current.oidcRedirectUris, updated.oidcRedirectUris);
+  const mobileChanged = !sameUriList(current.oidcMobileRedirectUris, updated.oidcMobileRedirectUris);
+  const oidcErrors = oidcConfigErrors(updated, { checkCrossListDuplicates: webChanged || mobileChanged });
   if (oidcErrors.length > 0) throw new GuestEditValidationError(oidcErrors.join('\n'));
 
   // Capability enforcement (issue #10, FR-012): refuse before probing or
@@ -171,6 +193,7 @@ export async function commitGuestEdit(
       authentikOidcSkipped,
       authentikForwardSkipped,
       authentikOidcDiscoveryFailures,
+      authentikMobileConsentProblems,
     } = await syncProxyLive({
       ssh: deps.ssh,
       inventory,
@@ -215,6 +238,9 @@ export async function commitGuestEdit(
       // Same conditional-spread convention as authentikConflicts above.
       ...(ownOidcDiscoveryFailures.length > 0 ? { oidcDiscoveryFailures: ownOidcDiscoveryFailures } : {}),
       ...(ownSkipped.length > 0 ? { oidcSkipped: ownSkipped } : {}),
+      ...(mobileChanged && authentikMobileConsentProblems.length > 0
+        ? { mobileConsentProblems: authentikMobileConsentProblems }
+        : {}),
     };
   } catch (err) {
     return { guest: updated, proxySynced: false, proxyError: err instanceof Error ? err.message : String(err) };
@@ -241,6 +267,12 @@ export const EDIT_GUEST_SHAPE = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe("OIDC callback URLs (array or ';'-separated absolute http(s) URLs); required when authMode is 'oidc' and the entry has subdomains. Admin only."),
+  oidcMobileRedirectUris: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .describe(
+      "Mobile app redirect URIs (array or ';'-separated; custom schemes allowed; javascript:, data:, file:, vbscript: rejected). Adds a consent click to mobile sign-ins only. Admin only."
+    ),
   confirmOidcClientDeletion: z
     .boolean()
     .optional()

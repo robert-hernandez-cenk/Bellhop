@@ -1528,6 +1528,96 @@ test('OIDC: an entry with no callback URLs is skipped with a reason naming oidcR
   assert.deepEqual(await authentik.listOAuth2Providers(), []);
 });
 
+// ---------------------------------------------------------------------------
+// Mobile redirect URIs (issue #22, T003): the client's callback list is the
+// entry's web list plus its mobile list.
+// ---------------------------------------------------------------------------
+
+const MOBILE_URI = 'bellhop://media.example.com/callback';
+
+test('OIDC: a new client gets web + mobile callback URLs, web first', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const inventory = oidcInventory({ oidcMobileRedirectUris: [MOBILE_URI] });
+
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.deepEqual(result.oidcToCreate, ['media']);
+
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.redirectUris, [
+    { matchingMode: 'strict', url: OIDC_URIS[0] },
+    { matchingMode: 'strict', url: MOBILE_URI },
+  ]);
+});
+
+test('OIDC: a mobile-only change on an owned client is reported as redirect_uris drift and patched', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const providerId = (await authentik.listOAuth2Providers())[0].id;
+
+  const edited = oidcInventory({ oidcMobileRedirectUris: [MOBILE_URI] });
+  const dry = await runSyncAuthentik({}, { authentik, inventory: edited, fetchImpl: okFetch() });
+  assert.deepEqual(dry.oidcUpdates, [{ slug: 'media', changes: ['redirect_uris'] }]);
+
+  const callsBeforeApply = authentik.calls.length;
+  const applied = await runSyncAuthentik({ apply: true }, { authentik, inventory: edited, fetchImpl: okFetch() });
+  assert.deepEqual(applied.oidcUpdates, [{ slug: 'media', changes: ['redirect_uris'] }]);
+  // The first mobile URI also creates the consent step (T014, tested in
+  // sync-authentik-mobile-consent.test.ts); the client gets only this PATCH.
+  assert.deepEqual(
+    authentik.calls.slice(callsBeforeApply).filter((c) => c.includes('OAuth2') || c.includes('Application')),
+    [`updateOAuth2Provider ${providerId}`]
+  );
+
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.redirectUris, [
+    { matchingMode: 'strict', url: OIDC_URIS[0] },
+    { matchingMode: 'strict', url: MOBILE_URI },
+  ]);
+});
+
+test('OIDC: an unchanged second run (web and mobile both) reports no update', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const inventory = oidcInventory({ oidcMobileRedirectUris: [MOBILE_URI] });
+  await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+
+  const callsBefore = authentik.calls.length;
+  const second = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.deepEqual(second.oidcUpdates, []);
+  assert.deepEqual(authentik.calls.slice(callsBefore), [], 'nothing is written on an unchanged second run');
+});
+
+test('OIDC: an entry with only mobile URIs (no web callback) is still skipped as missing-redirect-uris', async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const inventory = oidcInventory({ oidcRedirectUris: undefined, oidcMobileRedirectUris: [MOBILE_URI] });
+
+  const dry = await runSyncAuthentik({}, { authentik, inventory, fetchImpl: okFetch() });
+  assert.equal(dry.oidcSkipped!.length, 1);
+  assert.equal(dry.oidcSkipped![0].kind, 'missing-redirect-uris');
+  assert.deepEqual(dry.oidcToCreate, []);
+
+  const applied = await runSyncAuthentik({ apply: true }, { authentik, inventory, fetchImpl: okFetch() });
+  assert.deepEqual(applied.oidcSkipped, dry.oidcSkipped);
+  assert.deepEqual(await authentik.listOAuth2Providers(), []);
+});
+
+test("OIDC: a forward-mode entry's mobile list is ignored (no OpenID client is ever created for it)", async () => {
+  const authentik = new FakeAuthentikClient();
+  await seedLadderGroups(authentik);
+  const inventory = oidcInventory({ authMode: undefined, oidcMobileRedirectUris: [MOBILE_URI] });
+
+  const result = await runSyncAuthentik({ apply: true }, { authentik, inventory });
+  assert.deepEqual(result.oidcToCreate, []);
+  assert.deepEqual(result.oidcUpdates, []);
+  assert.deepEqual(result.toCreate, ['media'], 'a plain forward-auth Application is created instead');
+  assert.deepEqual(await authentik.listOAuth2Providers(), []);
+  const proxyProviders = await authentik.listProxyProviders();
+  assert.equal(proxyProviders.length, 1);
+});
+
 test('OIDC: an owned client whose callback URLs were cleared is skipped (not PATCHed to none) but its bindings still reconcile', async () => {
   const authentik = new FakeAuthentikClient();
   const ids = await seedLadderGroups(authentik);

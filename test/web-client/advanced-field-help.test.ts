@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { ADVANCED_FIELD_HELP } from '../../web-client/src/lib/advanced-field-help.ts';
 
-// Pins the 15 label -> explanation entries in
-// specs/011-advanced-field-help/contracts/field-help.md verbatim.
+// Pins the label -> explanation entries in
+// specs/011-advanced-field-help/contracts/field-help.md verbatim, plus the
+// "mobile app redirect urls" entry added for issue #22's Access tab.
 
 const CONTRACT: Record<string, string> = {
   type: 'Whether this guest is an LXC container (lxc) or a virtual machine (vm), as reported by Proxmox. Update All and package installs never act on a VM.',
@@ -24,6 +25,8 @@ const CONTRACT: Record<string, string> = {
     'How the auth group is enforced: forward-auth checks the login at the proxy, while OIDC gives the app its own Authentik login client. Only an admin may change it, and switching away from OIDC deletes that client.',
   'callback urls':
     'The addresses Authentik may send a user back to after an OIDC login. No effect unless the guest is gated in OIDC mode, and only an admin may change them.',
+  'mobile app redirect urls':
+    'Sign-in callbacks for a native mobile app, such as a custom scheme like app.example:///oauth-callback or the app server\'s own mobile-redirect page. Sent to Authentik alongside the web callback urls, and a login handed back to one of these gets one extra consent screen first so the phone can open the app.',
   'oidc client':
     'The issuer, client ID and client secret the app needs for its OIDC login, read live from Authentik. Only admins can reveal them.',
   'unauthenticated paths':

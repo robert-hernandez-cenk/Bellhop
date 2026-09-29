@@ -14,6 +14,7 @@ import type { OperationDeps } from '../../src/operations/types.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../src/lib/proxy/ids.ts';
+import { MOBILE_CONSENT_STAGE_NAME } from '../../src/commands/networking/sync-authentik.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -426,4 +427,132 @@ test('runEditGuest: edits that keep or enter OIDC gating never need confirmOidcC
   const d = oidcDeps();
   await runEditGuest({ name: 'media-lxc', authGroup: null, confirmOidcClientDeletion: true }, d);
   await runEditGuest({ name: 'media-lxc', authMode: null }, d);
+});
+
+// T005 (issue #22): oidcMobileRedirectUris wired through applyGuestEdits and
+// commitGuestEdit's oidcConfigErrors cross-list check, mirroring the
+// authMode/oidcRedirectUris tests above.
+
+test('applyGuestEdits parses oidcMobileRedirectUris from a form string and a typed array alike', () => {
+  const current = inventory.guests[1];
+  const fromForm = applyGuestEdits(current, {
+    oidcMobileRedirectUris: 'com.example.app://callback1; com.example.app://callback2',
+  });
+  const typed = applyGuestEdits(current, {
+    oidcMobileRedirectUris: ['com.example.app://callback1', 'com.example.app://callback2'],
+  });
+  assert.deepEqual(fromForm.oidcMobileRedirectUris, ['com.example.app://callback1', 'com.example.app://callback2']);
+  assert.deepEqual(typed, fromForm);
+});
+
+test('applyGuestEdits rejects a javascript: oidcMobileRedirectUris entry, naming it', () => {
+  const current = inventory.guests[1];
+  assert.throws(() => applyGuestEdits(current, { oidcMobileRedirectUris: 'javascript:alert(1)' }), /javascript:alert\(1\)/);
+});
+
+test('applyGuestEdits clears oidcMobileRedirectUris on an empty string', () => {
+  const updated = applyGuestEdits(
+    { ...inventory.guests[1], oidcMobileRedirectUris: ['com.example.app://cb'] },
+    { oidcMobileRedirectUris: '' }
+  );
+  assert.equal(updated.oidcMobileRedirectUris, undefined);
+});
+
+test('runEditGuest rejects a mobile redirect URI that duplicates a web callback URL, naming the field', async () => {
+  const d = deps();
+  await assert.rejects(
+    runEditGuest(
+      {
+        name: 'other-lxc',
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://taken.example.com/cb'],
+        oidcMobileRedirectUris: ['https://taken.example.com/cb'],
+      },
+      d
+    ),
+    (err: unknown) => err instanceof GuestEditValidationError && /oidcMobileRedirectUris/.test((err as Error).message)
+  );
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'other-lxc')?.oidcMobileRedirectUris, undefined);
+});
+
+test('runEditGuest accepts a distinct oidcMobileRedirectUris list alongside oidcRedirectUris', async () => {
+  const d = { ...deps(), authentik: new FakeAuthentikClient() };
+  const result = await runEditGuest(
+    {
+      name: 'other-lxc',
+      authGroup: 'bellhop-users',
+      authMode: 'oidc',
+      oidcRedirectUris: ['https://taken.example.com/cb'],
+      oidcMobileRedirectUris: ['com.example.app://callback'],
+    },
+    d
+  );
+  assert.deepEqual(result.guest.oidcMobileRedirectUris, ['com.example.app://callback']);
+});
+
+// Final review F3 (#22): the mobile consent step's conflicts/errors are
+// instance-wide, but the admin who just saved a mobile redirect URI needs to
+// see them -- the Dashboard PATCH runs outside any job, so a logWarn alone
+// never reaches them. Echoed only when this edit changed the mobile list.
+
+const FOREIGN_CONSENT_STAGE = { id: '600', name: MOBILE_CONSENT_STAGE_NAME, model: 'authentik_stages_prompt.promptstage' };
+const FOREIGN_STAGE_CONFLICT = `stage '${MOBILE_CONSENT_STAGE_NAME}' exists but is not a consent stage Bellhop created — rename or delete it in Authentik`;
+
+test('runEditGuest echoes mobile consent problems when the edit changed oidcMobileRedirectUris', async () => {
+  const d = { ...oidcDeps(), authentik: new FakeAuthentikClient({ stages: [FOREIGN_CONSENT_STAGE] }) };
+  const result = await runEditGuest({ name: 'media-lxc', oidcMobileRedirectUris: ['app.example:///oauth-callback'] }, d);
+  assert.equal(result.proxySynced, true);
+  assert.deepEqual((result as { mobileConsentProblems?: string[] }).mobileConsentProblems, [FOREIGN_STAGE_CONFLICT]);
+});
+
+test('runEditGuest omits mobile consent problems when the edit did not change oidcMobileRedirectUris', async () => {
+  const base = oidcDeps();
+  const stored = base.inventory.guests.map((g) =>
+    g.name === 'media-lxc' ? { ...g, oidcMobileRedirectUris: ['app.example:///oauth-callback'] } : g
+  );
+  saveInventory(base.inventoryPath, { ...base.inventory, guests: stored });
+  const d = {
+    ...base,
+    inventory: loadInventory(base.inventoryPath),
+    authentik: new FakeAuthentikClient({ stages: [FOREIGN_CONSENT_STAGE] }),
+  };
+  // Resending the same list counts as unchanged too.
+  for (const edit of [{ port: 8080 }, { oidcMobileRedirectUris: ['app.example:///oauth-callback'] }]) {
+    const result = await runEditGuest({ name: 'media-lxc', ...edit }, d);
+    assert.equal(result.proxySynced, true);
+    assert.equal('mobileConsentProblems' in result, false);
+  }
+});
+
+// Final review F10 (#22): a web/mobile duplicate already in the database
+// must not block an unrelated later edit; only an edit touching either list
+// is refused over it.
+
+function duplicateDeps(): OperationDeps {
+  const base = oidcDeps();
+  const stored = base.inventory.guests.map((g) =>
+    g.name === 'media-lxc' ? { ...g, oidcMobileRedirectUris: ['https://media.example.com/cb'] } : g
+  );
+  saveInventory(base.inventoryPath, { ...base.inventory, guests: stored });
+  return { ...base, inventory: loadInventory(base.inventoryPath) };
+}
+
+test('runEditGuest saves a port edit on an entry with a stored web/mobile duplicate', async () => {
+  const d = duplicateDeps();
+  const result = await runEditGuest({ name: 'media-lxc', port: 8080 }, d);
+  assert.equal(result.guest.port, 8080);
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'media-lxc')?.port, 8080);
+});
+
+test('runEditGuest still refuses an edit to either list that leaves a web/mobile duplicate', async () => {
+  for (const edit of [
+    { oidcRedirectUris: ['https://media.example.com/cb', 'https://media.example.com/cb2'] },
+    { oidcMobileRedirectUris: ['https://media.example.com/cb', 'app.example:///oauth-callback'] },
+  ]) {
+    await assert.rejects(
+      runEditGuest({ name: 'media-lxc', ...edit }, duplicateDeps()),
+      (err: unknown) => err instanceof GuestEditValidationError && /oidcMobileRedirectUris/.test((err as Error).message)
+    );
+  }
 });

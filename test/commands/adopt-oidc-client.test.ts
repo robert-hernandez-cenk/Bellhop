@@ -218,6 +218,29 @@ test('refuses when there are no callback URLs to adopt with, naming oidcRedirect
   );
 });
 
+// issue #22, T004: adopting a hand-made client whose callback list is
+// missing the entry's mobile URIs previews and applies that gap as
+// redirect_uris drift, same as a missing web callback would be.
+test('adopting an entry with mobile URIs previews and applies redirect_uris drift that includes them', async () => {
+  const authentik = handMadeAuthentik();
+  await seedLadderGroups(authentik);
+  const mobileUri = 'bellhop://media.example.com/callback';
+  const inventory = oidcInventory({ oidcMobileRedirectUris: [mobileUri] });
+
+  const dry = await runAdoptOidcClient({ entry: 'media' }, { authentik, inventory });
+  assert.deepEqual(dry.settingsChanges, ['redirect_uris', 'grant_types', 'property_mappings']);
+
+  const applied = await runAdoptOidcClient({ entry: 'media', apply: true }, { authentik, inventory });
+  assert.equal(applied.applied, true);
+  assert.deepEqual(applied.settingsChanges, dry.settingsChanges);
+
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.redirectUris, [
+    { matchingMode: 'strict', url: OIDC_URIS[0] },
+    { matchingMode: 'strict', url: mobileUri },
+  ]);
+});
+
 test('refuses naming AUTHENTIK_OIDC_SIGNING_KEY_NAME when the signing key cannot be resolved', async () => {
   const authentik = handMadeAuthentik();
   authentik.getSigningKeyId = async () => {

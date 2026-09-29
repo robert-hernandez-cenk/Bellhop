@@ -137,6 +137,9 @@ export interface GuestEntry {
   // Callback URLs Authentik's OpenID client redirects back to after a
   // sign-in, only meaningful in OIDC mode.
   oidcRedirectUris?: string[];
+  // Mobile-app hand-off callback addresses, additive to oidcRedirectUris
+  // (issue #22). Same "only meaningful in OIDC mode" caveat as above.
+  oidcMobileRedirectUris?: string[];
   unauthenticatedPaths?: string[];
   proxy?: boolean;
   app?: string;

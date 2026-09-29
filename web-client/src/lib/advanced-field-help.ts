@@ -27,6 +27,8 @@ export const ADVANCED_FIELD_HELP = {
     'How the auth group is enforced: forward-auth checks the login at the proxy, while OIDC gives the app its own Authentik login client. Only an admin may change it, and switching away from OIDC deletes that client.',
   'callback urls':
     'The addresses Authentik may send a user back to after an OIDC login. No effect unless the guest is gated in OIDC mode, and only an admin may change them.',
+  'mobile app redirect urls':
+    'Sign-in callbacks for a native mobile app, such as a custom scheme like app.example:///oauth-callback or the app server\'s own mobile-redirect page. Sent to Authentik alongside the web callback urls, and a login handed back to one of these gets one extra consent screen first so the phone can open the app.',
   'oidc client':
     'The issuer, client ID and client secret the app needs for its OIDC login, read live from Authentik. Only admins can reveal them.',
   'unauthenticated paths':

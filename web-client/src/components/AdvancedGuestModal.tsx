@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { EditableAuthGroup } from './EditableAuthGroup';
-import { EditableAuthMode, EditableOidcRedirectUris } from './EditableAuthMode';
+import { EditableAuthMode, EditableOidcRedirectUris, EditableOidcMobileRedirectUris } from './EditableAuthMode';
 import { EditableProxyManual } from './EditableProxyManual';
 import { EditableInsecureBackendTls } from './EditableInsecureBackendTls';
 import { EditablePort } from './EditablePort';
@@ -13,7 +13,8 @@ import { OidcCredentials } from './OidcCredentials';
 import type { GuestEntry, HostEntry, CustomScripts } from '../api/types';
 import { ADVANCED_FIELD_HELP, type AdvancedFieldLabel } from '../lib/advanced-field-help';
 import { communityScriptsUrl, communityScriptsLinkLabel } from '../lib/guest-display';
-import { isOidcEffective } from '../lib/oidc';
+import { isOidcEffective, accessFieldsFor, type AccessField } from '../lib/oidc';
+import { liveHelp, renderedAdvancedFields, type AdvancedTab, type HelpState } from '../lib/advanced-modal';
 
 interface Props {
   guest: GuestEntry;
@@ -26,29 +27,25 @@ interface Props {
 
 // At most one field's explanation is open at a time (FR-006), tracked here
 // rather than inside FieldHelp itself so a hover/click on one field can
-// close another. `pinned` distinguishes a hover-opened explanation (closes
-// on hover-out) from a click/tap/keyboard-opened one (stays open until
-// explicitly closed) -- see specs/011-advanced-field-help/data-model.md for
-// the exact transition table `helpFor` below implements.
-interface HelpState {
-  field: AdvancedFieldLabel;
-  pinned: boolean;
-}
+// close another -- see specs/011-advanced-field-help/data-model.md for the
+// exact transition table `helpFor` below implements, and
+// lib/advanced-modal.ts for HelpState and liveHelp.
 
 export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClose, onSaved }: Props) {
+  const [tab, setTab] = useState<AdvancedTab>('general');
   const appUrl = communityScriptsUrl(guest, customScripts);
   const appLinkLabel = communityScriptsLinkLabel(guest, customScripts);
+  const accessFields = new Set<AccessField>(accessFieldsFor(guest));
   const [help, setHelp] = useState<HelpState | null>(null);
   const showOidcClient = isOidcEffective(guest);
 
-  // A help state for a row that is no longer rendered (the oidc client row
-  // disappears once a save takes the guest out of OIDC mode) counts as
-  // closed, so a pinned explanation left behind there can't block hover on
-  // every other field.
+  // A help state for a row that is not rendered right now (the other tab's
+  // rows, an Access row the guest's auth mode hides, or the oidc client row
+  // outside effective OIDC) counts as closed, so a pinned explanation left
+  // behind there can't block hover on every visible field.
+  const rendered = renderedAdvancedFields(tab, guest);
   function live(state: HelpState | null): HelpState | null {
-    if (state === null) return null;
-    if (state.field === 'oidc client' && !showOidcClient) return null;
-    return state;
+    return liveHelp(state, rendered);
   }
   const current = live(help);
 
@@ -91,129 +88,141 @@ export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClos
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box advanced-modal-box" onClick={(e) => e.stopPropagation()}>
         <h3>Advanced — {guest.name}</h3>
-        <div className="advanced-modal-fields">
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('type')}
-            </div>
-            <div className="form-row-value">{guest.type}</div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('ip')}
-            </div>
-            <div className="form-row-value">{guest.ip}</div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('subdomains')}
-            </div>
-            <div className="form-row-value">
-              <EditableSubdomains guest={guest} hosts={hosts} guests={guests} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('host')}
-            </div>
-            <div className="form-row-value">{guest.host}</div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('vmid')}
-            </div>
-            <div className="form-row-value">{guest.vmid}</div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('port')}
-            </div>
-            <div className="form-row-value">
-              <EditablePort guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('read-only proxy')}
-            </div>
-            <div className="form-row-value">
-              <EditableProxyManual guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('insecure backend tls')}
-            </div>
-            <div className="form-row-value">
-              <EditableInsecureBackendTls guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('auth group')}
-            </div>
-            <div className="form-row-value">
-              <EditableAuthGroup guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('auth mode')}
-            </div>
-            <div className="form-row-value">
-              <EditableAuthMode guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('callback urls')}
-            </div>
-            <div className="form-row-value">
-              <EditableOidcRedirectUris guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          {showOidcClient && (
-            <div className="form-row">
-              <div className="form-row-label">
-                {fieldHelp('oidc client')}
-              </div>
-              <div className="form-row-value">
-                <OidcCredentials guest={guest} />
-              </div>
-            </div>
-          )}
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('unauthenticated paths')}
-            </div>
-            <div className="form-row-value">
-              <EditableUnauthenticatedPaths guest={guest} onSaved={onSaved} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('vpn')}
-            </div>
-            <div className="form-row-value">
-              <EditableVpn guest={guest} guests={guests} />
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-row-label">
-              {fieldHelp('app')}
-            </div>
-            <div className="form-row-value">
-              {guest.app ? (
-                <span className="app-cell">
-                  {guest.app}
-                  {appUrl && <ExternalLink href={appUrl} label={appLinkLabel} />}
-                </span>
-              ) : (
-                '—'
-              )}
-            </div>
-          </div>
+        <div className="tab-strip" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'general'}
+            className={`tab-button${tab === 'general' ? ' active' : ''}`}
+            onClick={() => setTab('general')}
+          >
+            General
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'access'}
+            className={`tab-button${tab === 'access' ? ' active' : ''}`}
+            onClick={() => setTab('access')}
+          >
+            Access
+          </button>
         </div>
+        {tab === 'general' && (
+          <div className="advanced-modal-fields">
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('type')}</div>
+              <div className="form-row-value">{guest.type}</div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('ip')}</div>
+              <div className="form-row-value">{guest.ip}</div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('subdomains')}</div>
+              <div className="form-row-value">
+                <EditableSubdomains guest={guest} hosts={hosts} guests={guests} onSaved={onSaved} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('host')}</div>
+              <div className="form-row-value">{guest.host}</div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('vmid')}</div>
+              <div className="form-row-value">{guest.vmid}</div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('port')}</div>
+              <div className="form-row-value">
+                <EditablePort guest={guest} onSaved={onSaved} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('read-only proxy')}</div>
+              <div className="form-row-value">
+                <EditableProxyManual guest={guest} onSaved={onSaved} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('insecure backend tls')}</div>
+              <div className="form-row-value">
+                <EditableInsecureBackendTls guest={guest} onSaved={onSaved} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('vpn')}</div>
+              <div className="form-row-value">
+                <EditableVpn guest={guest} guests={guests} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-row-label">{fieldHelp('app')}</div>
+              <div className="form-row-value">
+                {guest.app ? (
+                  <span className="app-cell">
+                    {guest.app}
+                    {appUrl && <ExternalLink href={appUrl} label={appLinkLabel} />}
+                  </span>
+                ) : (
+                  '—'
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {tab === 'access' && (
+          <div className="advanced-modal-fields">
+            {accessFields.has('authGroup') && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('auth group')}</div>
+                <div className="form-row-value">
+                  <EditableAuthGroup guest={guest} onSaved={onSaved} />
+                </div>
+              </div>
+            )}
+            {accessFields.has('authMode') && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('auth mode')}</div>
+                <div className="form-row-value">
+                  <EditableAuthMode guest={guest} onSaved={onSaved} />
+                </div>
+              </div>
+            )}
+            {accessFields.has('unauthenticatedPaths') && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('unauthenticated paths')}</div>
+                <div className="form-row-value">
+                  <EditableUnauthenticatedPaths guest={guest} onSaved={onSaved} />
+                </div>
+              </div>
+            )}
+            {accessFields.has('callbackUrls') && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('callback urls')}</div>
+                <div className="form-row-value">
+                  <EditableOidcRedirectUris guest={guest} onSaved={onSaved} />
+                </div>
+              </div>
+            )}
+            {accessFields.has('mobileRedirectUrls') && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('mobile app redirect urls')}</div>
+                <div className="form-row-value">
+                  <EditableOidcMobileRedirectUris guest={guest} onSaved={onSaved} />
+                </div>
+              </div>
+            )}
+            {accessFields.has('oidcClient') && showOidcClient && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('oidc client')}</div>
+                <div className="form-row-value">
+                  <OidcCredentials guest={guest} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="stats-row">
           <button className="button" onClick={onClose}>
             Close

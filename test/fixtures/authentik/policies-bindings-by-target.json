@@ -1,0 +1,33 @@
+{
+  "pagination": { "next": 0, "previous": 0, "count": 1, "current": 1, "total_pages": 1, "start_index": 1, "end_index": 1 },
+  "results": [
+    {
+      "pk": "00000000-0000-4000-8000-00000000000b",
+      "policy": "00000000-0000-4000-8000-000000000009",
+      "group": null,
+      "user": null,
+      "policy_obj": {
+        "pk": "00000000-0000-4000-8000-000000000009",
+        "name": "example-consent-policy",
+        "execution_logging": false,
+        "component": "ak-policy-expression-form",
+        "verbose_name": "Expression Policy",
+        "verbose_name_plural": "Expression Policies",
+        "meta_model_name": "authentik_policies_expression.expressionpolicy",
+        "bound_to": 1,
+        "expression": "# Example: gate a stage on a condition.\nreturn True"
+      },
+      "group_obj": null,
+      "user_obj": null,
+      "target": "00000000-0000-4000-8000-000000000007",
+      "negate": false,
+      "enabled": true,
+      "order": 0,
+      "timeout": 30,
+      "failure_result": false,
+      "expires": null,
+      "expiring": false
+    }
+  ],
+  "autocomplete": {}
+}

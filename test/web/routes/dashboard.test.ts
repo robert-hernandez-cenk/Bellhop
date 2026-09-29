@@ -1049,7 +1049,7 @@ test('PATCH guest authMode rejects a non-admin changing it, and leaves it unwrit
   const app = testApp(oidcInventory());
   const res = await asUser(request(app).patch('/api/inventory/guests/sonarr').send({ authMode: 'forward' }));
   assert.equal(res.status, 403);
-  assert.equal(res.body.error, "Only an admin may change an app's auth mode or callback URLs");
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode, callback URLs or mobile redirect URLs");
 
   const invRes = await request(app).get('/api/inventory');
   assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').authMode, 'oidc', 'rejected PATCH must not have been persisted');
@@ -1062,7 +1062,27 @@ test('PATCH guest oidcRedirectUris rejects a non-admin changing it', async () =>
       .send({ oidcRedirectUris: ['https://sonarr.example.com/oauth/callback2'] })
   );
   assert.equal(res.status, 403);
-  assert.equal(res.body.error, "Only an admin may change an app's auth mode or callback URLs");
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode, callback URLs or mobile redirect URLs");
+});
+
+test('PATCH guest oidcMobileRedirectUris rejects a non-admin changing it', async () => {
+  const res = await asUser(
+    request(testApp(oidcInventory()))
+      .patch('/api/inventory/guests/sonarr')
+      .send({ oidcMobileRedirectUris: ['com.example.app://callback'] })
+  );
+  assert.equal(res.status, 403);
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode, callback URLs or mobile redirect URLs");
+});
+
+test('PATCH guest oidcMobileRedirectUris is a no-op-safe re-submit of the current (empty) value for a non-admin', async () => {
+  const res = await asUser(
+    request(testApp(oidcInventory()))
+      .patch('/api/inventory/guests/sonarr')
+      .send({ oidcMobileRedirectUris: [], port: 8989 })
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.guest.port, 8989);
 });
 
 test('PATCH guest authMode is a no-op-safe re-submit of the current value for a non-admin', async () => {
@@ -1083,7 +1103,7 @@ test('PATCH guest authMode rejects an admin impersonating a non-admin group', as
   const app = testApp(oidcInventory(), undefined, undefined, undefined, undefined, store);
   const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ authMode: 'forward' });
   assert.equal(res.status, 403);
-  assert.equal(res.body.error, "Only an admin may change an app's auth mode or callback URLs");
+  assert.equal(res.body.error, "Only an admin may change an app's auth mode, callback URLs or mobile redirect URLs");
 });
 
 test('PATCH guest oidcRedirectUris rejects an admin impersonating a non-admin group', async () => {
@@ -1093,6 +1113,27 @@ test('PATCH guest oidcRedirectUris rejects an admin impersonating a non-admin gr
     oidcRedirectUris: ['https://sonarr.example.com/oauth/callback2'],
   });
   assert.equal(res.status, 403);
+});
+
+test('PATCH guest oidcMobileRedirectUris rejects an admin impersonating a non-admin group', async () => {
+  const store: ImpersonationStore = new Map([['admin', 'bellhop-app-users']]);
+  const app = testApp(oidcInventory(), undefined, undefined, undefined, undefined, store);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({
+    oidcMobileRedirectUris: ['com.example.app://callback'],
+  });
+  assert.equal(res.status, 403);
+});
+
+test('PATCH guest oidcMobileRedirectUris lets an admin change it and it persists', async () => {
+  const app = testApp(oidcInventory(), undefined, new FakeAuthentikClient());
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({
+    oidcMobileRedirectUris: ['com.example.app://callback'],
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.guest.oidcMobileRedirectUris, ['com.example.app://callback']);
+
+  const invRes = await request(app).get('/api/inventory');
+  assert.deepEqual(invRes.body.guests.find((g: any) => g.name === 'sonarr').oidcMobileRedirectUris, ['com.example.app://callback']);
 });
 
 test('PATCH guest authMode/oidcRedirectUris lets an admin change them and reports oidcDiscoveryFailures for this guest when discovery fails', async () => {

@@ -528,7 +528,9 @@ today), `authMode: oidc`, and `oidcRedirectUris` (the app's own callback
 URL — an absolute `http://`/`https://` address, e.g.
 `https://media.example.com/auth/callback`, whatever the app's own OIDC/
 OpenID settings call for; more than one is allowed). For a guest, use the
-Dashboard's Advanced modal (admin only). Its fields each save on their own,
+Dashboard's Advanced modal (admin only) — its General/Access tabs, see
+"Access tab" below; the callback/mobile-redirect fields live on Access.
+Its fields each save on their own,
 and a save that would leave an entry in OIDC mode with an access tier but
 no callback URL is rejected, so go in this order: set the access tier, save
 the Callback URLs, and only then switch Auth mode to OIDC. A host or
@@ -536,6 +538,69 @@ external site is DB/CLI-only, the same as `authGroup` itself. Then run
 `bellhop sync-authentik --apply` (or save the Dashboard edit, which runs
 the same sync as part of its push-live step) to create the OpenID client
 in Authentik.
+
+**Mobile app redirect URLs.** An OIDC-mode entry also accepts an optional
+`oidcMobileRedirectUris` list, alongside `oidcRedirectUris`, for a native
+mobile app's own sign-in callback — either a custom-scheme URI (e.g.
+`app.example:///oauth-callback`) or an `https://` hand-off page the app
+opens from (e.g. `https://books.example.com/auth/openid/mobile-redirect`).
+Use it when the app has an Android/iOS client that signs in through the
+phone's browser and gets handed back to the app; a plain browser-only login
+never needs it. Any scheme is accepted except `javascript:`, `data:`,
+`file:` and `vbscript:` (any letter case), which are rejected with a
+message naming the rejected value. A URI must not appear in both the
+callback list and the mobile list of the same entry — the edit is rejected,
+naming the duplicate, though this is only checked when the entry is edited,
+never when a saved inventory is loaded. `sync-authentik` sets the OpenID
+client's allowed callbacks to the callback list plus the mobile list
+together (deduplicated); a change to only the mobile list is reported the
+same as a callback-list change and never rotates the client's credentials.
+Set it through the Dashboard's Advanced modal (Access tab, admin only,
+same rule as the callback URLs), the MCP server's `edit_guest` tool, or
+YAML import — there is no CLI edit command for it.
+
+**The mobile consent step.** Once any entry anywhere in the inventory has
+a mobile redirect URL in effect, `sync-authentik` also adds a one-click
+consent step to the shared authorization flow, scoped to exactly those
+URLs: a consent stage named `bellhop-mobile-app-consent`, a binding of it
+to the flow, an expression policy named
+`bellhop-consent-on-mobile-redirect`, and a binding of that policy to the
+stage binding. The policy passes — showing the consent page — only when
+the login's own redirect URI exactly matches one of the mobile URLs
+currently in effect across the whole inventory; every other login
+(browser, or a mobile URL that isn't configured) skips it automatically,
+with zero clicks. This fixes a real Android quirk: with an existing
+Authentik session, the default authorization flow is nothing but automatic
+redirects, and the in-app browser tab can refuse to hand off to the app
+when there was no user gesture in the chain — one "Continue" click before
+the hand-off is enough to satisfy it. Any error while the policy is
+evaluated (an Authentik quirk, an unreachable dependency) means "no
+consent page," the same as it not matching — a browser login is never
+blocked by it. The four objects are created only while at least one
+mobile URL is in effect anywhere; removing the last one is what removes
+all four again on the next sync, leaving nothing behind. Bellhop only ever
+touches objects it recognizes as its own (a consent stage/expression
+policy under those exact names, the policy also carrying a comment marker
+identifying it as Bellhop-managed) — a same-named object it didn't create
+is reported as a conflict and left untouched, and the rest of the sync
+still completes. After creating or changing the stage binding or the
+policy, `sync-authentik` clears Authentik's cached flow plans, so a login
+already in progress under the old configuration isn't served a stale plan.
+**If you already have a hand-made consent stage and policy on this same
+flow (under different names) from working around this yourself, delete
+them once Bellhop's copy is in place** — otherwise a mobile sign-in shows
+two consent pages back to back.
+
+The consent step is bound only to the flow `AUTHENTIK_AUTHORIZATION_FLOW_SLUG`
+names. An OpenID client that uses a different authorization flow (one
+adopted with `adopt-oidc-client` that was set up with its own flow, say)
+still gets its mobile URLs in its allowed callbacks, but no consent step.
+`adopt-oidc-client` itself writes the client's callbacks (web and mobile)
+but does not reconcile the consent step; the next `sync-authentik` run, or
+any Dashboard guest edit, creates it. When a Dashboard save changes an
+entry's mobile redirect URLs and the consent step then reports a conflict
+or an error, the save still succeeds and the problem is shown as a warning
+under that field (and returned by the MCP `edit_guest` tool).
 
 A Dashboard save pushes the proxy configuration change *before* the Authentik sync runs,
 so switching an entry to OIDC removes its `forward_auth` gate first. If the
@@ -590,7 +655,26 @@ mappings, and update on Applications. `sync-authentik` lists OAuth2
 Providers on every run. When no entry is in OIDC mode, a token that cannot
 read them is tolerated — the sync carries on as forward-auth-only gating
 always did — but once any entry is in OIDC mode, a token missing these
-scopes fails the whole sync, not just the OIDC part of it.
+scopes fails the whole sync, not just the OIDC part of it. Once any *mobile*
+redirect URL is set anywhere in the inventory, the token additionally needs
+read/write on consent stages, flow-stage bindings, expression policies and
+policy bindings, plus permission to clear the flow cache — the mobile
+consent step above. As with the OIDC scopes, this is only ever checked
+against a token that actually has a mobile URL to reconcile: a deployment
+with no mobile URLs set never needs these and a token missing them causes
+no failure, since there is nothing to read or write yet.
+
+**Access tab.** The guest Advanced modal splits its fields across two tabs:
+General (type, IP, host, VMID, subdomains, port, read-only proxy, insecure
+backend TLS, VPN, app) and Access (auth group, auth mode, and whichever
+fields apply to the selected auth mode — unauthenticated paths in forward
+mode; callback URLs, mobile app redirect URLs, and OIDC client
+issuer/client ID/secret in OIDC mode). A gated forward-mode guest with no
+callback URL yet also shows the callback URLs field, noted "Needed before
+switching auth mode to OIDC.", since that switch is refused until one is
+set. Switching Auth mode back and forth
+never loses a hidden field's saved value — it's simply not shown while the
+other mode is selected.
 
 **Signing key.** A new OpenID client signs its identity tokens with the
 Authentik certificate-keypair named `AUTHENTIK_OIDC_SIGNING_KEY_NAME`

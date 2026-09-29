@@ -78,6 +78,47 @@ test('runImportYamlInventory accepts the tracked example file, including its OID
   assert.equal(oidcGuest!.authGroup, 'bellhop-app-users');
   assert.equal(oidcGuest!.authMode, 'oidc');
   assert.deepEqual(oidcGuest!.oidcRedirectUris, ['https://bookstack.example.com/oidc/callback']);
+  // T008 (issue #22): the example file's bookstack guest also carries an
+  // active oidcMobileRedirectUris example alongside oidcRedirectUris.
+  assert.deepEqual(oidcGuest!.oidcMobileRedirectUris, ['app.example:///oauth-callback']);
+});
+
+// T008 (issue #22): oidcMobileRedirectUris round-trips through
+// import-yaml-inventory on all three entry types that carry it.
+test('runImportYamlInventory round-trips oidcMobileRedirectUris on a host, a guest, and an external site', async () => {
+  const yaml = [
+    'domain: example.com',
+    'hosts:',
+    '  - name: pve1',
+    '    ssh_target: pve1.local',
+    '    ssh_user: root',
+    "    oidcMobileRedirectUris: ['app.example:///host-callback']",
+    'guests:',
+    '  - name: media',
+    '    type: lxc',
+    '    vmid: 105',
+    '    host: pve1',
+    "    oidcMobileRedirectUris: ['app.example:///guest-callback']",
+    'externalSites:',
+    '  - name: nas',
+    '    ip: 192.168.1.20',
+    '    subdomains:',
+    '      - nas',
+    "    oidcMobileRedirectUris: ['app.example:///site-callback']",
+    '',
+  ].join('\n');
+  const yamlPath = tempYamlFile(yaml);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  const result = await runImportYamlInventory({ yamlPath, dbPath, apply: true });
+  assert.equal(result.applied, true);
+
+  const reloaded = loadInventory(dbPath);
+  assert.deepEqual(reloaded.hosts.find((h) => h.name === 'pve1')?.oidcMobileRedirectUris, ['app.example:///host-callback']);
+  assert.deepEqual(reloaded.guests.find((g) => g.name === 'media')?.oidcMobileRedirectUris, ['app.example:///guest-callback']);
+  assert.deepEqual(
+    reloaded.externalSites?.find((s) => s.name === 'nas')?.oidcMobileRedirectUris,
+    ['app.example:///site-callback']
+  );
 });
 
 test('runImportYamlInventory rejects YAML that fails validateInventory', async () => {

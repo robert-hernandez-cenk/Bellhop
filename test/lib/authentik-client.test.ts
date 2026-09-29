@@ -1,11 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
 import type { AuthentikProxyProvider, AuthentikUser } from '../../src/lib/authentik-client.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 
 const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
+
+// Redacted captures from a live Authentik 2026.8.2 instance (issue #22,
+// research.md R4) -- see test/fixtures/authentik/ and specs/010-oidc-mobile-
+// redirects/research.md for provenance. Every pk/uuid, stage/policy name, and
+// expression in these files is a fake/example value; only field names,
+// types, nesting, and (mostly) array lengths are real.
+const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '../fixtures/authentik');
+function fixture(name: string): unknown {
+  return JSON.parse(readFileSync(join(FIXTURES_DIR, name), 'utf8'));
+}
 
 test('UnconfiguredAuthentikClient rejects every method with a clear configuration error', async () => {
   const client = new UnconfiguredAuthentikClient();
@@ -396,6 +409,351 @@ test('RealAuthentikClient.listOAuth2Providers excludes a proxy provider pk prese
         ['9'],
         'the proxy provider (pk 5) must not be reported as an OAuth2 provider'
       );
+    }
+  );
+});
+
+// --- Mobile-consent step (issue #22, T011) --------------------------------
+
+test('UnconfiguredAuthentikClient rejects the mobile-consent-step methods too', async () => {
+  const client = new UnconfiguredAuthentikClient();
+  await assert.rejects(client.findStageByName('a'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.getConsentStage('1'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.createConsentStage({ name: 'a', mode: 'always_require' }), {
+    message: UNCONFIGURED_MESSAGE,
+  });
+  await assert.rejects(client.updateConsentStage('1', { mode: 'always_require' }), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.deleteStage('1'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.findPolicyByName('a'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.createExpressionPolicy({ name: 'a', expression: 'return True' }), {
+    message: UNCONFIGURED_MESSAGE,
+  });
+  await assert.rejects(client.updateExpressionPolicy('1', { expression: 'return True' }), {
+    message: UNCONFIGURED_MESSAGE,
+  });
+  await assert.rejects(client.deletePolicy('1'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.listFlowStageBindings('1'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(
+    client.createFlowStageBinding({ flowId: '1', stageId: '2', order: 10, evaluateOnPlan: false, reEvaluatePolicies: true }),
+    { message: UNCONFIGURED_MESSAGE }
+  );
+  await assert.rejects(client.updateFlowStageBinding('1', { evaluateOnPlan: false, reEvaluatePolicies: true }), {
+    message: UNCONFIGURED_MESSAGE,
+  });
+  await assert.rejects(client.deleteFlowStageBinding('1'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.listPolicyBindingsForTarget('1'), { message: UNCONFIGURED_MESSAGE });
+  await assert.rejects(client.createPolicyToTargetBinding({ targetId: '1', policyId: '2' }), {
+    message: UNCONFIGURED_MESSAGE,
+  });
+  await assert.rejects(client.clearFlowCache(), { message: UNCONFIGURED_MESSAGE });
+});
+
+test('RealAuthentikClient.findStageByName maps a matching stage by name, any type, and returns undefined otherwise', async () => {
+  const stagesAllByName = fixture('stages-all-by-name.json');
+  await withStubbedFetch(
+    (url) => (url.includes('/stages/all/?name=') ? json(stagesAllByName) : new Response(null, { status: 204 })),
+    async (client, requests) => {
+      const stage = await client.findStageByName('example-mobile-consent');
+      assert.deepEqual(stage, {
+        id: '00000000-0000-4000-8000-000000000003',
+        name: 'example-mobile-consent',
+        model: 'authentik_stages_consent.consentstage',
+      });
+      assert.equal(requests[0]?.url, 'https://auth.example.com/api/v3/stages/all/?name=example-mobile-consent');
+      assert.equal(requests[0]?.method, 'GET');
+    }
+  );
+
+  await withStubbedFetch(
+    () => json({ results: [] }),
+    async (client) => {
+      assert.equal(await client.findStageByName('does-not-exist'), undefined);
+    }
+  );
+});
+
+test('RealAuthentikClient consent stage CRUD hits /stages/consent/ with the right bodies and maps the response', async () => {
+  const mobileStage = fixture('stages-consent-detail.json'); // 'example-mobile-consent', mode 'always_require'
+  const mapped = { id: '00000000-0000-4000-8000-000000000003', name: 'example-mobile-consent', mode: 'always_require' };
+
+  await withStubbedFetch(
+    () => json(mobileStage),
+    async (client, requests) => {
+      assert.deepEqual(await client.getConsentStage('00000000-0000-4000-8000-000000000003'), mapped);
+      assert.deepEqual(
+        await client.createConsentStage({ name: 'example-mobile-consent', mode: 'always_require' }),
+        mapped
+      );
+      await client.updateConsentStage('00000000-0000-4000-8000-000000000003', { mode: 'always_require' });
+      await client.deleteStage('00000000-0000-4000-8000-000000000003');
+
+      assert.deepEqual(requests, [
+        { url: 'https://auth.example.com/api/v3/stages/consent/00000000-0000-4000-8000-000000000003/', method: 'GET', body: undefined },
+        {
+          url: 'https://auth.example.com/api/v3/stages/consent/',
+          method: 'POST',
+          body: { name: 'example-mobile-consent', mode: 'always_require' },
+        },
+        {
+          url: 'https://auth.example.com/api/v3/stages/consent/00000000-0000-4000-8000-000000000003/',
+          method: 'PATCH',
+          body: { mode: 'always_require' },
+        },
+        {
+          url: 'https://auth.example.com/api/v3/stages/consent/00000000-0000-4000-8000-000000000003/',
+          method: 'DELETE',
+          body: undefined,
+        },
+      ]);
+    }
+  );
+});
+
+// The live "all" listing mixes policy types (expression, event_matcher,
+// password, ...) -- findPolicyByName's mapping must hold both ways: an
+// expression policy carries `expression`, and a non-expression policy
+// carries `model` alone with `expression: undefined` rather than throwing
+// or dropping the match.
+test('RealAuthentikClient.findPolicyByName matches client-side (the server-side name filter is ignored) and maps both an expression and a non-expression policy', async () => {
+  const policiesAll = fixture('policies-all.json');
+  await withStubbedFetch(
+    (url) => (url.includes('/policies/all/?page_size=500') ? json(policiesAll) : new Response(null, { status: 204 })),
+    async (client, requests) => {
+      const policy = await client.findPolicyByName('example-consent-policy');
+      assert.deepEqual(policy, {
+        id: '00000000-0000-4000-8000-000000000009',
+        name: 'example-consent-policy',
+        model: 'authentik_policies_expression.expressionpolicy',
+        expression: '# Example: gate a stage on a condition.\nreturn True',
+      });
+      assert.equal(requests[0]?.url, 'https://auth.example.com/api/v3/policies/all/?page_size=500');
+
+      const nonExpression = await client.findPolicyByName('example-event-matcher-policy');
+      assert.deepEqual(nonExpression, {
+        id: '00000000-0000-4000-8000-00000000000c',
+        name: 'example-event-matcher-policy',
+        model: 'authentik_policies_event_matcher.eventmatcherpolicy',
+        expression: undefined,
+      });
+
+      assert.equal(await client.findPolicyByName('does-not-exist'), undefined);
+    }
+  );
+});
+
+// Driven from the real policies-all.json shape (pagination.count bumped
+// above the result count) rather than a fabricated response -- the count
+// Authentik actually reports lives under `pagination.count`, never a
+// top-level `count`, so a stubbed `{ count, results }` shape would never
+// occur against a real instance and would prove nothing about this guard.
+test('RealAuthentikClient.findPolicyByName throws when Authentik reports more policies than the page returned', async () => {
+  const policiesAll = fixture('policies-all.json') as {
+    pagination: Record<string, unknown>;
+    results: unknown[];
+  };
+  const truncated = {
+    ...policiesAll,
+    pagination: { ...policiesAll.pagination, count: policiesAll.results.length + 1 },
+  };
+  await withStubbedFetch(
+    () => json(truncated),
+    async (client) => {
+      await assert.rejects(client.findPolicyByName('anything'), /pagination is not implemented/);
+    }
+  );
+});
+
+test('RealAuthentikClient expression policy CRUD hits /policies/expression/ with the right bodies and maps the response', async () => {
+  const policiesAll = fixture('policies-all.json') as { results: Array<Record<string, unknown>> };
+  const policy = policiesAll.results[0]!; // 'example-consent-policy'
+  const mapped = {
+    id: '00000000-0000-4000-8000-000000000009',
+    name: 'example-consent-policy',
+    model: 'authentik_policies_expression.expressionpolicy',
+    expression: '# Example: gate a stage on a condition.\nreturn True',
+  };
+
+  await withStubbedFetch(
+    () => json(policy),
+    async (client, requests) => {
+      assert.deepEqual(
+        await client.createExpressionPolicy({ name: 'example-consent-policy', expression: mapped.expression }),
+        mapped
+      );
+      await client.updateExpressionPolicy('00000000-0000-4000-8000-000000000009', { expression: 'return False' });
+      await client.deletePolicy('00000000-0000-4000-8000-000000000009');
+
+      assert.deepEqual(requests, [
+        {
+          url: 'https://auth.example.com/api/v3/policies/expression/',
+          method: 'POST',
+          body: { name: 'example-consent-policy', expression: mapped.expression, execution_logging: false },
+        },
+        {
+          url: 'https://auth.example.com/api/v3/policies/expression/00000000-0000-4000-8000-000000000009/',
+          method: 'PATCH',
+          body: { expression: 'return False' },
+        },
+        {
+          url: 'https://auth.example.com/api/v3/policies/expression/00000000-0000-4000-8000-000000000009/',
+          method: 'DELETE',
+          body: undefined,
+        },
+      ]);
+    }
+  );
+});
+
+test('RealAuthentikClient.listFlowStageBindings maps a target-filtered flow-stage-binding list', async () => {
+  const bindings = fixture('flows-bindings-by-target.json');
+  await withStubbedFetch(
+    (url) => (url.includes('/flows/bindings/?target=') ? json(bindings) : new Response(null, { status: 204 })),
+    async (client, requests) => {
+      const result = await client.listFlowStageBindings('00000000-0000-4000-8000-000000000001');
+      assert.deepEqual(result, [
+        {
+          id: '00000000-0000-4000-8000-000000000007',
+          policyBindingModelId: '00000000-0000-4000-8000-000000000008',
+          flowId: '00000000-0000-4000-8000-000000000001',
+          stageId: '00000000-0000-4000-8000-000000000003',
+          order: 10,
+          evaluateOnPlan: false,
+          reEvaluatePolicies: true,
+        },
+      ]);
+      assert.equal(
+        requests[0]?.url,
+        'https://auth.example.com/api/v3/flows/bindings/?target=00000000-0000-4000-8000-000000000001&page_size=500'
+      );
+    }
+  );
+});
+
+test('RealAuthentikClient.createFlowStageBinding sends the fixed policy_engine_mode/invalid_response_action, and update/delete hit the right URLs', async () => {
+  const bindings = fixture('flows-bindings-by-target.json') as { results: Array<Record<string, unknown>> };
+  const binding = bindings.results[0]!;
+  const mapped = {
+    id: '00000000-0000-4000-8000-000000000007',
+    policyBindingModelId: '00000000-0000-4000-8000-000000000008',
+    flowId: '00000000-0000-4000-8000-000000000001',
+    stageId: '00000000-0000-4000-8000-000000000003',
+    order: 10,
+    evaluateOnPlan: false,
+    reEvaluatePolicies: true,
+  };
+
+  await withStubbedFetch(
+    () => json(binding),
+    async (client, requests) => {
+      assert.deepEqual(
+        await client.createFlowStageBinding({
+          flowId: '00000000-0000-4000-8000-000000000001',
+          stageId: '00000000-0000-4000-8000-000000000003',
+          order: 10,
+          evaluateOnPlan: false,
+          reEvaluatePolicies: true,
+        }),
+        mapped
+      );
+      await client.updateFlowStageBinding('00000000-0000-4000-8000-000000000007', {
+        evaluateOnPlan: false,
+        reEvaluatePolicies: true,
+      });
+      await client.deleteFlowStageBinding('00000000-0000-4000-8000-000000000007');
+
+      assert.deepEqual(requests, [
+        {
+          url: 'https://auth.example.com/api/v3/flows/bindings/',
+          method: 'POST',
+          body: {
+            target: '00000000-0000-4000-8000-000000000001',
+            stage: '00000000-0000-4000-8000-000000000003',
+            order: 10,
+            evaluate_on_plan: false,
+            re_evaluate_policies: true,
+            policy_engine_mode: 'any',
+            invalid_response_action: 'retry',
+          },
+        },
+        {
+          url: 'https://auth.example.com/api/v3/flows/bindings/00000000-0000-4000-8000-000000000007/',
+          method: 'PATCH',
+          body: { evaluate_on_plan: false, re_evaluate_policies: true },
+        },
+        {
+          url: 'https://auth.example.com/api/v3/flows/bindings/00000000-0000-4000-8000-000000000007/',
+          method: 'DELETE',
+          body: undefined,
+        },
+      ]);
+    }
+  );
+});
+
+// The live quirk R4 calls out: filtering by the flow-stage binding's own pk
+// fails against a real instance, so the query uses policybindingmodel_ptr_id
+// -- but the response's own `target` field reports the flow-stage binding's
+// pk, not the policybindingmodel_ptr_id used to query it. targetId must
+// reflect the *response's* target field, not the value queried with.
+test('RealAuthentikClient.listPolicyBindingsForTarget maps the flow-stage binding pk (not the policybindingmodel_ptr_id queried with) to targetId', async () => {
+  const bindings = fixture('policies-bindings-by-target.json');
+  await withStubbedFetch(
+    (url) => (url.includes('/policies/bindings/?target=') ? json(bindings) : new Response(null, { status: 204 })),
+    async (client, requests) => {
+      // Queried by the flow-stage binding's policybindingmodel_ptr_id...
+      const result = await client.listPolicyBindingsForTarget('00000000-0000-4000-8000-000000000008');
+      // ...but the mapped targetId is the flow-stage binding's own pk, which
+      // is what the response's `target` field actually carries.
+      assert.deepEqual(result, [
+        {
+          id: '00000000-0000-4000-8000-00000000000b',
+          targetId: '00000000-0000-4000-8000-000000000007',
+          policyId: '00000000-0000-4000-8000-000000000009',
+        },
+      ]);
+      assert.equal(
+        requests[0]?.url,
+        'https://auth.example.com/api/v3/policies/bindings/?target=00000000-0000-4000-8000-000000000008&page_size=500'
+      );
+    }
+  );
+});
+
+test('RealAuthentikClient.createPolicyToTargetBinding sends the fixed policy-binding defaults', async () => {
+  await withStubbedFetch(
+    () => new Response(null, { status: 204 }),
+    async (client, requests) => {
+      await client.createPolicyToTargetBinding({
+        targetId: '00000000-0000-4000-8000-000000000007',
+        policyId: '00000000-0000-4000-8000-000000000009',
+      });
+      assert.deepEqual(requests, [
+        {
+          url: 'https://auth.example.com/api/v3/policies/bindings/',
+          method: 'POST',
+          body: {
+            target: '00000000-0000-4000-8000-000000000007',
+            policy: '00000000-0000-4000-8000-000000000009',
+            order: 0,
+            enabled: true,
+            negate: false,
+            timeout: 30,
+            failure_result: false,
+          },
+        },
+      ]);
+    }
+  );
+});
+
+test('RealAuthentikClient.clearFlowCache POSTs to the cache_clear endpoint', async () => {
+  await withStubbedFetch(
+    () => new Response(null, { status: 204 }),
+    async (client, requests) => {
+      await client.clearFlowCache();
+      assert.deepEqual(requests, [
+        { url: 'https://auth.example.com/api/v3/flows/instances/cache_clear/', method: 'POST', body: undefined },
+      ]);
     }
   );
 });

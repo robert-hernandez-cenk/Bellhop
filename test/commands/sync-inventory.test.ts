@@ -107,6 +107,41 @@ test('runSyncInventory preserves an existing guest\'s app slug', async () => {
   assert.equal(media?.app, 'plex');
 });
 
+// T010 (issue #22): oidcMobileRedirectUris is preserved on an existing
+// guest across a sync that refreshes its ip, the same way app/subdomains/
+// port/proxy already are (finalEntry's `{ ...existing }` spread).
+test('runSyncInventory preserves an existing guest\'s oidcMobileRedirectUris when its ip is refreshed', async () => {
+  const inv: Inventory = {
+    ...baseInventory,
+    guests: [
+      {
+        name: 'media',
+        type: 'lxc',
+        vmid: 105,
+        host: 'pve1',
+        ip: '192.168.1.50',
+        oidcMobileRedirectUris: ['app.example:///callback'],
+      },
+      { name: 'gone', type: 'lxc', vmid: 199, host: 'pve1' },
+    ],
+  };
+  const ssh = new FakeSSHClient(
+    responderFor({
+      lxcList: [{ vmid: 105, name: 'media', template: 0 }],
+      qemuList: [],
+      configByVmid: {
+        105: { net0: 'name=eth0,bridge=vmbr0,ip=192.168.1.99/24,gw=192.168.1.1' },
+      },
+    })
+  );
+
+  const result = await runSyncInventory({}, { ssh, inventory: inv });
+
+  const media = result.guests.find((g) => g.name === 'media');
+  assert.equal(media?.ip, '192.168.1.99', 'the ip should have been refreshed from the live guest config');
+  assert.deepEqual(media?.oidcMobileRedirectUris, ['app.example:///callback']);
+});
+
 test('runSyncInventory reports a removed guest that no longer appears live', async () => {
   const ssh = new FakeSSHClient(
     responderFor({
