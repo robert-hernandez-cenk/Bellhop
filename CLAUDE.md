@@ -1965,7 +1965,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   written to `document.documentElement.dataset.theme`; `index.css` keys its
   dark-mode variable overrides off `:root[data-theme='dark']` rather than
   `@media (prefers-color-scheme: dark)`, so any new themed CSS should target
-  that selector too.
+  that selector too. The guest Advanced modal's field explanations
+  (issue #34) live in `web-client/src/lib/advanced-field-help.ts`, keyed by
+  label and pinned by a test against the modal source, and are shown via
+  `FieldHelp` (`web-client/src/components/FieldHelp.tsx`), a reusable ⓘ
+  disclosure used instead of a hover-only `title` since `title` never shows
+  on touch.
 - **Web UI inventory reload** (`refreshInventory` in `src/lib/inventory.ts`,
   wired into `src/web/app.ts`'s `buildApp`): the web service loads
   `inventory` once at startup (`src/web/server.ts`), but every `/api`

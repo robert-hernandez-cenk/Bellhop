@@ -113,8 +113,8 @@ None. The existing `web-client/` app and test layout are used as they are.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T010 [P] Update `README.md` where the Dashboard's Advanced modal is described (search for "Advanced"): each field now has an ⓘ explanation you can reach by hover, tap or keyboard. If README doesn't describe the modal, add one sentence to the Dashboard section.
-- [ ] T011 [P] Update `CLAUDE.md`'s "Web UI responsiveness/theming" bullet with one sentence:
+- [x] T010 [P] Update `README.md` where the Dashboard's Advanced modal is described (search for "Advanced"): each field now has an ⓘ explanation you can reach by hover, tap or keyboard. If README doesn't describe the modal, add one sentence to the Dashboard section.
+- [x] T011 [P] Update `CLAUDE.md`'s "Web UI responsiveness/theming" bullet with one sentence:
   - the Advanced modal's field explanations live in `web-client/src/lib/advanced-field-help.ts` (issue #34), keyed by label and pinned by a test against the modal source;
   - `FieldHelp` (`web-client/src/components/FieldHelp.tsx`) is the reusable ⓘ disclosure, used instead of a hover-only `title` because `title` never shows on touch.
 
