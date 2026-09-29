@@ -6,7 +6,7 @@
 // or nothing at all -- see contracts/ui-and-messages.md ("Settings page
 // text").
 
-import type { SettingsResponse } from '../api/types.ts';
+import type { SettingsResponse, ProxyDriverInfo } from '../api/types.ts';
 
 export type ProxyHost = NonNullable<SettingsResponse['derived']['proxy']>;
 
@@ -16,3 +16,17 @@ export function proxyHostText(proxy: ProxyHost | null): string {
 }
 
 export const LAN_GATEWAYS_EMPTY_TEXT = 'LAN gateways: none yet — no host has a midScheme';
+
+// The Settings page's Proxy driver <select> options, in the server's own
+// registration order (issue #33) -- only the default driver's label gets
+// the " (default)" suffix, so an operator can tell which id an unset
+// setting actually resolves to without a separate "(unset)" option.
+export function proxyDriverOptions(
+  drivers: ProxyDriverInfo[],
+  defaultId: string,
+): Array<{ value: string; label: string }> {
+  return drivers.map((driver) => ({
+    value: driver.id,
+    label: driver.id === defaultId ? `${driver.label} (default)` : driver.label,
+  }));
+}

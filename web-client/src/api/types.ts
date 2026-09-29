@@ -271,10 +271,23 @@ export interface SettingsValues {
   proxyConfigPath?: string;
 }
 
+// One entry per registered reverse-proxy driver (src/lib/proxy/index.ts's
+// listDrivers(), in registration order) -- mirrors GET/PATCH
+// /api/settings's proxyDrivers field. Independent of inventory, so this
+// list is the same regardless of which driver is currently active.
+export interface ProxyDriverInfo {
+  id: string;
+  label: string;
+  defaultConfigPath: string | null;
+  suggestedStatusPagePath: string | null;
+}
+
 export interface SettingsResponse {
   settings: SettingsValues;
   derived: {
     lanGateways: Array<{ host: string; gateway: string }>;
     proxy: { name: string; ip: string } | null;
   };
+  proxyDrivers: ProxyDriverInfo[];
+  defaultProxyDriver: string;
 }

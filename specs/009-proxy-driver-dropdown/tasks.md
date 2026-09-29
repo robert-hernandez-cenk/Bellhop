@@ -63,23 +63,23 @@ None needed: existing project, dependencies installed.
 
 **Independent Test**: `GET /api/settings` includes `proxyDrivers`/`defaultProxyDriver`. On the page, the field is a `<select>` listing "Caddy (default)" and "No proxy"; Save and Clear round-trip.
 
-- [ ] T008 [US1] Write failing tests in `test/web/routes/settings.test.ts`:
+- [x] T008 [US1] Write failing tests in `test/web/routes/settings.test.ts`:
   - GET and PATCH responses include `proxyDrivers` exactly as in `contracts/settings-api.md` (Caddy first with its paths, None with `null`s) and `defaultProxyDriver: 'caddy'`.
   - PATCH `{proxyDriver: 'none'}` returns 200 and persists.
   - PATCH `{proxyDriver: 'nginx'}` returns 400.
   - PATCH `{proxyDriver: null}` clears it.
   - A stored `proxyConfigPath` is still returned while `proxyDriver` is `none`.
-- [ ] T009 [US1] In `src/web/routes/settings.ts`, add `proxyDrivers` (from `listDrivers()`, mapped to `{ id, label, defaultConfigPath, suggestedStatusPagePath: statusPage?.suggestedPath ?? null }`) and `defaultProxyDriver: DEFAULT_PROXY_DRIVER_ID` to both the GET and PATCH responses, through one shared response builder.
-- [ ] T010 [P] [US1] In `web-client/src/api/types.ts`, add a `ProxyDriverInfo` interface and add `proxyDrivers: ProxyDriverInfo[]` and `defaultProxyDriver: string` to `SettingsResponse`.
-- [ ] T011 [US1] Write failing tests in `test/web-client/settings-display.test.ts` for `proxyDriverOptions(drivers, defaultId)`. It returns `[{ value: 'caddy', label: 'Caddy (default)' }, { value: 'none', label: 'No proxy' }]`, suffixing only the default's label with " (default)".
-- [ ] T012 [US1] Implement `proxyDriverOptions` in `web-client/src/lib/settings-display.ts`. Keep the file framework-free.
-- [ ] T013 [US1] Update `web-client/src/pages/SettingsPage.tsx`:
+- [x] T009 [US1] In `src/web/routes/settings.ts`, add `proxyDrivers` (from `listDrivers()`, mapped to `{ id, label, defaultConfigPath, suggestedStatusPagePath: statusPage?.suggestedPath ?? null }`) and `defaultProxyDriver: DEFAULT_PROXY_DRIVER_ID` to both the GET and PATCH responses, through one shared response builder.
+- [x] T010 [P] [US1] In `web-client/src/api/types.ts`, add a `ProxyDriverInfo` interface and add `proxyDrivers: ProxyDriverInfo[]` and `defaultProxyDriver: string` to `SettingsResponse`.
+- [x] T011 [US1] Write failing tests in `test/web-client/settings-display.test.ts` for `proxyDriverOptions(drivers, defaultId)`. It returns `[{ value: 'caddy', label: 'Caddy (default)' }, { value: 'none', label: 'No proxy' }]`, suffixing only the default's label with " (default)".
+- [x] T012 [US1] Implement `proxyDriverOptions` in `web-client/src/lib/settings-display.ts`. Keep the file framework-free.
+- [x] T013 [US1] Update `web-client/src/pages/SettingsPage.tsx`:
   - Render the `proxyDriver` field as a `<select className="field-input">` whose options come from `proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver)`.
   - Its displayed value is `drafts.proxyDriver || data.defaultProxyDriver`.
   - Save sends the selected id, and Clear sends `null`, exactly as the text fields do.
   - Drop the proxyDriver `placeholder`, and update its help text to describe "No proxy" (Bellhop writes no proxy configuration; forward-auth assumes your own proxy enforces it).
   - Other fields stay `<input>`s.
-- [ ] T014 [US1] Run `npm run typecheck`, `npm test` and `npm run web:build`, then commit `Proxy driver dropdown on the Settings page (#33, US1)`.
+- [x] T014 [US1] Run `npm run typecheck`, `npm test` and `npm run web:build`, then commit `Proxy driver dropdown on the Settings page (#33, US1)`.
 
 **Checkpoint**: The driver is chosen from a list, and `none` can be saved.
 

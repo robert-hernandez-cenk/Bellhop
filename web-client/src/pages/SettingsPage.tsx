@@ -2,14 +2,16 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { SettingsResponse, SettingsValues } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
-import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../lib/settings-display';
+import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions } from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
 
 // Each field names what breaks while it is unset, so the page explains its
 // own consequences rather than assuming the reader knows which command
-// consumes which value.
-const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help: string }> = [
+// consumes which value. `placeholder` is unused for `proxyDriver`, which
+// renders as a <select> instead of an <input> (issue #33) -- kept optional
+// rather than adding a second, near-identical field-def shape.
+const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help: string }> = [
   {
     key: 'nfsServer',
     label: 'NFS server',
@@ -37,8 +39,7 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
   {
     key: 'proxyDriver',
     label: 'Proxy driver',
-    placeholder: 'caddy',
-    help: 'Which reverse-proxy driver sync-proxy/render-status-page use. Unset: the caddy default (the only driver that ships today).',
+    help: "Which reverse proxy Bellhop manages. \"No proxy\" means Bellhop writes no proxy configuration: sync-proxy does nothing and the status page is not rendered. Forward-auth entries are still allowed, on the assumption that your own proxy enforces them. When unset, Caddy is the default.",
   },
   {
     key: 'proxyConfigPath',
@@ -125,14 +126,29 @@ export function SettingsPage() {
             <label htmlFor={`setting-${field.key}`}>
               {field.label} <span className="settings-optional">Optional</span>
             </label>
-            <input
-              id={`setting-${field.key}`}
-              className="field-input"
-              type="text"
-              value={drafts[field.key] ?? ''}
-              placeholder={field.placeholder}
-              onChange={(e) => setDrafts({ ...drafts, [field.key]: e.target.value })}
-            />
+            {field.key === 'proxyDriver' && data ? (
+              <select
+                id={`setting-${field.key}`}
+                className="field-input"
+                value={drafts.proxyDriver || data.defaultProxyDriver}
+                onChange={(e) => setDrafts({ ...drafts, proxyDriver: e.target.value })}
+              >
+                {proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={`setting-${field.key}`}
+                className="field-input"
+                type="text"
+                value={drafts[field.key] ?? ''}
+                placeholder={field.placeholder}
+                onChange={(e) => setDrafts({ ...drafts, [field.key]: e.target.value })}
+              />
+            )}
             <p className="settings-help">{field.help}</p>
             <div className="actions-cell">
               <button
