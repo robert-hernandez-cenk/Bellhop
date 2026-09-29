@@ -7,7 +7,9 @@ import { pickStorage, listBackupStorages } from '../../lib/storage.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
 import { runSyncProxy } from '../networking/sync-proxy.ts';
-import { runRenderStatusPage, statusPageSkipReason } from '../networking/render-status-page.ts';
+import { runRenderStatusPage, statusPageSkipReason, logStatusPageSkip } from '../networking/render-status-page.ts';
+import { getDriver } from '../../lib/proxy/index.ts';
+import { managesProxy } from '../../lib/proxy/driver.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
 import { stringify } from 'yaml';
@@ -341,12 +343,18 @@ export async function runMigrateGuest(
   inventory.guests = guests;
 
   if (guest.subdomains && guest.subdomains.length > 0) {
-    logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via the proxy...`);
+    // Under proxyDriver: 'none' (issue #33) there is no proxy to push to, so
+    // the "Pushing ... live via the proxy" line would be untrue -- sync-proxy's
+    // own no-op message is logged instead.
+    if (managesProxy(getDriver(inventory))) {
+      logInfo(`Pushing the new IP for '${opts.guest}' (${newIp}) live via the proxy...`);
+    }
     // The migration itself is done by now -- the source is destroyed and
     // inventory saved -- so a proxy failure here must not report it as
     // failed. It is a warning with the retry command instead.
     try {
-      await runSyncProxy({ apply: true }, { ssh, inventory });
+      const syncResult = await runSyncProxy({ apply: true }, { ssh, inventory });
+      if (syncResult.proxyHost === null) logInfo(syncResult.preview);
     } catch (err) {
       logWarn(
         `'${opts.guest}' migrated successfully to ${opts.toHost} (${newIp}), but the proxy sync failed: ${err instanceof Error ? err.message : String(err)} -- fix the cause and retry with: bellhop sync-proxy --apply`
@@ -359,9 +367,9 @@ export async function runMigrateGuest(
     // of that setting. Skipping either way is not a failure here either --
     // the proxy config update above is what actually matters for the
     // migrated guest's subdomains to keep working.
-    const skipReason = statusPageSkipReason(inventory);
-    if (skipReason) {
-      logInfo(skipReason);
+    const skip = statusPageSkipReason(inventory);
+    if (skip) {
+      logStatusPageSkip(skip);
     } else {
       await runRenderStatusPage({ apply: true }, { ssh, inventory }, stringify(inventory));
     }

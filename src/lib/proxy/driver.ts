@@ -1,7 +1,7 @@
 import type { SSHClient } from '../ssh-client.ts';
 import type { Inventory } from '../inventory.ts';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
-import type { ProxyDriverId } from './ids.ts';
+import { NO_PROXY_DRIVER_ID, type ProxyDriverId } from './ids.ts';
 // settings-hint.ts only imports a *type* from inventory.ts, and inventory.ts
 // only imports PROXY_DRIVER_IDS (a value) from ./ids.ts -- neither of those
 // reaches back into this file, so importing settingFix here as an ordinary
@@ -44,19 +44,22 @@ export interface ReverseProxyDriver {
   // programming error, not a reachable runtime state for 'none'.
   defaultConfigPath: string | null;
   // null = no status page served (only the 'none' driver today) --
-  // render-status-page reads this before it reads statusPagePath.
+  // render-status-page checks managesProxy() first, then this, then
+  // statusPagePath.
   statusPage: { suggestedPath: string } | null;
   plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan>;
   apply(plan: ProxyPlan, deps: DriverDeps): Promise<void>; // throws on failure
   snapshot(deps: DriverDeps): Promise<string>; // throws on failure
 }
 
-// false only for the 'none' driver (issue #33) -- every real caller reads
-// this instead of comparing driver.id === 'none' directly, so a future
-// driver that also manages no proxy (unlikely, but the seam should not
-// assume there is exactly one) only has to say so through this metadata.
+// The one signal for "Bellhop manages no reverse proxy" (issue #33): false
+// only for the 'none' driver. It is an id comparison, not driver metadata --
+// every caller reads this rather than comparing ids itself, so if a second
+// such driver ever ships, this function is the one place to change.
+// statusPage === null is a separate question (does a managed driver serve a
+// status page?) and is never used to mean this.
 export function managesProxy(driver: ReverseProxyDriver): boolean {
-  return driver.id !== 'none';
+  return driver.id !== NO_PROXY_DRIVER_ID;
 }
 
 // The exact text contracts/commands-and-messages.md pins for every
@@ -66,8 +69,8 @@ export function managesProxy(driver: ReverseProxyDriver): boolean {
 export const NO_PROXY_SYNC_MESSAGE = "proxyDriver is 'none' -- Bellhop manages no reverse proxy, so there is nothing to write";
 
 // Thrown by runRenderStatusPage (CLI and operation) before any SSH call when
-// the active driver's statusPage is null -- there is neither a managed
-// proxy nor a document root to write the page to.
+// the active driver manages no proxy -- there is neither a managed proxy
+// nor a document root to write the page to.
 export const NO_PROXY_STATUS_PAGE_ERROR =
   "proxyDriver is 'none' -- there is no Bellhop-managed proxy to serve a status page -- " + settingFix('proxyDriver', 'caddy');
 

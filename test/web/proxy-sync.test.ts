@@ -11,6 +11,7 @@ import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts
 import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/proxy-sync.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
+import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -343,6 +344,7 @@ test("syncProxyLive under proxyDriver 'none' makes no SSH calls, logs both skip 
   const logs = await captureLogs(() => syncProxyLive({ ssh, inventory: noneInventory, authentik }));
 
   assert.equal(ssh.history.length, 0, 'no SSH calls at all under a driver that manages no proxy');
+  assert.ok(logs.info.some((l) => l.includes(NO_PROXY_SYNC_MESSAGE)), "sync-proxy's no-op message must be logged, not dropped");
   assert.ok(
     logs.info.some((l) => l.includes("proxyDriver is 'none' -- skipping the status page render")),
     'the driver status-page skip line must be logged'
@@ -354,6 +356,24 @@ test("syncProxyLive under proxyDriver 'none' makes no SSH calls, logs both skip 
   // FakeAuthentikClient records what it was asked for; reaching this line
   // without throwing means sync-authentik still ran against it.
   assert.ok(Array.isArray(await authentik.listApplications()));
+});
+
+// A driver that manages a proxy but serves no status page, with
+// statusPagePath set: the operator configured a path that is being
+// ignored, so the skip is a warning rather than an info line.
+test('syncProxyLive warns (not info) when the active managed driver serves no status page but statusPagePath is set', async () => {
+  const fake = fakeDriverWithoutAcme('fake-driver-no-status-page-warn');
+  const unregister = registerDriverForTests(fake);
+  try {
+    const inv: Inventory = { ...inventory, proxyDriver: fake.id as Inventory['proxyDriver'] };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const logs = await captureLogs(() => syncProxyLive({ ssh, inventory: inv, authentik: new UnconfiguredAuthentikClient() }));
+    const expected = `The '${fake.id}' proxy driver does not serve a status page -- skipping the status page render`;
+    assert.ok(logs.warn.some((l) => l.includes(expected)), 'the skip must be a warning');
+    assert.ok(!logs.info.some((l) => l.includes(expected)), 'and not also an info line');
+  } finally {
+    unregister();
+  }
 });
 
 // Native OIDC gating (issue #1): sync-authentik's OIDC skips and failed

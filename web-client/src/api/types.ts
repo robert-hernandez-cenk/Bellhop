@@ -280,6 +280,9 @@ export interface ProxyDriverInfo {
   label: string;
   defaultConfigPath: string | null;
   suggestedStatusPagePath: string | null;
+  // false only for "No proxy" -- the server's managesProxy(), so the page
+  // never has to compare ids to decide whether proxy fields apply.
+  managesProxy: boolean;
 }
 
 export interface SettingsResponse {

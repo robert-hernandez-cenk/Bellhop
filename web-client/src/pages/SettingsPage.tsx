@@ -116,7 +116,8 @@ export function SettingsPage() {
   // selected in the (possibly unsaved) dropdown -- null while `data` hasn't
   // loaded yet, in which case every field still renders with its static
   // FIELDS text, same as before this feature existed.
-  const view = data ? proxyFieldView(drafts.proxyDriver || data.defaultProxyDriver, data.proxyDrivers) : null;
+  const selectedDriver = drafts.proxyDriver || data?.defaultProxyDriver;
+  const view = data && selectedDriver ? proxyFieldView(selectedDriver, data.proxyDrivers) : null;
 
   // Hiding a field is display-only: it is simply left out of this list, so
   // its draft/stored value and its Save/Clear behavior are completely
@@ -150,18 +151,23 @@ export function SettingsPage() {
               <label htmlFor={`setting-${field.key}`}>
                 {field.label} <span className="settings-optional">Optional</span>
               </label>
-              {field.key === 'proxyDriver' && data ? (
+              {field.key === 'proxyDriver' ? (
+                // Always a <select>, never free text: without the driver list
+                // (a failed load) it is disabled with no options rather than
+                // an input that would accept any string.
                 <select
                   id={`setting-${field.key}`}
                   className="field-input"
-                  value={drafts.proxyDriver || data.defaultProxyDriver}
+                  value={selectedDriver ?? ''}
+                  disabled={!data}
                   onChange={(e) => setDrafts({ ...drafts, proxyDriver: e.target.value })}
                 >
-                  {proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver).map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
+                  {data &&
+                    proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <input
@@ -178,7 +184,7 @@ export function SettingsPage() {
                 <button
                   type="button"
                   className="button"
-                  disabled={savingKey === field.key}
+                  disabled={savingKey === field.key || (field.key === 'proxyDriver' && !data)}
                   onClick={() => save(field.key, drafts[field.key] === '' ? null : drafts[field.key])}
                 >
                   {savingKey === field.key ? 'Saving...' : 'Save'}

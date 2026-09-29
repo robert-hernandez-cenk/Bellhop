@@ -629,9 +629,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   reachable for a driver that manages no proxy, which every real caller
   short-circuits around before `driverDeps` ever runs). `index.ts` also
   exports `listDrivers()` (every registered driver, Caddy then None, in
-  registration order -- the Settings page's dropdown source) and
-  `managesProxy(driver)` (`false` only for the `none` driver below, so a
-  caller never has to compare `driver.id === 'none'` directly).
+  registration order -- the Settings page's dropdown source), and
+  `driver.ts` exports `managesProxy(driver)` (`driver.id !==
+  NO_PROXY_DRIVER_ID`, the constant in `ids.ts` -- `false` only for the
+  `none` driver below). It is the one signal for "Bellhop manages no
+  proxy", so a caller never compares `driver.id === 'none'` directly and
+  never reads `statusPage === null` to mean it (a `null` `statusPage`
+  only means a *managed* driver serves no status page). `getDriver`'s
+  unknown-id error names `DEFAULT_PROXY_DRIVER_ID` as the fix.
 
   **A driver that manages no reverse proxy at all** (`src/lib/proxy/
   drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
@@ -651,14 +656,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   text. `runSyncProxy` (`src/commands/networking/sync-proxy.ts`) checks
   `managesProxy(driver)` immediately after `getDriver` and, when false,
   returns `{ proxyHost: null, driver: driver.id, preview:
-  NO_PROXY_SYNC_MESSAGE, applied: opts.apply === true }` before
+  NO_PROXY_SYNC_MESSAGE, applied: false }` (always `false`, even with
+  `--apply`, since nothing is ever written) before
   `driverDeps`/`buildRoutes`/`checkCapabilities` ever run -- those would
   otherwise throw over a missing `proxy: true` entry or a missing
   `authentik` ip that "no proxy" makes irrelevant. `SyncProxyResult.
-  proxyHost` is therefore `string | null`; the CLI and the `sync-proxy`
-  operation (`src/operations/maintenance.ts`) print/log `result.preview`
-  via `logInfo` instead of their usual "Generated/Wrote ... for <host>"
-  lines whenever it's `null`.
+  proxyHost` is therefore `string | null`, and every caller keys on that
+  rather than on `applied`: the CLI and the `sync-proxy` operation
+  (`src/operations/maintenance.ts`) print/log `result.preview` instead of
+  their usual "Generated/Wrote ... for <host>" lines whenever it's `null`
+  (dry run and `--apply` alike), and `syncProxyLive`/`migrate-guest`'s
+  post-move push log it via `logInfo` rather than dropping it --
+  `migrate-guest` also skips its "Pushing the new IP ... live via the
+  proxy" line when `managesProxy(getDriver(inventory))` is false.
 
   **Capability enforcement** (FR-011/FR-012): `checkCapabilities` returns
   one `CapabilityError` per route whose `auth.mode` isn't in the active
@@ -685,8 +695,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   **`fileDriver(def)`** owns the full render -> back up -> write ->
   validate -> restore-or-reload cycle for a proxy configured by files, so
   a new file-configured driver only supplies `render()`, its validate
-  command, and its reload command (`configFiles()` optionally overrides
-  which paths `snapshot()` reads; defaults to `[configPath]`). `apply()`
+  command, and its reload command, plus a required `label` and
+  `statusPage` (no defaults, so a new driver can't silently show its bare
+  id in the Settings dropdown or opt out of a status page by omission;
+  `configFiles()` optionally overrides which paths `snapshot()` reads;
+  defaults to `[configPath]`). `apply()`
   builds one POSIX `sh` script (`buildFileDriverScript`, run via
   `runRemote` on the proxy host) that: backs up every target file first
   (or records that it didn't exist); installs one `trap ... EXIT` once
@@ -1186,19 +1199,25 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   command itself throws, naming the `set-config statusPagePath
   </absolute/path> --apply` fix; the two automated callers below treat an
   unset `statusPagePath` as a no-op, logging one line and continuing rather
-  than failing the rest of their run. As of issue #33, the active driver's
-  own `statusPage` metadata is checked first, before `statusPagePath`: a
-  driver that serves no status page at all (`proxyDriver: 'none'`) throws
+  than failing the rest of their run. As of issue #33, the active driver
+  is checked first, before `statusPagePath`: a driver that manages no
+  proxy (`proxyDriver: 'none'`, `!managesProxy(driver)`) throws
   `NO_PROXY_STATUS_PAGE_ERROR` from the standalone command regardless of
   whether `statusPagePath` happens to be set, since there is neither a
-  managed proxy nor a document root to write to. The exported
+  managed proxy nor a document root to write to; a *managed* driver whose
+  `statusPage` is `null` (none ships today) throws
+  `statusPageUnsupportedError(id)` instead, whose remedy is to clear
+  `statusPagePath` or choose a driver that serves one. The exported
   `statusPageSkipReason(inventory)` is the one place that decides, for the
   two automated callers, whether their render should even run: it returns
-  the driver's own skip line first, else the existing
-  `statusPagePathSkipMessage()` when `statusPagePath` is unset, else
-  `null` when the render should actually happen -- `syncProxyLive` and
-  `migrate-guest`'s post-move push both call it and `logInfo` whatever
-  non-null reason comes back instead of duplicating either check inline.
+  `{ message, level }` in the same order -- the `none` skip line
+  (`info`), the managed-but-no-status-page line (`warn` when
+  `statusPagePath` is set, since the operator's setting is being ignored,
+  else `info`), the existing `statusPagePathSkipMessage()` when
+  `statusPagePath` is unset (`info`) -- or `null` when the render should
+  actually happen. `syncProxyLive` and `migrate-guest`'s post-move push
+  both call it and pass any non-null result to `logStatusPageSkip`
+  instead of duplicating either check inline.
   The page shows two fetched-fresh
   `<pre>` blocks (HTML-escaped): a
   human-readable YAML snapshot of the current inventory (`src/cli.ts` calls
@@ -2210,7 +2229,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   setting gets: as of issue #33, `settingsResponse()` (`src/web/routes/
   settings.ts`, shared by GET and PATCH so the two can never disagree)
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
-  to `{ id, label, defaultConfigPath, suggestedStatusPagePath }`, Caddy
+  to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
+  managesProxy }`, Caddy
   then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
@@ -2222,11 +2242,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   like every other field. The same file's `proxyFieldView(selectedId,
   drivers)` decides, for whichever driver is currently selected in that
   *unsaved* dropdown value, whether the Proxy config path and Status page
-  path fields apply at all: a driver whose `defaultConfigPath`/
-  `suggestedStatusPagePath` is `null` (only `none` today) hides the
-  matching field entirely rather than showing it disabled or empty, and an
-  unrecognized id (never reachable through the dropdown itself, but
-  defensive) hides both. `SettingsPage.tsx` uses the shown field's own
+  path fields apply at all: a driver whose `managesProxy` is `false` (only
+  `none` today) hides both entirely rather than showing them disabled or
+  empty; a managed driver always shows Proxy config path (placeholder its
+  `defaultConfigPath`, or empty with "Required: this driver has no
+  default." help text when that is `null`) and shows Status page path only
+  when its `suggestedStatusPagePath` is non-null; an unrecognized id
+  (never reachable through the dropdown itself, but defensive) hides
+  both. Until the driver list has loaded (or if the load fails) the
+  dropdown is a disabled, option-less `<select>` with its Save disabled,
+  never a free-text input. `SettingsPage.tsx` uses the shown field's own
   placeholder/help text from `proxyFieldView`'s result in place of the
   static Caddy-specific ones the `FIELDS` table used to hardcode for
   `proxyConfigPath` (`statusPagePath`'s help text stays static; only its

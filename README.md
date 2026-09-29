@@ -351,8 +351,9 @@ assumption that whatever proxy you do run enforces `forward_auth` itself;
 driver. The standalone `render-status-page` command fails outright under
 "No proxy" — there's neither a managed proxy nor a document root to serve
 a page from — naming `proxyDriver` as the setting to change; the web UI's
-combined push-live step and `migrate-guest`'s post-move push instead skip
-the status page render with one log line and continue, the same opt-in
+combined push-live step and `migrate-guest`'s post-move push log the same
+"nothing to write" line in place of the proxy push, then skip the status
+page render with one log line and continue, the same opt-in
 skip they already give an unset `statusPagePath`. The stale ACME-challenge
 cleanup is skipped too, through the same driver-capability check that
 skips it for any driver that doesn't issue certificates via Cloudflare
@@ -365,7 +366,12 @@ target file(s), writes the new content in place (either replacing a
 managed section while leaving everything else on the file untouched, or
 replacing a file Bellhop owns outright), runs the proxy's own validation
 command against the real path, restores every backup and fails if
-validation fails, and reloads the proxy otherwise.
+validation fails, and reloads the proxy otherwise. Each such driver must
+state its Settings-dropdown label and whether it serves a status page;
+neither has a default. A driver that manages a proxy but serves no status
+page makes `render-status-page` fail with a message saying to clear
+`statusPagePath` or pick another driver, and the push-live step logs a
+warning, not an info line, when `statusPagePath` is set but ignored.
 
 **Certificates are the operator's job for a driver that doesn't issue them
 itself.** Caddy issues its own via Cloudflare DNS-01 with no extra setup;

@@ -44,7 +44,7 @@ export function getDriver(inventory: Inventory): ReverseProxyDriver {
   const id = inventory.proxyDriver ?? DEFAULT_PROXY_DRIVER_ID;
   const driver = DRIVERS.get(id);
   if (!driver) {
-    throw new Error(`Unknown proxyDriver '${id}' -- run: bellhop set-config proxyDriver caddy --apply`);
+    throw new Error(`Unknown proxyDriver '${id}' -- run: bellhop set-config proxyDriver ${DEFAULT_PROXY_DRIVER_ID} --apply`);
   }
   return driver;
 }

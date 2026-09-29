@@ -12,6 +12,7 @@ import {
   type Settings,
 } from '../../lib/inventory.ts';
 import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
+import { managesProxy } from '../../lib/proxy/driver.ts';
 
 function currentSettings(inv: Inventory): Settings {
   const settings: Settings = {};
@@ -47,6 +48,7 @@ function proxyDriversInfo() {
     label: driver.label,
     defaultConfigPath: driver.defaultConfigPath,
     suggestedStatusPagePath: driver.statusPage?.suggestedPath ?? null,
+    managesProxy: managesProxy(driver),
   }));
 }
 

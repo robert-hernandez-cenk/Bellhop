@@ -19,6 +19,8 @@ export interface SyncProxyResult {
   driver: string;
   // What the driver would write -- identical to what apply sends.
   preview: string;
+  // Whether a configuration was actually written -- false for a dry run,
+  // and always false when proxyHost is null (nothing to write).
   applied: boolean;
 }
 
@@ -38,9 +40,10 @@ export async function runSyncProxy(
   // this returns before driverDeps() (which throws when no entry has
   // 'proxy: true'), buildRoutes() (which throws when a forward-gated route
   // has no authentik ip), and checkCapabilities() ever run -- none of those
-  // failures are meaningful when Bellhop manages no proxy at all.
+  // failures are meaningful when Bellhop manages no proxy at all. applied is
+  // always false here, even with --apply: nothing is ever written.
   if (!managesProxy(driver)) {
-    return { proxyHost: null, driver: driver.id, preview: NO_PROXY_SYNC_MESSAGE, applied: opts.apply === true };
+    return { proxyHost: null, driver: driver.id, preview: NO_PROXY_SYNC_MESSAGE, applied: false };
   }
 
   const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);

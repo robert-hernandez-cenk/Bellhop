@@ -462,10 +462,12 @@ test("runSyncProxy (dry run) returns { proxyHost: null, driver: 'none', preview:
   assert.equal(ssh.history.length, 0);
 });
 
-test("runSyncProxy (apply) returns the same { proxyHost: null, ... } result, with applied: true and no SSH calls", async () => {
+// applied stays false even with --apply: nothing is ever written under
+// 'none', so reporting true would claim a write that never happened.
+test("runSyncProxy (apply) returns the same { proxyHost: null, ... } result, with applied: false and no SSH calls", async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const result = await runSyncProxy({ apply: true }, { ssh, inventory: noProxyInventory });
-  assert.deepEqual(result, { proxyHost: null, driver: 'none', preview: NO_PROXY_SYNC_MESSAGE, applied: true });
+  assert.deepEqual(result, { proxyHost: null, driver: 'none', preview: NO_PROXY_SYNC_MESSAGE, applied: false });
   assert.equal(ssh.history.length, 0);
 });
 

@@ -5,8 +5,9 @@ import { confirmOrDryRun } from '../../lib/dry-run.ts';
 import { shellQuote } from '../../lib/ssh-client.ts';
 import { getDriver, driverDeps } from '../../lib/proxy/index.ts';
 import type { DriverDeps } from '../../lib/proxy/driver.ts';
-import { NO_PROXY_STATUS_PAGE_ERROR } from '../../lib/proxy/driver.ts';
+import { managesProxy, NO_PROXY_STATUS_PAGE_ERROR } from '../../lib/proxy/driver.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
+import { logInfo, logWarn } from '../../lib/log.ts';
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -44,24 +45,47 @@ export function statusPagePathSkipMessage(): string {
   return `statusPagePath is not set -- skipping the status page render -- ${settingFix('statusPagePath', '</absolute/path>')}`;
 }
 
+// Thrown by runRenderStatusPage when the active driver does manage a proxy
+// but serves no status page -- a different case from proxyDriver: 'none'
+// (NO_PROXY_STATUS_PAGE_ERROR), so the remedy is different too.
+export function statusPageUnsupportedError(driverId: string): string {
+  return `The '${driverId}' proxy driver does not serve a status page -- clear statusPagePath (bellhop set-config statusPagePath --unset --apply, or on the web UI's Settings page) or choose a proxyDriver that serves one`;
+}
+
+export interface StatusPageSkip {
+  message: string;
+  level: 'info' | 'warn';
+}
+
 // Shared by the same two callers as statusPagePathSkipMessage above (issue
 // #33, US2): the one place that decides whether syncProxyLive/migrate-guest
-// should skip their post-sync status-page render, and why. The active
-// driver's own metadata is checked first -- a driver that serves no status
-// page at all (proxyDriver: 'none') means there is neither a managed proxy
-// nor a document root to write to, regardless of whether statusPagePath
-// happens to be set -- before falling back to the pre-existing
-// unset-statusPagePath skip. Returns null when the render should actually
-// happen.
-export function statusPageSkipReason(inventory: Inventory): string | null {
+// should skip their post-sync status-page render, why, and how loudly.
+// Checked in the same order runRenderStatusPage throws in: a driver that
+// manages no proxy (proxyDriver: 'none'), then a managed driver that serves
+// no status page, then an unset statusPagePath. Only the middle case can be
+// a warning, and only when statusPagePath is set -- the operator configured
+// a path that is being ignored. Returns null when the render should
+// actually happen. Callers log it with logStatusPageSkip below.
+export function statusPageSkipReason(inventory: Inventory): StatusPageSkip | null {
   const driver = getDriver(inventory);
+  if (!managesProxy(driver)) {
+    return { message: `proxyDriver is '${driver.id}' -- skipping the status page render`, level: 'info' };
+  }
   if (driver.statusPage === null) {
-    return `proxyDriver is '${driver.id}' -- skipping the status page render`;
+    return {
+      message: `The '${driver.id}' proxy driver does not serve a status page -- skipping the status page render`,
+      level: inventory.statusPagePath === undefined ? 'info' : 'warn',
+    };
   }
   if (inventory.statusPagePath === undefined) {
-    return statusPagePathSkipMessage();
+    return { message: statusPagePathSkipMessage(), level: 'info' };
   }
   return null;
+}
+
+export function logStatusPageSkip(skip: StatusPageSkip): void {
+  if (skip.level === 'warn') logWarn(skip.message);
+  else logInfo(skip.message);
 }
 
 function buildWriteScript(statusPagePath: string, html: string): string {
@@ -93,12 +117,16 @@ export async function runRenderStatusPage(
   hostsYamlText: string
 ): Promise<{ proxyHost: string; html: string; applied: boolean }> {
   const driver = getDriver(deps.inventory);
-  // Issue #33 (US2): a driver with no status page (proxyDriver: 'none') has
-  // neither a managed proxy nor a document root to write to -- checked
-  // before statusPagePath, since that setting being set means nothing when
-  // there's no driver-managed place to serve the page from.
-  if (driver.statusPage === null) {
+  // Issue #33 (US2): a driver that manages no proxy (proxyDriver: 'none')
+  // has neither a managed proxy nor a document root to write to, and a
+  // managed driver may still serve no status page -- both checked before
+  // statusPagePath, since that setting being set means nothing when there's
+  // no driver-managed place to serve the page from.
+  if (!managesProxy(driver)) {
     throw new Error(NO_PROXY_STATUS_PAGE_ERROR);
+  }
+  if (driver.statusPage === null) {
+    throw new Error(statusPageUnsupportedError(driver.id));
   }
 
   const statusPagePath = deps.inventory.statusPagePath;

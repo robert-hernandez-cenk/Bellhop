@@ -184,8 +184,8 @@ test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () 
   const res = await asAdmin(request(app).get('/api/settings'));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html' },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });
@@ -195,8 +195,8 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
   const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html' },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });

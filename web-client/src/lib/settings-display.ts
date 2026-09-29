@@ -36,14 +36,16 @@ export function proxyDriverOptions(
 // dropdown -- issue #33's US3. `selectedId` is the caller's already-resolved
 // choice (`drafts.proxyDriver || data.defaultProxyDriver`, so it tracks the
 // unsaved selection per FR-006/FR-007's acceptance scenario 5), not looked
-// up against a separate default here. A driver whose `defaultConfigPath`/
-// `suggestedStatusPagePath` is `null` (only "No proxy" today) hides the
-// matching field; an id with no matching entry in `drivers` at all (never
-// reachable through the dropdown itself, but defensive against a stale
-// selection) is treated the same as one with no metadata -- both fields
-// hidden, same as FR-006's "unknown means nothing to show". Hiding is
-// display-only (R6): callers must not clear the field's draft/stored value
-// just because it stopped being shown (FR-008).
+// up against a separate default here. A driver that manages no proxy (only
+// "No proxy" today) hides both fields. A managed driver always shows the
+// config path field -- with its default as the placeholder, or, if it has
+// none, help text saying a path is required -- and shows the status page
+// field only when it suggests a status page path. An id with no matching
+// entry in `drivers` at all (never reachable through the dropdown itself,
+// but defensive against a stale selection) hides both, same as FR-006's
+// "unknown means nothing to show". Hiding is display-only (R6): callers
+// must not clear the field's draft/stored value just because it stopped
+// being shown (FR-008).
 export interface ProxyFieldView {
   showConfigPath: boolean;
   configPathPlaceholder?: string;
@@ -54,14 +56,17 @@ export interface ProxyFieldView {
 
 export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): ProxyFieldView {
   const driver = drivers.find((d) => d.id === selectedId);
-  if (!driver || driver.defaultConfigPath === null) {
-    return { showConfigPath: false, showStatusPagePath: driver?.suggestedStatusPagePath != null };
+  if (!driver || !driver.managesProxy) {
+    return { showConfigPath: false, showStatusPagePath: false };
   }
   return {
     showConfigPath: true,
-    configPathPlaceholder: driver.defaultConfigPath,
-    configPathHelp: `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`,
-    showStatusPagePath: driver.suggestedStatusPagePath != null,
+    configPathPlaceholder: driver.defaultConfigPath ?? '',
+    configPathHelp:
+      driver.defaultConfigPath === null
+        ? `Config path for the ${driver.label} driver. Required: this driver has no default.`
+        : `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`,
+    showStatusPagePath: driver.suggestedStatusPagePath !== null,
     statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
   };
 }

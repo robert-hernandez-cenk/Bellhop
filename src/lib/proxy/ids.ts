@@ -7,3 +7,8 @@
 // future driver adds its id here.
 export const PROXY_DRIVER_IDS = ['caddy', 'none'] as const;
 export type ProxyDriverId = (typeof PROXY_DRIVER_IDS)[number];
+
+// The id of the driver that means "Bellhop manages no reverse proxy" --
+// managesProxy() in ./driver.ts compares against this, and nothing else
+// should compare against the bare literal.
+export const NO_PROXY_DRIVER_ID: ProxyDriverId = 'none';

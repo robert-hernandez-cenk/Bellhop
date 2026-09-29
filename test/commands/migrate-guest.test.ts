@@ -7,6 +7,7 @@ import type { Inventory } from '../../src/lib/inventory.ts';
 import { loadInventory, saveInventory } from '../../src/lib/inventory.ts';
 import { runMigrateGuest, archiveLogPath } from '../../src/commands/provisioning/migrate-guest.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
+import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
 
 test('archiveLogPath replaces the tar/vma + compression extension with .log', () => {
   assert.equal(
@@ -932,6 +933,8 @@ test("runMigrateGuest apply completes cleanly under proxyDriver 'none', with no 
       infos.some((l) => l.includes("proxyDriver is 'none' -- skipping the status page render")),
       'the status-page skip line must be logged'
     );
+    assert.ok(infos.some((l) => l.includes(NO_PROXY_SYNC_MESSAGE)), "sync-proxy's no-op message must be logged, not dropped");
+    assert.ok(!infos.some((l) => l.includes('live via the proxy')), 'no "Pushing the new IP ... live via the proxy" line when there is no proxy');
     assert.ok(!warnings.some((w) => w.includes('proxy sync failed')), 'no proxy sync failed warning under a driver with nothing to sync');
   } finally {
     console.error = originalWarn;

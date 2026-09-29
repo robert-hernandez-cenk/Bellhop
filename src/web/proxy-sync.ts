@@ -3,7 +3,7 @@ import type { SSHClient } from '../lib/ssh-client.ts';
 import type { Inventory } from '../lib/inventory.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
 import { runSyncProxy } from '../commands/networking/sync-proxy.ts';
-import { runRenderStatusPage, statusPageSkipReason } from '../commands/networking/render-status-page.ts';
+import { runRenderStatusPage, statusPageSkipReason, logStatusPageSkip } from '../commands/networking/render-status-page.ts';
 import { runSyncAuthentik, conflictExplanation, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
 import type { ForwardSkip, OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import { logInfo, logWarn } from '../lib/log.ts';
@@ -97,15 +97,18 @@ export async function syncProxyLive(deps: {
   // Passed through to sync-authentik's discovery check; tests inject one.
   fetchImpl?: typeof fetch;
 }): Promise<SyncProxyLiveResult> {
-  await runSyncProxy({ apply: true }, deps);
+  const syncResult = await runSyncProxy({ apply: true }, deps);
+  // Under proxyDriver: 'none' (issue #33) sync-proxy writes nothing; say so
+  // in the job log rather than passing over the step silently.
+  if (syncResult.proxyHost === null) logInfo(syncResult.preview);
   // The status page is opt-in: an operator who has not configured a path
   // never gets an index.html written to their proxy host, and a driver that
   // manages no proxy at all (issue #33, proxyDriver: 'none') has nowhere to
   // serve one regardless of that setting. Skipping either way is not a
   // failure, so the Authentik reconcile below still runs.
-  const skipReason = statusPageSkipReason(deps.inventory);
-  if (skipReason) {
-    logInfo(skipReason);
+  const skip = statusPageSkipReason(deps.inventory);
+  if (skip) {
+    logStatusPageSkip(skip);
   } else {
     const inventorySnapshot = stringify(deps.inventory);
     await runRenderStatusPage({ apply: true }, deps, inventorySnapshot);

@@ -102,6 +102,8 @@ test('fileDriver.plan: a single owned file preview is that file\'s content alone
   const files = [ownedFile('/etc/caddy/Caddyfile', 'example.com {\n    respond "hi"\n}')];
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: () => files,
@@ -122,6 +124,8 @@ test('fileDriver.plan: a single owned file preview is that file\'s content alone
 test('fileDriver.plan: wraps a managed-section body in the bellhop-managed markers, in both preview and payload', async () => {
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: (_routes, _ctx, configPath) => [managedFile(configPath, 'example.com {\n    respond "hi"\n}')],
@@ -143,6 +147,8 @@ test('fileDriver.plan: wraps a managed-section body in the bellhop-managed marke
 test('fileDriver.plan: an empty managed-section body is just the two markers', async () => {
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: (_routes, _ctx, configPath) => [managedFile(configPath, '')],
@@ -163,6 +169,8 @@ test('fileDriver.plan: several files join their content with a newline', async (
   const files = [ownedFile('/etc/nginx/conf.d/bellhop-a.conf', 'server { listen 80; }'), ownedFile('/etc/nginx/conf.d/bellhop-b.conf', 'server { listen 81; }')];
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/nginx/nginx.conf',
     render: () => files,
@@ -187,6 +195,8 @@ test('fileDriver.apply: sends exactly one runRemote call, whose command equals b
   const validateCommand = (p: string) => `caddy validate --config '${p}'`;
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: () => files,
@@ -212,6 +222,8 @@ test('fileDriver.apply: throws with stderr on a non-zero exit', async () => {
   const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: () => files,
@@ -235,6 +247,8 @@ test('fileDriver.snapshot: a single file has no ==> <path> <== header', async ()
   const files = [managedFile('/etc/caddy/Caddyfile', 'irrelevant for this test')];
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: () => files,
@@ -278,6 +292,8 @@ test('fileDriver.snapshot: uses configFiles(configPath), defaulting to [configPa
   let renderCalled = false;
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
     defaultConfigPath: '/etc/caddy/Caddyfile',
     render: () => {
@@ -298,6 +314,8 @@ test('fileDriver.snapshot: uses configFiles(configPath), defaulting to [configPa
 test('fileDriver.snapshot: a driver-supplied configFiles overrides the [configPath] default', async () => {
   const driver = fileDriver({
     id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/nginx/nginx.conf',
     render: () => [],
