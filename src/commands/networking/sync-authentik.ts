@@ -236,6 +236,16 @@ export const REPLACED_PROVIDER_SUFFIX = ' (replaced)';
 // Authentik cannot hang a Dashboard save that runs this via syncProxyLive.
 const DISCOVERY_TIMEOUT_MS = 10_000;
 
+// Mobile consent step (research.md R4/R5/R7): the fixed names of the two
+// Authentik objects this command owns, and the marker that proves a found
+// expression policy is this command's to reconcile rather than a hand-made
+// same-named one. Stage names are unique across every stage type, so this
+// name alone is enough to find it; the policy is additionally checked for
+// the marker (R7) since a policy name collision is otherwise silent.
+export const MOBILE_CONSENT_STAGE_NAME = 'bellhop-mobile-app-consent';
+export const MOBILE_CONSENT_POLICY_NAME = 'bellhop-consent-on-mobile-redirect';
+export const MOBILE_CONSENT_MARKER = '# Managed by Bellhop (sync-authentik).';
+
 // `name` is deliberately absent: the Application/Provider display name is
 // the slug verbatim (issue #156), so a second field holding the same value
 // would just be a chance for the two to drift.
@@ -332,6 +342,67 @@ export type DesiredOAuth2Settings = Omit<OAuth2ProviderSettings, 'authorizationF
 // still incomplete.
 export function clientRedirectUris(entry: { oidcRedirectUris?: string[]; oidcMobileRedirectUris?: string[] }): string[] {
   return [...new Set([...(entry.oidcRedirectUris ?? []), ...(entry.oidcMobileRedirectUris ?? [])])];
+}
+
+// research.md R5: a Python string literal for one URI, built by iterating
+// CODE POINTS (`for...of` over a string does this natively -- it never
+// splits a surrogate pair), not UTF-16 units. JSON.stringify would emit a
+// surrogate pair as two separate \uD8xx\uDCxx escapes, which Python decodes
+// back into two lone surrogates rather than the original character, so an
+// emoji redirect URI would silently never match. Lowercase hex throughout.
+export function pythonStringLiteral(value: string): string {
+  let out = '"';
+  for (const ch of value) {
+    switch (ch) {
+      case '\\':
+        out += '\\\\';
+        continue;
+      case '"':
+        out += '\\"';
+        continue;
+      case '\n':
+        out += '\\n';
+        continue;
+      case '\r':
+        out += '\\r';
+        continue;
+      case '\t':
+        out += '\\t';
+        continue;
+    }
+    const codePoint = ch.codePointAt(0)!;
+    if (codePoint >= 0x20 && codePoint <= 0x7e) {
+      out += ch;
+    } else if (codePoint <= 0xff) {
+      out += `\\x${codePoint.toString(16).padStart(2, '0')}`;
+    } else if (codePoint <= 0xffff) {
+      out += `\\u${codePoint.toString(16).padStart(4, '0')}`;
+    } else {
+      out += `\\U${codePoint.toString(16).padStart(8, '0')}`;
+    }
+  }
+  out += '"';
+  return out;
+}
+
+// research.md R5: the Authentik expression-policy body for the mobile
+// consent step. The URIs are sorted so the same set always renders the same
+// text -- drift is then a plain string comparison (research.md R8) -- and an
+// empty list renders `set()`, since `{}` is a Python dict literal, not an
+// empty set. `MOBILE_CONSENT_MARKER` is always the expression's first line,
+// which is what `ownedProviderKind`'s policy counterpart (R7) checks to
+// decide whether a found policy is this command's to reconcile.
+export function renderMobileConsentExpression(uris: string[]): string {
+  const sorted = [...uris].sort();
+  const setLiteral =
+    sorted.length === 0 ? 'set()' : ['{', ...sorted.map((uri) => `    ${pythonStringLiteral(uri)},`), '}'].join('\n');
+  return [
+    `${MOBILE_CONSENT_MARKER} Changes made here are overwritten.`,
+    '# Asks for consent only when the login hands off to a mobile app redirect URI.',
+    `MOBILE_REDIRECT_URIS = ${setLiteral}`,
+    'params = request.context.get("goauthentik.io/providers/oauth2/params")',
+    'return getattr(params, "redirect_uri", None) in MOBILE_REDIRECT_URIS',
+  ].join('\n');
 }
 
 export function desiredOAuth2Settings(
