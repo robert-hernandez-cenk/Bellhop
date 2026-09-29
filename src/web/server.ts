@@ -36,6 +36,13 @@ dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 // falls back to UnconfiguredCloudflareClient and the prune is skipped.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
 
+// NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for the
+// nginx-proxy-manager proxy driver (issue #31), loaded the same way and for
+// the same reason as the two files above. Silent no-op if missing --
+// buildNpmClient() throws its own named error only once a sync actually
+// tries to reach NPM.
+dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
+
 const invPath = inventoryPath();
 const inventory = loadInventory(invPath);
 
