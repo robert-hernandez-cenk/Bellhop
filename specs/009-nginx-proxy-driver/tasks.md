@@ -100,7 +100,7 @@ No setup needed: no new dependencies, directories, or tooling. `src/lib/proxy/dr
 
 - [x] T021 [US3] Add `proxyTlsCertificate?: string` and `proxyTlsKey?: string` to `SettingsValues` in `web-client/src/api/types.ts`.
 - [x] T022 [US3] In `web-client/src/pages/SettingsPage.tsx`, update the `proxyDriver` field's help to name both drivers (`caddy` default, or `nginx`), and add two fields after `proxyConfigPath`: "Proxy TLS certificate" (placeholder `/etc/letsencrypt/live/example.com/fullchain.pem`) and "Proxy TLS key" (placeholder `/etc/letsencrypt/live/example.com/privkey.pem`), each with help saying it is used by the nginx driver for every site, what unset means (certbot's path for the inventory domain), and that the Caddy driver ignores it.
-- [ ] T023 [US3] Run `npm test` for the two route/command test files and `npm run web:build`; then verify the Settings page in a browser (`npm run web:dev`, `/settings`) at desktop width and at ≤640px: both new fields render, save, clear, and show the absolute-path error. Stop the dev server by PID afterwards.
+- [x] T023 [US3] Run `npm test` for the two route/command test files and `npm run web:build`; then verify the Settings page in a browser (`npm run web:dev`, `/settings`) at desktop width and at ≤640px: both new fields render, save, clear, and show the absolute-path error. Stop the dev server by PID afterwards.
 
 **Checkpoint**: all three stories independently functional.
 
