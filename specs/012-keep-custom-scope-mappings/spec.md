@@ -95,11 +95,14 @@ exactly the three built-in mappings.
 
 - A client carries two mappings for the same required scope (built-in and custom): the scope
   is covered, and both stay attached.
-- A client carries a mapping that the scope-mapping listing does not contain (deleted, or
-  not a scope mapping): it is kept, but it covers no scope. If it was the only mapping for a
-  required scope, that scope is reported missing and the built-in mapping is added alongside.
-- An unused client reused as a partial-failure self-heal follows the same rule as an owned
-  one.
+- A client carries a mapping that the scope-mapping listing does not contain (a deleted
+  mapping can't stay attached, so it is one the API token can't see): its scope can't be
+  known, so the client's scope mappings are left alone entirely — no drift, no change — rather
+  than risk adding a second mapping for a scope it may already cover.
+- An unused client reused as a partial-failure self-heal (possibly a hand-made one) is
+  treated like a new client: it ends with exactly the three built-in mappings, and any other
+  mapping (a custom one, or one for an unrequired scope such as `goauthentik.io/api`) is
+  removed.
 - The listing of scope mappings reports more mappings than it returned: the run fails with a
   clear message rather than treating the missing ones as absent. This guard exists today but
   read the count from the wrong place, so it never fired.
@@ -111,10 +114,12 @@ exactly the three built-in mappings.
 
 ### Functional Requirements
 
-- **FR-001**: When checking an existing OpenID client (an owned client's drift check, an
-  unused client reused on create, and adoption), the scope-mapping check MUST pass when, for
-  each required scope (`openid`, `profile`, `email`), at least one attached mapping has that
-  scope name — built-in or custom.
+- **FR-001**: When checking an existing OpenID client (an owned client's drift check, and
+  adoption), the scope-mapping check MUST pass when, for each required scope (`openid`,
+  `profile`, `email`), its built-in mapping is attached or at least one attached mapping has
+  that scope name — built-in or custom. A built-in mapping whose scope name the listing does
+  not give counts only when that mapping itself is attached. An unused client reused on
+  create MUST instead end with exactly the three built-in mappings, like a new client.
 - **FR-002**: Attached mappings for scope names Bellhop does not require MUST be left alone
   and MUST NOT count as drift.
 - **FR-003**: `property_mappings` drift MUST be reported only when a required scope has no
@@ -125,8 +130,8 @@ exactly the three built-in mappings.
 - **FR-005**: The scope-mapping listing MUST be read at most once per sync run, and once per
   adoption, where the built-in mappings are looked up today. The same listing supplies the
   built-in mappings and each mapping's scope name.
-- **FR-006**: An attached mapping id that is not in the listing MUST be kept, and MUST NOT
-  count as covering any scope.
+- **FR-006**: If any attached mapping id is not in the listing, the client's scope mappings
+  MUST be left alone entirely: no drift reported and no change made.
 - **FR-007**: The listing's truncated-page guard MUST read the count Authentik actually
   returns, so a truncated listing fails with a clear message.
 - **FR-008**: README's "OIDC mode" section and the CLAUDE.md `sync-authentik` bullet MUST

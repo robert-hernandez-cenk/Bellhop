@@ -2,9 +2,9 @@
 
 ## R1 — The scope-mapping listing's live shape
 
-**Decision**: read the listing from `GET /api/v3/propertymappings/provider/scope/?page_size=100`
-(the endpoint `getScopeMappingIds` already calls), and take the truncation count from
-`pagination.count`.
+**Decision**: read the listing from `GET /api/v3/propertymappings/provider/scope/?page_size=500`
+(the endpoint `getScopeMappingIds` already called, at the same page size as every other list
+call in the client), and take the truncation count from `pagination.count`.
 
 **Evidence**: a read-only capture from a live Authentik instance (2026-09-29) returned
 top-level keys `pagination`, `results`, `autocomplete` and no top-level `count`. Each result
@@ -15,7 +15,11 @@ instance had ten mappings, including a custom one with `managed: null` and
 
 The existing guard (`res.count > res.results.length`) compared `undefined` to a number,
 which is always false, so it never fired. `findPolicyByName` in the same file already
-documents that every live list endpoint puts the count under `pagination.count`.
+documents that every live list endpoint puts the count under `pagination.count`. The final
+review confirmed live (2026-09-29) that `policies/bindings`, `providers/oauth2` and
+`providers/proxy` also return only `pagination`/`results`/`autocomplete`, so the same
+dead guard in `listPolicyBindings` and `listOAuth2Providers` now reads `pagination.count`
+too.
 
 **Fixture**: `test/fixtures/authentik/propertymappings-scope.json`, the capture redacted per
 Principle I: every `pk` replaced by an obviously fake UUID, and the custom mapping's `name`,
@@ -53,10 +57,23 @@ patch is `current.propertyMappingIds` (order kept) followed by the desired id of
 uncovered scope.
 
 **Rationale**: deriving required names from the desired ids keeps one source of truth
-(`OIDC_SCOPE_MAPPINGS`). An id missing from `scopeNameById` simply covers nothing, which is
-FR-006, and it stays in the patch because the patch starts from the current list. Making the
-argument required (not optional) means no call site can silently keep the old exact-match
-rule.
+(`OIDC_SCOPE_MAPPINGS`). Making the argument required (not optional) means no call site can
+silently keep the old exact-match rule.
+
+**Final-review rulings** (these supersede the first version of the rule above):
+
+1. **Orphan reuse = new client.** An unused provider reused on create may be hand-made, so it
+   must not keep extra scopes (e.g. `goauthentik.io/api`). The third argument becomes
+   `ReadonlyMap<string, string> | 'exact'`; the reuse path passes `'exact'` (exact-set
+   compare, patch = desired ids), while owned drift and adoption pass the map.
+2. **Unreadable attached mapping.** If any attached id is absent from `scopeNameById`, its
+   scope can't be known — a deleted mapping can't stay attached, so it is one the token can't
+   see. `property_mappings` is left alone entirely: appending a built-in next to a mapping
+   that may already cover that scope could let a second `email` mapping override a custom
+   `email_verified`.
+3. **Fail closed on desired ids.** A required scope is covered if its desired id is attached,
+   or some attached id has the same known scope name. A desired id missing from
+   `scopeNameById` is covered only by being attached itself.
 
 **Alternatives considered**:
 - Putting scope names into `DesiredOAuth2Settings` — rejected: that type is also the create

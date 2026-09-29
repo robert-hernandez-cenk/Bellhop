@@ -577,14 +577,17 @@ export class RealAuthentikClient implements AuthentikClient {
   // says, rather than the usual "missing data reads as inert" failure mode
   // the other list* methods fall into. Cheap to guard against even though
   // this instance's ~25 real bindings are nowhere near the limit today.
+  // The count lives under `pagination.count` -- Authentik returns no
+  // top-level `count` (verified live 2026-09-29), so a guard reading one
+  // never fired (issue #16).
   async listPolicyBindings(): Promise<AuthentikPolicyBinding[]> {
-    const res = await this.request<{ count: number; results: RawPolicyBinding[] }>(
+    const res = await this.request<{ pagination: { count: number }; results: RawPolicyBinding[] }>(
       'GET',
       '/api/v3/policies/bindings/?page_size=500'
     );
-    if (res.count > res.results.length) {
+    if (res.pagination.count > res.results.length) {
       throw new Error(
-        `Authentik returned ${res.results.length} of ${res.count} policy bindings; pagination is not implemented`
+        `Authentik returned ${res.results.length} of ${res.pagination.count} policy bindings; pagination is not implemented`
       );
     }
     return res.results.map((b) => ({
@@ -678,12 +681,16 @@ export class RealAuthentikClient implements AuthentikClient {
   // listProxyProviders -- rather than left for every caller to re-check.
   async listOAuth2Providers(): Promise<AuthentikOAuth2Provider[]> {
     const [res, proxyProviders] = await Promise.all([
-      this.request<{ count: number; results: RawOAuth2Provider[] }>('GET', '/api/v3/providers/oauth2/?page_size=500'),
+      this.request<{ pagination: { count: number }; results: RawOAuth2Provider[] }>(
+        'GET',
+        '/api/v3/providers/oauth2/?page_size=500'
+      ),
       this.listProxyProviders(),
     ]);
-    if (res.count > res.results.length) {
+    // `pagination.count`, not a top-level `count` (none exists; issue #16).
+    if (res.pagination.count > res.results.length) {
       throw new Error(
-        `Authentik returned ${res.results.length} of ${res.count} OAuth2 providers; pagination is not implemented`
+        `Authentik returned ${res.results.length} of ${res.pagination.count} OAuth2 providers; pagination is not implemented`
       );
     }
     const proxyProviderIds = new Set(proxyProviders.map((p) => p.id));
@@ -795,18 +802,16 @@ export class RealAuthentikClient implements AuthentikClient {
   // the built-in ids they need by `managed`, and look up any attached
   // mapping's scope name, from this one listing, rather than one request per
   // requested id (research.md R2 notes the three managed ids are looked up
-  // together on every sync run). Same truncated-page-guard *intent* as
-  // listPolicyBindings/listOAuth2Providers: a mapping that fell past page 1
-  // must not read as "missing" and abort an otherwise-healthy sync run --
-  // but, like findPolicyByName, the count this endpoint actually reports
-  // lives under `pagination.count`, not a top-level `count` (research.md R1;
-  // the old guard compared `undefined` to a number, which is always false,
-  // so it never fired).
+  // together on every sync run). Same truncated-page guard as
+  // listPolicyBindings/listOAuth2Providers/findPolicyByName: a mapping that
+  // fell past page 1 must not read as "missing" and abort an
+  // otherwise-healthy sync run. The count lives under `pagination.count`
+  // (research.md R1).
   async listScopeMappings(): Promise<AuthentikScopeMapping[]> {
     const res = await this.request<{
       pagination: { count: number };
       results: Array<{ pk: string; managed: string | null; scope_name: string }>;
-    }>('GET', '/api/v3/propertymappings/provider/scope/?page_size=100');
+    }>('GET', '/api/v3/propertymappings/provider/scope/?page_size=500');
     if (res.pagination.count > res.results.length) {
       throw new Error(
         `Authentik returned ${res.results.length} of ${res.pagination.count} scope property mappings; pagination is not implemented`
@@ -864,14 +869,12 @@ export class RealAuthentikClient implements AuthentikClient {
 
   // The `name` query param on this endpoint is ignored by Authentik (verified
   // live -- it returned every policy regardless), so this always fetches the
-  // full page and matches client-side. Same truncated-page-guard *intent* as
+  // full page and matches client-side. Same truncated-page guard as
   // listPolicyBindings/listOAuth2Providers/listScopeMappings: a policy that
-  // fell past page 1 must not silently read as "doesn't exist yet." Unlike
-  // the first two, the count here lives under `pagination.count`, not a
-  // top-level `count` -- same as listScopeMappings (issue #16, research.md
-  // R1) -- every live capture of this and every other `pagination`-shaped
-  // list endpoint in this file puts it there (see test/fixtures/authentik/
-  // policies-all.json); there is no top-level `count` field to read.
+  // fell past page 1 must not silently read as "doesn't exist yet." Like all
+  // of them, the count lives under `pagination.count` -- Authentik's list
+  // endpoints return no top-level `count` (see test/fixtures/authentik/
+  // policies-all.json; issue #16, research.md R1).
   async findPolicyByName(name: string): Promise<AuthentikPolicyRef | undefined> {
     const res = await this.request<{ pagination: { count: number }; results: RawPolicyRef[] }>(
       'GET',

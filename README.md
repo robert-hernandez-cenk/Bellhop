@@ -658,7 +658,14 @@ sign-ins. Mappings for other scopes are left alone too. Only a required
 scope with no mapping at all counts as drift, and the fix adds the built-in
 mapping for it while keeping everything already attached. The flip side:
 if someone swaps a built-in mapping for another mapping with the same scope
-name, Bellhop no longer puts the built-in one back.
+name, Bellhop no longer puts the built-in one back. If a client has a
+mapping attached that the API token cannot read, Bellhop can't tell which
+scope it covers, so it leaves that client's mappings alone entirely rather
+than risk adding a second mapping for a scope it already covers. One
+exception to keeping custom mappings: when the sync reuses a leftover,
+unused OpenID client named after the entry (one left behind by an earlier
+failed run, or made by hand), it resets that client to exactly the three
+built-in mappings, the same as a brand-new client.
 
 **Authentik API token permissions.** OIDC mode needs a few more scopes on
 the token in `data/authentik.env` than forward-auth-only gating did: read

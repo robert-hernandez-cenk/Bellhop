@@ -32,10 +32,18 @@ const EXPRESSION_POLICY_MODEL = 'authentik_policies_expression.expressionpolicy'
 const DEFAULT_SIGNING_KEYS: Record<string, string> = {
   'authentik Self-signed Certificate': 'key-1',
 };
-const DEFAULT_SCOPE_MAPPINGS: AuthentikScopeMapping[] = [
+export const DEFAULT_SCOPE_MAPPINGS: readonly AuthentikScopeMapping[] = [
   { id: 'scope-openid-1', managed: 'goauthentik.io/providers/oauth2/scope-openid', scopeName: 'openid' },
   { id: 'scope-profile-1', managed: 'goauthentik.io/providers/oauth2/scope-profile', scopeName: 'profile' },
   { id: 'scope-email-1', managed: 'goauthentik.io/providers/oauth2/scope-email', scopeName: 'email' },
+];
+
+// The built-ins plus one operator-made (unmanaged) email mapping -- the
+// issue #16 case: a custom email mapping attached in place of scope-email-1.
+export const CUSTOM_EMAIL_SCOPE_MAPPING_ID = 'scope-email-custom-1';
+export const SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL: readonly AuthentikScopeMapping[] = [
+  ...DEFAULT_SCOPE_MAPPINGS,
+  { id: CUSTOM_EMAIL_SCOPE_MAPPING_ID, scopeName: 'email' },
 ];
 
 // client_id/client_secret sit outside AuthentikOAuth2Provider itself (the
@@ -57,7 +65,7 @@ export interface FakeAuthentikSeed {
   outpost?: AuthentikOutpost;
   oauth2Providers?: Array<AuthentikOAuth2Provider & { clientId?: string; clientSecret?: string }>;
   signingKeys?: Record<string, string>;
-  scopeMappings?: AuthentikScopeMapping[];
+  scopeMappings?: readonly AuthentikScopeMapping[];
   // Mobile-consent step (issue #22, research.md R4/R7). Seeded objects use
   // the same shape the real AuthentikClient interface hands back, so a test
   // can seed exactly what a prior list/create call would have returned.
@@ -88,7 +96,7 @@ export class FakeAuthentikClient implements AuthentikClient {
   private policyBindings: Array<{ id: string; targetId: string; groupId?: string }> = [];
   private oauth2Providers: Map<string, FakeOAuth2ProviderRecord>;
   private signingKeys: Map<string, string>;
-  private scopeMappings: AuthentikScopeMapping[];
+  private scopeMappings: readonly AuthentikScopeMapping[];
   // Mobile-consent step (issue #22). `mode`/`expression` are only ever
   // present on a consent-model stage / expression-model policy respectively,
   // mirroring how the real API's per-type endpoints are the only place those

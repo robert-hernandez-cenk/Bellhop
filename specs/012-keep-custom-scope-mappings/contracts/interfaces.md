@@ -29,7 +29,7 @@ export type OidcInstanceSettings =
 export function diffOAuth2Settings(
   current: AuthentikOAuth2Provider,
   desired: DesiredOAuth2Settings,
-  scopeNameById: ReadonlyMap<string, string>
+  scopeMappings: ReadonlyMap<string, string> | 'exact' // the scopeNameById map, or 'exact' for a reused leftover provider
 ): { changes: string[]; patch: Partial<OAuth2ProviderSettings> };
 ```
 

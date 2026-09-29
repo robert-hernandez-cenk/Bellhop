@@ -18,11 +18,22 @@ three built-in ids, in `OIDC_SCOPE_MAPPINGS` order). The failure variants are un
 
 ## Scope coverage rule
 
-- **Required scope names**: `scopeNameById.get(id)` for each id in
-  `desired.propertyMappingIds`.
-- **Covered**: a required name is covered when some id in `current.propertyMappingIds` has
-  that name in `scopeNameById`.
-- **Drift**: at least one required name is not covered.
-- **Patch** (drift only): `current.propertyMappingIds` in order, then the desired id of each
-  uncovered name, in `desired` order.
-- An attached id absent from `scopeNameById` is kept and covers nothing.
+`diffOAuth2Settings(current, desired, scopeMappings)` takes either the `scopeNameById` map
+or `'exact'`.
+
+With the map (an owned client's drift check, and adoption):
+
+- **Unreadable attached id**: if any id in `current.propertyMappingIds` is absent from
+  `scopeNameById`, its scope can't be known (a deleted mapping can't stay attached, so it is
+  one the token can't see). `property_mappings` is left alone entirely: no drift, no patch.
+- **Covered**: a desired id is covered when it is itself in `current.propertyMappingIds`, or
+  when some attached id has the same (known) scope name as the desired id.
+- **Fail closed**: a desired id absent from `scopeNameById` is covered only by being attached
+  itself.
+- **Drift**: at least one desired id is not covered.
+- **Patch** (drift only): `current.propertyMappingIds` in order, then each uncovered desired
+  id, in `desired` order.
+
+With `'exact'` (an unused provider reused on create, which may be hand-made): the attached
+ids must equal the desired ids as a set; otherwise the patch is the desired ids, so the reused
+provider ends with exactly the three built-in mappings, like a new client.

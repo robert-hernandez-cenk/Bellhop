@@ -1093,12 +1093,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   deliberately setting up their own signing key), and a *new* client
   releases the fixed `openid`/`profile`/`email` scope mappings
   (`OIDC_SCOPE_MAPPINGS`, looked up by Authentik's stable `managed`
-  identifier rather than display name, since names are editable). Both
-  come from one `listScopeMappings()` call per run
-  (`resolveOidcInstanceSettings`), which also yields `scopeNameById`, every
-  scope mapping's id -> `scope_name`; its truncated-page guard reads
-  `pagination.count`, where the live response puts it -- there is no
-  top-level `count`, so the guard it replaced (issue #16) never fired.
+  identifier rather than display name, since names are editable). The
+  signing key comes from `getSigningKeyId`; the three built-in mapping ids
+  and `scopeNameById` (every scope mapping's id -> `scope_name`) both come
+  from one `listScopeMappings()` call per run
+  (`resolveOidcInstanceSettings`, `?page_size=500`). Its truncated-page
+  guard reads `pagination.count`, where the live response puts it -- there
+  is no top-level `count` -- and, as of issue #16, so do the guards on
+  `listPolicyBindings` and `listOAuth2Providers`, which had read a
+  top-level `count` and so never fired (verified live 2026-09-29).
   Both the signing key and the scope mappings
   are resolved once per run, only when some entry actually has redirect
   URIs to act on, and either failing skips every such entry
@@ -1112,17 +1115,26 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `(matchingMode, url)` pairs), grant types, scope mappings, signing
   key, and client type against the desired shape (research.md R4) and
   returns only the drifted Authentik field names plus a patch carrying just
-  those fields. Scope mappings are compared by *scope name*, not id (issue
-  #16, `scopeNameById`): each required scope (`openid`/`profile`/`email`)
-  needs some attached mapping with that name, built-in or custom, and
-  mappings for other scopes are ignored; only an uncovered required scope
-  is `property_mappings` drift, and its patch keeps every attached id in
+  those fields. For an owned client's drift and for `adopt-oidc-client`,
+  scope mappings are compared by *scope name*, not id (issue #16,
+  `scopeNameById`): each required scope (`openid`/`profile`/`email`) is
+  covered by its built-in id being attached or by some attached mapping
+  with that same scope name, built-in or custom, and mappings for other
+  scopes are ignored; only an uncovered required scope is
+  `property_mappings` drift, and its patch keeps every attached id in
   order and appends the built-in id for each missing scope. This is what
   lets a custom mapping survive sync and adoption (the case that drove it:
   a custom `email` mapping deriving `email_verified`, since the built-in one
   always reports `false`), at the cost that a built-in mapping swapped for
-  a same-scope-name one is never put back. An attached id absent from the
-  listing is kept but covers no scope. Credentials are structurally absent from
+  a same-scope-name one is never put back. Two fail-safe edges: if any
+  attached id is absent from the listing (the token can't see it, so its
+  scope is unknown), `property_mappings` is left alone entirely -- never a
+  built-in appended next to a mapping that may already cover that scope; and
+  a built-in id absent from the listing counts as covered only when that id
+  itself is attached. A reused leftover provider (`planProviderName`'s
+  `reuseId`) is the exception to the scope-name rule: it may be hand-made, so
+  `diffOAuth2Settings(..., 'exact')` brings it to exactly the three built-in
+  mappings, like a newly created client. Credentials are structurally absent from
   `DesiredOAuth2Settings`, so neither a routine drift fix nor
   `adopt-oidc-client` (below) can ever rotate `client_id`/`client_secret`
   (FR-009/FR-011), whatever else changed. `oidcUpdates` in the result

@@ -4,7 +4,7 @@ import type { Inventory } from '../../src/lib/inventory.ts';
 import { runAdoptOidcClient, formatAdoptOidcClient } from '../../src/commands/networking/adopt-oidc-client.ts';
 import { runSyncAuthentik } from '../../src/commands/networking/sync-authentik.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
-import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
+import { FakeAuthentikClient, SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL } from '../support/fake-authentik-client.ts';
 
 const LADDER = authentikConfig().groupLadder; // low -> high
 const [, , USERS_RUNG, ADMIN_RUNG] = LADDER;
@@ -262,12 +262,7 @@ test('adopting a client whose only difference is a custom email mapping previews
         redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
       },
     ],
-    scopeMappings: [
-      { id: 'scope-openid-1', managed: 'goauthentik.io/providers/oauth2/scope-openid', scopeName: 'openid' },
-      { id: 'scope-profile-1', managed: 'goauthentik.io/providers/oauth2/scope-profile', scopeName: 'profile' },
-      { id: 'scope-email-1', managed: 'goauthentik.io/providers/oauth2/scope-email', scopeName: 'email' },
-      { id: 'scope-email-custom-1', scopeName: 'email' },
-    ],
+    scopeMappings: SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL,
   });
   await seedLadderGroups(authentik);
 
