@@ -117,7 +117,7 @@ the demo. Every page renders with example data, and the checkout is unchanged af
   command fails and names the screenshot it could not take, rather than writing a
   half-rendered image.
 - The app catalog would normally be fetched from GitHub: in the demo it is served from a
-  fixed, invented list, so the capture works offline and the screenshot does not change when
+  fixed list kept in the repository, so the capture works offline and the screenshot does not change when
   the upstream catalog does.
 - Live timestamps (job start times, relative times such as "3 minutes ago"): the demo's
   seeded jobs use fixed times, so regenerated images differ only where the UI changed.
@@ -143,8 +143,9 @@ the demo. Every page renders with example data, and the checkout is unchanged af
   guests.
 - **FR-003**: The demo instance MUST answer every request that would normally reach a Proxmox
   host with simulated responses, and MUST NOT open a network connection to any host.
-- **FR-004**: The demo instance MUST serve the install-app catalog from a fixed, invented list
-  of app names, not from GitHub.
+- **FR-004**: The demo instance MUST serve the install-app catalog from a fixed list of app
+  names kept in the repository, not from GitHub. The list may use well-known public app names;
+  those are public software names, not operational data.
 - **FR-005**: The demo instance MUST start with a few finished jobs, each with a log, and those
   jobs MUST use fixed timestamps.
 - **FR-006**: The demo instance MUST NOT read or write the checkout's real inventory database,
