@@ -1,11 +1,16 @@
 import type {
   AuthentikApplication,
   AuthentikClient,
+  AuthentikConsentStage,
+  AuthentikFlowStageBinding,
   AuthentikGroup,
   AuthentikOAuth2Provider,
   AuthentikOutpost,
   AuthentikPolicyBinding,
+  AuthentikPolicyBindingDetail,
+  AuthentikPolicyRef,
   AuthentikProxyProvider,
+  AuthentikStageRef,
   AuthentikUser,
   CreateUserInput,
   OAuth2ProviderSettings,
@@ -508,5 +513,63 @@ export class FakeAuthentikClient implements AuthentikClient {
       if (!id) throw new Error(`No Authentik scope property mapping found for managed id '${m}'`);
       return id;
     });
+  }
+
+  // Mobile-consent step (issue #22): minimal stubs only, added so this class
+  // still satisfies `AuthentikClient` after T011 grew the interface. T012
+  // replaces these with real in-memory behavior.
+  findStageByName(_name: string): Promise<AuthentikStageRef | undefined> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  getConsentStage(_id: string): Promise<AuthentikConsentStage> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  createConsentStage(_input: { name: string; mode: string }): Promise<AuthentikConsentStage> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  updateConsentStage(_id: string, _input: { mode: string }): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  deleteStage(_id: string): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  findPolicyByName(_name: string): Promise<AuthentikPolicyRef | undefined> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  createExpressionPolicy(_input: { name: string; expression: string }): Promise<AuthentikPolicyRef> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  updateExpressionPolicy(_id: string, _input: { expression: string }): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  deletePolicy(_id: string): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  listFlowStageBindings(_flowId: string): Promise<AuthentikFlowStageBinding[]> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  createFlowStageBinding(_input: {
+    flowId: string;
+    stageId: string;
+    order: number;
+    evaluateOnPlan: boolean;
+    reEvaluatePolicies: boolean;
+  }): Promise<AuthentikFlowStageBinding> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  updateFlowStageBinding(_id: string, _input: { evaluateOnPlan: boolean; reEvaluatePolicies: boolean }): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  deleteFlowStageBinding(_id: string): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  listPolicyBindingsForTarget(_targetId: string): Promise<AuthentikPolicyBindingDetail[]> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  createPolicyToTargetBinding(_input: { targetId: string; policyId: string }): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
+  }
+  clearFlowCache(): Promise<void> {
+    throw new Error('not implemented in FakeAuthentikClient yet');
   }
 }

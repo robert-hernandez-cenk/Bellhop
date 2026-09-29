@@ -108,6 +108,46 @@ export interface AuthentikPolicyBinding {
   groupId?: string;
 }
 
+// The mobile-consent step's objects (issue #22, research.md R4) -- a stage,
+// a policy, a flow-stage binding, and the policy binding that guards it.
+// These are looked up by name/target rather than an id persisted anywhere in
+// inventory, same rationale as sync-authentik's own Application-by-slug
+// lookup: nothing here is ever written back to bellhop.db.
+export interface AuthentikStageRef {
+  id: string; // pk
+  name: string;
+  model: string; // meta_model_name, e.g. 'authentik_stages_consent.consentstage'
+}
+
+export interface AuthentikConsentStage {
+  id: string;
+  name: string;
+  mode: string;
+}
+
+export interface AuthentikPolicyRef {
+  id: string; // pk
+  name: string;
+  model: string; // meta_model_name, e.g. 'authentik_policies_expression.expressionpolicy'
+  expression?: string; // present for an expression policy
+}
+
+export interface AuthentikFlowStageBinding {
+  id: string; // pk
+  policyBindingModelId: string; // policybindingmodel_ptr_id -- what a policy binding targets
+  flowId: string; // target
+  stageId: string; // stage
+  order: number;
+  evaluateOnPlan: boolean;
+  reEvaluatePolicies: boolean;
+}
+
+export interface AuthentikPolicyBindingDetail {
+  id: string;
+  targetId: string;
+  policyId?: string; // absent for a group/user binding
+}
+
 export interface AuthentikClient {
   // Whether this client instance has a real Authentik API to talk to --
   // every other method call is only meaningful when this is true. Used to
@@ -180,6 +220,43 @@ export interface AuthentikClient {
   // Returns ids in the same order as the input `managed` list; throws naming
   // the first missing managed id.
   getScopeMappingIds(managed: string[]): Promise<string[]>;
+
+  // Mobile-consent step (issue #22, research.md R4). Stage names are unique
+  // across all stage types, so this looks up a stage of any type by name --
+  // used to find/own the mobile-consent stage without assuming it's the only
+  // consent stage on the instance.
+  findStageByName(name: string): Promise<AuthentikStageRef | undefined>;
+  getConsentStage(id: string): Promise<AuthentikConsentStage>;
+  createConsentStage(input: { name: string; mode: string }): Promise<AuthentikConsentStage>;
+  updateConsentStage(id: string, input: { mode: string }): Promise<void>;
+  deleteStage(id: string): Promise<void>; // DELETE /api/v3/stages/consent/<id>/
+  // The `name` query param on /policies/all/ is ignored by Authentik --
+  // callers must not rely on this filtering server-side.
+  findPolicyByName(name: string): Promise<AuthentikPolicyRef | undefined>;
+  createExpressionPolicy(input: { name: string; expression: string }): Promise<AuthentikPolicyRef>;
+  updateExpressionPolicy(id: string, input: { expression: string }): Promise<void>;
+  deletePolicy(id: string): Promise<void>; // DELETE /api/v3/policies/expression/<id>/
+  listFlowStageBindings(flowId: string): Promise<AuthentikFlowStageBinding[]>;
+  createFlowStageBinding(input: {
+    flowId: string;
+    stageId: string;
+    order: number;
+    evaluateOnPlan: boolean;
+    reEvaluatePolicies: boolean;
+  }): Promise<AuthentikFlowStageBinding>;
+  updateFlowStageBinding(id: string, input: { evaluateOnPlan: boolean; reEvaluatePolicies: boolean }): Promise<void>;
+  deleteFlowStageBinding(id: string): Promise<void>;
+  // `?target=<policybindingmodel_ptr_id>` -- filtering by the flow-stage
+  // binding's own pk fails ("Select a valid choice") against a live
+  // instance. The returned `target` field on each result nonetheless reports
+  // the flow-stage binding's own pk (not the policybindingmodel_ptr_id), so
+  // `targetId` below maps from that.
+  listPolicyBindingsForTarget(targetId: string): Promise<AuthentikPolicyBindingDetail[]>;
+  createPolicyToTargetBinding(input: { targetId: string; policyId: string }): Promise<void>;
+  // POST /api/v3/flows/instances/cache_clear/ -- run after any change to the
+  // binding or the policy so a cached flow plan can't keep serving stale
+  // consent behavior (FR-015).
+  clearFlowCache(): Promise<void>;
 }
 
 interface RawUser {
@@ -243,6 +320,41 @@ interface RawPolicyBinding {
 interface RawFlow {
   pk: string;
   slug: string;
+}
+
+interface RawStageRef {
+  pk: string;
+  name: string;
+  meta_model_name: string;
+}
+
+interface RawConsentStage {
+  pk: string;
+  name: string;
+  mode: string;
+}
+
+interface RawPolicyRef {
+  pk: string;
+  name: string;
+  meta_model_name: string;
+  expression?: string;
+}
+
+interface RawFlowStageBinding {
+  pk: string;
+  policybindingmodel_ptr_id: string;
+  target: string;
+  stage: string;
+  order: number;
+  evaluate_on_plan: boolean;
+  re_evaluate_policies: boolean;
+}
+
+interface RawPolicyBindingDetail {
+  pk: string;
+  target: string;
+  policy?: string | null;
 }
 
 // The one file that actually talks to a real Authentik instance -- no
@@ -689,6 +801,170 @@ export class RealAuthentikClient implements AuthentikClient {
       return id;
     });
   }
+
+  private toStageRef(raw: RawStageRef): AuthentikStageRef {
+    return { id: String(raw.pk), name: raw.name, model: raw.meta_model_name };
+  }
+
+  // Stage names are unique across all stage types on a real instance, but
+  // this still filters client-side rather than trusting the single result
+  // Authentik's own `?name=` filter returns -- cheap, and consistent with
+  // findPolicyByName below, whose equivalent filter is outright ignored.
+  async findStageByName(name: string): Promise<AuthentikStageRef | undefined> {
+    const res = await this.request<{ results: RawStageRef[] }>(
+      'GET',
+      `/api/v3/stages/all/?name=${encodeURIComponent(name)}`
+    );
+    const match = res.results.find((r) => r.name === name);
+    return match ? this.toStageRef(match) : undefined;
+  }
+
+  private toConsentStage(raw: RawConsentStage): AuthentikConsentStage {
+    return { id: String(raw.pk), name: raw.name, mode: raw.mode };
+  }
+
+  async getConsentStage(id: string): Promise<AuthentikConsentStage> {
+    return this.toConsentStage(await this.request<RawConsentStage>('GET', `/api/v3/stages/consent/${id}/`));
+  }
+
+  async createConsentStage(input: { name: string; mode: string }): Promise<AuthentikConsentStage> {
+    return this.toConsentStage(
+      await this.request<RawConsentStage>('POST', '/api/v3/stages/consent/', { name: input.name, mode: input.mode })
+    );
+  }
+
+  async updateConsentStage(id: string, input: { mode: string }): Promise<void> {
+    await this.request<void>('PATCH', `/api/v3/stages/consent/${id}/`, { mode: input.mode });
+  }
+
+  async deleteStage(id: string): Promise<void> {
+    await this.request<void>('DELETE', `/api/v3/stages/consent/${id}/`);
+  }
+
+  private toPolicyRef(raw: RawPolicyRef): AuthentikPolicyRef {
+    return { id: String(raw.pk), name: raw.name, model: raw.meta_model_name, expression: raw.expression };
+  }
+
+  // The `name` query param on this endpoint is ignored by Authentik (verified
+  // live -- it returned every policy regardless), so this always fetches the
+  // full page and matches client-side. Same truncated-page guard as
+  // listPolicyBindings/listOAuth2Providers/getScopeMappingIds: a policy that
+  // fell past page 1 must not silently read as "doesn't exist yet."
+  async findPolicyByName(name: string): Promise<AuthentikPolicyRef | undefined> {
+    const res = await this.request<{ count: number; results: RawPolicyRef[] }>(
+      'GET',
+      '/api/v3/policies/all/?page_size=500'
+    );
+    if (res.count > res.results.length) {
+      throw new Error(`Authentik returned ${res.results.length} of ${res.count} policies; pagination is not implemented`);
+    }
+    const match = res.results.find((r) => r.name === name);
+    return match ? this.toPolicyRef(match) : undefined;
+  }
+
+  async createExpressionPolicy(input: { name: string; expression: string }): Promise<AuthentikPolicyRef> {
+    return this.toPolicyRef(
+      await this.request<RawPolicyRef>('POST', '/api/v3/policies/expression/', {
+        name: input.name,
+        expression: input.expression,
+        execution_logging: false,
+      })
+    );
+  }
+
+  async updateExpressionPolicy(id: string, input: { expression: string }): Promise<void> {
+    await this.request<void>('PATCH', `/api/v3/policies/expression/${id}/`, { expression: input.expression });
+  }
+
+  async deletePolicy(id: string): Promise<void> {
+    await this.request<void>('DELETE', `/api/v3/policies/expression/${id}/`);
+  }
+
+  private toFlowStageBinding(raw: RawFlowStageBinding): AuthentikFlowStageBinding {
+    return {
+      id: String(raw.pk),
+      policyBindingModelId: String(raw.policybindingmodel_ptr_id),
+      flowId: String(raw.target),
+      stageId: String(raw.stage),
+      order: raw.order,
+      evaluateOnPlan: raw.evaluate_on_plan,
+      reEvaluatePolicies: raw.re_evaluate_policies,
+    };
+  }
+
+  // `target__slug` is ignored by Authentik (verified live); `target=<pk>`
+  // works, so this is always addressed by flow pk.
+  async listFlowStageBindings(flowId: string): Promise<AuthentikFlowStageBinding[]> {
+    const res = await this.request<{ results: RawFlowStageBinding[] }>(
+      'GET',
+      `/api/v3/flows/bindings/?target=${encodeURIComponent(flowId)}`
+    );
+    return res.results.map((r) => this.toFlowStageBinding(r));
+  }
+
+  async createFlowStageBinding(input: {
+    flowId: string;
+    stageId: string;
+    order: number;
+    evaluateOnPlan: boolean;
+    reEvaluatePolicies: boolean;
+  }): Promise<AuthentikFlowStageBinding> {
+    return this.toFlowStageBinding(
+      await this.request<RawFlowStageBinding>('POST', '/api/v3/flows/bindings/', {
+        target: input.flowId,
+        stage: input.stageId,
+        order: input.order,
+        evaluate_on_plan: input.evaluateOnPlan,
+        re_evaluate_policies: input.reEvaluatePolicies,
+        policy_engine_mode: 'any',
+        invalid_response_action: 'retry',
+      })
+    );
+  }
+
+  async updateFlowStageBinding(id: string, input: { evaluateOnPlan: boolean; reEvaluatePolicies: boolean }): Promise<void> {
+    await this.request<void>('PATCH', `/api/v3/flows/bindings/${id}/`, {
+      evaluate_on_plan: input.evaluateOnPlan,
+      re_evaluate_policies: input.reEvaluatePolicies,
+    });
+  }
+
+  async deleteFlowStageBinding(id: string): Promise<void> {
+    await this.request<void>('DELETE', `/api/v3/flows/bindings/${id}/`);
+  }
+
+  // Filtering by the flow-stage binding's own pk fails ("Select a valid
+  // choice") against a live instance; `?target=<policybindingmodel_ptr_id>`
+  // works. The response's own `target` field nonetheless reports the
+  // flow-stage binding's pk (not the policybindingmodel_ptr_id used to query
+  // it), so `targetId` below maps straight from that raw field.
+  async listPolicyBindingsForTarget(targetId: string): Promise<AuthentikPolicyBindingDetail[]> {
+    const res = await this.request<{ results: RawPolicyBindingDetail[] }>(
+      'GET',
+      `/api/v3/policies/bindings/?target=${encodeURIComponent(targetId)}`
+    );
+    return res.results.map((r) => ({
+      id: String(r.pk),
+      targetId: String(r.target),
+      policyId: r.policy == null ? undefined : String(r.policy),
+    }));
+  }
+
+  async createPolicyToTargetBinding(input: { targetId: string; policyId: string }): Promise<void> {
+    await this.request<void>('POST', '/api/v3/policies/bindings/', {
+      target: input.targetId,
+      policy: input.policyId,
+      order: 0,
+      enabled: true,
+      negate: false,
+      timeout: 30,
+      failure_result: false,
+    });
+  }
+
+  async clearFlowCache(): Promise<void> {
+    await this.request<void>('POST', '/api/v3/flows/instances/cache_clear/');
+  }
 }
 
 export const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
@@ -814,6 +1090,60 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   getScopeMappingIds(_managed: string[]): Promise<string[]> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  findStageByName(_name: string): Promise<AuthentikStageRef | undefined> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  getConsentStage(_id: string): Promise<AuthentikConsentStage> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  createConsentStage(_input: { name: string; mode: string }): Promise<AuthentikConsentStage> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  updateConsentStage(_id: string, _input: { mode: string }): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  deleteStage(_id: string): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  findPolicyByName(_name: string): Promise<AuthentikPolicyRef | undefined> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  createExpressionPolicy(_input: { name: string; expression: string }): Promise<AuthentikPolicyRef> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  updateExpressionPolicy(_id: string, _input: { expression: string }): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  deletePolicy(_id: string): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  listFlowStageBindings(_flowId: string): Promise<AuthentikFlowStageBinding[]> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  createFlowStageBinding(_input: {
+    flowId: string;
+    stageId: string;
+    order: number;
+    evaluateOnPlan: boolean;
+    reEvaluatePolicies: boolean;
+  }): Promise<AuthentikFlowStageBinding> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  updateFlowStageBinding(_id: string, _input: { evaluateOnPlan: boolean; reEvaluatePolicies: boolean }): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  deleteFlowStageBinding(_id: string): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  listPolicyBindingsForTarget(_targetId: string): Promise<AuthentikPolicyBindingDetail[]> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  createPolicyToTargetBinding(_input: { targetId: string; policyId: string }): Promise<void> {
+    return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
+  }
+  clearFlowCache(): Promise<void> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
 }
