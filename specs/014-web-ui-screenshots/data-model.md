@@ -11,7 +11,7 @@ next.
 
 - `domain`: `example.com`
 - Settings: `backupStorage: 'nas-backup'`,
-  `dnsServer: 198.51.100.53`, `nfsServer: 198.51.100.5`.
+  `dnsServer: 198.51.100.53`, `nfsServer: 198.51.100.50`.
 - Hosts (2): `pve1` and `pve2`, `ssh_user: root`, `ssh_target` in `192.0.2.0/24`; each with a
   `midScheme` (`vmidBase` 1000/2000, `ipPrefix` `198.51.100.`/`203.0.113.`, a gateway in the same
   range), one or two `bridges`, and `storages` covering `vztmpl`, `rootdir`, `images`, and one

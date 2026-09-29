@@ -123,7 +123,7 @@ test('buildDemoInventory settings match the brief: domain and the three settings
   assert.equal(inv.domain, 'example.com');
   assert.equal(inv.backupStorage, 'nas-backup');
   assert.equal(inv.dnsServer, '198.51.100.53');
-  assert.equal(inv.nfsServer, '198.51.100.5');
+  assert.equal(inv.nfsServer, '198.51.100.50');
 });
 
 test('buildDemoInventory hosts use pve1/pve2, root ssh_user, and 192.0.2.0/24 ssh_target', () => {

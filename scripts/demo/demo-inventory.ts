@@ -17,7 +17,9 @@ export function buildDemoInventory(): Inventory {
     domain: 'example.com',
     backupStorage: 'nas-backup',
     dnsServer: '198.51.100.53',
-    nfsServer: '198.51.100.5',
+    // Not 198.51.100.5 -- that address belongs to the paperless-ngx guest
+    // below; a free address in the same range keeps the two from colliding.
+    nfsServer: '198.51.100.50',
     hosts: [
       {
         name: 'pve1',
@@ -61,7 +63,8 @@ export function buildDemoInventory(): Inventory {
         type: 'lxc',
         vmid: 1001,
         host: 'pve1',
-        ip: '198.51.100.1',
+        // Not 198.51.100.1 -- that's pve1's own midScheme.gateway.
+        ip: '198.51.100.10',
         proxy: true,
         app: 'caddy',
       },
@@ -146,7 +149,8 @@ export function buildDemoInventory(): Inventory {
         type: 'lxc',
         vmid: 2001,
         host: 'pve2',
-        ip: '203.0.113.1',
+        // Not 203.0.113.1 -- that's pve2's own midScheme.gateway.
+        ip: '203.0.113.10',
         subdomains: ['grafana.example.com'],
         port: 3000,
         authGroup: 'bellhop-app-users-open',
@@ -158,7 +162,7 @@ export function buildDemoInventory(): Inventory {
         vmid: 2002,
         host: 'pve2',
         ip: '203.0.113.2',
-        app: 'pi-hole',
+        app: 'pihole',
       },
       {
         name: 'demo-vm',
