@@ -154,9 +154,9 @@ None needed: existing project, dependencies installed.
   - Settings page bullet: `proxyDrivers`/`defaultProxyDriver` in the response, dropdown, and conditional fields via `proxyFieldView`.
   - Record the single-operator assumption change: not every deployment has a Bellhop-managed proxy.
   - Check `CONTRIBUTING.md` for any restated rule this changes (likely none).
-- [ ] T032 Run quickstart.md sections 1-2 (typecheck, test, web:build, CLI against a temp inventory) and paste the output.
-- [ ] T033 Run quickstart.md section 3 in a browser at desktop width and at ≤640px (390px), covering dropdown options, toggling, save/reload, and clear, with no horizontal overflow.
-- [ ] T034 Commit the docs and verification ticks: `Mark #33 verification tasks complete`.
+- [x] T032 Run quickstart.md sections 1-2 (typecheck, test, web:build, CLI against a temp inventory) and paste the output.
+- [x] T033 Run quickstart.md section 3 in a browser at desktop width and at ≤640px (390px), covering dropdown options, toggling, save/reload, and clear, with no horizontal overflow.
+- [x] T034 Commit the docs and verification ticks: `Mark #33 verification tasks complete`.
 
 ---
 
