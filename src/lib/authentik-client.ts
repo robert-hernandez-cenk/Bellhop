@@ -132,6 +132,18 @@ export interface AuthentikPolicyRef {
   expression?: string; // present for an expression policy
 }
 
+// A scope property mapping (issue #16) -- what an OpenID client's
+// `property_mappings` lists. `managed` is set only for one of Authentik's own
+// built-in mappings (e.g. `goauthentik.io/providers/oauth2/scope-email`); a
+// custom, operator-attached mapping has `managed: null`, which maps to
+// `managed` absent here. `scopeName` is what sync-authentik's scope-coverage
+// rule (data-model.md) keys off -- several mappings can share one.
+export interface AuthentikScopeMapping {
+  id: string; // pk
+  managed?: string;
+  scopeName: string; // scope_name
+}
+
 export interface AuthentikFlowStageBinding {
   id: string; // pk
   policyBindingModelId: string; // policybindingmodel_ptr_id -- what a policy binding targets
@@ -217,9 +229,10 @@ export interface AuthentikClient {
   // Throws naming AUTHENTIK_OIDC_SIGNING_KEY_NAME when no key with that name
   // and a private key exists (research.md R3).
   getSigningKeyId(name: string): Promise<string>;
-  // Returns ids in the same order as the input `managed` list; throws naming
-  // the first missing managed id.
-  getScopeMappingIds(managed: string[]): Promise<string[]>;
+  // Every scope property mapping on the instance (issue #16) -- callers
+  // resolve the built-in ids they need by `managed`, and look up any
+  // attached mapping's scope name, from this one listing.
+  listScopeMappings(): Promise<AuthentikScopeMapping[]>;
 
   // Mobile-consent step (issue #22, research.md R4). Stage names are unique
   // across all stage types, so this looks up a stage of any type by name --
@@ -564,14 +577,17 @@ export class RealAuthentikClient implements AuthentikClient {
   // says, rather than the usual "missing data reads as inert" failure mode
   // the other list* methods fall into. Cheap to guard against even though
   // this instance's ~25 real bindings are nowhere near the limit today.
+  // The count lives under `pagination.count` -- Authentik returns no
+  // top-level `count` (verified live 2026-09-29), so a guard reading one
+  // never fired (issue #16).
   async listPolicyBindings(): Promise<AuthentikPolicyBinding[]> {
-    const res = await this.request<{ count: number; results: RawPolicyBinding[] }>(
+    const res = await this.request<{ pagination: { count: number }; results: RawPolicyBinding[] }>(
       'GET',
       '/api/v3/policies/bindings/?page_size=500'
     );
-    if (res.count > res.results.length) {
+    if (res.pagination.count > res.results.length) {
       throw new Error(
-        `Authentik returned ${res.results.length} of ${res.count} policy bindings; pagination is not implemented`
+        `Authentik returned ${res.results.length} of ${res.pagination.count} policy bindings; pagination is not implemented`
       );
     }
     return res.results.map((b) => ({
@@ -665,12 +681,16 @@ export class RealAuthentikClient implements AuthentikClient {
   // listProxyProviders -- rather than left for every caller to re-check.
   async listOAuth2Providers(): Promise<AuthentikOAuth2Provider[]> {
     const [res, proxyProviders] = await Promise.all([
-      this.request<{ count: number; results: RawOAuth2Provider[] }>('GET', '/api/v3/providers/oauth2/?page_size=500'),
+      this.request<{ pagination: { count: number }; results: RawOAuth2Provider[] }>(
+        'GET',
+        '/api/v3/providers/oauth2/?page_size=500'
+      ),
       this.listProxyProviders(),
     ]);
-    if (res.count > res.results.length) {
+    // `pagination.count`, not a top-level `count` (none exists; issue #16).
+    if (res.pagination.count > res.results.length) {
       throw new Error(
-        `Authentik returned ${res.results.length} of ${res.count} OAuth2 providers; pagination is not implemented`
+        `Authentik returned ${res.results.length} of ${res.pagination.count} OAuth2 providers; pagination is not implemented`
       );
     }
     const proxyProviderIds = new Set(proxyProviders.map((p) => p.id));
@@ -778,28 +798,30 @@ export class RealAuthentikClient implements AuthentikClient {
     return key.pk;
   }
 
-  // Fetches every scope property mapping once and filters client-side by
-  // `managed` id, rather than one request per requested id -- research.md R2
-  // notes the three managed ids are looked up together on every sync run.
-  // Same truncated-page guard as listPolicyBindings/listOAuth2Providers:
-  // a mapping that fell past page 1 must not read as "missing" and abort
-  // an otherwise-healthy sync run.
-  async getScopeMappingIds(managed: string[]): Promise<string[]> {
+  // Fetches every scope property mapping once (issue #16) -- callers resolve
+  // the built-in ids they need by `managed`, and look up any attached
+  // mapping's scope name, from this one listing, rather than one request per
+  // requested id (research.md R2 notes the three managed ids are looked up
+  // together on every sync run). Same truncated-page guard as
+  // listPolicyBindings/listOAuth2Providers/findPolicyByName: a mapping that
+  // fell past page 1 must not read as "missing" and abort an
+  // otherwise-healthy sync run. The count lives under `pagination.count`
+  // (research.md R1).
+  async listScopeMappings(): Promise<AuthentikScopeMapping[]> {
     const res = await this.request<{
-      count: number;
+      pagination: { count: number };
       results: Array<{ pk: string; managed: string | null; scope_name: string }>;
-    }>('GET', '/api/v3/propertymappings/provider/scope/?page_size=100');
-    if (res.count > res.results.length) {
+    }>('GET', '/api/v3/propertymappings/provider/scope/?page_size=500');
+    if (res.pagination.count > res.results.length) {
       throw new Error(
-        `Authentik returned ${res.results.length} of ${res.count} scope property mappings; pagination is not implemented`
+        `Authentik returned ${res.results.length} of ${res.pagination.count} scope property mappings; pagination is not implemented`
       );
     }
-    const byManaged = new Map(res.results.filter((r) => r.managed != null).map((r) => [r.managed as string, r.pk]));
-    return managed.map((m) => {
-      const id = byManaged.get(m);
-      if (!id) throw new Error(`No Authentik scope property mapping found for managed id '${m}'`);
-      return id;
-    });
+    return res.results.map((r) => ({
+      id: r.pk,
+      managed: r.managed ?? undefined,
+      scopeName: r.scope_name,
+    }));
   }
 
   private toStageRef(raw: RawStageRef): AuthentikStageRef {
@@ -847,13 +869,12 @@ export class RealAuthentikClient implements AuthentikClient {
 
   // The `name` query param on this endpoint is ignored by Authentik (verified
   // live -- it returned every policy regardless), so this always fetches the
-  // full page and matches client-side. Same truncated-page-guard *intent* as
-  // listPolicyBindings/listOAuth2Providers/getScopeMappingIds: a policy that
-  // fell past page 1 must not silently read as "doesn't exist yet." Unlike
-  // those three, the count here lives under `pagination.count`, not a
-  // top-level `count` -- every live capture of this and every other list
-  // endpoint in this file puts it there (see test/fixtures/authentik/
-  // policies-all.json); there is no top-level `count` field to read.
+  // full page and matches client-side. Same truncated-page guard as
+  // listPolicyBindings/listOAuth2Providers/listScopeMappings: a policy that
+  // fell past page 1 must not silently read as "doesn't exist yet." Like all
+  // of them, the count lives under `pagination.count` -- Authentik's list
+  // endpoints return no top-level `count` (see test/fixtures/authentik/
+  // policies-all.json; issue #16, research.md R1).
   async findPolicyByName(name: string): Promise<AuthentikPolicyRef | undefined> {
     const res = await this.request<{ pagination: { count: number }; results: RawPolicyRef[] }>(
       'GET',
@@ -1095,7 +1116,7 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
   getSigningKeyId(_name: string): Promise<string> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
-  getScopeMappingIds(_managed: string[]): Promise<string[]> {
+  listScopeMappings(): Promise<AuthentikScopeMapping[]> {
     return Promise.reject(new Error(UNCONFIGURED_MESSAGE));
   }
   findStageByName(_name: string): Promise<AuthentikStageRef | undefined> {

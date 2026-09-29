@@ -120,7 +120,7 @@ export async function runAdoptOidcClient(
 
   // FR-007: the client's actual allowed callback list is web + mobile.
   const desired = desiredOAuth2Settings(clientRedirectUris(entry), instance.signingKeyId, instance.scopeMappingIds);
-  const { changes, patch } = diffOAuth2Settings(provider, desired);
+  const { changes, patch } = diffOAuth2Settings(provider, desired, instance.scopeNameById);
 
   // Safe non-null assertion: effectiveAuth() only returns 'oidc' when
   // authGroup is set.

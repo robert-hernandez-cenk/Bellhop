@@ -4,7 +4,7 @@ import type { Inventory } from '../../src/lib/inventory.ts';
 import { runAdoptOidcClient, formatAdoptOidcClient } from '../../src/commands/networking/adopt-oidc-client.ts';
 import { runSyncAuthentik } from '../../src/commands/networking/sync-authentik.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
-import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
+import { FakeAuthentikClient, SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL } from '../support/fake-authentik-client.ts';
 
 const LADDER = authentikConfig().groupLadder; // low -> high
 const [, , USERS_RUNG, ADMIN_RUNG] = LADDER;
@@ -239,6 +239,47 @@ test('adopting an entry with mobile URIs previews and applies redirect_uris drif
     { matchingMode: 'strict', url: OIDC_URIS[0] },
     { matchingMode: 'strict', url: mobileUri },
   ]);
+});
+
+// issue #16, US2/T010: a client differing from the desired settings only by
+// a custom email mapping (in place of the built-in scope-email-1) must
+// adopt cleanly -- the preview shows only the ownership marker, and apply
+// never touches the mapping.
+test('adopting a client whose only difference is a custom email mapping previews and applies with no OpenID settings changes (issue #16)', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [{ id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50' }],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        // A custom email mapping in place of the built-in scope-email-1 --
+        // otherwise identical to Bellhop's desired settings.
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1'],
+        redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
+      },
+    ],
+    scopeMappings: SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL,
+  });
+  await seedLadderGroups(authentik);
+
+  const dry = await runAdoptOidcClient({ entry: 'media' }, { authentik, inventory: oidcInventory() });
+  assert.deepEqual(dry.settingsChanges, []);
+  const text = formatAdoptOidcClient(dry);
+  assert.match(text, /meta_publisher -> bellhop/);
+  assert.doesNotMatch(text, /property_mappings/);
+
+  const applied = await runAdoptOidcClient({ entry: 'media', apply: true }, { authentik, inventory: oidcInventory() });
+  assert.equal(applied.applied, true);
+  assert.deepEqual(applied.settingsChanges, []);
+
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1']);
+  const app = (await authentik.listApplications())[0];
+  assert.equal(app.metaPublisher, 'bellhop');
 });
 
 test('refuses naming AUTHENTIK_OIDC_SIGNING_KEY_NAME when the signing key cannot be resolved', async () => {
