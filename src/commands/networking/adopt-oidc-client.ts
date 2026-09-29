@@ -6,6 +6,7 @@ import { publicHostname } from '../../lib/hostname.ts';
 import {
   BELLHOP_META_PUBLISHER,
   MISSING_REDIRECT_URIS_REASON,
+  clientRedirectUris,
   desiredOAuth2Settings,
   diffOAuth2Settings,
   indexGroupBindings,
@@ -105,8 +106,10 @@ export async function runAdoptOidcClient(
   // Always found: ownership.oauth2ProviderIds is built from this exact list.
   const provider = oauth2Providers.find((p) => p.id === application.providerId)!;
 
-  const redirectUris = entry.oidcRedirectUris ?? [];
-  if (redirectUris.length === 0) {
+  // The web list alone decides whether this entry has any callback
+  // configured at all (FR-004, same rule planOidc's missing-redirect-uris
+  // skip applies) -- an entry with only mobile URIs is still incomplete.
+  if ((entry.oidcRedirectUris?.length ?? 0) === 0) {
     throw new Error(`${opts.entry}: ${MISSING_REDIRECT_URIS_REASON}`);
   }
 
@@ -115,7 +118,8 @@ export async function runAdoptOidcClient(
   const instance = await resolveOidcInstanceSettings(deps.authentik);
   if (!instance.ok) throw new Error(instance.reason);
 
-  const desired = desiredOAuth2Settings(redirectUris, instance.signingKeyId, instance.scopeMappingIds);
+  // FR-007: the client's actual allowed callback list is web + mobile.
+  const desired = desiredOAuth2Settings(clientRedirectUris(entry), instance.signingKeyId, instance.scopeMappingIds);
   const { changes, patch } = diffOAuth2Settings(provider, desired);
 
   // Safe non-null assertion: effectiveAuth() only returns 'oidc' when
@@ -137,6 +141,7 @@ export async function runAdoptOidcClient(
     authGroup,
     authMode: entry.authMode,
     oidcRedirectUris: entry.oidcRedirectUris,
+    oidcMobileRedirectUris: entry.oidcMobileRedirectUris,
   };
   const managedBySlug = new Map<string, AuthentikApplication>([[slug, application]]);
   const [plan] = planBindingChanges([candidate], new Set(), managedBySlug, bindingsByTarget, ladder, groupIdByName, groupNameById);

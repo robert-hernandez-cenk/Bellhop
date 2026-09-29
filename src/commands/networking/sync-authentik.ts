@@ -245,6 +245,7 @@ interface CandidateEntry {
   authGroup?: string;
   authMode?: 'forward' | 'oidc';
   oidcRedirectUris?: string[];
+  oidcMobileRedirectUris?: string[];
 }
 
 type SubdomainOwner = {
@@ -252,6 +253,7 @@ type SubdomainOwner = {
   subdomains?: string[];
   authMode?: 'forward' | 'oidc';
   oidcRedirectUris?: string[];
+  oidcMobileRedirectUris?: string[];
 };
 
 // A "candidate" is any entry with at least one subdomain, regardless of
@@ -281,6 +283,7 @@ function candidateEntries(inventory: Inventory): CandidateEntry[] {
       authGroup: owner.authGroup,
       authMode: owner.authMode,
       oidcRedirectUris: owner.oidcRedirectUris,
+      oidcMobileRedirectUris: owner.oidcMobileRedirectUris,
     });
   }
   return result;
@@ -317,6 +320,19 @@ export function ownedProviderKind(
 // two flow ids: those are only sent on create, and AuthentikOAuth2Provider
 // does not report them back, so they are not reconciled.
 export type DesiredOAuth2Settings = Omit<OAuth2ProviderSettings, 'authorizationFlowId' | 'invalidationFlowId'>;
+
+// FR-007: a Bellhop-owned OpenID client's actual callback list is the
+// entry's web list plus its mobile list, deduplicated (first-seen order,
+// web first) -- the mobile list is simply more addresses the same client is
+// allowed to send a signed-in user back to. Callers that decide whether an
+// entry has *any* callback configured at all (the missing-redirect-uris
+// skip in planOidc, adopt-oidc-client's own refusal) deliberately keep
+// testing `entry.oidcRedirectUris` alone instead (FR-004): the web list
+// stays the one that is required, so an entry with only mobile URIs is
+// still incomplete.
+export function clientRedirectUris(entry: { oidcRedirectUris?: string[]; oidcMobileRedirectUris?: string[] }): string[] {
+  return [...new Set([...(entry.oidcRedirectUris ?? []), ...(entry.oidcMobileRedirectUris ?? [])])];
+}
 
 export function desiredOAuth2Settings(
   redirectUris: string[],
@@ -980,7 +996,7 @@ async function planOidc(
   const { signingKeyId, scopeMappingIds } = instance;
 
   for (const entry of withUris) {
-    const settings = desiredOAuth2Settings(entry.oidcRedirectUris, signingKeyId, scopeMappingIds);
+    const settings = desiredOAuth2Settings(clientRedirectUris(entry), signingKeyId, scopeMappingIds);
     const application = managedBySlug.get(entry.slug);
     if (application && ownedKindBySlug.get(entry.slug) === 'oauth2') {
       // Owned as OAuth2, so this lookup always succeeds.

@@ -38,12 +38,14 @@ export interface OidcCredentialsResult {
 // gated" with two different error messages. oidcRedirectUris is exported
 // alongside this (issue #1, U9) so adopt-oidc-client.ts can reuse both
 // rather than a second lookup with its own narrower shape.
+// oidcMobileRedirectUris (issue #22) joins it for the same reason.
 export interface LookupEntry {
   name: string;
   authGroup?: string;
   authMode?: 'forward' | 'oidc';
   subdomains?: string[];
   oidcRedirectUris?: string[];
+  oidcMobileRedirectUris?: string[];
 }
 
 // Entry lookup searches hosts, guests, external sites by name (controller
