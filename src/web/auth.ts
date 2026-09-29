@@ -43,7 +43,8 @@ export interface AuthUser {
 // 'authentik' exists because 'auto' cannot detect the one failure it cannot
 // see: a Caddy config that *lost* its forward_auth directive looks identical
 // to a deployment that never had one. Any instance where authentication is
-// load-bearing should set it -- see README's "Running without Authentik".
+// load-bearing should set it -- see "Running without Authentik" in
+// docs/authentik.md.
 export type AuthMode = 'auto' | 'authentik' | 'none';
 
 export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {

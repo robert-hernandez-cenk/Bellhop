@@ -15,7 +15,7 @@ Closes #
 - [ ] Behavior changes include tests (a bug fix includes a test that fails without the fix)
 - [ ] Only example data in code, tests, fixtures, docs, and commit messages (constitution Principle I, `.specify/memory/constitution.md`)
 - [ ] Web UI changes checked in a browser at desktop width and at 640px or narrower
-- [ ] `README.md` / `CLAUDE.md` updated if behavior or conventions changed
+- [ ] `README.md` / `docs/` / `CLAUDE.md` updated if behavior or conventions changed
 
 ## Manual verification
 

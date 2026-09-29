@@ -133,8 +133,8 @@ pass before a pull request merges.
 
 Fill in the pull request template: a summary, the linked issue, and its
 checklist. Review your full diff for real operational data before you
-submit. A user-visible behavior change updates `README.md` in the same
-pull request, and a change to architecture or conventions updates
+submit. A user-visible behavior change updates `README.md` or the
+relevant page under `docs/` in the same pull request, and a change to architecture or conventions updates
 `CLAUDE.md`.
 
 ## Security
