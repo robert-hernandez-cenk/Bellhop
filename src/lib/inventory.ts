@@ -55,6 +55,37 @@ const OidcRedirectUriSchema = z.string().refine(isAbsoluteHttpUrl, {
   message: 'must be an absolute http:// or https:// URL',
 });
 
+// Mobile-app hand-off addresses (issue #22, research R1) -- a custom scheme
+// (app.example:///oauth-callback) is the whole point of this field, so
+// unlike isAbsoluteHttpUrl above there's no scheme allow-list, only a fixed
+// deny-list of schemes that are never a legitimate redirect target.
+const DISALLOWED_MOBILE_REDIRECT_SCHEMES = new Set(['javascript', 'data', 'file', 'vbscript']);
+
+// Shared by OidcMobileRedirectUriSchema below and parseOidcMobileRedirectUris
+// (write time) so the two can never disagree -- same pattern as
+// isAbsoluteHttpUrl/OidcRedirectUriSchema above.
+function isValidMobileRedirectUri(value: string): boolean {
+  // new URL() would silently percent-encode an embedded space rather than
+  // reject it, so whitespace/control characters are rejected on the raw
+  // string first, before it's ever handed to the URL parser.
+  if (/[\s\x00-\x1f\x7f]/.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const scheme = url.protocol.slice(0, -1).toLowerCase();
+  return !DISALLOWED_MOBILE_REDIRECT_SCHEMES.has(scheme);
+}
+
+// Shared by HostEntrySchema/GuestEntrySchema/ExternalSiteSchema's
+// oidcMobileRedirectUris -- one definition so all three enforce the exact
+// same rule, mirroring OidcRedirectUriSchema above.
+const OidcMobileRedirectUriSchema = z.string().refine(isValidMobileRedirectUri, {
+  message: 'must be a valid URI with no whitespace/control characters and not a javascript:/data:/file:/vbscript: scheme',
+});
+
 // The exact message this schema, parseUnauthenticatedPaths below, and
 // proxy/routes.ts's parsePathPattern all throw -- issue #10, US4: every
 // proxy this toolkit could ever drive can express an exact path or a
@@ -151,6 +182,13 @@ export const HostEntrySchema = z.object({
   // time; oidcConfigErrors requires at least one when effectiveAuth is
   // 'oidc' and the entry has subdomains).
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
+  // Mobile-app hand-off addresses -- same role as oidcRedirectUris, additive
+  // to it (sync-authentik's clientRedirectUris merges both into one client
+  // callback set) rather than a replacement, so a native app and a browser
+  // login can share one entry. Inert unless authMode is 'oidc'; parsed at
+  // write time by parseOidcMobileRedirectUris, and checked against
+  // oidcRedirectUris for a duplicate by oidcConfigErrors below.
+  oidcMobileRedirectUris: z.array(OidcMobileRedirectUriSchema).optional(),
   unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
   // Marks this entry as the Authentik instance itself -- mirrors proxy:
   // true's "exactly one entry" role. sync-proxy resolves this entry's ip
@@ -181,9 +219,11 @@ export const GuestEntrySchema = z.object({
   proxyManual: z.boolean().optional(),
   insecureBackendTls: z.boolean().optional(),
   authGroup: z.string().min(1).optional(),
-  // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
+  // See HostEntrySchema's authMode/oidcRedirectUris/oidcMobileRedirectUris
+  // for what these do.
   authMode: z.enum(['forward', 'oidc']).optional(),
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
+  oidcMobileRedirectUris: z.array(OidcMobileRedirectUriSchema).optional(),
   unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
   authentik: z.boolean().optional(),
   proxy: z.boolean().optional(),
@@ -242,9 +282,11 @@ export const ExternalSiteSchema = z.object({
   // off-ladder value instead, so an AUTHENTIK_GROUP_LADDER edit can never
   // make an already-saved inventory refuse to load.
   authGroup: z.string().min(1).optional(),
-  // See HostEntrySchema's authMode/oidcRedirectUris for what these do.
+  // See HostEntrySchema's authMode/oidcRedirectUris/oidcMobileRedirectUris
+  // for what these do.
   authMode: z.enum(['forward', 'oidc']).optional(),
   oidcRedirectUris: z.array(OidcRedirectUriSchema).optional(),
+  oidcMobileRedirectUris: z.array(OidcMobileRedirectUriSchema).optional(),
   unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
 });
 
@@ -361,7 +403,8 @@ const SCHEMA = `
     nfs_mounts_json TEXT,
     unauthenticated_paths_json TEXT,
     auth_mode TEXT,
-    oidc_redirect_uris_json TEXT
+    oidc_redirect_uris_json TEXT,
+    oidc_mobile_redirect_uris_json TEXT
   );
   CREATE TABLE IF NOT EXISTS guests (
     name TEXT PRIMARY KEY,
@@ -375,6 +418,7 @@ const SCHEMA = `
     unauthenticated_paths_json TEXT,
     auth_mode TEXT,
     oidc_redirect_uris_json TEXT,
+    oidc_mobile_redirect_uris_json TEXT,
     UNIQUE (host, vmid)
   );
   CREATE TABLE IF NOT EXISTS external_sites (
@@ -382,7 +426,8 @@ const SCHEMA = `
     ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER,
     unauthenticated_paths_json TEXT,
     auth_mode TEXT,
-    oidc_redirect_uris_json TEXT
+    oidc_redirect_uris_json TEXT,
+    oidc_mobile_redirect_uris_json TEXT
   );
   CREATE TABLE IF NOT EXISTS subdomains (
     subdomain TEXT PRIMARY KEY,
@@ -510,10 +555,13 @@ function openInventoryDb(path: string): Database.Database {
   ensureColumn(db, 'hosts', 'ssh_identity_file', 'ssh_identity_file TEXT');
   ensureColumn(db, 'hosts', 'auth_mode', 'auth_mode TEXT');
   ensureColumn(db, 'hosts', 'oidc_redirect_uris_json', 'oidc_redirect_uris_json TEXT');
+  ensureColumn(db, 'hosts', 'oidc_mobile_redirect_uris_json', 'oidc_mobile_redirect_uris_json TEXT');
   ensureColumn(db, 'guests', 'auth_mode', 'auth_mode TEXT');
   ensureColumn(db, 'guests', 'oidc_redirect_uris_json', 'oidc_redirect_uris_json TEXT');
+  ensureColumn(db, 'guests', 'oidc_mobile_redirect_uris_json', 'oidc_mobile_redirect_uris_json TEXT');
   ensureColumn(db, 'external_sites', 'auth_mode', 'auth_mode TEXT');
   ensureColumn(db, 'external_sites', 'oidc_redirect_uris_json', 'oidc_redirect_uris_json TEXT');
+  ensureColumn(db, 'external_sites', 'oidc_mobile_redirect_uris_json', 'oidc_mobile_redirect_uris_json TEXT');
   ensureColumn(db, 'guests', 'app_source', 'app_source TEXT');
   // Must run after the auth_group ensureColumn calls above -- it writes
   // into that column before dropping the one it read from.
@@ -767,6 +815,33 @@ export function parseOidcRedirectUris(raw: unknown): string[] | undefined {
   return deduped.length > 0 ? deduped : undefined;
 }
 
+// The web UI's mobile-redirect-URI field (semicolon-joined free text) or a
+// typed array (CLI/MCP JSON) -> a deduplicated list of valid mobile hand-off
+// URIs in authored order, or undefined when empty -- same input handling and
+// same "reject rather than silently drop" precedent as parseOidcRedirectUris
+// above, just against isValidMobileRedirectUri's broader (custom-scheme-
+// friendly) rule instead of isAbsoluteHttpUrl's http(s)-only one.
+export function parseOidcMobileRedirectUris(raw: unknown): string[] | undefined {
+  let list: string[];
+  if (Array.isArray(raw)) {
+    list = raw.map((v) => String(v).trim()).filter(Boolean);
+  } else if (typeof raw === 'string') {
+    if (!raw.trim()) return undefined;
+    list = raw.split(';').map((s) => s.trim()).filter(Boolean);
+  } else {
+    return undefined;
+  }
+  const deduped = Array.from(new Set(list));
+  for (const uri of deduped) {
+    if (!isValidMobileRedirectUri(uri)) {
+      throw new Error(
+        `Invalid mobile redirect URI '${uri}' (must be a valid URI with no whitespace/control characters and not a javascript:/data:/file:/vbscript: scheme)`
+      );
+    }
+  }
+  return deduped.length > 0 ? deduped : undefined;
+}
+
 // Write-level validation for an OIDC-gated entry (research R7): deliberately
 // NOT part of validateInventory(), which runs on every load -- the same
 // reasoning that kept ladder membership out of it (#158) applies here, so a
@@ -778,6 +853,7 @@ export function oidcConfigErrors(entry: {
   authMode?: 'forward' | 'oidc';
   subdomains?: string[];
   oidcRedirectUris?: string[];
+  oidcMobileRedirectUris?: string[];
 }): string[] {
   const errors: string[] = [];
   if (
@@ -786,6 +862,16 @@ export function oidcConfigErrors(entry: {
     (entry.oidcRedirectUris?.length ?? 0) === 0
   ) {
     errors.push('oidcRedirectUris: set at least one callback URL for an OIDC-gated entry');
+  }
+  // A URI listed in both is harmless to the sync (research R2 -- the client
+  // callback set is deduplicated regardless, see sync-authentik's
+  // clientRedirectUris), but almost certainly an authoring mistake, so it's
+  // rejected at write time the same way an invalid URI itself is.
+  const webUris = new Set(entry.oidcRedirectUris ?? []);
+  for (const uri of entry.oidcMobileRedirectUris ?? []) {
+    if (webUris.has(uri)) {
+      errors.push(`oidcMobileRedirectUris: '${uri}' is also a web callback URL; list it in only one`);
+    }
   }
   return errors;
 }
@@ -805,6 +891,7 @@ interface HostRow {
   auth_group: string | null;
   auth_mode: string | null;
   oidc_redirect_uris_json: string | null;
+  oidc_mobile_redirect_uris_json: string | null;
   authentik: number | null;
   bridges_json: string | null;
   storages_json: string | null;
@@ -823,6 +910,7 @@ interface GuestRow {
   auth_group: string | null;
   auth_mode: string | null;
   oidc_redirect_uris_json: string | null;
+  oidc_mobile_redirect_uris_json: string | null;
   authentik: number | null;
   proxy: number;
   proxy_manual: number | null;
@@ -842,6 +930,7 @@ interface ExternalSiteRow {
   auth_group: string | null;
   auth_mode: string | null;
   oidc_redirect_uris_json: string | null;
+  oidc_mobile_redirect_uris_json: string | null;
   unauthenticated_paths_json: string | null;
 }
 
@@ -890,6 +979,7 @@ export function loadInventory(path: string): Inventory {
       authGroup: row.auth_group ?? undefined,
       authMode: (row.auth_mode ?? undefined) as 'forward' | 'oidc' | undefined,
       oidcRedirectUris: row.oidc_redirect_uris_json ? JSON.parse(row.oidc_redirect_uris_json) : undefined,
+      oidcMobileRedirectUris: row.oidc_mobile_redirect_uris_json ? JSON.parse(row.oidc_mobile_redirect_uris_json) : undefined,
       authentik: row.authentik ? true : undefined,
       bridges: row.bridges_json ? JSON.parse(row.bridges_json) : undefined,
       storages: row.storages_json ? JSON.parse(row.storages_json) : undefined,
@@ -909,6 +999,7 @@ export function loadInventory(path: string): Inventory {
       authGroup: row.auth_group ?? undefined,
       authMode: (row.auth_mode ?? undefined) as 'forward' | 'oidc' | undefined,
       oidcRedirectUris: row.oidc_redirect_uris_json ? JSON.parse(row.oidc_redirect_uris_json) : undefined,
+      oidcMobileRedirectUris: row.oidc_mobile_redirect_uris_json ? JSON.parse(row.oidc_mobile_redirect_uris_json) : undefined,
       authentik: row.authentik ? true : undefined,
       proxy: row.proxy ? true : undefined,
       proxyManual: row.proxy_manual ? true : undefined,
@@ -929,6 +1020,7 @@ export function loadInventory(path: string): Inventory {
       authGroup: row.auth_group ?? undefined,
       authMode: (row.auth_mode ?? undefined) as 'forward' | 'oidc' | undefined,
       oidcRedirectUris: row.oidc_redirect_uris_json ? JSON.parse(row.oidc_redirect_uris_json) : undefined,
+      oidcMobileRedirectUris: row.oidc_mobile_redirect_uris_json ? JSON.parse(row.oidc_mobile_redirect_uris_json) : undefined,
       unauthenticatedPaths: row.unauthenticated_paths_json ? JSON.parse(row.unauthenticated_paths_json) : undefined,
     }));
 
@@ -1087,8 +1179,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertHost = db.prepare(`
-        INSERT INTO hosts (name, ssh_target, ssh_user, ssh_port, ssh_identity_file, proxy, proxy_manual, ip, port, insecure_backend_tls, bridges_json, storages_json, nfs_mounts_json, auth_group, auth_mode, oidc_redirect_uris_json, authentik, mid_scheme_json, unauthenticated_paths_json)
-        VALUES (@name, @ssh_target, @ssh_user, @ssh_port, @ssh_identity_file, @proxy, @proxy_manual, @ip, @port, @insecure_backend_tls, @bridges_json, @storages_json, @nfs_mounts_json, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @mid_scheme_json, @unauthenticated_paths_json)
+        INSERT INTO hosts (name, ssh_target, ssh_user, ssh_port, ssh_identity_file, proxy, proxy_manual, ip, port, insecure_backend_tls, bridges_json, storages_json, nfs_mounts_json, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, authentik, mid_scheme_json, unauthenticated_paths_json)
+        VALUES (@name, @ssh_target, @ssh_user, @ssh_port, @ssh_identity_file, @proxy, @proxy_manual, @ip, @port, @insecure_backend_tls, @bridges_json, @storages_json, @nfs_mounts_json, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @authentik, @mid_scheme_json, @unauthenticated_paths_json)
       `);
       const insertSubdomain = db.prepare(
         'INSERT INTO subdomains (subdomain, owner_type, owner_name) VALUES (?, ?, ?)'
@@ -1112,6 +1204,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           auth_group: host.authGroup ?? null,
           auth_mode: host.authMode ?? null,
           oidc_redirect_uris_json: host.oidcRedirectUris ? JSON.stringify(host.oidcRedirectUris) : null,
+          oidc_mobile_redirect_uris_json: host.oidcMobileRedirectUris ? JSON.stringify(host.oidcMobileRedirectUris) : null,
           authentik: host.authentik ? 1 : null,
           bridges_json: host.bridges ? JSON.stringify(host.bridges) : null,
           storages_json: host.storages ? JSON.stringify(host.storages) : null,
@@ -1124,8 +1217,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, authentik, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @authentik, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -1146,6 +1239,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           auth_group: guest.authGroup ?? null,
           auth_mode: guest.authMode ?? null,
           oidc_redirect_uris_json: guest.oidcRedirectUris ? JSON.stringify(guest.oidcRedirectUris) : null,
+          oidc_mobile_redirect_uris_json: guest.oidcMobileRedirectUris ? JSON.stringify(guest.oidcMobileRedirectUris) : null,
           authentik: guest.authentik ? 1 : null,
           unauthenticated_paths_json: guest.unauthenticatedPaths ? JSON.stringify(guest.unauthenticatedPaths) : null,
         });
@@ -1154,8 +1248,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertExternalSite = db.prepare(`
-        INSERT INTO external_sites (name, ip, port, insecure_backend_tls, auth_group, auth_mode, oidc_redirect_uris_json, unauthenticated_paths_json)
-        VALUES (@name, @ip, @port, @insecure_backend_tls, @auth_group, @auth_mode, @oidc_redirect_uris_json, @unauthenticated_paths_json)
+        INSERT INTO external_sites (name, ip, port, insecure_backend_tls, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, unauthenticated_paths_json)
+        VALUES (@name, @ip, @port, @insecure_backend_tls, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @unauthenticated_paths_json)
       `);
       for (const site of data.externalSites ?? []) {
         insertExternalSite.run({
@@ -1166,6 +1260,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           auth_group: site.authGroup ?? null,
           auth_mode: site.authMode ?? null,
           oidc_redirect_uris_json: site.oidcRedirectUris ? JSON.stringify(site.oidcRedirectUris) : null,
+          oidc_mobile_redirect_uris_json: site.oidcMobileRedirectUris ? JSON.stringify(site.oidcMobileRedirectUris) : null,
           unauthenticated_paths_json: site.unauthenticatedPaths ? JSON.stringify(site.unauthenticatedPaths) : null,
         });
         for (const subdomain of site.subdomains) insertSubdomain.run(subdomain, 'external_site', site.name);

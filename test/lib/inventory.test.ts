@@ -14,6 +14,7 @@ import {
   parseUnauthenticatedPaths,
   parseAuthMode,
   parseOidcRedirectUris,
+  parseOidcMobileRedirectUris,
   effectiveAuth,
   oidcConfigErrors,
   sortInventoryForFile,
@@ -1540,6 +1541,198 @@ test('oidcConfigErrors is fine for a forward-effective entry with no redirect UR
 
 test('oidcConfigErrors is fine for an oidc-effective entry with no subdomains', () => {
   assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-users', authMode: 'oidc' }), []);
+});
+
+// --- OIDC mobile-app redirect URIs (issue #22, T002) ---
+
+test('HostEntrySchema/GuestEntrySchema/ExternalSiteSchema accept a custom-scheme or https mobile redirect URI', () => {
+  const hostBase = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  assert.ok(
+    HostEntrySchema.safeParse({ ...hostBase, oidcMobileRedirectUris: ['app.example:///oauth-callback'] }).success
+  );
+  assert.ok(
+    HostEntrySchema.safeParse({
+      ...hostBase,
+      oidcMobileRedirectUris: ['https://books.example.com/auth/openid/mobile-redirect'],
+    }).success
+  );
+
+  const guestBase = { name: 'sonarr', type: 'lxc' as const, vmid: 120, host: 'pve1' };
+  assert.ok(
+    GuestEntrySchema.safeParse({ ...guestBase, oidcMobileRedirectUris: ['app.example:///oauth-callback'] }).success
+  );
+
+  const siteBase = { name: 'nas', ip: '192.168.1.5', subdomains: ['nas'] };
+  assert.ok(
+    ExternalSiteSchema.safeParse({ ...siteBase, oidcMobileRedirectUris: ['app.example:///oauth-callback'] }).success
+  );
+});
+
+test('HostEntrySchema rejects javascript:/data:/file:/vbscript: schemes (case-insensitive) for oidcMobileRedirectUris', () => {
+  const hostBase = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  for (const bad of ['javascript:x', 'JavaScript:x', 'data:text/plain,x', 'file:///etc/passwd', 'vbscript:x']) {
+    assert.ok(
+      !HostEntrySchema.safeParse({ ...hostBase, oidcMobileRedirectUris: [bad] }).success,
+      `${bad} must be rejected`
+    );
+  }
+});
+
+test('HostEntrySchema rejects an oidcMobileRedirectUris value with a space or no scheme', () => {
+  const hostBase = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
+  assert.ok(
+    !HostEntrySchema.safeParse({ ...hostBase, oidcMobileRedirectUris: ['app.example:///oauth callback'] }).success
+  );
+  assert.ok(!HostEntrySchema.safeParse({ ...hostBase, oidcMobileRedirectUris: ['not-a-uri'] }).success);
+});
+
+test('saveInventory/loadInventory round-trip oidcMobileRedirectUris on a host, a guest, and an external site', () => {
+  const dest = tempInventoryDb();
+  const inv = loadInventory(dest);
+  const updated: Inventory = {
+    ...inv,
+    hosts: inv.hosts.map((h) =>
+      h.name === 'pve1'
+        ? {
+            ...h,
+            authGroup: 'bellhop-users',
+            authMode: 'oidc' as const,
+            oidcRedirectUris: ['https://pve1.example.com/callback'],
+            oidcMobileRedirectUris: ['app.example:///oauth-callback'],
+          }
+        : h
+    ),
+    guests: inv.guests.map((g) =>
+      g.name === 'proxy'
+        ? {
+            ...g,
+            authGroup: 'bellhop-users',
+            authMode: 'oidc' as const,
+            oidcMobileRedirectUris: ['app.example:///oauth-callback', 'com.example.app:/callback'],
+          }
+        : g
+    ),
+    externalSites: [
+      {
+        name: 'nas',
+        ip: '192.168.1.250',
+        subdomains: ['nas'],
+        authGroup: 'bellhop-users',
+        authMode: 'oidc' as const,
+        oidcMobileRedirectUris: ['https://books.example.com/auth/openid/mobile-redirect'],
+      },
+    ],
+  };
+  saveInventory(dest, updated);
+
+  const reloaded = loadInventory(dest);
+  const pve1 = reloaded.hosts.find((h) => h.name === 'pve1')!;
+  assert.deepEqual(pve1.oidcMobileRedirectUris, ['app.example:///oauth-callback']);
+
+  const proxy = reloaded.guests.find((g) => g.name === 'proxy')!;
+  assert.deepEqual(proxy.oidcMobileRedirectUris, ['app.example:///oauth-callback', 'com.example.app:/callback']);
+
+  const nas = reloaded.externalSites?.find((s) => s.name === 'nas')!;
+  assert.deepEqual(nas.oidcMobileRedirectUris, ['https://books.example.com/auth/openid/mobile-redirect']);
+
+  const pve2 = reloaded.hosts.find((h) => h.name === 'pve2')!;
+  assert.equal(
+    pve2.oidcMobileRedirectUris,
+    undefined,
+    'a host with no oidcMobileRedirectUris given must stay undefined, not []'
+  );
+});
+
+test('opening a database without the oidc_mobile_redirect_uris_json column loads with the field undefined', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  const legacyDb = new Database(dest);
+  legacyDb.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE hosts (
+      name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
+      proxy INTEGER NOT NULL DEFAULT 0,
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT,
+      auth_mode TEXT, oidc_redirect_uris_json TEXT
+    );
+    CREATE TABLE guests (
+      name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
+      host TEXT NOT NULL REFERENCES hosts(name),
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      auth_mode TEXT, oidc_redirect_uris_json TEXT,
+      UNIQUE (host, vmid)
+    );
+    CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER, auth_mode TEXT, oidc_redirect_uris_json TEXT);
+    CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+  `);
+  legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
+  legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
+  legacyDb.close();
+
+  const inv = loadInventory(dest);
+  assert.equal(
+    inv.hosts[0].oidcMobileRedirectUris,
+    undefined,
+    'a database predating oidc_mobile_redirect_uris_json has no value for it'
+  );
+});
+
+test('parseOidcMobileRedirectUris accepts a semicolon-joined string, dedupes, and keeps order', () => {
+  assert.deepEqual(
+    parseOidcMobileRedirectUris('app.example:///oauth-callback ; com.example.app:/callback; app.example:///oauth-callback'),
+    ['app.example:///oauth-callback', 'com.example.app:/callback']
+  );
+});
+
+test('parseOidcMobileRedirectUris accepts an array, dedupes, and keeps order', () => {
+  assert.deepEqual(
+    parseOidcMobileRedirectUris(['app.example:///oauth-callback', 'com.example.app:/callback', 'app.example:///oauth-callback']),
+    ['app.example:///oauth-callback', 'com.example.app:/callback']
+  );
+});
+
+test('parseOidcMobileRedirectUris returns undefined for empty input', () => {
+  assert.equal(parseOidcMobileRedirectUris(''), undefined);
+  assert.equal(parseOidcMobileRedirectUris('   '), undefined);
+  assert.equal(parseOidcMobileRedirectUris(undefined), undefined);
+  assert.equal(parseOidcMobileRedirectUris([]), undefined);
+});
+
+test('parseOidcMobileRedirectUris throws on a disallowed scheme, naming the URI and the reason', () => {
+  assert.throws(() => parseOidcMobileRedirectUris('javascript:x'), /javascript:x/);
+  assert.throws(() => parseOidcMobileRedirectUris('data:text/plain,x'), /data:text\/plain,x/);
+  assert.throws(() => parseOidcMobileRedirectUris('file:///etc/passwd'), /file:\/\/\/etc\/passwd/);
+  assert.throws(() => parseOidcMobileRedirectUris('vbscript:x'), /vbscript:x/);
+  assert.throws(() => parseOidcMobileRedirectUris('not-a-uri'), /not-a-uri/);
+});
+
+test('oidcConfigErrors reports a URI present in both oidcRedirectUris and oidcMobileRedirectUris, naming it', () => {
+  const errors = oidcConfigErrors({
+    authGroup: 'bellhop-users',
+    authMode: 'oidc',
+    subdomains: ['sonarr'],
+    oidcRedirectUris: ['https://sonarr.example.com/cb'],
+    oidcMobileRedirectUris: ['https://sonarr.example.com/cb', 'app.example:///oauth-callback'],
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /oidcMobileRedirectUris/);
+  assert.match(errors[0], /https:\/\/sonarr\.example\.com\/cb/);
+});
+
+test('oidcConfigErrors is fine when oidcMobileRedirectUris does not overlap oidcRedirectUris', () => {
+  assert.deepEqual(
+    oidcConfigErrors({
+      authGroup: 'bellhop-users',
+      authMode: 'oidc',
+      subdomains: ['sonarr'],
+      oidcRedirectUris: ['https://sonarr.example.com/cb'],
+      oidcMobileRedirectUris: ['app.example:///oauth-callback'],
+    }),
+    []
+  );
 });
 
 test('validateInventory allows an OIDC-gated entry with no authentik:true entry anywhere', () => {
