@@ -176,8 +176,8 @@ host references its result.
    host uses that certificate and no new certificate is requested.
 2. **Given** no NPM certificate covers a route's hostnames, **When** the
    route is synced with `--apply`, **Then** Bellhop asks NPM to request a
-   Let's Encrypt certificate for exactly those hostnames, using the
-   configured contact email, and the proxy host uses it. The dry run says a
+   Let's Encrypt certificate for exactly those hostnames (NPM registers it
+   under its own account's email), and the proxy host uses it. The dry run says a
    certificate will be requested.
 3. **Given** NPM rejects the certificate request (for example the domain is
    not publicly reachable), **When** the route is synced, **Then** the sync
@@ -242,8 +242,9 @@ file fields are hidden.
 - A certificate that covers some but not all of a route's hostnames is not
   used; a new one covering all of them is requested.
 - An expired certificate is not treated as covering anything.
-- NPM's token expires during a long sync: the driver obtains a fresh one
-  rather than failing mid-way.
+- NPM saves a proxy host whose custom configuration nginx rejects, marks
+  it offline, and takes that site down; the sync reads the host back after
+  every write and fails with nginx's own message, naming the proxy host.
 - A request to NPM that stalls is abandoned after a fixed timeout, and the
   sync reports it.
 
@@ -268,9 +269,8 @@ file fields are hidden.
 
 **Connection**
 
-- **FR-004**: The system MUST read the NPM login (email and password), an
-  optional API address, and an optional certificate contact email from a
-  gitignored credentials file under `data/`, loaded by every entry point
+- **FR-004**: The system MUST read the NPM login (email and password) and
+  an optional API address from a gitignored credentials file under `data/`, loaded by every entry point
   that already loads Authentik credentials.
 - **FR-005**: When no API address is configured, the driver MUST use HTTP
   on port 81 of the `proxy: true` entry's IP address.
@@ -306,7 +306,9 @@ file fields are hidden.
 - **FR-013**: Syncing an inventory already reflected in NPM MUST make no
   changes.
 - **FR-014**: A request NPM rejects MUST fail the sync with NPM's own error
-  message and the route or proxy host it concerned.
+  message and the route or proxy host it concerned. A proxy host NPM saved
+  but could not bring online (its generated configuration failed nginx's
+  test) MUST also fail the sync, with nginx's message.
 
 **Forward-auth**
 
@@ -328,9 +330,9 @@ file fields are hidden.
   names cover every one of the route's hostnames (exact match, or a
   one-level wildcard), when one exists.
 - **FR-019**: When none exists, apply MUST ask NPM to request a Let's
-  Encrypt certificate for exactly the route's hostnames, using the
-  configured contact email (defaulting to the NPM login email), before
-  creating or updating that proxy host; a failed request MUST fail that
+  Encrypt certificate for exactly the route's hostnames before creating or
+  updating that proxy host (NPM registers it under the login account's
+  email); a failed request MUST fail that
   route without leaving a proxy host behind that lacks a certificate.
 - **FR-020**: A proxy host whose current certificate still covers its
   hostnames MUST keep that certificate.
@@ -358,9 +360,8 @@ file fields are hidden.
 - **Sync plan**: the per-route create/update/unchanged decisions, deletions,
   certificate requests, and conflicts computed by the dry run and carried
   out by apply.
-- **NPM connection settings**: login email and password, optional API
-  address, optional certificate contact email, kept only in the gitignored
-  credentials file.
+- **NPM connection settings**: login email and password and an optional
+  API address, kept only in the gitignored credentials file.
 
 ## Success Criteria *(mandatory)*
 
