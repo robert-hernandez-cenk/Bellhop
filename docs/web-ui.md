@@ -73,3 +73,21 @@ fail-closed behavior back. `WEB_UI_DEV_USER` remains useful in dev/test for
 simulating a *specific non-admin group membership*, which the synthetic
 local operator can't do — `web:dev` sets it automatically (to `local-dev`)
 and `npm test` sets it too (to `test-user`).
+
+## Screenshots
+
+The images on this page and in `README.md`/`docs/authentik.md`/
+`docs/reverse-proxy/README.md` are captured from a throwaway demo instance,
+not a real deployment. Regenerate all of them with:
+
+```bash
+npm run web:build
+npm run docs:screenshots
+```
+
+This needs Google Chrome or Microsoft Edge installed (it also works with
+Playwright's own bundled Chromium after `npx playwright install chromium`).
+It writes every file under `docs/images/` and prints one `wrote
+docs/images/<file>` line per image; after a UI change that alters a
+screenshotted screen, regenerate and check the new images by eye for
+example-only values before committing them.

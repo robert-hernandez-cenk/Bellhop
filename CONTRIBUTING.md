@@ -67,6 +67,10 @@ so you can explore them safely.
   `data-label` card layout below that breakpoint, a long card value wraps
   (`overflow-wrap: anywhere`, right-aligned) rather than truncating, and
   dark-mode styles target `:root[data-theme='dark']`.
+- A change that alters a screen already shown in `docs/images/` regenerates
+  its screenshots (`npm run web:build && npm run docs:screenshots`, see
+  [Web UI](docs/web-ui.md#screenshots)) and checks the new images by eye for
+  example-only values before committing them.
 
 ## Testing
 

@@ -75,10 +75,10 @@ Paths are relative to the repository root (the worktree).
 
 **Independent test**: in a checkout with no `data/` and no `inventory/bellhop.db`, run `npm run docs:screenshots` twice; both succeed with the same content; nothing is left running.
 
-- [ ] T021 [US2] In `scripts/capture-screenshots.ts`, when no browser launches, print each attempt with its error and `Install Google Chrome or Microsoft Edge, or run: npx playwright install chromium`, exit 1, and do not start the demo (FR-010)
-- [ ] T022 [US2] In `scripts/capture-screenshots.ts`, when a definition fails (navigation, `prepare`, or `ready` timeout), print `Screenshot <file> failed: <reason>`, write no image for it, clean up, exit 1 (FR-012); verify by temporarily pointing one definition's `ready` at a selector that never appears, then revert
-- [ ] T023 [US2] Verify cleanup and isolation by hand (quickstart §3): run the capture twice and compare images for identical content; confirm with `Get-Process`/`Get-NetTCPConnection` that no demo port is still listening and no browser process started by the script remains; confirm `git status` shows only intended image changes and `data/`/`inventory/bellhop.db` were never created
-- [ ] T024 [P] [US2] Document regeneration in `docs/web-ui.md` (a short "Screenshots" note: `npm run docs:screenshots`, needs Chrome/Edge, writes `docs/images/`) and add to `CONTRIBUTING.md` that a change altering a screenshotted screen should regenerate the screenshots and check them by eye for example-only values (FR-017)
+- [x] T021 [US2] In `scripts/capture-screenshots.ts`, when no browser launches, print each attempt with its error and `Install Google Chrome or Microsoft Edge, or run: npx playwright install chromium`, exit 1, and do not start the demo (FR-010)
+- [x] T022 [US2] In `scripts/capture-screenshots.ts`, when a definition fails (navigation, `prepare`, or `ready` timeout), print `Screenshot <file> failed: <reason>`, write no image for it, clean up, exit 1 (FR-012); verify by temporarily pointing one definition's `ready` at a selector that never appears, then revert
+- [x] T023 [US2] Verify cleanup and isolation by hand (quickstart §3): run the capture twice and compare images for identical content; confirm with `Get-Process`/`Get-NetTCPConnection` that no demo port is still listening and no browser process started by the script remains; confirm `git status` shows only intended image changes and `data/`/`inventory/bellhop.db` were never created
+- [x] T024 [P] [US2] Document regeneration in `docs/web-ui.md` (a short "Screenshots" note: `npm run docs:screenshots`, needs Chrome/Edge, writes `docs/images/`) and add to `CONTRIBUTING.md` that a change altering a screenshotted screen should regenerate the screenshots and check them by eye for example-only values (FR-017)
 
 **Checkpoint**: screenshots are reproducible on demand.
 
