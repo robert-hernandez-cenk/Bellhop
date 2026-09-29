@@ -232,6 +232,8 @@ test('PATCH /api/settings accepts proxyDriver nginx', async () => {
 
 const CADDY_CONFIG_PATH_NOTE = caddyDriver.configPathNote;
 const NGINX_CONFIG_PATH_NOTE = nginxDriver.configPathNote;
+const HAPROXY_CONFIG_PATH_NOTE =
+  "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate.";
 
 test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
   const { app } = testApp();
@@ -241,6 +243,7 @@ test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () 
     { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
     { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
     { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
+    { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
     { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
@@ -254,6 +257,7 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
     { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
     { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
     { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
+    { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
     { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
