@@ -21,7 +21,7 @@ None. No new dependencies or configuration.
 
 **Purpose**: one implementation both front ends call (FR-003). Every user story depends on this phase.
 
-- [ ] T001 Create `test/operations/vpn-gateway.test.ts` (node:test, `node:assert/strict`) against a stub `fetchImpl` that records `(url, init)`. Cover:
+- [x] T001 Create `test/operations/vpn-gateway.test.ts` (node:test, `node:assert/strict`) against a stub `fetchImpl` that records `(url, init)`. Cover:
   - `gatewayStatus(inventory, name, fetchImpl)` for a guest without `vpnGateway` returns `{ ok: false, kind: 'not-found', error: 'Unknown VPN gateway: <name>', body: { error: same } }` and never calls fetch. Same for an unknown name.
   - A gateway guest with no `ip` returns `kind: 'not-found'`, `error: 'VPN gateway <name> has no ip in inventory'`, and no fetch.
   - Success: fetch URL `http://192.0.2.15:8080/status`, `init.signal` is an `AbortSignal`, result `{ ok: true, body }` with body unchanged.
@@ -31,11 +31,11 @@ None. No new dependencies or configuration.
   - `gatewayServers` calls `/servers`, and `gatewayGroups` calls `/groups`, each with a signal.
   - `gatewayCities(inv, name, 'Bosnia & Herzegovina', f)` calls `/cities?country=Bosnia%20%26%20Herzegovina`, and `gatewayCities(inv, name, '', f)` calls `/cities?country=`.
   - `connectGateway(inv, name, { country: 'Germany' }, f)` sends `POST /connect` with header `Content-Type: application/json`, body JSON `{ country: 'Germany', city: '', group: '' }`, and **no** `signal`.
-- [ ] T002 Create `src/operations/vpn-gateway.ts` to make T001 pass. Move out of `src/web/routes/networking.ts`: `resolveGateway`, `proxyToGateway` (renamed `callGateway`), `STATUS_TIMEOUT_MS = 5_000`, `LIST_TIMEOUT_MS = 15_000`, and their comments (including the issue #145 timeout rationale). Export:
+- [x] T002 Create `src/operations/vpn-gateway.ts` to make T001 pass. Move out of `src/web/routes/networking.ts`: `resolveGateway`, `proxyToGateway` (renamed `callGateway`), `STATUS_TIMEOUT_MS = 5_000`, `LIST_TIMEOUT_MS = 15_000`, and their comments (including the issue #145 timeout rationale). Export:
   - `type GatewayResult = { ok: true; body: unknown } | { ok: false; kind: 'not-found' | 'upstream'; error: string; body: unknown }`
   - `gatewayStatus(inventory, name, fetchImpl)`, `gatewayServers(...)`, `gatewayCities(inventory, name, country, fetchImpl)`, `gatewayGroups(...)`, `connectGateway(inventory, name, selection: { country?: string; city?: string; group?: string }, fetchImpl)`
   - Upstream `error` is `body.error` when it is a non-empty string, else `VPN gateway <name> returned HTTP <status>` (research R2). Connect has no timeout (R4); keep a comment saying so and why.
-- [ ] T003 Rewrite `src/web/routes/networking.ts` as a thin adapter. Keep `requireGatewayAccess` on every route. Each handler calls the matching shared function (cities passes `typeof req.query.country === 'string' ? req.query.country : ''`; connect passes `{ country: req.body?.country, city: req.body?.city, group: req.body?.group }`) and responds with `ok ? 200 : kind === 'not-found' ? 404 : 502` and `result.body`. Keep the `networkingRoutes(inventory, inventoryPath, fetchImpl = fetch)` signature. Run `test/web/routes/networking.test.ts` unchanged; it must pass.
+- [x] T003 Rewrite `src/web/routes/networking.ts` as a thin adapter. Keep `requireGatewayAccess` on every route. Each handler calls the matching shared function (cities passes `typeof req.query.country === 'string' ? req.query.country : ''`; connect passes `{ country: req.body?.country, city: req.body?.city, group: req.body?.group }`) and responds with `ok ? 200 : kind === 'not-found' ? 404 : 502` and `result.body`. Keep the `networkingRoutes(inventory, inventoryPath, fetchImpl = fetch)` signature. Run `test/web/routes/networking.test.ts` unchanged; it must pass.
 
 **Checkpoint**: typecheck plus the operations and route tests pass. The web behavior is unchanged.
 
