@@ -100,9 +100,9 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
 
 ## Phase 7: Polish & verification
 
-- [ ] T021 Run quickstart.md step 3 (word diff of the old README against the new files) and confirm every removed fragment is a seam. Restore anything lost.
-- [ ] T022 Review the full diff for real operational data (Principle I).
-- [ ] T023 Run `npm run typecheck`, `npm test` and `npm run web:build`. All must pass.
+- [x] T021 Run quickstart.md step 3 (word diff of the old README against the new files) and confirm every removed fragment is a seam. Restore anything lost.
+- [x] T022 Review the full diff for real operational data (Principle I).
+- [x] T023 Run `npm run typecheck`, `npm test` and `npm run web:build`. All must pass.
 
 ## Dependencies
 
