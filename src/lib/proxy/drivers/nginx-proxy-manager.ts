@@ -287,7 +287,7 @@ function routeLine(entry: NpmRoutePlan): string {
     case 'unchanged':
       return `  = ok      ${entry.hostnames[0]} (#${entry.hostId})`;
     case 'conflict':
-      return `  ! conflict ${entry.hostnames.join(', ')}: already claimed by proxy host ${hostIdList(entry.hostIds)} (not created by Bellhop) -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`;
+      return `  ! conflict ${entry.hostnames.join(', ')}: already claimed by proxy host ${hostIdList(entry.hostIds)} (not created by Bellhop), entry '${entry.owner.name}' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`;
   }
 }
 
@@ -385,7 +385,7 @@ async function applyNpmPlan(client: NpmClient, plan: NpmSyncPlan): Promise<void>
   }
   const conflicts = plan.routes.filter((r) => r.action === 'conflict');
   if (conflicts.length > 0) {
-    const list = conflicts.map((c) => `${c.canonical} (${hostIdList(c.hostIds)})`).join(', ');
+    const list = conflicts.map((c) => `${c.canonical} (entry '${c.owner.name}', ${hostIdList(c.hostIds)})`).join(', ');
     throw new Error(
       `${conflicts.length} route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: ${list} -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual`
     );

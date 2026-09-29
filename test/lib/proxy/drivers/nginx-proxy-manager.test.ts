@@ -310,12 +310,19 @@ test("NPM: a conflicting route keeps its own live Bellhop host -- no delete, no 
 
   const { plan, driver, deps } = setup(inv([TWO_ROUTES[0]]), client);
   const result = await plan();
-  assert.match(result.preview, /^ {2}! conflict www\.example\.com: already claimed by proxy host #9 \(not created by Bellhop\)/m);
+  assert.ok(
+    result.preview
+      .split('\n')
+      .includes(
+        "  ! conflict www.example.com: already claimed by proxy host #9 (not created by Bellhop), entry 'app' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual"
+      ),
+    result.preview
+  );
   assert.doesNotMatch(result.preview, /^ {2}- delete/m);
   await assert.rejects(
     () => driver.apply(result, deps),
     new Error(
-      '1 route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: app.example.com (#9) -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual'
+      "1 route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: app.example.com (entry 'app', #9) -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual"
     )
   );
   assert.deepEqual(client.writes(), []);
@@ -346,7 +353,7 @@ test('planNpmSync: a mixed-case route hostname against an owned host holding the
 // =============================================================================
 
 const CONFLICT_HINT =
-  '(not created by Bellhop) -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual';
+  'delete or change it in Nginx Proxy Manager, or mark the entry proxyManual';
 
 test('US2: an unmarked host for an unrelated hostname is never updated or deleted, across a create, a drift update and a delete', async () => {
   const handmade = npmHost({ id: 9, domain_names: ['handmade.example.com'], forward_port: 1234, advanced_config: '# my own config' });
@@ -373,7 +380,7 @@ test("US2: an unmarked host claiming a route's non-canonical hostname -> \"! con
     result.preview,
     [
       'Nginx Proxy Manager at http://192.0.2.30:81',
-      `  ! conflict www.example.com: already claimed by proxy host #9 ${CONFLICT_HINT}`,
+      `  ! conflict www.example.com: already claimed by proxy host #9 (not created by Bellhop), entry 'app' -- ${CONFLICT_HINT}`,
       '  + create  wiki.example.com -> http://192.0.2.11:3000  [certificate: #3 Wildcard example.com]',
       '1 change(s), 1 conflict(s)',
     ].join('\n')
@@ -382,7 +389,7 @@ test("US2: an unmarked host claiming a route's non-canonical hostname -> \"! con
   await assert.rejects(
     () => driver.apply(result, deps),
     new Error(
-      '1 route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: app.example.com (#9) -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual'
+      "1 route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: app.example.com (entry 'app', #9) -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual"
     )
   );
   // The non-conflicting route was still applied, before the throw.
@@ -402,11 +409,12 @@ test('US2: several conflicts are all named in the final error, with every claimi
   });
   const { plan, driver, deps } = setup(inv(TWO_ROUTES), client);
   const result = await plan();
-  assert.match(result.preview, /^ {2}! conflict app\.example\.com, www\.example\.com: already claimed by proxy host #9, #10 /m);
+  assert.match(result.preview, /^ {2}! conflict app\.example\.com, www\.example\.com: already claimed by proxy host #9, #10 \(not created by Bellhop\), entry 'app' -- /m);
+  assert.match(result.preview, /^ {2}! conflict wiki\.example\.com: already claimed by proxy host #11 \(not created by Bellhop\), entry 'wiki' -- /m);
   assert.match(result.preview, /^0 change\(s\), 2 conflict\(s\)$/m);
   await assert.rejects(
     () => driver.apply(result, deps),
-    /^Error: 2 route\(s\) skipped because a proxy host not created by Bellhop already claims their hostnames: app\.example\.com \(#9, #10\), wiki\.example\.com \(#11\) -- /
+    /^Error: 2 route\(s\) skipped because a proxy host not created by Bellhop already claims their hostnames: app\.example\.com \(entry 'app', #9, #10\), wiki\.example\.com \(entry 'wiki', #11\) -- /
   );
   assert.deepEqual(client.writes(), []);
 });
@@ -424,7 +432,7 @@ test('US2: an owned host whose marker line was removed is treated as unmarked --
   // Its route still exists -> conflict, not an update.
   const same = setup(inv([TWO_ROUTES[1]]), client);
   const result = await same.plan();
-  assert.match(result.preview, /^ {2}! conflict wiki\.example\.com: already claimed by proxy host #1 /m);
+  assert.match(result.preview, /^ {2}! conflict wiki\.example\.com: already claimed by proxy host #1 \(not created by Bellhop\), entry 'wiki' -- /m);
   await assert.rejects(() => same.driver.apply(result, same.deps), /1 route\(s\) skipped/);
 
   // No route for it at all -> left alone, not a delete.
@@ -446,7 +454,7 @@ test('US2: the marker only counts as the first line of advanced_config', () => {
 test("US2: matching is case-insensitive -- an unmarked \"WWW.Example.COM\" conflicts, and an owned \"APP.EXAMPLE.COM\" host is the route's own", async () => {
   const conflicted = new FakeNpmClient({ certificates: [WILDCARD], hosts: [npmHost({ id: 9, domain_names: ['WWW.Example.COM'] })] });
   const conflict = await setup(inv([TWO_ROUTES[0]]), conflicted).plan();
-  assert.match(conflict.preview, /^ {2}! conflict www\.example\.com: already claimed by proxy host #9 /m);
+  assert.match(conflict.preview, /^ {2}! conflict www\.example\.com: already claimed by proxy host #9 \(not created by Bellhop\), entry 'app' -- /m);
 
   const client = new FakeNpmClient({ certificates: [WILDCARD] });
   await setup(inv([TWO_ROUTES[0]]), client).sync();
@@ -500,6 +508,49 @@ test('M1: an alias moving from owned host A to owned host B -> the update releas
   );
   assert.deepEqual(client.hosts.get(1)!.domain_names, ['a.example.com']);
   assert.deepEqual(client.hosts.get(2)!.domain_names, ['c.example.com', 'b.example.com']);
+});
+
+test('M1: a three-host chain (A releases a name B claims, B releases a name C claims) is written and previewed A, B, C for every route order', async () => {
+  const before: GuestSpec[] = [
+    { name: 'a', ip: '192.0.2.10', port: 80, subdomains: ['a', 'b'] },
+    { name: 'c', ip: '192.0.2.11', port: 80, subdomains: ['c', 'd'] },
+    { name: 'e', ip: '192.0.2.12', port: 80, subdomains: ['e'] },
+  ];
+  const after: GuestSpec[] = [
+    { name: 'a', ip: '192.0.2.10', port: 80, subdomains: ['a'] },
+    { name: 'c', ip: '192.0.2.11', port: 80, subdomains: ['c', 'b'] },
+    { name: 'e', ip: '192.0.2.12', port: 80, subdomains: ['e', 'd'] },
+  ];
+  const orders = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ];
+  for (const order of orders) {
+    const client = new FakeNpmClient({ certificates: [WILDCARD] });
+    await setup(inv(before), client).sync();
+    client.clearCalls();
+
+    const { plan, driver, deps } = setup(inv(order.map((i) => after[i])), client);
+    const result = await plan();
+    assert.equal(
+      result.preview,
+      [
+        'Nginx Proxy Manager at http://192.0.2.30:81',
+        '  ~ update  a.example.com (#1): domain_names',
+        '  ~ update  c.example.com (#2): domain_names',
+        '  ~ update  e.example.com (#3): domain_names',
+        '3 change(s), 0 conflict(s)',
+      ].join('\n'),
+      `route order ${order.join(',')}`
+    );
+    await driver.apply(result, deps);
+    assert.deepEqual(client.writes().map((w) => w.id), [1, 2, 3], `route order ${order.join(',')}`);
+    assert.deepEqual(client.hosts.get(3)!.domain_names, ['e.example.com', 'd.example.com']);
+  }
 });
 
 test('M1: updates with no name moving between them keep route order', () => {

@@ -52,22 +52,29 @@ Nginx Proxy Manager at http://192.0.2.30:81
   ~ update  media.example.com (#12): forward_port, advanced_config
   = ok      wiki.example.com (#14)
   + create  new.example.com -> https://192.0.2.11:443  [certificate: request Let's Encrypt for new.example.com]
-  ! conflict docs.example.com: already claimed by proxy host #9 (not created by Bellhop) -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual
+  ! conflict docs.example.com: already claimed by proxy host #9 (not created by Bellhop), entry 'docs-lxc' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual
   - delete  old.example.com (#7)
 N change(s), M conflict(s)
 ```
 
 With no changes and no conflicts, the last line is `No changes`.
 
+A conflict line lists the route's hostnames the unmarked host(s) claim, the
+claiming host ids, and the inventory entry (`route.owner.name`):
+`  ! conflict <claimed hostnames>: already claimed by proxy host #<ids> (not created by Bellhop), entry '<name>' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`.
+
 ## `apply()`
 
-Order: deletes -> updates -> creates. For a route needing
+Order: deletes -> updates -> creates. Updates run in the order the preview
+lists them: an update releasing a hostname runs before the update claiming
+it (a stable topological order, otherwise route order; a genuine cycle keeps
+route order and fails on NPM's `<name> is already in use`). For a route needing
 `{ kind: 'request' }`, `requestCertificate` runs immediately before its
 create/update. After each create/update, `getProxyHost(id)`; if
 `meta.nginx_online === false`:
 `Error("Nginx Proxy Manager saved proxy host #<id> (<canonical>) but nginx rejected its configuration: <nginx_err> -- the site is offline until the next successful sync")`.
 The first error stops the apply. After all changes, when conflicts exist:
-`Error("<n> route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: <canonical> (#<ids>)[, ...] -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual")`.
+`Error("<n> route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: <canonical> (entry '<name>', #<ids>)[, ...] -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual")`.
 
 ## `snapshot()`
 
