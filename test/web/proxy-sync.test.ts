@@ -16,6 +16,8 @@ import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/proxy-sync.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
+import { createNpmDriver, nginxProxyManagerDriver } from '../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
+import { FakeNpmClient } from '../support/fake-npm-client.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -293,6 +295,41 @@ test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME p
   assert.match(ssh.history[0].command, /nginx -t/);
   assert.deepEqual(cloudflare.history, [], "nginx's capabilities has acmeDns01ViaCloudflare: false, so the prune never calls Cloudflare");
   assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx')));
+});
+
+// Issue #31 (US5, T022): the Nginx Proxy Manager driver also has
+// acmeDns01ViaCloudflare: false (it never touches DNS -- it either reuses an
+// NPM certificate or has NPM request one over HTTP-01), so this is the same
+// generic mechanism the fake-driver and real-nginx-driver tests above already
+// exercise, just proven against the real registered 'nginx-proxy-manager'
+// driver id. Its plan()/apply() talk to NPM's REST API, not SSH, so a fake
+// NpmClient is registered over the real driver (createNpmDriver, the same
+// factory the shipped driver is built from) to let sync-proxy's own step
+// succeed without a network call -- and the real, buildNpmClient-backed
+// driver is put back afterward, since registerDriverForTests's own unregister
+// would otherwise delete the production registration for 'nginx-proxy-manager'
+// entirely rather than restore it.
+test('syncProxyLive (real Nginx Proxy Manager driver, fake client) pushes NPM config over REST, makes no SSH calls, and skips the ACME prune', async () => {
+  const npmClient = new FakeNpmClient();
+  const fakeClientDriver = createNpmDriver({ clientFor: () => npmClient });
+  registerDriverForTests(fakeClientDriver);
+  try {
+    const npmInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'nginx-proxy-manager' };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+    const logs = await captureLogs(() =>
+      syncProxyLive({ ssh, inventory: npmInventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+    );
+    assert.equal(ssh.history.length, 0, 'the NPM driver reconciles over REST, never SSH');
+    assert.ok(npmClient.writes().length > 0, 'sanity: the fake NPM client actually applied the plex-lxc route');
+    assert.deepEqual(cloudflare.history, [], "the NPM driver's capabilities has acmeDns01ViaCloudflare: false, so the prune never calls Cloudflare");
+    assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx-proxy-manager')));
+  } finally {
+    // Restore the real, buildNpmClient-backed driver under the same id --
+    // registerDriverForTests's unregister() only deletes, it does not know
+    // there was already a production entry to put back.
+    registerDriverForTests(nginxProxyManagerDriver);
+  }
 });
 
 test('syncProxyLive treats an omitted cloudflare dep as unconfigured', async () => {

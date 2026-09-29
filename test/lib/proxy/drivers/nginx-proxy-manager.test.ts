@@ -897,3 +897,108 @@ test('US4: a failed certificate request for an update leaves the existing host e
   assert.equal(client.calls.filter((c) => c.method === 'updateProxyHost').length, 0);
   assert.deepEqual(client.hosts.get(1), before);
 });
+
+// =============================================================================
+// User Story 5 (T020): snapshot() -- contract format, never any PEM
+// =============================================================================
+
+test('NPM snapshot: header + owned hosts only, sorted by id, certificate labels ("none" / "#id name" / bare "#id"), forward-auth and online detection, advanced_config indented with blank lines preserved', async () => {
+  // Deliberately out of id order, and an unowned host interleaved, to prove
+  // both the ownership filter (contract: "N proxy host(s) managed by
+  // Bellhop") and the id sort in one pass.
+  const unowned = npmHost({ id: 9, domain_names: ['handmade.example.com'], advanced_config: '# my own config' });
+  const gated = npmHost({
+    id: 12,
+    domain_names: ['media.example.com'],
+    forward_host: '192.0.2.12',
+    forward_port: 8096,
+    certificate_id: 3,
+    advanced_config: [
+      NPM_OWNERSHIP_MARKER,
+      '    client_max_body_size 0;',
+      '',
+      '    location / {',
+      '        auth_request /outpost.goauthentik.io/auth/nginx;',
+      '    }',
+    ].join('\n'),
+  });
+  const noCert = npmHost({
+    id: 5,
+    domain_names: ['plain.example.com'],
+    forward_host: '192.0.2.5',
+    forward_port: 80,
+    certificate_id: 0,
+    advanced_config: [NPM_OWNERSHIP_MARKER, '    location / {', '        proxy_pass http://192.0.2.5:80;', '    }'].join('\n'),
+  });
+  // certificate_id 99 names no certificate in the list at all (e.g. one
+  // deleted out from under a proxy host) -- the bare "#99" form, no name.
+  const orphanCert = npmHost({
+    id: 14,
+    domain_names: ['wiki.example.com'],
+    forward_host: '192.0.2.14',
+    forward_port: 3000,
+    certificate_id: 99,
+    advanced_config: [NPM_OWNERSHIP_MARKER, '    location / {', '        proxy_pass http://192.0.2.14:3000;', '    }'].join('\n'),
+    meta: { nginx_online: false, nginx_err: 'boom' },
+  });
+
+  const client = new FakeNpmClient({ certificates: [WILDCARD], hosts: [orphanCert, unowned, gated, noCert] });
+  const driver = createNpmDriver({ clientFor: () => client });
+  const deps: DriverDeps = { ssh: new FakeSSHClient(defaultResponder), inventory: inv([]), proxyHost: 'pve1', configPath: null };
+
+  const result = await driver.snapshot(deps);
+  const header = 'Nginx Proxy Manager at http://192.0.2.30:81 -- 3 proxy host(s) managed by Bellhop';
+  // indent() shifts the *whole* stored advanced_config (marker at column 0,
+  // its body already indented 4 spaces by renderServerBody in the real
+  // driver) another 4 spaces uniformly -- so the marker lands at column 4
+  // and a body line originally at column 4 lands at column 8, per the
+  // contract's "<advanced_config, indented 4 spaces>".
+  const block5 = [
+    '#5 plain.example.com -> http://192.0.2.5:80',
+    '    certificate: none   forward-auth: no   online: yes',
+    `    ${NPM_OWNERSHIP_MARKER}`,
+    '        location / {',
+    '            proxy_pass http://192.0.2.5:80;',
+    '        }',
+  ].join('\n');
+  const block12 = [
+    '#12 media.example.com -> http://192.0.2.12:8096',
+    '    certificate: #3 Wildcard example.com   forward-auth: yes   online: yes',
+    `    ${NPM_OWNERSHIP_MARKER}`,
+    '        client_max_body_size 0;',
+    '',
+    '        location / {',
+    '            auth_request /outpost.goauthentik.io/auth/nginx;',
+    '        }',
+  ].join('\n');
+  const block14 = [
+    '#14 wiki.example.com -> http://192.0.2.14:3000',
+    '    certificate: #99   forward-auth: no   online: no',
+    `    ${NPM_OWNERSHIP_MARKER}`,
+    '        location / {',
+    '            proxy_pass http://192.0.2.14:3000;',
+    '        }',
+  ].join('\n');
+  assert.equal(result, [header, block5, block12, block14].join('\n\n'));
+
+  // Belt-and-suspenders: the fake's NpmCertificate type has no `meta` field
+  // to smuggle a PEM/private key through in the first place -- npm-client.ts's
+  // schema drops it entirely (test/lib/npm-client.test.ts's "drops meta
+  // entirely (never surfaces the private key)" case is what actually pins
+  // that guarantee at the parse boundary). This just confirms
+  // formatNpmSnapshot itself only ever reads a certificate's id/nice_name and
+  // a host's own listed fields -- never a wholesale dump of either object --
+  // by checking the exact string above never contains anything PEM-shaped.
+  assert.doesNotMatch(result, /BEGIN CERTIFICATE|PRIVATE KEY/);
+});
+
+test('NPM snapshot: no owned hosts at all -> just the header, "0 proxy host(s)"', async () => {
+  const client = new FakeNpmClient({
+    certificates: [WILDCARD],
+    hosts: [npmHost({ id: 9, domain_names: ['handmade.example.com'], advanced_config: '# my own config' })],
+  });
+  const driver = createNpmDriver({ clientFor: () => client });
+  const deps: DriverDeps = { ssh: new FakeSSHClient(defaultResponder), inventory: inv([]), proxyHost: 'pve1', configPath: null };
+  const result = await driver.snapshot(deps);
+  assert.equal(result, 'Nginx Proxy Manager at http://192.0.2.30:81 -- 0 proxy host(s) managed by Bellhop');
+});

@@ -101,9 +101,9 @@ description: "Task list for the Nginx Proxy Manager proxy driver"
 
 **Independent Test**: missing credentials error names the file; Settings view hides fields; `render-status-page` reports no status page.
 
-- [ ] T020 [P] [US5] Implement and test `snapshot()` (contract format, never any PEM) in `src/lib/proxy/drivers/nginx-proxy-manager.ts` / `test/lib/proxy/drivers/nginx-proxy-manager.test.ts`
-- [ ] T021 [P] [US5] Test in `test/commands/render-status-page.test.ts` that with the NPM driver active `runRenderStatusPage` throws `statusPageUnsupportedError('nginx-proxy-manager')` and `statusPageSkipReason` returns the managed-but-no-status-page reason
-- [ ] T022 [US5] Verify `syncProxyLive` skips `prune-acme-challenges` for this driver (`acmeDns01ViaCloudflare: false`) — covered by an assertion in `test/web/proxy-sync.test.ts` or confirm existing generic coverage and note it in the test
+- [x] T020 [P] [US5] Implement and test `snapshot()` (contract format, never any PEM) in `src/lib/proxy/drivers/nginx-proxy-manager.ts` / `test/lib/proxy/drivers/nginx-proxy-manager.test.ts`
+- [x] T021 [P] [US5] Test in `test/commands/render-status-page.test.ts` that with the NPM driver active `runRenderStatusPage` throws `statusPageUnsupportedError('nginx-proxy-manager')` and `statusPageSkipReason` returns the managed-but-no-status-page reason
+- [x] T022 [US5] Verify `syncProxyLive` skips `prune-acme-challenges` for this driver (`acmeDns01ViaCloudflare: false`) — covered by an assertion in `test/web/proxy-sync.test.ts` or confirm existing generic coverage and note it in the test
 
 ---
 
