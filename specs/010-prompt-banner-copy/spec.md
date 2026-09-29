@@ -135,8 +135,15 @@ exactly that label is shown.
 ### Edge Cases
 
 - A paused job whose origin is not recorded (a job that paused before origins
-  existed): no explanation is shown, all controls have equal weight, and the
-  dismiss control reads "Not a question — keep waiting".
+  existed): the server already reports such a pause as `heuristic`, because
+  every pause was a heuristic guess before origins existed, so it gets the
+  heuristic banner (the "no known prompts" variant, since such a job has none
+  recorded). Found during browser verification; the server's mapping is
+  correct and unchanged.
+- The page has not yet received the pause's origin (the moment before the
+  live connection replays it): no explanation is shown, all controls have
+  equal weight, and the dismiss control reads "Not a question — keep
+  waiting".
 - Narrow screens (640px wide or less): the banner's controls stack vertically
   as they do today, and the secondary styling of a de-emphasised control
   still reads as secondary.
@@ -171,7 +178,9 @@ exactly that label is shown.
 - **FR-007**: For `stall`, the existing emphasis MUST be kept: dismiss
   emphasised, answer controls de-emphasised. For `heuristic` and the
   unrecorded case, all controls MUST have equal weight.
-- **FR-008**: The unrecorded case MUST show no explanation.
+- **FR-008**: When the page has no origin for the pause (not yet received), it
+  MUST show no explanation. A pause the server reports without a stored
+  origin is `heuristic` and follows FR-004.
 - **FR-009**: The banner MUST remain usable at desktop widths and at 640px or
   narrower, and in both light and dark themes.
 - **FR-010**: What answering and dismissing do MUST NOT change; this feature

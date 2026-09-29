@@ -23,5 +23,7 @@ npm run web:build
 
 Each banner matches its row in [contracts/banner-copy.md](contracts/banner-copy.md):
 the hint text, the dismiss label, and which buttons render as outline
-("quiet") buttons. At 390px the controls stack vertically and nothing is
+("quiet") buttons. The `prompt_origin = NULL` row renders as `heuristic`
+(the "no known prompts" variant), because the server reports a stored NULL
+origin as `heuristic`. At 390px the controls stack vertically and nothing is
 clipped. No banner shows "Not stuck — keep waiting".
