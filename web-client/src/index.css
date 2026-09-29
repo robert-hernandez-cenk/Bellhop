@@ -151,10 +151,10 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .prompt-banner { background: var(--warning); color: #1d1d1f; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
 .prompt-banner-text { font-weight: 600; margin-bottom: 4px; }
 .prompt-banner-hint { font-size: 13px; opacity: 0.8; margin-bottom: 10px; }
-/* A stall escalation is a guess, not a detected prompt (issue #160) -- give it full contrast and weight rather than the softened tone a confirmed match gets. Dismiss keeps visual precedence via styling (muting Yes/No/Submit into ghost buttons below) rather than flex order -- row-reverse plus the action row's own flex-wrap pushed Yes/No fully off the right edge of the viewport at mobile widths. */
+/* A stall escalation is a guess, not a detected prompt (issue #160) -- give it full contrast and weight rather than the softened tone a confirmed match gets. Dismiss keeps visual precedence via styling (muting Yes/No/Submit into ghost buttons below) rather than flex order -- row-reverse plus the action row's own flex-wrap pushed Yes/No fully off the right edge of the viewport at mobile widths. Which buttons get this treatment is chosen per origin by promptBannerView() (web-client/src/lib/prompt-banner.ts, issue #4) via a per-button .prompt-banner-quiet class, not a last-child selector -- a confirmed (expected) prompt quiets its own dismiss button instead of Yes/No/Submit. */
 .prompt-banner-hint-stall { opacity: 1; font-weight: 600; }
-.prompt-banner-actions-stall > .button:not(:last-child), .prompt-banner-actions-stall .prompt-banner-freetext .button { background: transparent; color: #1d1d1f; border: 1px solid rgba(0, 0, 0, 0.35); }
-.prompt-banner-actions-stall > .button:not(:last-child):hover:not(:disabled), .prompt-banner-actions-stall .prompt-banner-freetext .button:hover:not(:disabled) { background: rgba(0, 0, 0, 0.08); }
+.prompt-banner .button.prompt-banner-quiet { background: transparent; color: #1d1d1f; border: 1px solid rgba(0, 0, 0, 0.35); }
+.prompt-banner .button.prompt-banner-quiet:hover:not(:disabled) { background: rgba(0, 0, 0, 0.08); }
 .prompt-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .prompt-banner-freetext { display: flex; gap: 8px; flex: 1; min-width: 200px; }
 /* issue #5: the input's intrinsic minimum width otherwise stretches the prompt banner past a 320px screen. */

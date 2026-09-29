@@ -5,6 +5,7 @@ import type { JobRow } from '../api/types';
 import { JobStatusBadge } from '../components/JobStatusBadge';
 import { useJobStream } from '../api/useJobStream';
 import { PageDescription } from '../components/PageDescription';
+import { promptBannerView } from '../lib/prompt-banner';
 
 const CANCELLABLE_STATUSES = ['queued', 'running', 'awaiting_input'];
 
@@ -76,6 +77,8 @@ export function JobView() {
     }
   };
 
+  const view = promptBannerView(promptOrigin, promptMatchedIndex, expectedPrompts.length);
+
   return (
     <div className="job-view">
       <PageDescription>
@@ -103,25 +106,25 @@ export function JobView() {
       {job.status === 'awaiting_input' && promptText && (
         <div className="prompt-banner">
           <div className="prompt-banner-text">{promptText}</div>
-          {promptOrigin === 'expected' && (
-            <div className="prompt-banner-hint">
-              {promptMatchedIndex !== null && expectedPrompts.length > 0
-                ? `Question ${promptMatchedIndex + 1} of up to ${expectedPrompts.length} — matches a known prompt in this app's install script.`
-                : "Matches a known prompt in this app's install script."}
-            </div>
-          )}
-          {promptOrigin === 'stall' && (
-            <div className="prompt-banner-hint prompt-banner-hint-stall">
-              Output stopped for 5 minutes and this does not match any known prompt — it may not be a question at all. The
-              line above is the last output received. Dismiss to keep waiting, or answer if it is in fact a prompt.
+          {view.hint && (
+            <div className={view.hintStrong ? 'prompt-banner-hint prompt-banner-hint-stall' : 'prompt-banner-hint'}>
+              {view.hint}
             </div>
           )}
           {promptError && <div className="warning-banner">{promptError}</div>}
-          <div className={promptOrigin === 'stall' ? 'prompt-banner-actions prompt-banner-actions-stall' : 'prompt-banner-actions'}>
-            <button className="button" disabled={promptBusy} onClick={() => submitAnswer('y')}>
+          <div className="prompt-banner-actions">
+            <button
+              className={view.quiet === 'answers' ? 'button prompt-banner-quiet' : 'button'}
+              disabled={promptBusy}
+              onClick={() => submitAnswer('y')}
+            >
               Yes
             </button>
-            <button className="button" disabled={promptBusy} onClick={() => submitAnswer('n')}>
+            <button
+              className={view.quiet === 'answers' ? 'button prompt-banner-quiet' : 'button'}
+              disabled={promptBusy}
+              onClick={() => submitAnswer('n')}
+            >
               No
             </button>
             <form
@@ -138,12 +141,20 @@ export function JobView() {
                 placeholder="Type an answer…"
                 disabled={promptBusy}
               />
-              <button className="button" type="submit" disabled={promptBusy || !answerText.trim()}>
+              <button
+                className={view.quiet === 'answers' ? 'button prompt-banner-quiet' : 'button'}
+                type="submit"
+                disabled={promptBusy || !answerText.trim()}
+              >
                 Submit
               </button>
             </form>
-            <button className="button" disabled={promptBusy} onClick={dismissPrompt}>
-              Not stuck — keep waiting
+            <button
+              className={view.quiet === 'dismiss' ? 'button prompt-banner-quiet' : 'button'}
+              disabled={promptBusy}
+              onClick={dismissPrompt}
+            >
+              {view.dismissLabel}
             </button>
           </div>
         </div>
