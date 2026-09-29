@@ -40,12 +40,15 @@ export function proxyDriverOptions(
 // "No proxy" today) hides all of them. A managed driver always shows the
 // config path field -- with its default as the placeholder, or, if it has
 // none, help text saying a path is required -- and shows the status page
-// field only when it suggests a status page path. An id with no matching
-// entry in `drivers` at all (never reachable through the dropdown itself,
-// but defensive against a stale selection) hides both, same as FR-006's
-// "unknown means nothing to show". Hiding is display-only (R6): callers
-// must not clear the field's draft/stored value just because it stopped
-// being shown (FR-008).
+// field only when it suggests a status page path. A managed driver with no
+// config file at all (defaultConfigPath: null -- issue #31, e.g. a
+// REST-managed driver like Nginx Proxy Manager) hides the config path field
+// too, the same as a driver that manages no proxy: there is no file for the
+// field to override. An id with no matching entry in `drivers` at all
+// (never reachable through the dropdown itself, but defensive against a
+// stale selection) hides both, same as FR-006's "unknown means nothing to
+// show". Hiding is display-only (R6): callers must not clear the field's
+// draft/stored value just because it stopped being shown (FR-008).
 export interface ProxyFieldView {
   showConfigPath: boolean;
   configPathPlaceholder?: string;
@@ -63,16 +66,23 @@ export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): 
   if (!driver || !driver.managesProxy) {
     return { showConfigPath: false, showStatusPagePath: false, showTlsFields: false };
   }
-  const baseHelp =
-    driver.defaultConfigPath === null
-      ? `Config path for the ${driver.label} driver. Required: this driver has no default.`
-      : `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`;
-  return {
-    showConfigPath: true,
-    configPathPlaceholder: driver.defaultConfigPath ?? '',
-    configPathHelp: driver.configPathNote ? `${baseHelp} ${driver.configPathNote}` : baseHelp,
+  const shared = {
     showStatusPagePath: driver.suggestedStatusPagePath !== null,
     statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
     showTlsFields: driver.usesSharedCertificate,
+  };
+  // A managed driver with no config file at all (defaultConfigPath: null --
+  // issue #31, e.g. a REST-managed driver like Nginx Proxy Manager) hides
+  // the config path field entirely rather than showing it as "required":
+  // there is no file for the field to name or override.
+  if (driver.defaultConfigPath === null) {
+    return { showConfigPath: false, ...shared };
+  }
+  const baseHelp = `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`;
+  return {
+    showConfigPath: true,
+    configPathPlaceholder: driver.defaultConfigPath,
+    configPathHelp: driver.configPathNote ? `${baseHelp} ${driver.configPathNote}` : baseHelp,
+    ...shared,
   };
 }

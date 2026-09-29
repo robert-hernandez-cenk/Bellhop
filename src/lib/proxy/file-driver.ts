@@ -177,6 +177,23 @@ function buildSnapshotCommand(paths: string[]): string {
   return paths.map((p) => `echo ${singleQuote(`==> ${p} <==`)}; cat ${singleQuote(p)}`).join('; ');
 }
 
+// Resolves a file-configured driver's own config path out of DriverDeps,
+// which types configPath as string | null (issue #31, research.md R11: null
+// means the active driver's own defaultConfigPath is null -- a driver with
+// no config file at all, e.g. a REST-managed driver like Nginx Proxy
+// Manager). Every driver fileDriver builds declares a real
+// defaultConfigPath (def.defaultConfigPath below is typed string, never
+// null), so driverDeps() never actually returns null for one of these --
+// seeing null here would mean a driver was built with fileDriver but
+// somehow still resolved to a null configPath, a programming error rather
+// than a state reachable through normal use.
+function requireConfigPath(deps: DriverDeps, id: ProxyDriverId): string {
+  if (deps.configPath === null) {
+    throw new Error(`${id} driver requires a config path`);
+  }
+  return deps.configPath;
+}
+
 // Builds a ReverseProxyDriver for a proxy that's configured entirely by
 // files delivered to the proxy host (Caddy and nginx today, issue #30;
 // HAProxy is a candidate future driver). Owns the full
@@ -223,15 +240,17 @@ export function fileDriver(def: {
     ...(def.configPathNote !== undefined ? { configPathNote: def.configPathNote } : {}),
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
+      const configPath = requireConfigPath(deps, def.id);
       const files = def
-        .render(routes, ctx, deps.configPath)
+        .render(routes, ctx, configPath)
         .map((f) => (f.mode === 'managed-section' ? { ...f, content: wrapManagedSection(f.content) } : f));
       return { preview: files.map((f) => f.content).join('\n'), payload: files };
     },
 
     async apply(plan: ProxyPlan, deps: DriverDeps): Promise<void> {
+      const configPath = requireConfigPath(deps, def.id);
       const files = plan.payload as FileSpec[];
-      const validateCommand = def.validateCommand(deps.configPath);
+      const validateCommand = def.validateCommand(configPath);
       const script = buildFileDriverScript(files, validateCommand, def.reloadCommand);
       const result = await runRemote(deps.ssh, deps.inventory, deps.proxyHost, script);
       if (result.code !== 0) {
@@ -240,7 +259,8 @@ export function fileDriver(def: {
     },
 
     async snapshot(deps: DriverDeps): Promise<string> {
-      const paths = (def.configFiles ?? ((configPath: string) => [configPath]))(deps.configPath);
+      const configPath = requireConfigPath(deps, def.id);
+      const paths = (def.configFiles ?? ((configPath: string) => [configPath]))(configPath);
       const command = buildSnapshotCommand(paths);
       const result = await runRemote(deps.ssh, deps.inventory, deps.proxyHost, command);
       if (result.code !== 0) {
