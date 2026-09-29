@@ -7,7 +7,7 @@ import { applyGuestEdits, commitGuestEdit, runEditGuest, GuestEditValidationErro
 import { FakeSSHClient, defaultResponder } from '../support/fake-ssh-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
-import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
+import { UnconfiguredAuthentikClient, type AuthentikClient } from '../../src/lib/authentik-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import type { OperationDeps } from '../../src/operations/types.ts';
@@ -203,6 +203,66 @@ test('commitGuestEdit saves a port-only edit even when route derivation fails fo
   if (!result.proxySynced) {
     assert.match(result.proxyError, /Entry 'gated-other' has an invalid unauthenticatedPaths pattern '\/api\*'/);
   }
+});
+
+// --- HAProxy driver (issue #32, US2) -- forward-gated entries refused at edit time ---
+//
+// The real, registered 'haproxy' driver (capabilities: oidc only) -- no fake
+// driver needed. Reuses capabilityInventory's ungated 'sonarr' (subdomains,
+// no authGroup) and already forward-gated 'gated-other' (subdomains,
+// authGroup set) entries, plus its 'auth-lxc' authentik outpost.
+
+function haproxyCapabilityDeps(authentik: AuthentikClient = new UnconfiguredAuthentikClient()): OperationDeps {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-haproxy-')), 'bellhop.db');
+  saveInventory(inventoryPath, { ...capabilityInventory, proxyDriver: 'haproxy' });
+  return {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loadInventory(inventoryPath),
+    inventoryPath,
+    authentik,
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+}
+
+const HAPROXY_FORWARD_REFUSAL =
+  "Entry 'sonarr' uses forward-auth gating, but the 'haproxy' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup";
+
+test('commitGuestEdit rejects an edit that leaves the guest forward-gated with subdomains under the haproxy driver (US2), leaving the inventory unchanged', async () => {
+  const d = haproxyCapabilityDeps();
+  const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
+  const updated = applyGuestEdits(current, { authGroup: 'bellhop-users' });
+  await assert.rejects(
+    () => commitGuestEdit(d, 'sonarr', updated, false),
+    (err: unknown) => {
+      assert.ok(err instanceof GuestEditValidationError);
+      assert.equal((err as Error).message, HAPROXY_FORWARD_REFUSAL);
+      return true;
+    }
+  );
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'sonarr')?.authGroup, undefined);
+});
+
+test('commitGuestEdit accepts switching the same guest to authMode: oidc under the haproxy driver, given a callback URL', async () => {
+  const d = haproxyCapabilityDeps(new FakeAuthentikClient());
+  const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
+  const updated = applyGuestEdits(current, {
+    authGroup: 'bellhop-users',
+    authMode: 'oidc',
+    oidcRedirectUris: ['https://web.example.com/callback'],
+  });
+  const result = await commitGuestEdit(d, 'sonarr', updated, false);
+  assert.equal(result.guest.authMode, 'oidc');
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'sonarr')?.authMode, 'oidc');
+});
+
+test('commitGuestEdit accepts clearing authGroup on an already forward-gated guest under the haproxy driver', async () => {
+  const d = haproxyCapabilityDeps();
+  const current = d.inventory.guests.find((g) => g.name === 'gated-other')!;
+  assert.equal(current.authGroup, 'bellhop-users');
+  const updated = applyGuestEdits(current, { authGroup: null });
+  const result = await commitGuestEdit(d, 'gated-other', updated, false);
+  assert.equal(result.guest.authGroup, undefined);
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'gated-other')?.authGroup, undefined);
 });
 
 test('applyGuestEdits accepts form strings and typed arrays/numbers alike', () => {

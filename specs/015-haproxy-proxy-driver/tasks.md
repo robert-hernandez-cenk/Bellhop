@@ -60,10 +60,10 @@ No setup: no new dependency, directory, or configuration. The worktree is alread
 
 **Independent test**: real-driver tests below; no code beyond T008's declaration and backstop is expected.
 
-- [ ] T011 [P] [US2] In `test/commands/sync-proxy.test.ts`: with `proxyDriver: 'haproxy'` and a forward-gated guest with subdomains, `runSyncProxy` (dry run and `--apply`) throws exactly `Entry '<name>' uses forward-auth gating, but the 'haproxy' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup` and makes no SSH call; a forward-gated `proxyManual` entry and a forward-gated entry with no subdomains are not refused.
-- [ ] T012 [P] [US2] In `test/operations/edit-guest.test.ts`: with `proxyDriver: 'haproxy'`, a `commitGuestEdit` that leaves the guest forward-gated with subdomains is rejected (400-shaped result with the same message) and the inventory is unchanged; switching the same guest to `authMode: 'oidc'` (with a callback URL) or clearing `authGroup` is accepted.
-- [ ] T013 [P] [US2] In `test/lib/proxy/drivers/haproxy.test.ts`: an OIDC route whose entry carries saved `unauthenticatedPaths` renders byte-identically to one without; `render()` given a `forward` route throws the backstop message naming the entry.
-- [ ] T014 [US2] Run `npm test`; fix any gap in `src/lib/proxy/drivers/haproxy.ts` only if a US2 test fails (no new enforcement code is expected — research R8).
+- [x] T011 [P] [US2] In `test/commands/sync-proxy.test.ts`: with `proxyDriver: 'haproxy'` and a forward-gated guest with subdomains, `runSyncProxy` (dry run and `--apply`) throws exactly `Entry '<name>' uses forward-auth gating, but the 'haproxy' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup` and makes no SSH call; a forward-gated `proxyManual` entry and a forward-gated entry with no subdomains are not refused.
+- [x] T012 [P] [US2] In `test/operations/edit-guest.test.ts`: with `proxyDriver: 'haproxy'`, a `commitGuestEdit` that leaves the guest forward-gated with subdomains is rejected (400-shaped result with the same message) and the inventory is unchanged; switching the same guest to `authMode: 'oidc'` (with a callback URL) or clearing `authGroup` is accepted.
+- [x] T013 [P] [US2] In `test/lib/proxy/drivers/haproxy.test.ts`: an OIDC route whose entry carries saved `unauthenticatedPaths` renders byte-identically to one without; `render()` given a `forward` route throws the backstop message naming the entry.
+- [x] T014 [US2] Run `npm test`; fix any gap in `src/lib/proxy/drivers/haproxy.ts` only if a US2 test fails (no new enforcement code is expected — research R8).
 
 **Checkpoint**: US2 complete — SC-002 holds.
 

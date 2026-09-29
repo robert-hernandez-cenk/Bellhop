@@ -546,6 +546,90 @@ test('sync-proxy (haproxy driver) --apply sends one script to the proxy host wri
   assert.match(script, /systemctl reload haproxy$/m);
 });
 
+// --- HAProxy driver (issue #32, US2) -- forward-gated entries refused ------
+//
+// The real, registered 'haproxy' driver (capabilities: oidc only) -- no fake
+// driver needed. checkCapabilities runs after buildRoutes, so a forward-
+// gated route that would actually get derived needs an authentik:true entry
+// with an ip, or buildRoutes throws its own missing-authentik error first.
+
+const HAPROXY_FORWARD_REFUSAL =
+  "Entry 'sonarr' uses forward-auth gating, but the 'haproxy' proxy driver cannot enforce it -- set its authMode to oidc or clear authGroup";
+
+const haproxyForwardGatedInventory: Inventory = {
+  domain: 'example.com',
+  proxyDriver: 'haproxy',
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+  guests: [
+    { name: 'auth-lxc', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+  ],
+};
+
+test('sync-proxy (haproxy driver) refuses a forward-gated guest with subdomains (dry run) with exactly the capability message, and makes no SSH call', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  let thrown: unknown;
+  try {
+    await runSyncProxy({}, { ssh, inventory: haproxyForwardGatedInventory });
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown instanceof Error, 'expected runSyncProxy to throw');
+  assert.equal((thrown as Error).message, HAPROXY_FORWARD_REFUSAL);
+  assert.equal(ssh.history.length, 0);
+});
+
+test('sync-proxy (haproxy driver) refuses the same forward-gated guest on --apply, before writing anything, with no SSH call', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  let thrown: unknown;
+  try {
+    await runSyncProxy({ apply: true }, { ssh, inventory: haproxyForwardGatedInventory });
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown instanceof Error, 'expected runSyncProxy to throw');
+  assert.equal((thrown as Error).message, HAPROXY_FORWARD_REFUSAL);
+  assert.equal(ssh.history.length, 0);
+});
+
+test('sync-proxy (haproxy driver) does not refuse a forward-gated proxyManual entry -- buildRoutes never derives a route for it', async () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    proxyDriver: 'haproxy',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+    guests: [
+      {
+        name: 'caddy-lxc',
+        type: 'lxc',
+        vmid: 4002,
+        host: 'pve1',
+        ip: '192.168.1.2',
+        subdomains: ['sonarr'],
+        authGroup: 'bellhop-users',
+        proxyManual: true,
+      },
+    ],
+  };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({}, { ssh, inventory: inv });
+  assert.equal(result.driver, 'haproxy');
+  assert.doesNotMatch(result.preview, /sonarr/);
+  assert.equal(ssh.history.length, 0);
+});
+
+test('sync-proxy (haproxy driver) does not refuse a forward-gated entry with no subdomains -- no route is derived at all', async () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    proxyDriver: 'haproxy',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', authGroup: 'bellhop-users' }],
+  };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({}, { ssh, inventory: inv });
+  assert.equal(result.driver, 'haproxy');
+  assert.equal(ssh.history.length, 0);
+});
+
 // --- Nginx Proxy Manager driver (issue #31, US1) -----------------------------
 //
 // The real nginxProxyManagerDriver builds its client from the environment,

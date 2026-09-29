@@ -184,6 +184,15 @@ test('render: never renders unauthenticatedPaths (an OIDC entry that also carrie
   assert.doesNotMatch(backends.content + map.content, /\/api/);
 });
 
+// --- US2 (issue #32, T013): forward-gated entries are refused, never emitted ---
+
+test('render: an OIDC route with saved unauthenticatedPaths renders byte-identically to the same route without them', () => {
+  const withPaths = exampleInventory();
+  withPaths.externalSites![0].unauthenticatedPaths = ['/api/*', '/health'];
+  const withoutPaths = exampleInventory();
+  assert.deepEqual(renderInventory(withPaths), renderInventory(withoutPaths));
+});
+
 test('mapPath: bellhop.map in configPath\'s own directory', () => {
   assert.equal(mapPath('/etc/haproxy/bellhop.cfg'), '/etc/haproxy/bellhop.map');
   assert.equal(mapPath('/opt/haproxy/sites.cfg'), '/opt/haproxy/bellhop.map');
