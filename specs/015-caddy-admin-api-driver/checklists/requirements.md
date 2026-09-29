@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -35,5 +35,6 @@
   API, and the existing Bellhop settings and commands the operator uses.
   These are the product's user-facing surface, not implementation choices.
   Code structure, data formats, and HTTP details are left to the plan.
-- Open: Q1 (migration from the file-based Caddy driver). It sets FR-015
-  and User Story 5's independent test.
+- Q1 (migration from the file-based Caddy driver) resolved as option B:
+  a one-time conversion command with a dry run and `--apply` (FR-015,
+  User Story 5).

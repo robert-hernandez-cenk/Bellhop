@@ -37,6 +37,10 @@ Decisions carried over from the issue:
   a Bellhop identifier. Untagged objects belong to the operator and are
   never changed or removed, the same way content outside the file driver's
   managed markers is left alone today.
+- **Assisted switch (clarified 2026-09-29).** Moving from the file-based
+  Caddy driver goes through a one-time, previewable conversion command
+  rather than documented manual steps or automatic adoption of untagged
+  routes during sync.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -190,17 +194,45 @@ inventory hostname being reported as a conflict.
 the file-based one, so this is the realistic adoption path. It comes after
 the driver itself works.
 
-**Independent Test**: [NEEDS CLARIFICATION: how much of the switch Bellhop
-performs. See Q1. The test follows from the answer.]
+Bellhop provides a one-time conversion command for this, with the usual dry
+run and `--apply`. It reads the live Caddyfile on the proxy host, sets aside
+the Bellhop-managed section, converts the rest into Caddy's configuration
+using Caddy's own converter, and adds the inventory's routes as
+Bellhop-tagged routes. The result is one previewable starting
+configuration. The operator then switches Caddy to its API-configured
+service and selects the new driver.
+
+**Independent Test**: with a fake SSH client that returns an example
+Caddyfile (hand-authored sites plus a managed section) and a captured,
+redacted output of Caddy's converter, run the conversion's dry run and
+apply. Assert the preview, that no managed-section site appears untagged,
+that every inventory route appears tagged, and what the fake client
+received.
 
 **Acceptance Scenarios**:
 
-1. **Given** an operator on the file-based Caddy driver, **When** they
-   follow the documented switch, **Then** every hand-authored site still
-   answers afterwards and every inventory site is served by a
+1. **Given** an operator on the file-based Caddy driver, **When** they run
+   the conversion without `--apply`, **Then** it shows the hand-authored
+   sites it will keep, the Bellhop routes it will add, and any conflicts,
+   and changes nothing on the proxy host.
+2. **Given** the same state, **When** they run it with `--apply`, **Then**
+   the resulting configuration is loaded into Caddy and saved so that the
+   API-configured service resumes from it. The Caddyfile itself is left in
+   place, unchanged, as a fallback.
+3. **Given** the conversion was applied and the operator followed the
+   documented remaining steps (switch the Caddy service, select the
+   driver), **When** they check each site, **Then** every hand-authored
+   site still answers and every inventory site is served by a
    Bellhop-tagged route.
-2. **Given** the switch is done, **When** `sync-proxy` runs, **Then** it
-   reports no conflicts caused by the old managed section.
+4. **Given** the switch is done, **When** `sync-proxy` runs, **Then** it
+   reports no changes and no conflicts caused by the old managed section.
+5. **Given** a hand-authored site in the Caddyfile claims an inventory
+   hostname, **When** the conversion runs, **Then** it reports the conflict
+   the same way `sync-proxy` does (User Story 2), keeps the hand-authored
+   site, and does not add the conflicting Bellhop route.
+6. **Given** the Caddyfile has no managed section (the operator never used
+   the file-based driver), **When** the conversion runs, **Then** it
+   converts the whole file and adds the inventory's routes.
 
 ---
 
@@ -253,6 +285,13 @@ configuration and assert the section shows it in readable form.
   settings for its hostnames and never changes untagged certificate
   settings. If an untagged certificate policy already covers a Bellhop
   hostname, that is reported as a conflict, not overwritten.
+- **Conversion run twice.** Once Caddy holds Bellhop-tagged routes, the
+  conversion refuses to run again and points at `sync-proxy`, so it can
+  never replace a live API configuration with an old Caddyfile's content.
+- **Conversion while Caddy still runs from the Caddyfile.** The conversion
+  is the one action allowed in that state (FR-010 applies to `sync-proxy`,
+  not to the conversion). Its output tells the operator to switch the
+  service next, since a reload before that would discard the load.
 - **Switching back.** Changing `proxyDriver` from this driver to another
   leaves Caddy's live configuration as it is. Bellhop does not clean up its
   tagged routes on a driver change. Removing them is documented as part of
@@ -317,13 +356,22 @@ configuration and assert the section shows it in readable form.
 - **FR-014**: The Settings page MUST NOT show the proxy config path or TLS
   certificate fields for this driver, since it uses no configuration file.
   It MUST show the status page path field.
-- **FR-015**: The switch from the file-based Caddy driver MUST be supported
-  as follows: [NEEDS CLARIFICATION: see Q1. Documented manual steps only,
-  or a Bellhop-assisted conversion?]
+- **FR-015**: The system MUST provide a one-time conversion action from a
+  Caddyfile to this driver's configuration, reachable from the CLI. It MUST
+  default to a dry run and act only with `--apply`. It MUST drop the
+  Bellhop-managed section, convert the remaining Caddyfile content with
+  Caddy's own converter on the proxy host, add the inventory's routes
+  tagged as Bellhop's, report conflicts by the same rules as FR-007, load
+  the result into Caddy all-or-nothing, and leave the Caddyfile unchanged.
+  It MUST fail with a named error if the Caddyfile cannot be read or Caddy
+  cannot convert it, and MUST refuse to overwrite a Caddy that already
+  holds Bellhop-tagged routes, since the conversion is for the first switch
+  only.
 - **FR-016**: The documentation MUST describe the driver's prerequisites
   (the API-configured, resuming Caddy service; the Cloudflare token in
   Caddy's environment), how hand-authored sites live alongside Bellhop's
-  routes, how to switch to and away from the driver, and that there is no
+  routes, how to switch to the driver (the conversion, then switching the
+  Caddy service, then selecting the driver) and away from it, and that there is no
   longer a human-readable configuration file of record.
 - **FR-017**: The branch MUST record the single-operator assumptions this
   driver keeps or adds: the fixed admin address on the proxy host, Caddy
