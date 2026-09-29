@@ -515,6 +515,48 @@ describe('mobile consent reconcile', () => {
     assert.equal(authentik.listTargetPolicyBindingsForTest().length, 1);
   });
 
+  test('a failed policy-binding create rolls back the stage binding this run created, then the next run completes', async () => {
+    const failOn = new Set(['createPolicyToTargetBinding']);
+    const authentik = await newClient({ failOn });
+    const inventory = mobileInventory([MOBILE_A]);
+    const first = await run(authentik, inventory, true);
+    // An unguarded stage binding would show the consent page on every login.
+    assert.deepEqual(authentik.listFlowStageBindingsForTest(), []);
+    assert.deepEqual(first.mobileConsent?.changes, FOUR_CREATES(1).slice(0, 2), 'only what remains done');
+    assert.match(first.mobileConsent?.error ?? '', /forced failure for createPolicyToTargetBinding/);
+    assert.equal(syncAuthentikFailed(first), true);
+    const writes = consentWrites(authentik);
+    const bindingDelete = writes.findIndex((c) => c.startsWith('deleteFlowStageBinding '));
+    assert.ok(bindingDelete >= 0, 'the new binding is deleted');
+    assert.ok(writes.indexOf('clearFlowCache', bindingDelete) > bindingDelete, 'cache cleared after the rollback');
+
+    failOn.delete('createPolicyToTargetBinding');
+    const second = await run(authentik, inventory, true);
+    assert.deepEqual(second.mobileConsent?.changes, FOUR_CREATES(1).slice(2));
+    assert.equal(authentik.listStagesForTest().length, 1);
+    assert.equal(authentik.listPoliciesForTest().length, 1);
+    assert.equal(authentik.listFlowStageBindingsForTest().length, 1);
+    assert.equal(authentik.listTargetPolicyBindingsForTest().length, 1);
+  });
+
+  test('a failed policy-binding create leaves a pre-existing stage binding in place', async () => {
+    const failOn = new Set<string>();
+    const authentik = await newClient({ failOn });
+    const inventory = mobileInventory([MOBILE_A]);
+    await run(authentik, inventory, true);
+    const policyBinding = authentik.listTargetPolicyBindingsForTest()[0];
+    await authentik.deletePolicyBinding(policyBinding.id);
+    const binding = authentik.listFlowStageBindingsForTest()[0];
+    failOn.add('createPolicyToTargetBinding');
+    const before = authentik.calls.length;
+
+    const applied = await run(authentik, inventory, true);
+    assert.deepEqual(applied.mobileConsent?.changes, []);
+    assert.match(applied.mobileConsent?.error ?? '', /forced failure for createPolicyToTargetBinding/);
+    assert.deepEqual(authentik.listFlowStageBindingsForTest(), [binding], 'the existing binding is not rolled back');
+    assert.deepEqual(consentWrites(authentik, before), []);
+  });
+
   const removals: Array<[string, GuestOverrides]> = [
     ['the last URI is removed', { oidcMobileRedirectUris: [] }],
     ['the entry leaves OIDC mode', { authMode: 'forward' }],

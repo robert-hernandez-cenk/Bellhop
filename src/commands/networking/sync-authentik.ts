@@ -1142,6 +1142,9 @@ async function applyMobileConsent(
 ): Promise<void> {
   let { stageId, policyId, binding } = plan;
   let failed = true;
+  // A binding was created and then deleted again: a flow plan may have been
+  // cached in between, so the cache is cleared even if nothing else remains.
+  let rolledBack = false;
   try {
     for (const change of plan.changes) {
       const key = `${change.object}:${change.action}`;
@@ -1182,7 +1185,26 @@ async function applyMobileConsent(
           await authentik.deleteFlowStageBinding(binding!.id);
           break;
         case 'policy-binding:create':
-          await authentik.createPolicyToTargetBinding({ targetId: binding!.policyBindingModelId, policyId: policyId! });
+          try {
+            await authentik.createPolicyToTargetBinding({ targetId: binding!.policyBindingModelId, policyId: policyId! });
+          } catch (err) {
+            // A stage binding with no policy on it runs for every login. If
+            // this run created it, take it back out rather than leave
+            // consent on every browser sign-in until the next run. A binding
+            // that existed before the run is left alone (repair case).
+            const created = made.findIndex((c) => c.object === 'binding' && c.action === 'create');
+            if (created < 0) throw err;
+            try {
+              await authentik.deleteFlowStageBinding(binding!.id);
+            } catch (rollbackErr) {
+              throw new Error(
+                `${errorMessage(err)}; removing the new stage binding also failed (${errorMessage(rollbackErr)}), so every login on the flow shows the consent page until the next successful run`
+              );
+            }
+            made.splice(created, 1);
+            rolledBack = true;
+            throw err;
+          }
           break;
         case 'policy-binding:delete':
           await authentik.deletePolicyBinding(plan.policyBindingId!);
@@ -1194,7 +1216,9 @@ async function applyMobileConsent(
     }
     failed = false;
   } finally {
-    if (made.some((c) => c.object !== 'stage')) {
+    // A stage-only change (a mode repair) needs no clear: the consent stage
+    // reads its mode when it executes, not from the cached plan.
+    if (rolledBack || made.some((c) => c.object !== 'stage')) {
       try {
         await authentik.clearFlowCache();
       } catch (err) {
