@@ -86,18 +86,19 @@ function unauthenticatedPathsChangeError(
   };
 }
 
-// authMode/oidcRedirectUris are unconditionally admin-only in both
-// directions (FR-018) -- unlike authGroup's raise/lower asymmetry above,
-// there is no "raise" a non-admin may make unassisted here: switching to
-// OIDC removes the forward-auth gate the proxy would otherwise put in front of
-// the app, and the callback URL decides where Authentik sends a sign-in
-// token after a successful login, so getting either wrong has a bigger
-// blast radius than widening an authGroup rung. Compared against the
-// *parsed* values (already resolved by applyGuestEdits) rather than the raw
-// body, so re-submitting the current value unchanged -- which the Dashboard
-// does whenever it PATCHes the full object -- is never treated as a change.
-// Arrays are compared in order, matching parseOidcRedirectUris's own
-// order-preserving output.
+// authMode/oidcRedirectUris/oidcMobileRedirectUris are unconditionally
+// admin-only in both directions (FR-018, issue #22) -- unlike authGroup's
+// raise/lower asymmetry above, there is no "raise" a non-admin may make
+// unassisted here: switching to OIDC removes the forward-auth gate the
+// proxy would otherwise put in front of the app, and the callback URL (web
+// or mobile) decides where Authentik sends a sign-in token after a
+// successful login, so getting any of them wrong has a bigger blast radius
+// than widening an authGroup rung. Compared against the *parsed* values
+// (already resolved by applyGuestEdits) rather than the raw body, so
+// re-submitting the current value unchanged -- which the Dashboard does
+// whenever it PATCHes the full object -- is never treated as a change.
+// Arrays are compared in order, matching parseOidcRedirectUris/
+// parseOidcMobileRedirectUris's own order-preserving output.
 function sameOidcRedirectUris(a: string[] | undefined, b: string[] | undefined): boolean {
   const x = a ?? [];
   const y = b ?? [];
@@ -106,9 +107,12 @@ function sameOidcRedirectUris(a: string[] | undefined, b: string[] | undefined):
 
 function oidcEditChangeError(current: GuestEntry, updated: GuestEntry, isAdmin: boolean): { status: number; error: string } | null {
   if (isAdmin) return null;
-  const changed = current.authMode !== updated.authMode || !sameOidcRedirectUris(current.oidcRedirectUris, updated.oidcRedirectUris);
+  const changed =
+    current.authMode !== updated.authMode ||
+    !sameOidcRedirectUris(current.oidcRedirectUris, updated.oidcRedirectUris) ||
+    !sameOidcRedirectUris(current.oidcMobileRedirectUris, updated.oidcMobileRedirectUris);
   if (!changed) return null;
-  return { status: 403, error: "Only an admin may change an app's auth mode or callback URLs" };
+  return { status: 403, error: "Only an admin may change an app's auth mode, callback URLs or mobile redirect URLs" };
 }
 
 export function dashboardRoutes(
@@ -209,7 +213,7 @@ export function dashboardRoutes(
         return;
       }
 
-      if ('authMode' in req.body || 'oidcRedirectUris' in req.body) {
+      if ('authMode' in req.body || 'oidcRedirectUris' in req.body || 'oidcMobileRedirectUris' in req.body) {
         const problem = oidcEditChangeError(current, updated, isAdminUser(req.user?.groups ?? []));
         if (problem) {
           res.status(problem.status).json({ error: problem.error });

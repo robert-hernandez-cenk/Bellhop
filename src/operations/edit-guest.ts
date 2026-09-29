@@ -8,6 +8,7 @@ import {
   parseUnauthenticatedPaths,
   parseAuthMode,
   parseOidcRedirectUris,
+  parseOidcMobileRedirectUris,
   oidcConfigErrors,
   validateInventory,
   effectiveAuth,
@@ -82,6 +83,7 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
   if ('authMode' in body) updated.authMode = parseAuthMode(body.authMode);
   if ('oidcRedirectUris' in body) updated.oidcRedirectUris = parseOidcRedirectUris(asDelimited(body.oidcRedirectUris));
+  if ('oidcMobileRedirectUris' in body) updated.oidcMobileRedirectUris = parseOidcMobileRedirectUris(asDelimited(body.oidcMobileRedirectUris));
   return updated;
 }
 
@@ -241,6 +243,12 @@ export const EDIT_GUEST_SHAPE = {
     .union([z.string(), z.array(z.string())])
     .optional()
     .describe("OIDC callback URLs (array or ';'-separated absolute http(s) URLs); required when authMode is 'oidc' and the entry has subdomains. Admin only."),
+  oidcMobileRedirectUris: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .describe(
+      "Mobile app redirect URIs (array or ';'-separated; custom schemes allowed; javascript:, data:, file:, vbscript: rejected). Adds a consent click to mobile sign-ins only. Admin only."
+    ),
   confirmOidcClientDeletion: z
     .boolean()
     .optional()

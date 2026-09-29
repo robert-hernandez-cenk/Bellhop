@@ -427,3 +427,65 @@ test('runEditGuest: edits that keep or enter OIDC gating never need confirmOidcC
   await runEditGuest({ name: 'media-lxc', authGroup: null, confirmOidcClientDeletion: true }, d);
   await runEditGuest({ name: 'media-lxc', authMode: null }, d);
 });
+
+// T005 (issue #22): oidcMobileRedirectUris wired through applyGuestEdits and
+// commitGuestEdit's oidcConfigErrors cross-list check, mirroring the
+// authMode/oidcRedirectUris tests above.
+
+test('applyGuestEdits parses oidcMobileRedirectUris from a form string and a typed array alike', () => {
+  const current = inventory.guests[1];
+  const fromForm = applyGuestEdits(current, {
+    oidcMobileRedirectUris: 'com.example.app://callback1; com.example.app://callback2',
+  });
+  const typed = applyGuestEdits(current, {
+    oidcMobileRedirectUris: ['com.example.app://callback1', 'com.example.app://callback2'],
+  });
+  assert.deepEqual(fromForm.oidcMobileRedirectUris, ['com.example.app://callback1', 'com.example.app://callback2']);
+  assert.deepEqual(typed, fromForm);
+});
+
+test('applyGuestEdits rejects a javascript: oidcMobileRedirectUris entry, naming it', () => {
+  const current = inventory.guests[1];
+  assert.throws(() => applyGuestEdits(current, { oidcMobileRedirectUris: 'javascript:alert(1)' }), /javascript:alert\(1\)/);
+});
+
+test('applyGuestEdits clears oidcMobileRedirectUris on an empty string', () => {
+  const updated = applyGuestEdits(
+    { ...inventory.guests[1], oidcMobileRedirectUris: ['com.example.app://cb'] },
+    { oidcMobileRedirectUris: '' }
+  );
+  assert.equal(updated.oidcMobileRedirectUris, undefined);
+});
+
+test('runEditGuest rejects a mobile redirect URI that duplicates a web callback URL, naming the field', async () => {
+  const d = deps();
+  await assert.rejects(
+    runEditGuest(
+      {
+        name: 'other-lxc',
+        authGroup: 'bellhop-users',
+        authMode: 'oidc',
+        oidcRedirectUris: ['https://taken.example.com/cb'],
+        oidcMobileRedirectUris: ['https://taken.example.com/cb'],
+      },
+      d
+    ),
+    (err: unknown) => err instanceof GuestEditValidationError && /oidcMobileRedirectUris/.test((err as Error).message)
+  );
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'other-lxc')?.oidcMobileRedirectUris, undefined);
+});
+
+test('runEditGuest accepts a distinct oidcMobileRedirectUris list alongside oidcRedirectUris', async () => {
+  const d = { ...deps(), authentik: new FakeAuthentikClient() };
+  const result = await runEditGuest(
+    {
+      name: 'other-lxc',
+      authGroup: 'bellhop-users',
+      authMode: 'oidc',
+      oidcRedirectUris: ['https://taken.example.com/cb'],
+      oidcMobileRedirectUris: ['com.example.app://callback'],
+    },
+    d
+  );
+  assert.deepEqual(result.guest.oidcMobileRedirectUris, ['com.example.app://callback']);
+});
