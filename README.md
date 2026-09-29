@@ -13,6 +13,8 @@ Bellhop is an independent project, not affiliated with or endorsed by
 Proxmox Server Solutions GmbH. Proxmox is a registered trademark of
 Proxmox Server Solutions GmbH.
 
+![The Bellhop web UI Dashboard: a sidebar of provisioning and maintenance actions, two Proxmox hosts with their MID schemes and SSH targets, and a table of guests with their IP addresses, subdomains and Start, Shutdown and Delete buttons](docs/images/dashboard.png)
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 24
@@ -83,7 +85,8 @@ npm run web:start
 ```
 
 See [Web UI](docs/web-ui.md) for the development server, authentication,
-and what each page does.
+and what each page does. To see the web UI without any of the above, run
+`npm run demo` instead — a throwaway instance with built-in example data.
 
 ## Commands
 

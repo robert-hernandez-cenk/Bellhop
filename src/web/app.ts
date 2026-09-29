@@ -84,14 +84,19 @@ export function buildApp(deps: AppDeps): express.Express {
       tlsProbeSleepFn: deps.tlsProbeSleepFn,
     })
   );
-  app.use('/api/maintenance', maintenanceRoutes(deps.inventory, deps.baseSsh, deps.jobRunner, deps.inventoryPath, deps.authentik, cloudflare));
+  app.use(
+    '/api/maintenance',
+    maintenanceRoutes(deps.inventory, deps.baseSsh, deps.jobRunner, deps.inventoryPath, deps.authentik, cloudflare, {
+      fetchImpl: deps.fetchImpl,
+    })
+  );
   app.use('/api/users', usersRoutes(deps.authentik));
   app.use('/api/groups', groupsRoutes(deps.authentik));
   app.use('/api/auth-groups', authGroupsRoutes(deps.authentik));
   app.use('/api/permissions', permissionsRoutes(deps.inventoryPath));
   app.use('/api/settings', settingsRoutes(deps.inventory, deps.inventoryPath));
   app.use('/api/impersonate', impersonationRoutes(deps.authentik, impersonationStore));
-  app.use('/api/networking', networkingRoutes(deps.inventory, deps.inventoryPath));
+  app.use('/api/networking', networkingRoutes(deps.inventory, deps.inventoryPath, deps.fetchImpl));
   app.use(
     '/api/oidc',
     oidcRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.jobRunner)

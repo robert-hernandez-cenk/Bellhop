@@ -20,11 +20,14 @@ export function maintenanceRoutes(
   jobRunner: JobRunner,
   inventoryPath: string,
   authentik: AuthentikClient,
-  cloudflare: CloudflareClient
+  cloudflare: CloudflareClient,
+  // Test/demo-only (same role as provisioningRoutes' testDeps.fetchImpl):
+  // unset in production, where every operation falls back to global fetch.
+  testDeps: { fetchImpl?: typeof fetch } = {}
 ): Router {
   const router = Router();
 
-  const deps = (): OperationDeps => ({ ssh, inventory, inventoryPath, authentik, cloudflare });
+  const deps = (): OperationDeps => ({ ssh, inventory, inventoryPath, authentik, cloudflare, fetchImpl: testDeps.fetchImpl });
 
   router.get('/', (_req, res) => {
     res.json(MAINTENANCE_ACTIONS);

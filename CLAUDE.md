@@ -2818,6 +2818,17 @@ the same rigor as any other correctness bug.
   test`) enforces the README line budget and fails on any relative link or
   heading anchor in `README.md`/`docs/` that doesn't resolve, so renaming a
   heading means updating the links to it in the same change (issue #41).
+- **The demo instance (`scripts/demo/`) regenerates screenshots.** `npm
+  run demo` is a throwaway 127.0.0.1:3100 instance with example inventory,
+  simulated Proxmox via `DemoSSHClient`, fixed app catalog, seeded jobs,
+  and signed-in admin — never touching real `inventory/bellhop.db` or
+  `data/`. `npm run docs:screenshots` regenerates `docs/images/` through
+  installed Chrome/Edge (`playwright-core`, no bundled browser; not in CI).
+  A UI change that alters a screenshotted screen regenerates the images
+  and verifies them by eye for example-only values (constitution Principle I
+  applies to screenshots). `test/scripts/demo/demo-inventory.test.ts`
+  enforces the example-data invariant. See `specs/014-web-ui-screenshots/`
+  for design details.
 - **GitHub operations go through the `gh` CLI, not the GitHub MCP tools.**
   The GitHub MCP server's token is not reliably scoped to this repository
   (`mcp__github__*` calls come back 404/422 "resource does not exist or
