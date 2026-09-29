@@ -3,7 +3,7 @@ import type { SSHClient } from '../lib/ssh-client.ts';
 import type { Inventory } from '../lib/inventory.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
 import { runSyncProxy } from '../commands/networking/sync-proxy.ts';
-import { runRenderStatusPage, statusPagePathSkipMessage } from '../commands/networking/render-status-page.ts';
+import { runRenderStatusPage, statusPageSkipReason } from '../commands/networking/render-status-page.ts';
 import { runSyncAuthentik, conflictExplanation, OFF_LADDER_EXPLANATION, MISSING_RUNG_EXPLANATION } from '../commands/networking/sync-authentik.ts';
 import type { ForwardSkip, OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import { logInfo, logWarn } from '../lib/log.ts';
@@ -99,13 +99,16 @@ export async function syncProxyLive(deps: {
 }): Promise<SyncProxyLiveResult> {
   await runSyncProxy({ apply: true }, deps);
   // The status page is opt-in: an operator who has not configured a path
-  // never gets an index.html written to their proxy host. Skipping is not
-  // a failure, so the Authentik reconcile below still runs.
-  if (deps.inventory.statusPagePath !== undefined) {
+  // never gets an index.html written to their proxy host, and a driver that
+  // manages no proxy at all (issue #33, proxyDriver: 'none') has nowhere to
+  // serve one regardless of that setting. Skipping either way is not a
+  // failure, so the Authentik reconcile below still runs.
+  const skipReason = statusPageSkipReason(deps.inventory);
+  if (skipReason) {
+    logInfo(skipReason);
+  } else {
     const inventorySnapshot = stringify(deps.inventory);
     await runRenderStatusPage({ apply: true }, deps, inventorySnapshot);
-  } else {
-    logInfo(statusPagePathSkipMessage());
   }
   let result: SyncProxyLiveResult = {
     authentikConflicts: [],

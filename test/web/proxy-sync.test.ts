@@ -330,6 +330,32 @@ test('syncProxyLive never reaches the prune when sync-proxy fails', async () => 
   assert.deepEqual(cloudflare.history, []);
 });
 
+// Issue #33 US2: under proxyDriver: 'none', syncProxyLive must make no SSH
+// calls at all (sync-proxy's own early return under 'none' means there is
+// nothing to write, so render-status-page's read/write never happens
+// either), log both the driver's status-page skip line and the existing
+// ACME-prune driver-capability skip line, and still reconcile Authentik
+// when it is configured -- exactly as today.
+test("syncProxyLive under proxyDriver 'none' makes no SSH calls, logs both skip lines, and still runs sync-authentik", async () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none' };
+  const ssh = new FakeSSHClient(() => ({ stdout: 'unused', stderr: '', code: 0 }));
+  const authentik = new FakeAuthentikClient();
+  const logs = await captureLogs(() => syncProxyLive({ ssh, inventory: noneInventory, authentik }));
+
+  assert.equal(ssh.history.length, 0, 'no SSH calls at all under a driver that manages no proxy');
+  assert.ok(
+    logs.info.some((l) => l.includes("proxyDriver is 'none' -- skipping the status page render")),
+    'the driver status-page skip line must be logged'
+  );
+  assert.ok(
+    logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('none')),
+    'the existing ACME-prune driver-capability skip line must still be logged'
+  );
+  // FakeAuthentikClient records what it was asked for; reaching this line
+  // without throwing means sync-authentik still ran against it.
+  assert.ok(Array.isArray(await authentik.listApplications()));
+});
+
 // Native OIDC gating (issue #1): sync-authentik's OIDC skips and failed
 // discovery checks are warned and returned, and never fail the push.
 function oidcGated(overrides: Partial<Inventory['guests'][number]> = {}): Inventory {

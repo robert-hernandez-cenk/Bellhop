@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import { authentikConfig, authentikConfigured } from './lib/authentik-config.ts';
 import { logError, logInfo } from './lib/log.ts';
 import { Ssh2SSHClient } from './lib/ssh-client.ts';
-import { loadInventory, saveInventory } from './lib/inventory.ts';
+import { loadInventory, saveInventory, SETTINGS_KEYS } from './lib/inventory.ts';
 import { dataDir, inventoryPath } from './lib/paths.ts';
 import { runAuditNfsMounts, formatAuditNfsMounts } from './commands/maintenance/audit-nfs-mounts.ts';
 import { runImportYamlInventory } from './commands/maintenance/import-yaml-inventory.ts';
@@ -152,9 +152,7 @@ program
 
 program
   .command('set-config')
-  .description(
-    'Set or clear one inventory-wide setting (nfsServer, backupStorage, dnsServer, statusPagePath, customScriptsRepo, customScriptsBranch)'
-  )
+  .description(`Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')})`)
   .argument('<key>', 'the setting to change')
   .argument('[value]', 'the new value (omit with --unset)')
   .option('--unset', 'clear the setting instead of setting it')
@@ -279,6 +277,10 @@ program
       const inventory = loadInventory(inventoryPath());
       const ssh = new Ssh2SSHClient();
       const result = await runSyncProxy(opts, { ssh, inventory });
+      if (result.proxyHost === null) {
+        logInfo(result.preview);
+        return;
+      }
       if (!result.applied) {
         logInfo(`[DRY RUN] Generated ${result.driver} configuration for ${result.proxyHost}:`);
         console.log(result.preview);

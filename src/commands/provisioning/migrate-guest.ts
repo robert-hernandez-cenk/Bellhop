@@ -7,7 +7,7 @@ import { pickStorage, listBackupStorages } from '../../lib/storage.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
 import { runSyncProxy } from '../networking/sync-proxy.ts';
-import { runRenderStatusPage, statusPagePathSkipMessage } from '../networking/render-status-page.ts';
+import { runRenderStatusPage, statusPageSkipReason } from '../networking/render-status-page.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
 import { stringify } from 'yaml';
@@ -354,13 +354,16 @@ export async function runMigrateGuest(
     }
     // Same opt-in behavior as syncProxyLive (src/web/proxy-sync.ts): an
     // operator who hasn't configured statusPagePath never gets an
-    // index.html write attempted, and skipping it is not a failure here
-    // either -- the proxy config update above is what actually matters for
-    // the migrated guest's subdomains to keep working.
-    if (inventory.statusPagePath !== undefined) {
-      await runRenderStatusPage({ apply: true }, { ssh, inventory }, stringify(inventory));
+    // index.html write attempted, and a driver that manages no proxy at all
+    // (issue #33, proxyDriver: 'none') has nowhere to serve one regardless
+    // of that setting. Skipping either way is not a failure here either --
+    // the proxy config update above is what actually matters for the
+    // migrated guest's subdomains to keep working.
+    const skipReason = statusPageSkipReason(inventory);
+    if (skipReason) {
+      logInfo(skipReason);
     } else {
-      logInfo(statusPagePathSkipMessage());
+      await runRenderStatusPage({ apply: true }, { ssh, inventory }, stringify(inventory));
     }
   }
 

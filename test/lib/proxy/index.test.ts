@@ -194,6 +194,12 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
     id: 'test-only-driver-t040' as ProxyDriverId,
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/test-only/test.conf',
+    // This test exercises runRenderStatusPage below (issue #33, US2 gave
+    // that command a hard 'proxyDriver has no status page' throw for any
+    // driver whose statusPage is null -- fileDriver()'s own default when a
+    // def omits it), so this file-configured, real-proxy-managing test
+    // driver needs a non-null value, same as the Caddy driver's.
+    statusPage: { suggestedPath: '/var/www/test-only/index.html' },
     render(routes, ctx, configPath) {
       receivedRoutes = routes;
       receivedCtx = ctx;

@@ -4,6 +4,7 @@ import type { Inventory } from '../../src/lib/inventory.ts';
 import { runSyncProxy } from '../../src/commands/networking/sync-proxy.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
+import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../src/lib/proxy/ids.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
@@ -435,6 +436,45 @@ test('runSyncProxy joins every offending entry\'s message into one thrown Error'
   } finally {
     unregister();
   }
+});
+
+// Issue #33 US2: under proxyDriver: 'none', runSyncProxy must short-circuit
+// before driverDeps()/buildRoutes()/checkCapabilities() ever run -- so this
+// inventory deliberately has no 'proxy: true' entry and a forward-gated
+// entry ('sonarr') with no 'authentik: true' entry, either of which would
+// throw under the real caddy driver (see the 'No inventory entry has
+// proxy: true' and 'has an authGroup set but no...authentik' tests above).
+// Reaching a clean { proxyHost: null, ... } result here proves the
+// short-circuit happens first.
+const noProxyInventory: Inventory = {
+  domain: 'example.com',
+  proxyDriver: 'none',
+  hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+  guests: [
+    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+  ],
+};
+
+test("runSyncProxy (dry run) returns { proxyHost: null, driver: 'none', preview: NO_PROXY_SYNC_MESSAGE } and makes no SSH calls", async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({}, { ssh, inventory: noProxyInventory });
+  assert.deepEqual(result, { proxyHost: null, driver: 'none', preview: NO_PROXY_SYNC_MESSAGE, applied: false });
+  assert.equal(ssh.history.length, 0);
+});
+
+test("runSyncProxy (apply) returns the same { proxyHost: null, ... } result, with applied: true and no SSH calls", async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({ apply: true }, { ssh, inventory: noProxyInventory });
+  assert.deepEqual(result, { proxyHost: null, driver: 'none', preview: NO_PROXY_SYNC_MESSAGE, applied: true });
+  assert.equal(ssh.history.length, 0);
+});
+
+test("runSyncProxy under an unset proxyDriver (caddy default) is unchanged: proxyHost names the 'proxy: true' entry", async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({}, { ssh, inventory });
+  assert.equal(result.proxyHost, 'pve1');
+  assert.equal(result.driver, 'caddy');
+  assert.notEqual(result.preview, NO_PROXY_SYNC_MESSAGE);
 });
 
 test('sync-proxy emits the configured Authentik outpost port', async () => {

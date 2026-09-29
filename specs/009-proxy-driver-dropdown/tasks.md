@@ -91,32 +91,32 @@ None needed: existing project, dependencies installed.
 
 **Independent Test**: With `proxyDriver: 'none'` and no `proxy: true` entry, sync-proxy (CLI and operation), syncProxyLive, and migrate-guest succeed with an empty `FakeSSHClient.history` for proxy work. render-status-page throws the named error.
 
-- [ ] T015 [P] [US2] Write failing tests in `test/commands/sync-proxy.test.ts`. Under `none`, with no `proxy: true` entry, and with a forward-gated entry but no `authentik` entry (proves routes are never derived), both dry run and apply must:
+- [x] T015 [P] [US2] Write failing tests in `test/commands/sync-proxy.test.ts`. Under `none`, with no `proxy: true` entry, and with a forward-gated entry but no `authentik` entry (proves routes are never derived), both dry run and apply must:
   - return `{ proxyHost: null, driver: 'none', preview: NO_PROXY_SYNC_MESSAGE }`,
   - set `applied` equal to `opts.apply === true`,
   - leave `ssh.history` empty.
   Keep an unset-setting case asserting today's Caddy behavior is unchanged.
-- [ ] T016 [P] [US2] Write failing tests in `test/commands/render-status-page.test.ts`. Under `none`, with or without `statusPagePath` set, it rejects with `NO_PROXY_STATUS_PAGE_ERROR` and makes no SSH calls.
-- [ ] T017 [P] [US2] Write failing tests in `test/web/proxy-sync.test.ts`. Under `none` with `statusPagePath` set, `syncProxyLive`:
+- [x] T016 [P] [US2] Write failing tests in `test/commands/render-status-page.test.ts`. Under `none`, with or without `statusPagePath` set, it rejects with `NO_PROXY_STATUS_PAGE_ERROR` and makes no SSH calls.
+- [x] T017 [P] [US2] Write failing tests in `test/web/proxy-sync.test.ts`. Under `none` with `statusPagePath` set, `syncProxyLive`:
   - makes no SSH calls,
   - logs the driver status-page skip line and the existing `pruneAcmeDriverSkipMessage('none')` line,
   - still runs sync-authentik when Authentik is configured, as the existing tests do.
-- [ ] T018 [P] [US2] Write failing tests in `test/commands/migrate-guest.test.ts`. A successful migration of a guest with subdomains under `none` (no `proxy: true` entry, `statusPagePath` set):
+- [x] T018 [P] [US2] Write failing tests in `test/commands/migrate-guest.test.ts`. A successful migration of a guest with subdomains under `none` (no `proxy: true` entry, `statusPagePath` set):
   - completes,
   - makes no proxy-host SSH calls,
   - logs the status-page skip line,
   - logs no "proxy sync failed" warning.
-- [ ] T019 [P] [US2] Write failing tests for the sync-proxy operation in `test/operations/` (the existing maintenance/networking operation tests file). Under `none`, the preview contains `NO_PROXY_SYNC_MESSAGE`. Also write failing tests in `test/cli.test.ts`, or the existing CLI coverage, if the CLI's sync-proxy output is tested there: the CLI prints the message rather than "Generated ... for null".
-- [ ] T020 [US2] In `src/commands/networking/sync-proxy.ts`:
+- [x] T019 [P] [US2] Write failing tests for the sync-proxy operation in `test/operations/` (the existing maintenance/networking operation tests file). Under `none`, the preview contains `NO_PROXY_SYNC_MESSAGE`. Also write failing tests in `test/cli.test.ts`, or the existing CLI coverage, if the CLI's sync-proxy output is tested there: the CLI prints the message rather than "Generated ... for null".
+- [x] T020 [US2] In `src/commands/networking/sync-proxy.ts`:
   - Make `SyncProxyResult.proxyHost` a `string | null`, documented as null when the driver manages no proxy.
   - Right after `getDriver`, when `!managesProxy(driver)`, return `{ proxyHost: null, driver: driver.id, preview: NO_PROXY_SYNC_MESSAGE, applied: opts.apply === true }`. This must happen before `driverDeps`, `buildRoutes`, and `checkCapabilities`, because those throw on a missing `proxy: true` entry or authentik ip.
-- [ ] T021 [US2] In `src/commands/networking/render-status-page.ts`:
+- [x] T021 [US2] In `src/commands/networking/render-status-page.ts`:
   - Throw `new Error(NO_PROXY_STATUS_PAGE_ERROR)` first when `getDriver(inventory).statusPage === null`, before the `statusPagePath` check.
   - Export `statusPageSkipReason(inventory): string | null`. It returns ``proxyDriver is '${id}' -- skipping the status page render`` when the driver serves no status page, `statusPagePathSkipMessage()` when the path is unset, and otherwise `null`.
-- [ ] T022 [US2] Use `statusPageSkipReason` in `src/web/proxy-sync.ts` (`syncProxyLive`) and `src/commands/provisioning/migrate-guest.ts`, replacing each `if (statusPagePath !== undefined)` block. When a reason is returned, log it with `logInfo`; otherwise render.
-- [ ] T023 [US2] Update the `sync-proxy` output in `src/cli.ts` and `src/operations/maintenance.ts`. When `result.proxyHost === null`, print/log `result.preview` via `logInfo` instead of the "Generated/Wrote ... for <host>" lines. The operation's preview already returns `result.preview`, so confirm it reads well. The apply path must log the message.
-- [ ] T024 [US2] Change the `set-config` command description in `src/cli.ts` to build its key list from `SETTINGS_KEYS.join(', ')` (FR-013), matching `src/operations/networking.ts`.
-- [ ] T025 [US2] Run `npm run typecheck` and `npm test`, then commit `No-proxy driver: sync-proxy and status page skip cleanly (#33, US2)`.
+- [x] T022 [US2] Use `statusPageSkipReason` in `src/web/proxy-sync.ts` (`syncProxyLive`) and `src/commands/provisioning/migrate-guest.ts`, replacing each `if (statusPagePath !== undefined)` block. When a reason is returned, log it with `logInfo`; otherwise render.
+- [x] T023 [US2] Update the `sync-proxy` output in `src/cli.ts` and `src/operations/maintenance.ts`. When `result.proxyHost === null`, print/log `result.preview` via `logInfo` instead of the "Generated/Wrote ... for <host>" lines. The operation's preview already returns `result.preview`, so confirm it reads well. The apply path must log the message.
+- [x] T024 [US2] Change the `set-config` command description in `src/cli.ts` to build its key list from `SETTINGS_KEYS.join(', ')` (FR-013), matching `src/operations/networking.ts`.
+- [x] T025 [US2] Run `npm run typecheck` and `npm test`, then commit `No-proxy driver: sync-proxy and status page skip cleanly (#33, US2)`.
 
 **Checkpoint**: `none` is fully usable from the CLI, web, and MCP.
 

@@ -81,6 +81,42 @@ test('guest-power apply fails when the remote command exits nonzero', async () =
   await assert.rejects(op.apply(parseOperationInput(op, { guest: 'app-lxc', state: 'shutdown' }), deps(ssh)), /exit 2/);
 });
 
+// Issue #33 US2: the sync-proxy operation must expose the same 'nothing to
+// write' behavior as the CLI/runSyncProxy under proxyDriver: 'none' -- the
+// preview already reads result.preview verbatim (so it needs no dedicated
+// change), and apply must log the message since apply otherwise logs
+// nothing at all today.
+test("sync-proxy operation preview contains NO_PROXY_SYNC_MESSAGE under proxyDriver 'none'", async () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const op = MAINTENANCE_OPERATIONS['sync-proxy'];
+  const preview = await op.preview(
+    parseOperationInput(op, {}),
+    { ssh, inventory: noneInventory, inventoryPath: ':unused:', authentik: new FakeAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() }
+  );
+  assert.match(preview, /proxyDriver is 'none' -- Bellhop manages no reverse proxy, so there is nothing to write/);
+  assert.equal(ssh.history.length, 0);
+});
+
+test("sync-proxy operation apply logs NO_PROXY_SYNC_MESSAGE under proxyDriver 'none'", async () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const op = MAINTENANCE_OPERATIONS['sync-proxy'];
+  const infos: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg: string) => infos.push(String(msg));
+  try {
+    await op.apply(
+      parseOperationInput(op, {}),
+      { ssh, inventory: noneInventory, inventoryPath: ':unused:', authentik: new FakeAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() }
+    );
+  } finally {
+    console.log = originalLog;
+  }
+  assert.ok(infos.some((l) => l.includes("proxyDriver is 'none' -- Bellhop manages no reverse proxy, so there is nothing to write")));
+  assert.equal(ssh.history.length, 0);
+});
+
 test('fleet-wide maintenance operations are flagged', () => {
   const fleetWide = Object.values(MAINTENANCE_OPERATIONS).filter((o) => o.fleetWide).map((o) => o.id).sort();
   assert.deepEqual(fleetWide, ['push-ssh-key', 'sync-inventory', 'sync-proxy', 'sync-ssh-keys', 'update-all']);
