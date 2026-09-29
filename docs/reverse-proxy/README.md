@@ -4,13 +4,15 @@ How `sync-proxy` manages a reverse proxy through a driver. Each driver has its
 own page:
 
 - [Caddy](caddy.md) — the default.
+- [Caddy (admin API)](caddy-api.md) — Caddy configured through its admin
+  API instead of a Caddyfile.
 - [nginx](nginx.md).
 - "No proxy" (`proxyDriver: none`) — described below.
 
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see [Inventory-wide
-settings](../configuration.md#inventory-wide-settings); unset means `caddy`, the default; `nginx` and `none`
-are the other drivers that ship). Exactly one driver is active per
+settings](../configuration.md#inventory-wide-settings); unset means `caddy`, the default; `caddy-api`, `nginx`
+and `none` are the other drivers that ship). Exactly one driver is active per
 deployment: it's a per-deployment choice, not a per-entry one, so every
 gated/reverse-proxied inventory entry is served by the same proxy. The web
 UI's Settings page presents this choice as a dropdown of every driver
@@ -54,9 +56,9 @@ cleanup is skipped too, through the same driver-capability check that
 skips it for any driver that doesn't issue certificates via Cloudflare
 DNS-01 (nginx included).
 
-A driver that's configured through a file (Caddy and nginx both are; a
-future Caddy-admin-API/Nginx-Proxy-Manager/HAProxy-Data-Plane-API driver
-might not be) is built with a shared `fileDriver` helper: it backs up the
+A driver that's configured through a file (Caddy and nginx both are; the
+[Caddy admin-API driver](caddy-api.md) is not, and reconciles tagged objects
+in Caddy's live configuration instead) is built with a shared `fileDriver` helper: it backs up the
 target file(s), writes the new content in place (either replacing a
 managed section while leaving everything else on the file untouched, or
 replacing a file Bellhop owns outright), runs the proxy's own validation

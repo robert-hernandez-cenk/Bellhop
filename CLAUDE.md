@@ -92,8 +92,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Guests reference their parent host by name and carry a `vmid`. Optional
   `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive reverse-proxy
   generation through whichever driver is active (issue #10 — see the
-  "Reverse-proxy driver interface" bullet below; Caddy and nginx, issue
-  #30, are the two drivers that ship today) — `subdomains` is a list (a host or guest can
+  "Reverse-proxy driver interface" bullet below; Caddy, nginx (issue
+  #30), and Caddy through its admin API (issue #26) are the drivers that
+  ship today) — `subdomains` is a list (a host or guest can
   front more than one subdomain; `sync-proxy` emits one route per entry in
   the list, all pointing at the same `ip`/`port`);
   `insecureBackendTls` — see the driver-interface bullet below;
@@ -600,10 +601,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
   driver rather than untangling Caddy-specific code throughout the toolkit.
-  Caddy and nginx (issue #30) are the two drivers that ship and actually
-  manage a proxy -- an admin-API Caddy driver, and drivers for Nginx Proxy
-  Manager/HAProxy, are follow-up issues (its shape was checked against all
-  four on paper first; see `specs/006-reverse-proxy-driver/research.md`).
+  Caddy, nginx (issue #30), and an admin-API Caddy driver (`caddy-api`,
+  issue #26 -- see its own bullet below) are the drivers that ship and
+  actually manage a proxy -- drivers for Nginx Proxy Manager/HAProxy are
+  follow-up issues (its shape was checked against all four on paper first;
+  see `specs/006-reverse-proxy-driver/research.md`).
   A third registered driver, `none`, ships alongside them as of issue #33
   -- see "A driver that manages no reverse proxy at all" below.
   Single-operator-assumption
@@ -658,8 +660,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   "render this file", with `fileDriver` supplying everything a
   file-configured driver needs on top of that); `index.ts`'s
   `getDriver(inventory)` resolves the `proxyDriver` setting (unset means
-  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'nginx'`, issue #30, and
-  `'none'`, issue #33, are the other registered ids;
+  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'caddy-api'`, issue #26,
+  `'nginx'`, issue #30, and `'none'`, issue #33, are the other registered
+  ids;
   an id no registered driver has -- only reachable by hand-editing
   `bellhop.db`, since the schema's own zod enum already rejects any other
   value at load time -- throws `"Unknown proxyDriver '<id>' -- run: bellhop
@@ -671,7 +674,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   own `defaultConfigPath`, throwing if that resolves to `null` -- only
   reachable for a driver that manages no proxy, which every real caller
   short-circuits around before `driverDeps` ever runs). `index.ts` also
-  exports `listDrivers()` (every registered driver, Caddy, nginx, then None, in
+  exports `listDrivers()` (every registered driver, Caddy, Caddy (admin
+  API), nginx, then None, in
   registration order -- the Settings page's dropdown source), and
   `driver.ts` exports `managesProxy(driver)` (`driver.id !==
   NO_PROXY_DRIVER_ID`, the constant in `ids.ts` -- `false` only for the
@@ -944,6 +948,73 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   DNS-01 does, one operator-managed certificate (in practice a wildcard
   for the domain, issued and renewed by something like `certbot`) covers
   every site this driver generates instead.
+- **Caddy admin-API driver** (`src/lib/proxy/drivers/caddy-api.ts`, issue
+  #26, `proxyDriver: 'caddy-api'`, label "Caddy (admin API)") serves exactly
+  what the file-based Caddy driver serves but reconciles Caddy's *live JSON
+  configuration* through its admin API instead of writing a Caddyfile
+  section -- the first registered driver not built on `fileDriver`. It
+  declares `usesConfigFile: false` (new optional `ReverseProxyDriver`
+  field, absent = `true`): `driverDeps()` resolves `configPath: null` for
+  it instead of requiring one (`DriverDeps.configPath` is `string | null`;
+  `fileDriver`'s `requireConfigPath` throws the usual "no default config
+  path" error if a file driver is ever handed `null`), and the Settings
+  page hides Proxy config path for it. Capabilities match Caddy's (`forward`
+  + `oidc`, `acmeDns01ViaCloudflare: true`); status page suggestion
+  `/usr/share/caddy/index.html`. Three files split it:
+  `src/lib/proxy/caddy-json.ts` is pure -- `renderRoute`/`renderTlsPolicy`
+  produce the exact JSON Caddy's own adapter makes from the Caddy driver's
+  site block (pinned by a parity test against
+  `test/fixtures/caddy/characterization-adapted.json`, a real Caddy v2.10.2
+  `caddy adapt` capture of `caddy.test.ts`'s characterization block; the
+  Caddy driver now exports `OUTPOST_AUTH_URI`/`OUTPOST_PATH_PREFIX`/
+  `AUTHENTIK_COPY_HEADERS`/`CLOUDFLARE_TOKEN_PLACEHOLDER`/
+  `ACME_DNS_RESOLVERS` so both drivers render the same values -- its own
+  output stays byte-identical), and `planCaddyConfig(current, routes, ctx,
+  host)` reconciles: every object Bellhop owns carries an `@id` starting
+  `bellhop-` (`bellhop-route-<canonical hostname>` per route, one
+  `bellhop-tls` automation policy) and nothing untagged is ever changed;
+  Bellhop routes are prepended to the single server listening on port 443
+  (an empty config gets `srv0` on `:443`; zero HTTPS servers among existing
+  ones, or several, throws naming them), the policy is prepended to
+  `apps.tls.automation.policies` and removed outright once no route is
+  left (an empty-`subjects` policy would match every hostname); an
+  untagged route in any server or untagged policy naming an inventory
+  hostname exactly (case-insensitive -- wildcards are not conflicts) is a
+  `CaddyConflict`, and that whole route is left out; comparison is
+  key-order-insensitive (`canonicalJson`, since Caddy returns keys
+  sorted), so an unchanged inventory plans `config: null` and writes
+  nothing. `src/lib/proxy/caddy-admin.ts` is the remote half, POSIX `sh` via
+  `runRemote`: `readCaddyConfig` runs `curl -sS -D -
+  http://localhost:2019/config/` (preceded, for a sync, by `systemctl
+  is-active --quiet caddy.service` -> exit 3 -> the "running from a
+  Caddyfile" refusal, since `systemctl reload caddy` would discard every
+  API change; skipped for `snapshot()` and `convert-caddyfile`), parses
+  the `Etag`, and validates the body with a passthrough zod schema;
+  `writeCaddyConfig` sends the whole configuration as compact JSON in a
+  quoted heredoc with one `PATCH /config/` + `If-Match: <etag>` -- verified
+  live against Caddy v2.10.2: `PATCH /config/` honors `If-Match` (412 on a
+  stale one, nothing written) while `POST /load` silently ignores it, and a
+  config Caddy can't provision gets a 500 with the previous config still
+  running. `apply()` writes the non-conflicting config first, then throws
+  one line per conflict (FR-007). `snapshot()` pretty-prints `GET
+  /config/`. The one-time `convert-caddyfile [--caddyfile <path>]
+  [--apply]` CLI command (`src/commands/networking/convert-caddyfile.ts`,
+  CLI-only) is the switch-over path: it copies the Caddyfile minus the
+  bellhop-managed block to a temp file *beside* it (so relative `import`s
+  resolve), runs `caddy adapt` on it, runs the same planner to add
+  Bellhop's routes, and `PATCH`es the result against the live `Etag`
+  while `caddy.service` is still running (Caddy autosaves it, and
+  `caddy-api.service`'s `--resume` loads that autosave); it refuses once the
+  live config already holds a `bellhop-` object. Single-operator
+  assumptions this driver adds: the admin address is fixed at Caddy's
+  default `localhost:2019` on the `proxy: true` entry; Caddy runs under
+  systemd with the packaged unit names (`caddy.service` is what the
+  Caddyfile check looks for, `caddy-api.service` the documented target);
+  `curl` is installed on the proxy host; and it keeps the Caddy driver's
+  hardcoded Cloudflare DNS-01 issuance. A guest proxy host receives the
+  whole configuration as one `sh -c` argument through `pct exec`, so it is
+  bounded by Linux's 128 KiB single-argument limit (documented in
+  `docs/reverse-proxy/caddy-api.md`, not engineered around).
 - **`sync-authentik`**
   (`src/commands/networking/sync-authentik.ts`) is `sync-proxy`'s
   counterpart for the Authentik side of issue #80's per-app forward-auth:
@@ -2590,8 +2661,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   settings.ts`, shared by GET and PATCH so the two can never disagree)
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
-  managesProxy, usesSharedCertificate, configPathNote }`, Caddy, nginx,
-  then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
+  managesProxy, usesSharedCertificate, configPathNote, usesConfigFile }`,
+  Caddy, Caddy (admin API), nginx, then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
   tested with plain `node --test`, same convention as `admin-nav.ts`)
@@ -2613,7 +2684,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Status page path only when its `suggestedStatusPagePath` is non-null,
   and shows the two TLS fields only when `usesSharedCertificate` is true
   (`showTlsFields`; nginx only, issue #30 -- driver metadata, never an id
-  comparison in the page); an unrecognized id (never reachable through the
+  comparison in the page); a driver whose `usesConfigFile` is `false`
+  (`caddy-api`, issue #26) hides Proxy config path but keeps Status page
+  path; an unrecognized id (never reachable through the
   dropdown itself, but defensive) hides all of them. The TLS fields also
   stay hidden until the driver list has loaded, since unlike the other two
   they mean nothing for the default driver. Until the driver list has

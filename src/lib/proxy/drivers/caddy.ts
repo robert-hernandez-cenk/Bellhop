@@ -80,11 +80,14 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
   return [{ path: configPath, content: lines.join('\n'), mode: 'managed-section' }];
 }
 
+// Also the Caddyfile convert-caddyfile (issue #26) reads by default.
+export const CADDYFILE_DEFAULT_PATH = '/etc/caddy/Caddyfile';
+
 export const caddyDriver = fileDriver({
   id: 'caddy',
   label: 'Caddy',
   capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
-  defaultConfigPath: '/etc/caddy/Caddyfile',
+  defaultConfigPath: CADDYFILE_DEFAULT_PATH,
   // The Caddy package's default document root -- what render-status-page's
   // caddy.example.com block already serves via file_server (see CLAUDE.md's
   // render-status-page bullet), and the placeholder the Settings page shows.

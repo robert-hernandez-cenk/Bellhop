@@ -17,6 +17,7 @@ import { runSyncSshKeys, formatSyncSshKeysResult } from './commands/maintenance/
 import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/push-ssh-key.ts';
 import { runSetConfig } from './commands/maintenance/set-config.ts';
 import { runSyncProxy } from './commands/networking/sync-proxy.ts';
+import { runConvertCaddyfile, formatConvertCaddyfile } from './commands/networking/convert-caddyfile.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
 import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
 import { runOidcCredentials, formatOidcCredentials } from './commands/networking/oidc-credentials.ts';
@@ -287,6 +288,26 @@ program
         return;
       }
       logInfo(`Wrote ${result.driver} configuration to ${result.proxyHost}`);
+    })
+  );
+
+program
+  .command('convert-caddyfile')
+  .description("Convert the proxy host's Caddyfile into Caddy's admin-API configuration, once, to switch to the caddy-api proxy driver")
+  .option('--caddyfile <path>', 'Caddyfile on the proxy host (default: proxyConfigPath under the caddy driver, else /etc/caddy/Caddyfile)')
+  .option('--apply', 'load the converted configuration into Caddy (default: dry run)')
+  .action(
+    action(async (opts: { caddyfile?: string; apply?: boolean }) => {
+      const inventory = loadInventory(inventoryPath());
+      const ssh = new Ssh2SSHClient();
+      const result = await runConvertCaddyfile(opts, { ssh, inventory });
+      if (!opts.apply) {
+        logInfo(`[DRY RUN] Converted ${result.caddyfile} on ${result.proxyHost}:`);
+      }
+      console.log(formatConvertCaddyfile(result));
+      if (result.conflicts.length > 0) {
+        process.exitCode = 1;
+      }
     })
   );
 

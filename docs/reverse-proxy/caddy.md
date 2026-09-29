@@ -3,7 +3,8 @@
 Caddy is the default driver: with `proxyDriver` unset, `sync-proxy` uses it.
 Everything the drivers share (how a driver is chosen, the dry run, backup
 and restore on a failed validate, capability checks) is described in
-[Reverse proxy drivers](README.md).
+[Reverse proxy drivers](README.md). To run Caddy from its admin API rather
+than a Caddyfile, see the [Caddy (admin API) driver](caddy-api.md).
 
 Its configuration file defaults to `/etc/caddy/Caddyfile` (override with
 `proxyConfigPath` — see

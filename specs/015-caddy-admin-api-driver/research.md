@@ -179,8 +179,9 @@ remainder yields `null`. The adapted JSON is the starting configuration.
 The planner from R5/R6 adds Bellhop's routes, and `--apply` writes it with
 `PATCH /config/` against the live `Etag`. The command refuses when the live
 configuration already holds a `bellhop-` object. The Caddyfile path is
-`--caddyfile <path>`, defaulting to `proxyConfigPath` or
-`/etc/caddy/Caddyfile`.
+`--caddyfile <path>`, defaulting to `proxyConfigPath` while the file-based
+Caddy driver is active (it would be nginx's file under the nginx driver),
+else `/etc/caddy/Caddyfile`.
 
 **Rationale**: Caddy's own adapter is the only faithful Caddyfile→JSON
 converter, and the conversion is allowed while `caddy.service` still runs,
