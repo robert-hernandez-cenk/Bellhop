@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
-import type { FocusEvent } from 'react';
+import type { FocusEvent, KeyboardEvent } from 'react';
 
 // Generic field-label + info-marker disclosure (issue #34). Deliberately has
 // no import of any help-text map -- the caller (AdvancedGuestModal today,
@@ -27,6 +27,7 @@ interface FieldHelpProps {
 export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClose }: FieldHelpProps) {
   const id = useId();
   const wrapperRef = useRef<HTMLSpanElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   // T007 (US2): while open, close on a pointerdown outside both the button
   // and the popover -- both live inside the wrapping <span>, so one
@@ -58,10 +59,26 @@ export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClos
     onClose();
   }
 
+  // T009 (US3) fix round 1: Escape is handled on the wrapper, not just the
+  // button, so it still works once focus has moved into the popover (e.g.
+  // after clicking inside it to select text) -- a keydown there bubbles up
+  // through this span either way. Closes the explanation, not the modal
+  // (research R4, stopPropagation), and explicitly returns focus to the
+  // button so a keyboard user isn't stranded on a popover that just
+  // unmounted (a no-op when focus was already on the button).
+  function handleKeyDown(e: KeyboardEvent) {
+    if (open && e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      buttonRef.current?.focus();
+    }
+  }
+
   return (
-    <span className="field-help" ref={wrapperRef}>
+    <span className="field-help" ref={wrapperRef} onKeyDown={handleKeyDown}>
       {field}
       <button
+        ref={buttonRef}
         type="button"
         className="field-help-button"
         aria-label={`About ${field}`}
@@ -74,16 +91,6 @@ export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClos
           if (e.pointerType === 'mouse') onHover(false);
         }}
         onClick={onToggle}
-        onKeyDown={(e) => {
-          // Escape closes the explanation, not the modal (research R4) --
-          // stopPropagation so a future modal-level Escape handler never
-          // sees this keypress. Focus is deliberately left on the button:
-          // Escape doesn't move focus by default, and nothing here moves it.
-          if (open && e.key === 'Escape') {
-            e.stopPropagation();
-            onClose();
-          }
-        }}
         onBlur={handleBlur}
       >
         ⓘ

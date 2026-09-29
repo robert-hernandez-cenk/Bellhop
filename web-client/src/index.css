@@ -98,7 +98,13 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .advanced-link:hover { text-decoration: underline; }
 .advanced-modal-fields { margin-bottom: 20px; }
 .form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; position: relative; }
-.form-row-label { flex: 0 0 auto; width: 110px; font-size: 12px; opacity: 0.7; display: flex; align-items: center; gap: 4px; }
+/* color, not opacity (issue #34 fix round 1): an opacity < 1 creates a new
+   stacking context, which trapped FieldHelp's popover -- rendered inside this
+   label -- under its 0.7 alpha and under its own z-index: 10, both invisible
+   to (and outranked by) later .form-row siblings' content. color-mix against
+   the themed --text-primary keeps today's dimmed look in both themes without
+   creating that context. */
+.form-row-label { flex: 0 0 auto; width: 110px; font-size: 12px; color: color-mix(in srgb, var(--text-primary) 70%, transparent); display: flex; align-items: center; gap: 4px; }
 .form-row-value { flex: 1; min-width: 0; }
 .form-row-value input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
 .field-help-button {
