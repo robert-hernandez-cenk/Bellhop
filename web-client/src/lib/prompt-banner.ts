@@ -32,8 +32,8 @@ const BANNER_VIEWS: Record<PromptOrigin | 'none', BannerEntry> = {
         ? `Question ${matchedIndex + 1} of up to ${expectedCount} — matches a known prompt in this app's install script.`
         : "Matches a known prompt in this app's install script.",
     hintStrong: false,
-    dismissLabel: TODAY_DISMISS_LABEL,
-    quiet: null,
+    dismissLabel: 'Skip this question',
+    quiet: 'dismiss',
   }),
   heuristic: () => ({
     hint: null,

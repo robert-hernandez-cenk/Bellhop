@@ -43,8 +43,8 @@ None. No new dependencies or project structure.
 
 **Independent Test**: `promptBannerView('expected', …)` returns `dismissLabel: 'Skip this question'`, `quiet: 'dismiss'`; the browser shows an outline-styled "Skip this question" beside normal Yes/No/Submit.
 
-- [ ] T005 [US1] In `test/web-client/prompt-banner.test.ts`, change the `expected` tests to also assert `dismissLabel === 'Skip this question'` and `quiet === 'dismiss'` (both hint variants unchanged, FR-002). Confirm they fail.
-- [ ] T006 [US1] In `web-client/src/lib/prompt-banner.ts`, set the `expected` entry's `dismissLabel` to `Skip this question` and `quiet` to `'dismiss'`. Run `npm test`; T005 passes.
+- [x] T005 [US1] In `test/web-client/prompt-banner.test.ts`, change the `expected` tests to also assert `dismissLabel === 'Skip this question'` and `quiet === 'dismiss'` (both hint variants unchanged, FR-002). Confirm they fail.
+- [x] T006 [US1] In `web-client/src/lib/prompt-banner.ts`, set the `expected` entry's `dismissLabel` to `Skip this question` and `quiet` to `'dismiss'`. Run `npm test`; T005 passes.
 
 **Checkpoint**: US1 complete and testable alone.
 

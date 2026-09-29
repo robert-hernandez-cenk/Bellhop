@@ -10,28 +10,28 @@ import { promptBannerView } from '../../web-client/src/lib/prompt-banner.ts';
 
 const TODAY_DISMISS_LABEL = 'Not stuck — keep waiting';
 
-test("promptBannerView('expected', 0, 4) numbers the question and stays quiet", () => {
+test("promptBannerView('expected', 0, 4) numbers the question and quiets the dismiss control", () => {
   const view = promptBannerView('expected', 0, 4);
   assert.equal(view.hint, "Question 1 of up to 4 — matches a known prompt in this app's install script.");
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, TODAY_DISMISS_LABEL);
-  assert.equal(view.quiet, null);
+  assert.equal(view.dismissLabel, 'Skip this question');
+  assert.equal(view.quiet, 'dismiss');
 });
 
 test("promptBannerView('expected', null, 4) falls back to the un-numbered hint", () => {
   const view = promptBannerView('expected', null, 4);
   assert.equal(view.hint, "Matches a known prompt in this app's install script.");
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, TODAY_DISMISS_LABEL);
-  assert.equal(view.quiet, null);
+  assert.equal(view.dismissLabel, 'Skip this question');
+  assert.equal(view.quiet, 'dismiss');
 });
 
 test("promptBannerView('expected', 0, 0) falls back to the un-numbered hint", () => {
   const view = promptBannerView('expected', 0, 0);
   assert.equal(view.hint, "Matches a known prompt in this app's install script.");
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, TODAY_DISMISS_LABEL);
-  assert.equal(view.quiet, null);
+  assert.equal(view.dismissLabel, 'Skip this question');
+  assert.equal(view.quiet, 'dismiss');
 });
 
 test("promptBannerView('stall', ...) reproduces today's stall hint verbatim and quiets the answer controls", () => {
