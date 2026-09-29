@@ -89,8 +89,8 @@ None. The existing `web-client/` app and test layout are used as they are.
 
 **Independent Test**: at 375px, tap each ⓘ, then tap outside.
 
-- [ ] T007 [US2] In `web-client/src/components/FieldHelp.tsx`, while `open`, register a `document` `pointerdown` listener in a `useEffect` (with cleanup). It calls `onClose()` when the event target is outside both the button and the popover, using refs on a wrapping `<span className="field-help">` that contains both. Clicking inside the popover must not close it. The listener must not use capture ordering that would swallow the modal backdrop's own click, which still closes the modal.
-- [ ] T008 [US2] In `web-client/src/index.css`, confirm inside `@media (max-width: 640px)` that nothing overrides `.form-row`/`.form-row-label` in a way that breaks the popover's row-width anchoring. Add a mobile rule only if the browser check in T012 shows a problem.
+- [x] T007 [US2] In `web-client/src/components/FieldHelp.tsx`, while `open`, register a `document` `pointerdown` listener in a `useEffect` (with cleanup). It calls `onClose()` when the event target is outside both the button and the popover, using refs on a wrapping `<span className="field-help">` that contains both. Clicking inside the popover must not close it. The listener must not use capture ordering that would swallow the modal backdrop's own click, which still closes the modal.
+- [x] T008 [US2] In `web-client/src/index.css`, confirm inside `@media (max-width: 640px)` that nothing overrides `.form-row`/`.form-row-label` in a way that breaks the popover's row-width anchoring. Add a mobile rule only if the browser check in T012 shows a problem.
 
 **Checkpoint**: on a phone-width viewport, every explanation opens by tap, fits the modal and closes by tap.
 

@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 
 // Generic field-label + info-marker disclosure (issue #34). Deliberately has
 // no import of any help-text map -- the caller (AdvancedGuestModal today,
@@ -7,12 +7,10 @@ import { useId } from 'react';
 // field name and its explanation text in as props, and owns the open/pinned
 // state so at most one explanation is open at a time across a whole modal.
 //
-// tabIndex={-1} on the popover is deliberate ahead of a later task (US2)
-// that adds a document pointerdown listener closing the popover on an
-// outside click/tap -- a click landing inside the popover (to select text,
-// say) needs the popover itself to be a legitimate focus/event target
-// (relatedTarget) for that later blur-close rule to distinguish "moved into
-// the popover" from "moved elsewhere".
+// tabIndex={-1} on the popover is deliberate: clicking inside the popover
+// (to select text, say) focuses it, which is what lets the outside-pointerdown
+// listener below (T007) treat "moved into the popover" as staying open rather
+// than closing.
 
 interface FieldHelpProps {
   field: string;
@@ -24,11 +22,29 @@ interface FieldHelpProps {
   onClose(): void;
 }
 
-export function FieldHelp({ field, text, open, onHover, onToggle }: FieldHelpProps) {
+export function FieldHelp({ field, text, open, onHover, onToggle, onClose }: FieldHelpProps) {
   const id = useId();
+  const wrapperRef = useRef<HTMLSpanElement>(null);
+
+  // T007 (US2): while open, close on a pointerdown outside both the button
+  // and the popover -- both live inside the wrapping <span>, so one
+  // containment check against it covers either. Bubble phase, and this
+  // handler never calls preventDefault/stopPropagation, so the modal
+  // backdrop's own click-to-close listener still sees and handles the same
+  // event when the tap/click lands outside this field entirely.
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: PointerEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [open, onClose]);
 
   return (
-    <span className="field-help">
+    <span className="field-help" ref={wrapperRef}>
       {field}
       <button
         type="button"
