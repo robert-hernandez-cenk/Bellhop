@@ -45,11 +45,25 @@ test("promptBannerView('stall', ...) reproduces today's stall hint verbatim and 
   assert.equal(view.quiet, 'answers');
 });
 
-test("promptBannerView('heuristic', ...) shows no hint today", () => {
+test("promptBannerView('heuristic', null, 2) explains the guess against known prompts", () => {
   const view = promptBannerView('heuristic', null, 2);
-  assert.equal(view.hint, null);
+  assert.equal(
+    view.hint,
+    "Looks like a question, but it doesn't match any prompt in this app's install script — it may not be one.",
+  );
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, TODAY_DISMISS_LABEL);
+  assert.equal(view.dismissLabel, 'Not a question — keep waiting');
+  assert.equal(view.quiet, null);
+});
+
+test("promptBannerView('heuristic', null, 0) explains the guess when there were no known prompts", () => {
+  const view = promptBannerView('heuristic', null, 0);
+  assert.equal(
+    view.hint,
+    'Looks like a question, but there were no known prompts for this app to check it against — it may not be one.',
+  );
+  assert.equal(view.hintStrong, false);
+  assert.equal(view.dismissLabel, 'Not a question — keep waiting');
   assert.equal(view.quiet, null);
 });
 

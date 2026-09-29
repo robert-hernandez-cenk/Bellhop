@@ -56,8 +56,8 @@ None. No new dependencies or project structure.
 
 **Independent Test**: `promptBannerView('heuristic', null, 2)` and `promptBannerView('heuristic', null, 0)` return the two contract hints, `hintStrong: false`, `quiet: null`, `dismissLabel: 'Not a question — keep waiting'`.
 
-- [ ] T007 [US2] In `test/web-client/prompt-banner.test.ts`, replace the `heuristic` tests with: `expectedCount > 0` → hint `Looks like a question, but it doesn't match any prompt in this app's install script — it may not be one.`; `expectedCount === 0` → hint `Looks like a question, but there were no known prompts for this app to check it against — it may not be one.`; both `hintStrong: false`, `quiet: null`, `dismissLabel: 'Not a question — keep waiting'`. Confirm they fail.
-- [ ] T008 [US2] In `web-client/src/lib/prompt-banner.ts`, implement the `heuristic` entry per `contracts/banner-copy.md`. Run `npm test`; T007 passes.
+- [x] T007 [US2] In `test/web-client/prompt-banner.test.ts`, replace the `heuristic` tests with: `expectedCount > 0` → hint `Looks like a question, but it doesn't match any prompt in this app's install script — it may not be one.`; `expectedCount === 0` → hint `Looks like a question, but there were no known prompts for this app to check it against — it may not be one.`; both `hintStrong: false`, `quiet: null`, `dismissLabel: 'Not a question — keep waiting'`. Confirm they fail.
+- [x] T008 [US2] In `web-client/src/lib/prompt-banner.ts`, implement the `heuristic` entry per `contracts/banner-copy.md`. Run `npm test`; T007 passes.
 
 **Checkpoint**: US2 complete and testable alone.
 

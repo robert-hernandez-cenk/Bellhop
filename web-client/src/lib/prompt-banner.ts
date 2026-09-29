@@ -35,10 +35,13 @@ const BANNER_VIEWS: Record<PromptOrigin | 'none', BannerEntry> = {
     dismissLabel: 'Skip this question',
     quiet: 'dismiss',
   }),
-  heuristic: () => ({
-    hint: null,
+  heuristic: (_matchedIndex, expectedCount) => ({
+    hint:
+      expectedCount > 0
+        ? "Looks like a question, but it doesn't match any prompt in this app's install script — it may not be one."
+        : 'Looks like a question, but there were no known prompts for this app to check it against — it may not be one.',
     hintStrong: false,
-    dismissLabel: TODAY_DISMISS_LABEL,
+    dismissLabel: 'Not a question — keep waiting',
     quiet: null,
   }),
   stall: () => ({
