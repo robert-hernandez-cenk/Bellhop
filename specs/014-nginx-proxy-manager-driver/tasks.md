@@ -111,9 +111,9 @@ description: "Task list for the Nginx Proxy Manager proxy driver"
 
 - [x] T023 [P] Write `docs/reverse-proxy/nginx-proxy-manager.md` (selection, `data/nginx-proxy-manager.env`, URL default, ownership marker and conflicts, certificate behavior incl. HTTP-01 needs public port 80 and wildcard reuse, forward-auth, what NPM settings Bellhop forces, `nginx_online` failures, no status page, single-deployment assumptions); link it from `docs/reverse-proxy/README.md` and wherever the README/docs index lists drivers; add the three variables to `docs/environment-variables.md`; keep README within 200 lines (`test/docs/links.test.ts`)
 - [x] T024 [P] Update `CLAUDE.md`: driver-interface bullet (four registered drivers; NPM is the first file-less managed driver; `configPath: string | null`; Settings hides config path for `defaultConfigPath: null`), a new "Nginx Proxy Manager driver" bullet (client, env file loaded by the three entry points, marker, matching, certificates, read-back, timeouts, private-key stripping, single-deployment assumptions); mention the new env file where `cloudflare-api.env` is listed for new worktrees; check `CONTRIBUTING.md` for anything restated
-- [ ] T025 Run `npm run typecheck`, `npm test`, `npm run web:build`
-- [ ] T026 Run quickstart.md §2-§4 against the local NPM container through the real CLI with a temp inventory (scenarios a-i, k) and record results
-- [ ] T027 Browser-check the Settings page with the NPM driver selected at desktop width and at ≤640px (scenario j)
+- [x] T025 Run `npm run typecheck`, `npm test`, `npm run web:build`
+- [x] T026 Run quickstart.md §2-§4 against the local NPM container through the real CLI with a temp inventory (scenarios a-i, k) and record results
+- [x] T027 Browser-check the Settings page with the NPM driver selected at desktop width and at ≤640px (scenario j)
 
 ---
 
