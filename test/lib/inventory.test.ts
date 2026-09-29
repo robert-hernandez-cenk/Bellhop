@@ -1154,6 +1154,15 @@ test('SettingsSchema rejects an unknown proxyDriver and a relative proxyConfigPa
   assert.equal(SettingsSchema.safeParse({ proxyConfigPath: 'etc/caddy/Caddyfile' }).success, false);
 });
 
+// issue #33: 'none' is a real registered driver id, so PROXY_DRIVER_IDS
+// (and therefore this schema's proxyDriver enum) accepts it the same way it
+// accepts 'caddy' and 'nginx' -- an id no driver is registered under stays
+// rejected.
+test('SettingsSchema accepts proxyDriver "none" and still rejects an unknown id', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'none' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'unknown-provider' }).success, false);
+});
+
 test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
   const dest = path.join(dir, 'bellhop.db');

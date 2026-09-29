@@ -11,6 +11,8 @@ import {
   type Inventory,
   type Settings,
 } from '../../lib/inventory.ts';
+import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
+import { managesProxy } from '../../lib/proxy/driver.ts';
 
 function currentSettings(inv: Inventory): Settings {
   const settings: Settings = {};
@@ -35,12 +37,42 @@ function derivedValues(inv: Inventory) {
   };
 }
 
+// Every registered proxy driver, in registration order (Caddy, nginx, then
+// None) -- issue #33: the Settings page's dropdown is populated from this
+// rather than a hardcoded option list, so a future driver needs no client
+// change. Independent of inventory: every driver is always listed, whether
+// or not it's the one currently active.
+function proxyDriversInfo() {
+  return listDrivers().map((driver) => ({
+    id: driver.id,
+    label: driver.label,
+    defaultConfigPath: driver.defaultConfigPath,
+    suggestedStatusPagePath: driver.statusPage?.suggestedPath ?? null,
+    managesProxy: managesProxy(driver),
+    usesSharedCertificate: driver.usesSharedCertificate ?? false,
+    configPathNote: driver.configPathNote ?? null,
+  }));
+}
+
+// Shared by GET and PATCH so the two can never drift on shape -- both
+// return the current settings/derived values plus the static driver list/
+// default, the last two being the same on every call regardless of what, if
+// anything, was just written.
+function settingsResponse(inv: Inventory) {
+  return {
+    settings: currentSettings(inv),
+    derived: derivedValues(inv),
+    proxyDrivers: proxyDriversInfo(),
+    defaultProxyDriver: DEFAULT_PROXY_DRIVER_ID,
+  };
+}
+
 export function settingsRoutes(inventory: Inventory, inventoryPath: string): Router {
   const router = Router();
   router.use(requireAdminGroup);
 
   router.get('/', (_req, res) => {
-    res.json({ settings: currentSettings(inventory), derived: derivedValues(inventory) });
+    res.json(settingsResponse(inventory));
   });
 
   router.patch('/', (req, res) => {
@@ -90,7 +122,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // Reflect the write in the shared in-memory object immediately rather
     // than waiting for the next request's reload middleware.
     refreshInventory(inventory, inventoryPath);
-    res.json({ settings: currentSettings(inventory), derived: derivedValues(inventory) });
+    res.json(settingsResponse(inventory));
   });
 
   return router;

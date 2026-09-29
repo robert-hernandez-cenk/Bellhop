@@ -11,6 +11,8 @@ import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
 import { FakeSSHClient } from '../../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
+import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 
 function baseInventory(): Inventory {
   return {
@@ -226,4 +228,55 @@ test('PATCH /api/settings accepts proxyDriver nginx', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.settings.proxyDriver, 'nginx');
   assert.equal(loadInventory(inventoryPath).proxyDriver, 'nginx');
+});
+
+const CADDY_CONFIG_PATH_NOTE = caddyDriver.configPathNote;
+const NGINX_CONFIG_PATH_NOTE = nginxDriver.configPathNote;
+
+test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.proxyDrivers, [
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+  ]);
+  assert.equal(res.body.defaultProxyDriver, 'caddy');
+});
+
+test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDriver', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.proxyDrivers, [
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+  ]);
+  assert.equal(res.body.defaultProxyDriver, 'caddy');
+});
+
+test('PATCH /api/settings writes proxyDriver "none" and persists it', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'none' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'none');
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'none');
+});
+
+test('PATCH /api/settings clears proxyDriver sent as null', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), proxyDriver: 'none' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: null });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, undefined);
+  assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
+});
+
+test('A stored proxyConfigPath is still returned while proxyDriver is none', async () => {
+  const { app } = testApp({ ...baseInventory(), proxyDriver: 'none', proxyConfigPath: '/opt/proxy/Caddyfile' });
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'none');
+  assert.equal(res.body.settings.proxyConfigPath, '/opt/proxy/Caddyfile');
 });

@@ -185,8 +185,22 @@ function buildSnapshotCommand(paths: string[]): string {
 // command, and its reload command.
 export function fileDriver(def: {
   id: ProxyDriverId;
+  // The Settings page's dropdown label. Required so a new driver can never
+  // silently show up there as its bare id.
+  label: string;
   capabilities: DriverCapabilities;
+  // Always a real path here, never null -- a file-configured driver always
+  // has a file (data-model.md "ReverseProxyDriver (extended)": only the
+  // 'none' driver's own defaultConfigPath is null).
   defaultConfigPath: string;
+  // null = this driver serves no status page. Required rather than
+  // defaulted, so a new driver has to decide whether it serves one instead
+  // of quietly opting out by omission.
+  statusPage: { suggestedPath: string } | null;
+  // See ReverseProxyDriver in ./driver.ts -- both optional, absent = false/
+  // no note.
+  usesSharedCertificate?: boolean;
+  configPathNote?: string;
   render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
   validateCommand(configPath: string): string;
   reloadCommand: string;
@@ -201,8 +215,12 @@ export function fileDriver(def: {
 }): ReverseProxyDriver {
   return {
     id: def.id,
+    label: def.label,
     capabilities: def.capabilities,
     defaultConfigPath: def.defaultConfigPath,
+    statusPage: def.statusPage,
+    ...(def.usesSharedCertificate !== undefined ? { usesSharedCertificate: def.usesSharedCertificate } : {}),
+    ...(def.configPathNote !== undefined ? { configPathNote: def.configPathNote } : {}),
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
       const files = def

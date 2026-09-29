@@ -2,14 +2,16 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { SettingsResponse, SettingsValues } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
-import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT } from '../lib/settings-display';
+import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions, proxyFieldView } from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
 
 // Each field names what breaks while it is unset, so the page explains its
 // own consequences rather than assuming the reader knows which command
-// consumes which value.
-const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help: string }> = [
+// consumes which value. `placeholder` is unused for `proxyDriver`, which
+// renders as a <select> instead of an <input> (issue #33) -- kept optional
+// rather than adding a second, near-identical field-def shape.
+const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help: string }> = [
   {
     key: 'nfsServer',
     label: 'NFS server',
@@ -37,26 +39,25 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
   {
     key: 'proxyDriver',
     label: 'Proxy driver',
-    placeholder: 'caddy',
-    help: 'Which reverse-proxy driver sync-proxy/render-status-page use. Unset: the caddy default, or nginx.',
+    help: "Which reverse proxy Bellhop manages. \"No proxy\" means Bellhop writes no proxy configuration: sync-proxy does nothing and the status page is not rendered. Forward-auth entries are still allowed, on the assumption that your own proxy enforces them. When unset, Caddy is the default.",
   },
   {
     key: 'proxyConfigPath',
     label: 'Proxy config path',
-    placeholder: "the active driver's default",
-    help: "Overrides the active driver's config path. Unset: caddy uses /etc/caddy/Caddyfile, nginx /etc/nginx/conf.d/bellhop.conf. nginx replaces the whole file, and refuses to replace a file it didn't generate.",
+    placeholder: '/etc/caddy/Caddyfile',
+    help: "Overrides the active driver's own default config path. Unset: that default.",
   },
   {
     key: 'proxyTlsCertificate',
     label: 'Proxy TLS certificate',
     placeholder: '/etc/letsencrypt/live/example.com/fullchain.pem',
-    help: "Absolute path on the proxy host to the TLS certificate the nginx driver serves for every site. Unset: certbot's own path for the inventory domain. The Caddy driver ignores this.",
+    help: "Absolute path on the proxy host to the TLS certificate the nginx driver serves for every site. Unset: certbot's own path for the inventory domain.",
   },
   {
     key: 'proxyTlsKey',
     label: 'Proxy TLS key',
     placeholder: '/etc/letsencrypt/live/example.com/privkey.pem',
-    help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site. Unset: certbot's own path for the inventory domain. The Caddy driver ignores this.",
+    help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site. Unset: certbot's own path for the inventory domain.",
   },
   {
     key: 'customScriptsRepo',
@@ -122,50 +123,101 @@ export function SettingsPage() {
 
   if (loading) return <p>Loading...</p>;
 
+  // issue #33 (US3): which of the two driver-dependent fields actually
+  // apply, and what they should say, for whichever driver is currently
+  // selected in the (possibly unsaved) dropdown -- null while `data` hasn't
+  // loaded yet, in which case every field still renders with its static
+  // FIELDS text, same as before this feature existed.
+  const selectedDriver = drafts.proxyDriver || data?.defaultProxyDriver;
+  const view = data && selectedDriver ? proxyFieldView(selectedDriver, data.proxyDrivers) : null;
+
+  // Hiding a field is display-only: it is simply left out of this list, so
+  // its draft/stored value and its Save/Clear behavior are completely
+  // untouched (FR-008) -- nothing here ever resets `drafts` or sends a
+  // PATCH because of visibility.
+  const visibleFields = FIELDS.filter((field) => {
+    if (field.key === 'proxyConfigPath') return !view || view.showConfigPath;
+    if (field.key === 'statusPagePath') return !view || view.showStatusPagePath;
+    // Before `data` loads there is no driver list to consult, and the TLS
+    // fields mean something for nginx alone -- so unlike the two fields
+    // above they stay hidden until a view says the selected driver uses them.
+    if (field.key === 'proxyTlsCertificate' || field.key === 'proxyTlsKey') return view?.showTlsFields ?? false;
+    return true;
+  });
+
   return (
     <div>
       <h2>Settings</h2>
       <PageDescription>
         Inventory-wide values a few commands read. Every one of them is optional -- each field
         below says what happens while it is unset. The same values can be set from the CLI with{' '}
-        <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>.
+        <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>. Proxy config path,
+        Status page path and the Proxy TLS fields only appear when the selected Proxy driver
+        actually uses them.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
       <div className="settings-fields">
-        {FIELDS.map((field) => (
-          <div key={field.key} className="settings-field">
-            <label htmlFor={`setting-${field.key}`}>
-              {field.label} <span className="settings-optional">Optional</span>
-            </label>
-            <input
-              id={`setting-${field.key}`}
-              className="field-input"
-              type="text"
-              value={drafts[field.key] ?? ''}
-              placeholder={field.placeholder}
-              onChange={(e) => setDrafts({ ...drafts, [field.key]: e.target.value })}
-            />
-            <p className="settings-help">{field.help}</p>
-            <div className="actions-cell">
-              <button
-                type="button"
-                className="button"
-                disabled={savingKey === field.key}
-                onClick={() => save(field.key, drafts[field.key] === '' ? null : drafts[field.key])}
-              >
-                {savingKey === field.key ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                type="button"
-                className="button button-danger"
-                disabled={savingKey === field.key || !data?.settings[field.key]}
-                onClick={() => save(field.key, null)}
-              >
-                Clear
-              </button>
+        {visibleFields.map((field) => {
+          const placeholder =
+            field.key === 'proxyConfigPath' && view ? view.configPathPlaceholder
+            : field.key === 'statusPagePath' && view ? view.statusPagePlaceholder
+            : field.placeholder;
+          const help = field.key === 'proxyConfigPath' && view?.configPathHelp ? view.configPathHelp : field.help;
+          return (
+            <div key={field.key} className="settings-field">
+              <label htmlFor={`setting-${field.key}`}>
+                {field.label} <span className="settings-optional">Optional</span>
+              </label>
+              {field.key === 'proxyDriver' ? (
+                // Always a <select>, never free text: without the driver list
+                // (a failed load) it is disabled with no options rather than
+                // an input that would accept any string.
+                <select
+                  id={`setting-${field.key}`}
+                  className="field-input"
+                  value={selectedDriver ?? ''}
+                  disabled={!data}
+                  onChange={(e) => setDrafts({ ...drafts, proxyDriver: e.target.value })}
+                >
+                  {data &&
+                    proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <input
+                  id={`setting-${field.key}`}
+                  className="field-input"
+                  type="text"
+                  value={drafts[field.key] ?? ''}
+                  placeholder={placeholder}
+                  onChange={(e) => setDrafts({ ...drafts, [field.key]: e.target.value })}
+                />
+              )}
+              <p className="settings-help">{help}</p>
+              <div className="actions-cell">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={savingKey === field.key || (field.key === 'proxyDriver' && !data)}
+                  onClick={() => save(field.key, drafts[field.key] === '' ? null : drafts[field.key])}
+                >
+                  {savingKey === field.key ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-danger"
+                  disabled={savingKey === field.key || !data?.settings[field.key]}
+                  onClick={() => save(field.key, null)}
+                >
+                  Clear
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <h3>Derived (read-only)</h3>
       <PageDescription>

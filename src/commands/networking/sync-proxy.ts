@@ -2,7 +2,7 @@ import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../lib/proxy/routes.ts';
 import { getDriver, driverDeps } from '../../lib/proxy/index.ts';
-import { checkCapabilities } from '../../lib/proxy/driver.ts';
+import { checkCapabilities, managesProxy, NO_PROXY_SYNC_MESSAGE } from '../../lib/proxy/driver.ts';
 import type { DriverDeps } from '../../lib/proxy/driver.ts';
 
 export interface SyncProxyOptions {
@@ -10,12 +10,17 @@ export interface SyncProxyOptions {
 }
 
 export interface SyncProxyResult {
-  // Name of the `proxy: true` entry the configuration was written to.
-  proxyHost: string;
+  // Name of the `proxy: true` entry the configuration was written to, or
+  // null when the active driver manages no proxy at all (issue #33,
+  // proxyDriver: 'none') -- there is nothing to write and therefore no
+  // proxy host to name.
+  proxyHost: string | null;
   // Id of the active driver (the `proxyDriver` setting, default 'caddy').
   driver: string;
   // What the driver would write -- identical to what apply sends.
   preview: string;
+  // Whether a configuration was actually written -- false for a dry run,
+  // and always false when proxyHost is null (nothing to write).
   applied: boolean;
 }
 
@@ -30,6 +35,17 @@ export async function runSyncProxy(
   deps: { ssh: SSHClient; inventory: Inventory }
 ): Promise<SyncProxyResult> {
   const driver = getDriver(deps.inventory);
+
+  // Issue #33 (US2): under proxyDriver: 'none' there is nothing to write, so
+  // this returns before driverDeps() (which throws when no entry has
+  // 'proxy: true'), buildRoutes() (which throws when a forward-gated route
+  // has no authentik ip), and checkCapabilities() ever run -- none of those
+  // failures are meaningful when Bellhop manages no proxy at all. applied is
+  // always false here, even with --apply: nothing is ever written.
+  if (!managesProxy(driver)) {
+    return { proxyHost: null, driver: driver.id, preview: NO_PROXY_SYNC_MESSAGE, applied: false };
+  }
+
   const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);
 
   const routes = buildRoutes(deps.inventory);

@@ -152,9 +152,7 @@ program
 
 program
   .command('set-config')
-  .description(
-    `Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')})`
-  )
+  .description(`Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')})`)
   .argument('<key>', 'the setting to change')
   .argument('[value]', 'the new value (omit with --unset)')
   .option('--unset', 'clear the setting instead of setting it')
@@ -279,6 +277,10 @@ program
       const inventory = loadInventory(inventoryPath());
       const ssh = new Ssh2SSHClient();
       const result = await runSyncProxy(opts, { ssh, inventory });
+      if (result.proxyHost === null) {
+        logInfo(result.preview);
+        return;
+      }
       if (!result.applied) {
         logInfo(`[DRY RUN] Generated ${result.driver} configuration for ${result.proxyHost}:`);
         console.log(result.preview);

@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ProxyRoute } from '../../../src/lib/proxy/routes.ts';
 import type { ReverseProxyDriver, ProxyPlan, DriverDeps } from '../../../src/lib/proxy/driver.ts';
-import { checkCapabilities } from '../../../src/lib/proxy/driver.ts';
+import { checkCapabilities, managesProxy } from '../../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../../src/lib/proxy/ids.ts';
+import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
 
 function route(name: string, auth: ProxyRoute['auth']): ProxyRoute {
   return {
@@ -16,14 +18,18 @@ function route(name: string, auth: ProxyRoute['auth']): ProxyRoute {
 
 // A minimal fake driver satisfying ReverseProxyDriver -- plan/apply/snapshot
 // are never called by checkCapabilities, so they're stubs. `id` is cast
-// through ProxyDriverId since PROXY_DRIVER_IDS only lists 'caddy' this
-// round (src/lib/proxy/ids.ts) and these tests need drivers with other,
-// test-only ids to exercise both capability-mismatch directions.
+// through ProxyDriverId since PROXY_DRIVER_IDS only lists the shipped ids
+// (src/lib/proxy/ids.ts) and these tests need drivers with other,
+// test-only ids to exercise both capability-mismatch directions. `label`/
+// `statusPage` are unused by checkCapabilities but required by
+// ReverseProxyDriver.
 function fakeDriver(id: string, authModes: ('forward' | 'oidc')[]): ReverseProxyDriver {
   return {
     id: id as ProxyDriverId,
+    label: 'Fake',
     capabilities: { authModes, acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/fake/fake.conf',
+    statusPage: null,
     async plan(): Promise<ProxyPlan> {
       return { preview: '', payload: undefined };
     },
@@ -115,4 +121,25 @@ test('DriverDeps shape matches the contract', () => {
     configPath: '/etc/caddy/Caddyfile',
   };
   assert.equal(deps.proxyHost, 'pve1');
+});
+
+// --- managesProxy (issue #33) -----------------------------------------------
+
+test('managesProxy: true for caddyDriver, false only for noneDriver', () => {
+  assert.equal(managesProxy(caddyDriver), true);
+  assert.equal(managesProxy(noneDriver), false);
+});
+
+// --- checkCapabilities under noneDriver (issue #33) -------------------------
+//
+// noneDriver declares authModes: ['forward', 'oidc'] (the same as Caddy), so
+// it never itself produces a capability mismatch -- callers short-circuit
+// around it via managesProxy() before a route is ever derived.
+
+test('checkCapabilities: [] for both forward and oidc routes under noneDriver', () => {
+  const routes = [
+    route('forward-app', { mode: 'forward', exemptPaths: [], rawExemptPaths: [] }),
+    route('oidc-app', { mode: 'oidc' }),
+  ];
+  assert.deepEqual(checkCapabilities(routes, noneDriver), []);
 });

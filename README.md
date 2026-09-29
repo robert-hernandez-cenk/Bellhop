@@ -315,10 +315,13 @@ and `adopt-oidc-client` are its companions for native OIDC gating; see
 
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see "Inventory-wide
-settings" below; unset means `caddy`; `nginx` is the other driver that
-ships). Exactly one driver is active per deployment: it's a per-deployment
-choice, not a per-entry one, so every gated/reverse-proxied inventory entry
-is served by the same proxy.
+settings" below; unset means `caddy`, the default; `nginx` and `none`
+are the other drivers that ship). Exactly one driver is active per
+deployment: it's a per-deployment choice, not a per-entry one, so every
+gated/reverse-proxied inventory entry is served by the same proxy. The web
+UI's Settings page presents this choice as a dropdown of every driver
+Bellhop supports, rather than a free-text field — see "Inventory-wide
+settings" below.
 
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
 both `forward` and `oidc`) and whether it issues TLS certificates itself
@@ -337,6 +340,26 @@ guest-edit time, naming the entry, the driver, and the fix — never
 silently dropped, which would leave that entry reachable with no gate in
 front of it.
 
+**"No proxy" (`proxyDriver: none`) is for an operator whose reverse proxy
+is managed by hand, or who has none at all.** It's a real, selectable
+driver, not an error state: `sync-proxy` (CLI, web, and MCP alike)
+succeeds without making any remote call and reports that Bellhop manages
+no reverse proxy, so there is nothing to write — no inventory entry needs
+to be flagged `proxy: true` for this to work. It accepts both forward-auth
+and OIDC gated entries (capability enforcement never rejects it), on the
+assumption that whatever proxy you do run enforces `forward_auth` itself;
+`sync-authentik` reconciles Authentik exactly as it does under any other
+driver. The standalone `render-status-page` command fails outright under
+"No proxy" — there's neither a managed proxy nor a document root to serve
+a page from — naming `proxyDriver` as the setting to change; the web UI's
+combined push-live step and `migrate-guest`'s post-move push log the same
+"nothing to write" line in place of the proxy push, then skip the status
+page render with one log line and continue, the same opt-in
+skip they already give an unset `statusPagePath`. The stale ACME-challenge
+cleanup is skipped too, through the same driver-capability check that
+skips it for any driver that doesn't issue certificates via Cloudflare
+DNS-01 (nginx included).
+
 A driver that's configured through a file (Caddy and nginx both are; a
 future Caddy-admin-API/Nginx-Proxy-Manager/HAProxy-Data-Plane-API driver
 might not be) is built with a shared `fileDriver` helper: it backs up the
@@ -344,9 +367,14 @@ target file(s), writes the new content in place (either replacing a
 managed section while leaving everything else on the file untouched, or
 replacing a file Bellhop owns outright), runs the proxy's own validation
 command against the real path, restores every backup and fails if
-validation fails, and reloads the proxy otherwise.
+validation fails, and reloads the proxy otherwise. Each such driver must
+state its Settings-dropdown label and whether it serves a status page;
+neither has a default. A driver that manages a proxy but serves no status
+page makes `render-status-page` fail with a message saying to clear
+`statusPagePath` or pick another driver, and the push-live step logs a
+warning, not an info line, when `statusPagePath` is set but ignored.
 
-On both drivers, a request to a forward-gated entry's exempt
+On both file-configured drivers (Caddy and nginx), a request to a forward-gated entry's exempt
 (`unauthenticatedPaths`) location skips the Authentik check entirely — any
 `X-authentik-*` identity headers on that request are whatever the client
 itself sent, unverified, so a backend must not trust them on an exempt
@@ -378,6 +406,12 @@ forward-gated entry, checks every request against the embedded Authentik
 outpost the same way Caddy's `forward_auth` does, including
 `unauthenticatedPaths` exemptions; an `oidc`-mode or ungated entry gets no
 forward-auth at all.
+
+Its status page follows the same opt-in `statusPagePath` setting as
+Caddy's; the Settings page suggests `/var/www/html/index.html`, the
+Debian/Ubuntu nginx package's default document root. Serving that page
+(and restricting it to your LAN) is your own hand-authored `server`
+block's job, exactly as the status page's site block is for Caddy.
 
 Because nginx cannot obtain a certificate the way Caddy does through
 Cloudflare DNS-01, every site this driver generates shares one
@@ -684,7 +718,13 @@ bellhop set-config nfsServer --unset --apply
 ```
 
 Without `--apply` the command prints what it would change and writes
-nothing. Admins can set the same values from the web UI's Settings page.
+nothing. Admins can set the same values from the web UI's Settings page,
+where `proxyDriver` is a dropdown of the supported ids rather than a
+free-text field, and Proxy config path/Status page path are shown or
+hidden and given a matching placeholder based on whichever driver is
+currently selected in that dropdown (unsaved changes included); the Proxy
+TLS certificate/key fields appear only while nginx is selected. Hiding a
+field never clears its stored value — see "Reverse proxy drivers" above.
 
 | Setting | Used by | When unset |
 |---|---|---|
@@ -692,10 +732,10 @@ nothing. Admins can set the same values from the web UI's Settings page.
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
-| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | the `caddy` driver |
-| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx) |
-| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy |
-| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy |
+| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`nginx`/`none` |
+| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx; `none` has no config file at all) |
+| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 
