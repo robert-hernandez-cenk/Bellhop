@@ -22,7 +22,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 ## Phase 1: Setup
 
-- [ ] T001 Capture redacted Authentik fixtures from the session scratchpad captures (`C:/Users/rcher/AppData/Local/Temp/claude/C--Users-rcher-Dev-Bellhop/7667a057-827f-4731-a6c3-554d77c73a29/scratchpad/live-shapes.txt`, `live-binding.json`, `live-policybinding.json`) into `test/fixtures/authentik/` as `stages-all-by-name.json`, `stages-consent-list.json`, `flows-bindings-by-target.json`, `policies-all.json`, `policies-bindings-by-target.json`. Keep every field name, type, nesting and array length. Replace every pk/uuid with an obviously fake UUID (e.g. `00000000-0000-4000-8000-00000000000N`), the stage and policy names with `mobile-app-consent`-style example names, expressions with a short example expression, and any hostname with `example.com` (constitution Principle I). `policies-all.json` may be trimmed to 2–3 results, but its `pagination` block must stay consistent with that count. Check the existing fixture location convention first (`test/fixtures/` or wherever `test/lib/authentik-client.test.ts` loads fixtures from) and follow it.
+- [x] T001 Capture redacted Authentik fixtures from the session scratchpad captures (`C:/Users/rcher/AppData/Local/Temp/claude/C--Users-rcher-Dev-Bellhop/7667a057-827f-4731-a6c3-554d77c73a29/scratchpad/live-shapes.txt`, `live-binding.json`, `live-policybinding.json`) into `test/fixtures/authentik/` as `stages-all-by-name.json`, `stages-consent-list.json`, `flows-bindings-by-target.json`, `policies-all.json`, `policies-bindings-by-target.json`. Keep every field name, type, nesting and array length. Replace every pk/uuid with an obviously fake UUID (e.g. `00000000-0000-4000-8000-00000000000N`), the stage and policy names with `mobile-app-consent`-style example names, expressions with a short example expression, and any hostname with `example.com` (constitution Principle I). `policies-all.json` may be trimmed to 2–3 results, but its `pagination` block must stay consistent with that count. Check the existing fixture location convention first (`test/fixtures/` or wherever `test/lib/authentik-client.test.ts` loads fixtures from) and follow it.
 
 ---
 
@@ -81,7 +81,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 **Independent Test**: Against `FakeAuthentikClient`: the first mobile URI plans and then creates the 4 objects; a URI change updates only the policy; drift is repaired; the last URI removed deletes all 4; a same-named foreign object is a conflict with nothing touched; a thrown client error gives `mobileConsent.error`, the rest of the run still applies, and `syncAuthentikFailed` is true only on apply.
 
-- [ ] T011 [US2] In `src/lib/authentik-client.ts`, add the client methods and types from `contracts/interfaces.md` §1 to the `AuthentikClient` interface, `RealAuthentikClient` and `UnconfiguredAuthentikClient`. The endpoints and bodies are in research R4, verbatim:
+- [x] T011 [US2] In `src/lib/authentik-client.ts`, add the client methods and types from `contracts/interfaces.md` §1 to the `AuthentikClient` interface, `RealAuthentikClient` and `UnconfiguredAuthentikClient`. The endpoints and bodies are in research R4, verbatim:
   - Stage lookup: `GET /api/v3/stages/all/?name=`. The name filter works.
   - Consent stage CRUD: `/api/v3/stages/consent/`.
   - Policy lookup: `GET /api/v3/policies/all/?page_size=500`, matching `name` client-side, because the name filter is ignored.
@@ -92,11 +92,11 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
   - Cache clear: `POST /api/v3/flows/instances/cache_clear/`.
   - Map `policybindingmodel_ptr_id` → `policyBindingModelId`. Handle pagination the way existing list methods do.
   - **Tests first**, in `test/lib/authentik-client.test.ts` with `withStubbedFetch` and the T001 fixtures: every method's URL, method and body, plus the response mapping, including that a listed policy binding's `target` (reported as the flow-stage binding's own pk) maps to `targetId`.
-- [ ] T012 [P] [US2] In `test/support/fake-authentik-client.ts`, implement the same methods in memory: stages with a model string, consent stage mode, policies with model and expression, flow-stage bindings with generated `pk` and a distinct `policyBindingModelId`, target-policy bindings, and a `cacheClears` counter.
+- [x] T012 [P] [US2] In `test/support/fake-authentik-client.ts`, implement the same methods in memory: stages with a model string, consent stage mode, policies with model and expression, flow-stage bindings with generated `pk` and a distinct `policyBindingModelId`, target-policy bindings, and a `cacheClears` counter.
   - Extend `FakeAuthentikSeed` with `stages`, `policies`, `flowStageBindings`, `targetPolicyBindings`, and `authorizationFlowId`. `getDefaultAuthorizationFlowId` already exists; make it return the seed value.
   - Add an optional per-method failure injection (e.g. `failOn?: Set<string>`) if the fake doesn't have one yet.
   - Keep existing behavior unchanged; the whole existing suite must still pass.
-- [ ] T013 [P] [US2] In `src/commands/networking/sync-authentik.ts`, add `pythonStringLiteral(value)` and `renderMobileConsentExpression(uris)`, plus the constants `MOBILE_CONSENT_STAGE_NAME = 'bellhop-mobile-app-consent'`, `MOBILE_CONSENT_POLICY_NAME = 'bellhop-consent-on-mobile-redirect'` and `MOBILE_CONSENT_MARKER = '# Managed by Bellhop (sync-authentik).'`. Rules are in research R5:
+- [x] T013 [P] [US2] In `src/commands/networking/sync-authentik.ts`, add `pythonStringLiteral(value)` and `renderMobileConsentExpression(uris)`, plus the constants `MOBILE_CONSENT_STAGE_NAME = 'bellhop-mobile-app-consent'`, `MOBILE_CONSENT_POLICY_NAME = 'bellhop-consent-on-mobile-redirect'` and `MOBILE_CONSENT_MARKER = '# Managed by Bellhop (sync-authentik).'`. Rules are in research R5:
   - Iterate code points.
   - Escape `\\`, `\"`, `\n`, `\r`, `\t`.
   - Printable ASCII 0x20–0x7E stays literal; everything else becomes `\xHH`, `\uHHHH`, or `\UHHHHHHHH` above U+FFFF.
@@ -107,7 +107,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
     - a URI with `"`, `\`, a newline, `é` and `😀` escapes to the expected Python literal (`"\U0001f600"` for the emoji, not two surrogates);
     - the expression starts with the marker.
   - If `python3` is available on the machine, also add a test that runs the literal through `python3 -c 'import sys,ast; print(ast.literal_eval(sys.stdin.read()))'` and compares, skipped when python is absent (`test.skip` guarded by a `spawnSync` probe). This keeps the suite deterministic without depending on python.
-- [ ] T014 [US2] In `src/commands/networking/sync-authentik.ts`, implement the consent reconcile (research R6–R9, data-model "Mobile consent step").
+- [x] T014 [US2] In `src/commands/networking/sync-authentik.ts`, implement the consent reconcile (research R6–R9, data-model "Mobile consent step").
   - **Wanted set**: `mobileUriSet(desired)` is the sorted, deduplicated union of `oidcMobileRedirectUris` over `desired` candidates whose `effectiveAuth` is `'oidc'`.
   - **Planning**: `planMobileConsent(uris, authentik)` resolves the flow pk via `getDefaultAuthorizationFlowId()`, finds the stage and policy by name, and applies the ownership rules (R7). A conflict stops the plan. It then finds the stage binding (the binding on the flow whose stage is ours) and the policy binding (ours, matched on either target id). It returns `{ changes, conflicts, actions }`, following R8's create/drift/delete rules.
   - **Applying**: `applyMobileConsent(plan, authentik)` executes the actions in R8 order and calls `clearFlowCache()` after any binding or policy change.
@@ -127,8 +127,8 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
     - the same error on a dry run gives `syncAuthentikFailed` false;
     - no URIs plus a failing read gives no error;
     - a mobile URI on a forward-mode entry contributes nothing.
-- [ ] T015 [US2] In `src/commands/networking/sync-authentik.ts`, make `formatSyncAuthentik` print the consent sections exactly as in `contracts/interfaces.md` §2 (change lines `+`/`~`/`-`, conflicts `!`, the failure line), each only when non-empty. **Tests first**, in `test/commands/sync-authentik-mobile-consent.test.ts`: the formatter output for creates, updates, deletes, conflicts and error; and a result with an empty `mobileConsent` formats byte-identically to one without the field.
-- [ ] T016 [US2] In `src/web/proxy-sync.ts`, have `syncProxyLive` `logWarn` each `mobileConsent.conflicts` entry and any `mobileConsent.error`, prefixed `sync-authentik: mobile consent — `. `SyncProxyLiveResult` is unchanged. **Tests first**, in `test/web/proxy-sync.test.ts`, using the existing warning-capture helper: a conflict and an error each produce a warning, and the call still resolves successfully.
+- [x] T015 [US2] In `src/commands/networking/sync-authentik.ts`, make `formatSyncAuthentik` print the consent sections exactly as in `contracts/interfaces.md` §2 (change lines `+`/`~`/`-`, conflicts `!`, the failure line), each only when non-empty. **Tests first**, in `test/commands/sync-authentik-mobile-consent.test.ts`: the formatter output for creates, updates, deletes, conflicts and error; and a result with an empty `mobileConsent` formats byte-identically to one without the field.
+- [x] T016 [US2] In `src/web/proxy-sync.ts`, have `syncProxyLive` `logWarn` each `mobileConsent.conflicts` entry and any `mobileConsent.error`, prefixed `sync-authentik: mobile consent — `. `SyncProxyLiveResult` is unchanged. **Tests first**, in `test/web/proxy-sync.test.ts`, using the existing warning-capture helper: a conflict and an error each produce a warning, and the call still resolves successfully.
 
 **Checkpoint**: US2 is complete. Commit `Reconcile a mobile-only consent step in sync-authentik (#22, US2)`.
 
