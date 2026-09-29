@@ -13,6 +13,7 @@ import { parseOperationInput, previewAndEnqueue, scrubSecretValues } from '../op
 import { runEditGuest, EDIT_GUEST_SHAPE } from '../operations/edit-guest.ts';
 import { runOidcClientInfo } from '../commands/networking/oidc-credentials.ts';
 import { checkAppUrl } from '../operations/app-check.ts';
+import { gatewayStatus, type GatewayResult } from '../operations/vpn-gateway.ts';
 import { MAX_LOG_CHUNK, json, pageLog, summarizeJob, text } from './job-helpers.ts';
 import { requestJobControl } from '../web/jobs/job-control.ts';
 import { PromptTracker } from './elicitation.ts';
@@ -126,6 +127,32 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
         clientId,
         secretAvailableFrom: `the Dashboard (admin) or \`bellhop oidc-credentials ${args.entry}\``,
       });
+    }
+  );
+
+  // --- VPN gateway tools (issue #7): get_vpn_gateway_status,
+  // list_vpn_gateway_servers, list_vpn_gateway_cities, list_vpn_gateway_groups,
+  // connect_vpn_gateway. All five call the exact same
+  // src/operations/vpn-gateway.ts functions the web UI's
+  // /api/networking/gateways/* routes call, so a tool's result always matches
+  // what the Dashboard's gateway panel shows for the same request (FR-003).
+  // connect_vpn_gateway acts immediately -- no dry run, no job -- matching
+  // the Dashboard's own Connect button (research R1).
+  function gatewayResult(r: GatewayResult) {
+    if (r.ok) return json(r.body);
+    throw new Error(r.error);
+  }
+
+  server.registerTool(
+    'get_vpn_gateway_status',
+    {
+      description:
+        "A VPN gateway guest's live status: connected, requested/resolved country and city, group, public IP, server, and last health check -- the same data the Dashboard's gateway card shows.",
+      inputSchema: { name: z.string().describe('VPN gateway guest name (a guest with vpnGateway set)') },
+    },
+    async (args: { name: string }) => {
+      refresh();
+      return gatewayResult(await gatewayStatus(deps.inventory, args.name, deps.fetchImpl ?? fetch));
     }
   );
 

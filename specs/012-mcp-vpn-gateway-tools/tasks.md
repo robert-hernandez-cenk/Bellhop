@@ -45,13 +45,13 @@ None. No new dependencies or configuration.
 
 **Independent Test**: harness call against a fake gateway; the result equals the web body.
 
-- [ ] T004 [US1] In `test/mcp/build-server.test.ts`, add tests using `setupMcp({ inventory, fetchImpl })` with an inventory holding a NordVPN gateway guest (ip `192.0.2.15`), a guest without `vpnGateway`, and a gateway with no ip:
+- [x] T004 [US1] In `test/mcp/build-server.test.ts`, add tests using `setupMcp({ inventory, fetchImpl })` with an inventory holding a NordVPN gateway guest (ip `192.0.2.15`), a guest without `vpnGateway`, and a gateway with no ip:
   - `get_vpn_gateway_status` is in `listTools()`.
   - A success returns JSON text equal to the fake status body.
   - The unknown, no-ip, and unreachable cases each return `isError: true` with exactly the web route's message text.
   - Parity: for the same fake fetch, the tool's parsed result deep-equals `(await gatewayStatus(...)).body` from the shared module.
   - The tool reloads inventory: save an inventory changing the gateway ip to `192.0.2.16` after setup, and assert the next call hits `.16`.
-- [ ] T005 [US1] In `src/mcp/build-server.ts`, add a local helper `gatewayResult(r: GatewayResult)` that returns `json(r.body)` on success and throws `new Error(r.error)` otherwise (the SDK turns a throw into `isError`, as the file's header comment says). Register `get_vpn_gateway_status` with input `{ name: z.string().describe('VPN gateway guest name (a guest with vpnGateway set)') }`. It calls `refresh()` then `gatewayStatus(deps.inventory, args.name, deps.fetchImpl ?? fetch)`. Description: live gateway status (connected, requested/resolved country and city, group, public IP, server, last health check), the same as the Dashboard gateway card.
+- [x] T005 [US1] In `src/mcp/build-server.ts`, add a local helper `gatewayResult(r: GatewayResult)` that returns `json(r.body)` on success and throws `new Error(r.error)` otherwise (the SDK turns a throw into `isError`, as the file's header comment says). Register `get_vpn_gateway_status` with input `{ name: z.string().describe('VPN gateway guest name (a guest with vpnGateway set)') }`. It calls `refresh()` then `gatewayStatus(deps.inventory, args.name, deps.fetchImpl ?? fetch)`. Description: live gateway status (connected, requested/resolved country and city, group, public IP, server, last health check), the same as the Dashboard gateway card.
 
 **Checkpoint**: US1 tests pass.
 
