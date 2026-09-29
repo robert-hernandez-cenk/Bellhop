@@ -473,8 +473,7 @@ test('RealAuthentikClient.findStageByName maps a matching stage by name, any typ
 });
 
 test('RealAuthentikClient consent stage CRUD hits /stages/consent/ with the right bodies and maps the response', async () => {
-  const list = fixture('stages-consent-list.json') as { results: Array<Record<string, unknown>> };
-  const mobileStage = list.results[1]!; // 'example-mobile-consent', mode 'always_require'
+  const mobileStage = fixture('stages-consent-detail.json'); // 'example-mobile-consent', mode 'always_require'
   const mapped = { id: '00000000-0000-4000-8000-000000000003', name: 'example-mobile-consent', mode: 'always_require' };
 
   await withStubbedFetch(
@@ -510,7 +509,12 @@ test('RealAuthentikClient consent stage CRUD hits /stages/consent/ with the righ
   );
 });
 
-test('RealAuthentikClient.findPolicyByName matches client-side (the server-side name filter is ignored) and includes the expression', async () => {
+// The live "all" listing mixes policy types (expression, event_matcher,
+// password, ...) -- findPolicyByName's mapping must hold both ways: an
+// expression policy carries `expression`, and a non-expression policy
+// carries `model` alone with `expression: undefined` rather than throwing
+// or dropping the match.
+test('RealAuthentikClient.findPolicyByName matches client-side (the server-side name filter is ignored) and maps both an expression and a non-expression policy', async () => {
   const policiesAll = fixture('policies-all.json');
   await withStubbedFetch(
     (url) => (url.includes('/policies/all/?page_size=500') ? json(policiesAll) : new Response(null, { status: 204 })),
@@ -523,6 +527,15 @@ test('RealAuthentikClient.findPolicyByName matches client-side (the server-side 
         expression: '# Example: gate a stage on a condition.\nreturn True',
       });
       assert.equal(requests[0]?.url, 'https://auth.example.com/api/v3/policies/all/?page_size=500');
+
+      const nonExpression = await client.findPolicyByName('example-event-matcher-policy');
+      assert.deepEqual(nonExpression, {
+        id: '00000000-0000-4000-8000-00000000000c',
+        name: 'example-event-matcher-policy',
+        model: 'authentik_policies_event_matcher.eventmatcherpolicy',
+        expression: undefined,
+      });
+
       assert.equal(await client.findPolicyByName('does-not-exist'), undefined);
     }
   );

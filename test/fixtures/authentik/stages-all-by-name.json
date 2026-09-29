@@ -7,7 +7,23 @@
       "component": "ak-stage-consent-form",
       "verbose_name": "Consent Stage",
       "verbose_name_plural": "Consent Stages",
-      "meta_model_name": "authentik_stages_consent.consentstage"
+      "meta_model_name": "authentik_stages_consent.consentstage",
+      "flow_set": [
+        {
+          "pk": "00000000-0000-4000-8000-000000000001",
+          "policybindingmodel_ptr_id": "00000000-0000-4000-8000-000000000002",
+          "name": "Authorize Application",
+          "slug": "default-provider-authorization-implicit-consent",
+          "title": "Redirecting to %(app)s",
+          "designation": "authorization",
+          "background_url": "/static/dist/assets/images/flow_background.jpg",
+          "policy_engine_mode": "any",
+          "compatibility_mode": false,
+          "export_url": "/api/v3/flows/instances/default-provider-authorization-implicit-consent/export/",
+          "layout": "stacked",
+          "denied_action": "message_continue"
+        }
+      ]
     }
   ],
   "autocomplete": {}
