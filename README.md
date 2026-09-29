@@ -754,6 +754,14 @@ the assistant sees the question and can answer it with
 `answer_job_prompt`.
 It manages the inventory and `data/` directory of the checkout it runs from.
 
+Five tools cover VPN gateway runtime control, mirroring the Dashboard's
+gateway card: `get_vpn_gateway_status`, `list_vpn_gateway_servers`,
+`list_vpn_gateway_cities`, `list_vpn_gateway_groups`, and
+`connect_vpn_gateway`. Unlike every other tool here, `connect_vpn_gateway`
+acts immediately — no `apply: true`, no preview, no job — the same as the
+Dashboard's own Connect button, since switching a gateway's VPN server is
+the entire action rather than something to preview first.
+
 A job the MCP server starts isn't siloed to it: it shows up live in the web
 UI's Job History with the same streaming output, and Stop/answer controls
 work from there just as they would for a job started in the web UI. The
