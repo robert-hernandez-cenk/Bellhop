@@ -47,8 +47,11 @@ npm run bellhop -- import-yaml-inventory --yaml-path inventory/hosts.yaml.exampl
 `--yaml-path inventory/hosts.yaml` instead — see `import-yaml-inventory
 --help`).
 
-The file's schema, and how to hand-edit a copy of it for your real hosts,
-is in [Hand-editing the inventory](docs/configuration.md#hand-editing-the-inventory).
+The example file's hosts are placeholders, so importing it only lets you
+look around. To manage your own Proxmox hosts, copy it to
+`inventory/hosts.yaml`, replace its hosts with yours, and import that
+copy before continuing — the file's schema is in
+[Hand-editing the inventory](docs/configuration.md#hand-editing-the-inventory).
 
 A few operator-specific values — your NAS's `nfsServer` IP chief among
 them — live in the inventory database rather than in code, and are unset
@@ -64,8 +67,8 @@ The web UI's Settings page sets the same values. See
 [Configuration](docs/configuration.md) for the full list and what happens
 when a value stays unset.
 
-Then pull your hosts' real guests into the inventory — a dry run first,
-then `--apply` to write them:
+With your own hosts imported, pull their real guests into the inventory —
+a dry run first, then `--apply` to write them:
 
 ```bash
 npm run bellhop -- sync-inventory

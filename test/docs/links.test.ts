@@ -5,14 +5,17 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Documentation link check (specs/013-condense-readme-docs/contracts/link-check.md).
-// Scans README.md plus every *.md under docs/, and fails once listing every
+// Scans README.md, CONTRIBUTING.md, CLAUDE.md and every *.md under docs/, and
+// fails once listing every
 // relative link or anchor that no longer resolves.
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const README_LINE_LIMIT = 200;
 
 function markdownFiles(): string[] {
-  const files = [join(REPO_ROOT, 'README.md')];
+  // CONTRIBUTING.md and CLAUDE.md link into the README (#prerequisites,
+  // #setup), so renaming one of its headings must fail here too.
+  const files = ['README.md', 'CONTRIBUTING.md', 'CLAUDE.md'].map((name) => join(REPO_ROOT, name));
   const walk = (dir: string): void => {
     if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -174,7 +177,7 @@ test(`README.md stays within its ${README_LINE_LIMIT}-line budget`, () => {
   );
 });
 
-test('every relative link and anchor in README.md and docs/ resolves', () => {
+test('every relative link and anchor in README.md, docs/ and the contributor docs resolves', () => {
   const breaks = brokenLinks(markdownFiles());
   assert.equal(breaks.length, 0, `Broken documentation links:\n${breaks.join('\n')}`);
 });

@@ -97,7 +97,7 @@ Messages, comments and contributor docs that told readers to look in a named REA
   - `docs/authentik.md`: running without Authentik, and the whole OIDC mode section.
   - `docs/troubleshooting.md`: validation, and known hardware issues.
 - **FR-005**: No content MUST be lost. Rewording MUST be limited to the seams: cross-references become relative links, and a sentence introducing a moved block may be adjusted so it reads correctly on its new page.
-- **FR-006**: Every relative link and `#anchor` in `README.md` and `docs/**/*.md` MUST resolve to an existing file and, for anchors, an existing heading.
+- **FR-006**: Every relative link and `#anchor` in `README.md`, `docs/**/*.md`, `CONTRIBUTING.md` and `CLAUDE.md` MUST resolve to an existing file and, for anchors, an existing heading.
 - **FR-007**: The test suite MUST include a check that enforces FR-001 and FR-006 and fails with a message naming the file and the broken link.
 - **FR-008**: Every reference to a README section in tracked files (source messages and comments, tests, the example inventory, CLAUDE.md, CONTRIBUTING.md, the constitution and the pull request template) MUST point at the section's new location.
 - **FR-009**: The contributor rule that a user-visible behavior change updates `README.md` MUST be restated as "`README.md` or the relevant `docs/` page" in CONTRIBUTING.md, the constitution and the pull request template.

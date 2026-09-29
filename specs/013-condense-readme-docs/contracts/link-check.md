@@ -4,7 +4,7 @@
 
 ## Inputs
 
-`README.md`, plus every `*.md` file under `docs/`, found recursively from the repository root.
+`README.md`, `CONTRIBUTING.md` and `CLAUDE.md`, plus every `*.md` file under `docs/`, found recursively from the repository root. The two contributor docs are included because they link into the README (`#prerequisites`, `#setup`), so renaming a README heading has to fail the check (added in code review).
 
 ## Checks
 
@@ -19,4 +19,4 @@ One assertion lists every broken link, one per line, in the form `<source file>:
 
 ## Out of scope
 
-External URLs, reference-style links, HTML `<a>` tags, and Markdown files outside `README.md` and `docs/`. CLAUDE.md, CONTRIBUTING.md and `specs/` are not scanned.
+External URLs, reference-style links, HTML `<a>` tags, and Markdown files other than those listed under Inputs (`specs/` is not scanned).
