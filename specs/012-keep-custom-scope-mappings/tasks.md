@@ -75,7 +75,7 @@ root.
 
 - [x] T013 [P] Update README.md's "OIDC mode" section: scope-mapping drift is checked by scope name; a custom mapping for `openid`/`profile`/`email` is kept (example: a custom `email` mapping setting `email_verified`), a missing scope gets the built-in mapping added, and Bellhop no longer restores a built-in mapping that was swapped for another with the same scope name.
 - [x] T014 [P] Update CLAUDE.md's `sync-authentik` bullet (the `diffOAuth2Settings` sentence and the "fixed openid/profile/email scope mappings" sentence) with the same rule and trade-off, and note that `listScopeMappings` reads `pagination.count`.
-- [ ] T015 Run `npm run typecheck` and `npm test`; run the quickstart.md manual dry run (`npm run bellhop -- sync-authentik`, read-only) from the worktree and record the result.
+- [x] T015 Run `npm run typecheck` and `npm test`; run the quickstart.md manual dry run (`npm run bellhop -- sync-authentik`, read-only) from the worktree and record the result.
 
 ---
 
