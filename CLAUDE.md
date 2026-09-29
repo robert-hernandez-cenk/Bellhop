@@ -132,9 +132,29 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Dashboard's guest-PATCH route and the MCP server's `edit_guest` tool --
   rather than from `validateInventory()` itself, so an unrelated load of an
   already-saved inventory, or a host/external-site row hand-edited straight
-  into `bellhop.db`, never fails over it). Neither field is synced away
+  into `bellhop.db`, never fails over it). `oidcMobileRedirectUris`
+  (optional, same three entry types, issue #22) sits alongside it: a
+  separate ordered list of the same shape, but for a native mobile app's
+  own sign-in callback rather than a browser's -- a custom-scheme URI
+  (`app.example:///oauth-callback`) or an `https://` hand-off page, validated
+  by `isValidMobileRedirectUri` (broader than `oidcRedirectUris`'s
+  http(s)-only rule: any scheme with no whitespace/control characters,
+  except `javascript:`/`data:`/`file:`/`vbscript:` in any letter case,
+  rejected by name). Always optional, in every mode -- unlike
+  `oidcRedirectUris`, an OIDC entry with subdomains but no mobile list is
+  still complete. A URI must not appear in both lists of the same entry;
+  `oidcConfigErrors` enforces this the same write-time-only way it enforces
+  the required-callback rule above -- on `commitGuestEdit` alone, never on
+  `validateInventory()`, so a saved inventory always loads regardless of
+  what an `AUTHENTIK_AUTHORIZATION_FLOW_SLUG` change or a hand-edited row
+  does to it. `sync-authentik`'s exported `clientRedirectUris(entry)`
+  is what actually decides an OpenID client's allowed callbacks: the web
+  list plus the mobile list, deduplicated, web first -- so a mobile-only
+  edit shows as ordinary `redirect_uris` drift on the client, never a
+  separate code path. Neither field is synced away
   when the other changes: switching `authMode` back to `forward` leaves
-  `oidcRedirectUris` in place, inert, in case the entry switches back.
+  `oidcRedirectUris`/`oidcMobileRedirectUris` in place, inert, in case the
+  entry switches back.
   `sync-authentik`
   creates/deletes the matching Authentik Proxy Provider and Application,
   and binds it to the named rung **and every rung above it** (Authentik's
@@ -1171,6 +1191,100 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`oidcDiscoveryFailures`, see `edit-guest.ts` below) instead of failing
   the save (FR-013).
 
+  **Mobile consent step** (issue #22): whenever at least one
+  `oidcMobileRedirectUris` entry is in effect anywhere in the inventory,
+  `sync-authentik` also reconciles a one-click consent step on the shared
+  authorization flow (`AUTHENTIK_AUTHORIZATION_FLOW_SLUG`) -- four objects:
+  a consent stage `MOBILE_CONSENT_STAGE_NAME`
+  (`'bellhop-mobile-app-consent'`, `mode: 'always_require'`), a binding of
+  it to the flow (`evaluate_on_plan: false`, `re_evaluate_policies: true`,
+  order `10`, matching the stock explicit-consent flow's own consent
+  binding), an expression policy `MOBILE_CONSENT_POLICY_NAME`
+  (`'bellhop-consent-on-mobile-redirect'`), and a binding of that policy to
+  the stage binding (`failure_result: false`). `mobileUriSet(desired)`
+  (research R6) is the sole input: the sorted, deduplicated union of
+  `oidcMobileRedirectUris` over every *desired* OIDC-mode candidate --
+  gated, has subdomains, `effectiveAuth() === 'oidc'` -- regardless of
+  ladder/conflict/skip state for that entry, since a URI with no live
+  client behind it can never be a real login's `redirect_uri` and this
+  keeps the policy stable while an operator fixes an unrelated problem on
+  that entry. `renderMobileConsentExpression(uris)` renders a Python
+  expression policy body: a sorted `MOBILE_REDIRECT_URIS` set literal (each
+  URI a `pythonStringLiteral`, escaping outside printable ASCII by code
+  point, not UTF-16 unit, so a surrogate pair renders as the one character
+  Python decodes rather than two lone surrogates that would silently never
+  match) followed by a check of
+  `request.context.get("goauthentik.io/providers/oauth2/params").redirect_uri`
+  against that set; its first line is `MOBILE_CONSENT_MARKER`, and a policy
+  is Bellhop's only when its expression starts with that exact marker
+  (ownership, alongside "is a consent stage" for the stage -- a same-named
+  object failing either check is reported as a conflict and left
+  completely untouched, the whole consent reconcile skipped for that run).
+  Fails closed on both sides: a missing `params` object evaluates to
+  `None`, which is never in the set, so the stage is skipped (no consent
+  page) the same as a thrown exception under `failure_result: false` --
+  neither ever blocks a login.
+
+  **Live-verified Authentik 2026.8 API quirks** (research R4) this
+  reconcile works around: `GET /api/v3/policies/all/` ignores its own
+  `name` query filter (returns every policy regardless), so
+  `findPolicyByName` matches client-side; `GET /api/v3/flows/bindings/`
+  ignores `target__slug` the same way (`target=<pk>` works), so bindings
+  are listed by the already-resolved flow pk and filtered to the owned
+  stage's `stageId` in code; and a policy binding created on a flow-stage
+  binding is filtered by `GET /api/v3/policies/bindings/?target=<pk>`
+  using the binding's own `policybindingmodel_ptr_id` (filtering by the
+  binding's plain `pk` fails outright, `"Select a valid choice"`), while
+  that same listing's own `target` field on the result reports the
+  binding's ordinary `pk` instead -- so a listed policy binding is matched
+  against *either* id (`AuthentikFlowStageBinding.id` or
+  `.policyBindingModelId`), and a new one is always created with
+  `target: policyBindingModelId` (what Authentik's own admin UI sends).
+
+  **Ownership and reconcile order** (research R7/R8): a conflicting stage
+  or policy stops the whole consent reconcile for that run -- nothing
+  created, updated, or deleted, reported in `mobileConsent.conflicts`,
+  never failing it (FR-017). Wanting the step, creation order is stage ->
+  policy -> binding -> policy-binding; not wanting it (the set went empty,
+  or was always empty), deletion order is the reverse
+  (policy-binding -> binding -> policy -> stage) -- only objects this
+  command owns are ever touched, so a hand-added binding/policy on the
+  same stage binding survives. `applyMobileConsent` rolls a just-created
+  stage binding back out if creating its policy binding then fails *in the
+  same run* (a stage binding with no policy on it would otherwise gate
+  every login on the flow, not just mobile ones, until the next successful
+  sync) -- a stage binding that already existed before this run (a repair
+  case) is left in place on the same failure instead, since it was already
+  live either way. The cache is cleared (`POST
+  /api/v3/flows/instances/cache_clear/`, FR-015) after any run that changed
+  the binding or the policy, including the rollback case above (a plan may
+  have been cached in between) and even when a later step in the same run
+  failed -- a stage-only repair (just the consent `mode`) needs no clear,
+  since the stage reads its own mode when it executes rather than from a
+  cached plan.
+
+  **Failure isolation and the no-mobile-URI read-failure swallow**
+  (research R9): the whole consent reconcile runs inside its own
+  `try/catch` after every other `sync-authentik` step (group bindings,
+  before discovery) -- a thrown error becomes `mobileConsent.error` (the
+  message plus a hint naming `AUTHENTIK_AUTHORIZATION_FLOW_SLUG` and the
+  token's stage/policy/flow permissions) and the rest of the run completes
+  regardless. `syncAuthentikFailed` (the CLI's non-zero-exit signal) is
+  `true` when `applied && mobileConsent?.error` -- a conflict alone never
+  makes it true. When the mobile URI set is *empty*, a failure while merely
+  *reading* the four objects (listing stages/policies/bindings, resolving
+  the flow) is swallowed and planned as "nothing to do" rather than thrown
+  -- mirroring `listOAuth2ProvidersForRun`'s own precedent -- so a
+  deployment whose Authentik token predates this feature, and which sets no
+  mobile URLs, never sees a new error or a new non-zero exit; the
+  trade-off is that owned leftovers from an earlier under-permissioned run
+  wouldn't be cleaned up, accepted because that combination can't have
+  created them in the first place. `syncProxyLive` (the Dashboard push-live
+  step) logs `mobileConsent.conflicts`/`mobileConsent.error` via `logWarn`
+  the same as `missingRungs` -- instance-wide, so `SyncProxyLiveResult`
+  itself carries nothing new for it (there's no per-guest Dashboard action
+  to offer).
+
   The web UI's Dashboard auth-group dropdown
   (`EditableAuthGroup.tsx`, replacing the old "requires auth" checkbox,
   backed by `GET /api/auth-groups` -- authenticated but deliberately not
@@ -1180,14 +1294,31 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `render-status-page`, and `sync-authentik` back to back, then
   `prune-acme-challenges` (below), as one combined push-live step.
 
-  Changing `authMode`/`oidcRedirectUris` through the Dashboard's guest PATCH
-  (`EditableAuthMode.tsx`/`EditableOidcRedirectUris.tsx`) is admin-only in
+  Changing `authMode`/`oidcRedirectUris`/`oidcMobileRedirectUris` through
+  the Dashboard's guest PATCH
+  (`EditableAuthMode.tsx`/`EditableOidcRedirectUris.tsx`/
+  `EditableOidcMobileRedirectUris.tsx` -- issue #22 split the Advanced
+  modal into General and Access tabs, General holding the type/ip/host/
+  vmid/subdomains/port/proxy/VPN/app fields and Access holding auth
+  group/mode plus whichever of unauthenticated paths (forward mode) or
+  callback URLs/mobile redirect URLs/OIDC client info (OIDC mode) apply to
+  the entry's current mode -- `accessFieldsFor(authMode)`
+  (`web-client/src/lib/oidc.ts`) decides which, reading the entry's saved
+  mode rather than any in-progress dropdown edit, so a field hidden by a
+  mode switch keeps its saved value rather than losing it) is
+  admin-only in
   both directions with no raise/lower exception (FR-018, unlike
   `authGroup`'s own asymmetry) -- switching *to* OIDC removes the
   forward-auth gate the active proxy driver would otherwise enforce, and
-  the callback URL
-  decides where a completed login is sent, so getting either wrong is never
-  a purely narrowing edit. `editDeletesOidcClient`/
+  the callback URL (web or mobile)
+  decides where a completed login is sent, so getting any of them wrong is never
+  a purely narrowing edit. `oidcEditChangeError` (`src/web/routes/
+  dashboard.ts`) is what enforces this -- triggered whenever the request
+  body touches `authMode`, `oidcRedirectUris`, or `oidcMobileRedirectUris`,
+  and comparing all three against the *parsed* current/updated entries
+  (order-sensitive, like `oidcRedirectUris` itself) rather than the raw
+  body, so resending an unchanged value is never treated as a change.
+  `editDeletesOidcClient`/
   `OIDC_CLIENT_DELETION_CONFIRMATION_ERROR` (`src/operations/edit-guest.ts`)
   is the FR-022a confirmation rule: an edit that takes an entry from
   `effectiveAuth() === 'oidc'` to anything else (switching to forward-auth,
@@ -2120,7 +2251,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   no dialog of its own to show one in; unlike the Dashboard,
   `authMode`/`oidcRedirectUris` changes need no admin check here at all,
   because this server always runs with CLI-level trust (FR-018 is a
-  web-UI-only restriction). A standalone `get_oidc_client` tool
+  web-UI-only restriction). `EDIT_GUEST_SHAPE` also gained
+  `oidcMobileRedirectUris` (issue #22, same shape and admin-free trust
+  level as `oidcRedirectUris`) once the mobile-redirect-list field existed
+  to edit -- again no new tool, since `edit_guest` already covers every
+  writable guest field. A standalone `get_oidc_client` tool
   (`src/mcp/build-server.ts`) wraps `oidc-credentials`'s lookup logic
   (`runOidcClientInfo`, `commands/networking/oidc-credentials.ts`) to
   return an OIDC-gated entry's issuer and client ID -- and only those two,
