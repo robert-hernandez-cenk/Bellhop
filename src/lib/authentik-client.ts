@@ -847,16 +847,22 @@ export class RealAuthentikClient implements AuthentikClient {
 
   // The `name` query param on this endpoint is ignored by Authentik (verified
   // live -- it returned every policy regardless), so this always fetches the
-  // full page and matches client-side. Same truncated-page guard as
+  // full page and matches client-side. Same truncated-page-guard *intent* as
   // listPolicyBindings/listOAuth2Providers/getScopeMappingIds: a policy that
-  // fell past page 1 must not silently read as "doesn't exist yet."
+  // fell past page 1 must not silently read as "doesn't exist yet." Unlike
+  // those three, the count here lives under `pagination.count`, not a
+  // top-level `count` -- every live capture of this and every other list
+  // endpoint in this file puts it there (see test/fixtures/authentik/
+  // policies-all.json); there is no top-level `count` field to read.
   async findPolicyByName(name: string): Promise<AuthentikPolicyRef | undefined> {
-    const res = await this.request<{ count: number; results: RawPolicyRef[] }>(
+    const res = await this.request<{ pagination: { count: number }; results: RawPolicyRef[] }>(
       'GET',
       '/api/v3/policies/all/?page_size=500'
     );
-    if (res.count > res.results.length) {
-      throw new Error(`Authentik returned ${res.results.length} of ${res.count} policies; pagination is not implemented`);
+    if (res.pagination.count > res.results.length) {
+      throw new Error(
+        `Authentik returned ${res.results.length} of ${res.pagination.count} policies; pagination is not implemented`
+      );
     }
     const match = res.results.find((r) => r.name === name);
     return match ? this.toPolicyRef(match) : undefined;

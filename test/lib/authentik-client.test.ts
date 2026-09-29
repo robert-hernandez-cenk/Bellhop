@@ -541,9 +541,22 @@ test('RealAuthentikClient.findPolicyByName matches client-side (the server-side 
   );
 });
 
+// Driven from the real policies-all.json shape (pagination.count bumped
+// above the result count) rather than a fabricated response -- the count
+// Authentik actually reports lives under `pagination.count`, never a
+// top-level `count`, so a stubbed `{ count, results }` shape would never
+// occur against a real instance and would prove nothing about this guard.
 test('RealAuthentikClient.findPolicyByName throws when Authentik reports more policies than the page returned', async () => {
+  const policiesAll = fixture('policies-all.json') as {
+    pagination: Record<string, unknown>;
+    results: unknown[];
+  };
+  const truncated = {
+    ...policiesAll,
+    pagination: { ...policiesAll.pagination, count: policiesAll.results.length + 1 },
+  };
   await withStubbedFetch(
-    () => json({ count: 501, results: [] }),
+    () => json(truncated),
     async (client) => {
       await assert.rejects(client.findPolicyByName('anything'), /pagination is not implemented/);
     }
