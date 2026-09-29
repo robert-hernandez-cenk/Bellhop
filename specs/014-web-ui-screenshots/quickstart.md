@@ -20,7 +20,7 @@ Expected: all pass. `test/docs/links.test.ts` fails if any image link in the doc
 npm run demo
 ```
 
-Expected: prints `Bellhop demo running at http://localhost:3100 ...`. In a browser:
+Expected: prints `Bellhop demo running at http://127.0.0.1:3100 ...`. In a browser:
 
 - The Dashboard lists `pve1`/`pve2` and their guests with running/stopped statuses, no
   "no authentication configured" banner, and the user shown as `admin`.
