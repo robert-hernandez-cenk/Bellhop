@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions } from '../../web-client/src/lib/settings-display.ts';
+import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions, proxyFieldView } from '../../web-client/src/lib/settings-display.ts';
 
 test('proxyHostText returns "<name> (<ip>)" for a set proxy entry', () => {
   assert.equal(proxyHostText({ name: 'proxy', ip: '10.0.0.2' }), 'proxy (10.0.0.2)');
@@ -34,4 +34,31 @@ test('proxyDriverOptions preserves driver order and suffixes whichever id is the
     { value: 'caddy', label: 'Caddy' },
     { value: 'none', label: 'No proxy (default)' },
   ]);
+});
+
+const DRIVERS = [
+  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html' },
+  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null },
+];
+
+test('proxyFieldView shows both fields with Caddy-specific placeholders/help when Caddy is selected', () => {
+  const view = proxyFieldView('caddy', DRIVERS);
+  assert.equal(view.showConfigPath, true);
+  assert.equal(view.configPathPlaceholder, '/etc/caddy/Caddyfile');
+  assert.match(view.configPathHelp ?? '', /Caddy/);
+  assert.match(view.configPathHelp ?? '', /\/etc\/caddy\/Caddyfile/);
+  assert.equal(view.showStatusPagePath, true);
+  assert.equal(view.statusPagePlaceholder, '/usr/share/caddy/index.html');
+});
+
+test('proxyFieldView hides both fields when "no proxy" is selected', () => {
+  const view = proxyFieldView('none', DRIVERS);
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.showStatusPagePath, false);
+});
+
+test('proxyFieldView hides both fields for an unknown driver id', () => {
+  const view = proxyFieldView('nginx', DRIVERS);
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.showStatusPagePath, false);
 });

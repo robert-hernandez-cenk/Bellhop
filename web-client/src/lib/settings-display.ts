@@ -30,3 +30,38 @@ export function proxyDriverOptions(
     label: driver.id === defaultId ? `${driver.label} (default)` : driver.label,
   }));
 }
+
+// What the Settings page's Proxy config path/Status page path fields show
+// for whichever driver is currently selected in the (possibly unsaved)
+// dropdown -- issue #33's US3. `selectedId` is the caller's already-resolved
+// choice (`drafts.proxyDriver || data.defaultProxyDriver`, so it tracks the
+// unsaved selection per FR-006/FR-007's acceptance scenario 5), not looked
+// up against a separate default here. A driver whose `defaultConfigPath`/
+// `suggestedStatusPagePath` is `null` (only "No proxy" today) hides the
+// matching field; an id with no matching entry in `drivers` at all (never
+// reachable through the dropdown itself, but defensive against a stale
+// selection) is treated the same as one with no metadata -- both fields
+// hidden, same as FR-006's "unknown means nothing to show". Hiding is
+// display-only (R6): callers must not clear the field's draft/stored value
+// just because it stopped being shown (FR-008).
+export interface ProxyFieldView {
+  showConfigPath: boolean;
+  configPathPlaceholder?: string;
+  configPathHelp?: string;
+  showStatusPagePath: boolean;
+  statusPagePlaceholder?: string;
+}
+
+export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): ProxyFieldView {
+  const driver = drivers.find((d) => d.id === selectedId);
+  if (!driver || driver.defaultConfigPath === null) {
+    return { showConfigPath: false, showStatusPagePath: driver?.suggestedStatusPagePath != null };
+  }
+  return {
+    showConfigPath: true,
+    configPathPlaceholder: driver.defaultConfigPath,
+    configPathHelp: `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`,
+    showStatusPagePath: driver.suggestedStatusPagePath != null,
+    statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
+  };
+}

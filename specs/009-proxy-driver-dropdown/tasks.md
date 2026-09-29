@@ -128,17 +128,17 @@ None needed: existing project, dependencies installed.
 
 **Independent Test**: Toggling the unsaved dropdown hides or shows Proxy config path and Status page path, and switches their placeholders.
 
-- [ ] T026 [US3] Write failing tests in `test/web-client/settings-display.test.ts` for `proxyFieldView(selectedId, drivers)`:
+- [x] T026 [US3] Write failing tests in `test/web-client/settings-display.test.ts` for `proxyFieldView(selectedId, drivers)`:
   - With Caddy selected, it returns `{ showConfigPath: true, configPathPlaceholder: '/etc/caddy/Caddyfile', configPathHelp: <mentions "Caddy" and "/etc/caddy/Caddyfile">, showStatusPagePath: true, statusPagePlaceholder: '/usr/share/caddy/index.html' }`.
   - With none selected, both `show*` are false.
   - An unknown id (defensive) behaves like no metadata: both hidden.
-- [ ] T027 [US3] Implement `proxyFieldView` in `web-client/src/lib/settings-display.ts`.
-- [ ] T028 [US3] In `web-client/src/pages/SettingsPage.tsx`:
+- [x] T027 [US3] Implement `proxyFieldView` in `web-client/src/lib/settings-display.ts`.
+- [x] T028 [US3] In `web-client/src/pages/SettingsPage.tsx`:
   - Compute `view = proxyFieldView(drafts.proxyDriver || data.defaultProxyDriver, data.proxyDrivers)`.
   - Skip rendering `proxyConfigPath` when `!view.showConfigPath` and `statusPagePath` when `!view.showStatusPagePath`.
   - Use `view`'s placeholders and help text for those two fields in place of the static `FIELDS` values.
   - Drafts and stored values are never cleared by hiding (FR-008).
-- [ ] T029 [US3] Run `npm run typecheck`, `npm test` and `npm run web:build`, then commit `Settings: show proxy fields only when the driver uses them (#33, US3)`.
+- [x] T029 [US3] Run `npm run typecheck`, `npm test` and `npm run web:build`, then commit `Settings: show proxy fields only when the driver uses them (#33, US3)`.
 
 ---
 

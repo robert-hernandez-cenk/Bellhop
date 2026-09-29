@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { SettingsResponse, SettingsValues } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
-import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions } from '../lib/settings-display';
+import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions, proxyFieldView } from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
 
@@ -111,65 +111,90 @@ export function SettingsPage() {
 
   if (loading) return <p>Loading...</p>;
 
+  // issue #33 (US3): which of the two driver-dependent fields actually
+  // apply, and what they should say, for whichever driver is currently
+  // selected in the (possibly unsaved) dropdown -- null while `data` hasn't
+  // loaded yet, in which case every field still renders with its static
+  // FIELDS text, same as before this feature existed.
+  const view = data ? proxyFieldView(drafts.proxyDriver || data.defaultProxyDriver, data.proxyDrivers) : null;
+
+  // Hiding a field is display-only: it is simply left out of this list, so
+  // its draft/stored value and its Save/Clear behavior are completely
+  // untouched (FR-008) -- nothing here ever resets `drafts` or sends a
+  // PATCH because of visibility.
+  const visibleFields = FIELDS.filter((field) => {
+    if (field.key === 'proxyConfigPath') return !view || view.showConfigPath;
+    if (field.key === 'statusPagePath') return !view || view.showStatusPagePath;
+    return true;
+  });
+
   return (
     <div>
       <h2>Settings</h2>
       <PageDescription>
         Inventory-wide values a few commands read. Every one of them is optional -- each field
         below says what happens while it is unset. The same values can be set from the CLI with{' '}
-        <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>.
+        <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>. Proxy config path and
+        Status page path only appear when the selected Proxy driver actually uses them.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
       <div className="settings-fields">
-        {FIELDS.map((field) => (
-          <div key={field.key} className="settings-field">
-            <label htmlFor={`setting-${field.key}`}>
-              {field.label} <span className="settings-optional">Optional</span>
-            </label>
-            {field.key === 'proxyDriver' && data ? (
-              <select
-                id={`setting-${field.key}`}
-                className="field-input"
-                value={drafts.proxyDriver || data.defaultProxyDriver}
-                onChange={(e) => setDrafts({ ...drafts, proxyDriver: e.target.value })}
-              >
-                {proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                id={`setting-${field.key}`}
-                className="field-input"
-                type="text"
-                value={drafts[field.key] ?? ''}
-                placeholder={field.placeholder}
-                onChange={(e) => setDrafts({ ...drafts, [field.key]: e.target.value })}
-              />
-            )}
-            <p className="settings-help">{field.help}</p>
-            <div className="actions-cell">
-              <button
-                type="button"
-                className="button"
-                disabled={savingKey === field.key}
-                onClick={() => save(field.key, drafts[field.key] === '' ? null : drafts[field.key])}
-              >
-                {savingKey === field.key ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                type="button"
-                className="button button-danger"
-                disabled={savingKey === field.key || !data?.settings[field.key]}
-                onClick={() => save(field.key, null)}
-              >
-                Clear
-              </button>
+        {visibleFields.map((field) => {
+          const placeholder =
+            field.key === 'proxyConfigPath' && view ? view.configPathPlaceholder
+            : field.key === 'statusPagePath' && view ? view.statusPagePlaceholder
+            : field.placeholder;
+          const help = field.key === 'proxyConfigPath' && view?.configPathHelp ? view.configPathHelp : field.help;
+          return (
+            <div key={field.key} className="settings-field">
+              <label htmlFor={`setting-${field.key}`}>
+                {field.label} <span className="settings-optional">Optional</span>
+              </label>
+              {field.key === 'proxyDriver' && data ? (
+                <select
+                  id={`setting-${field.key}`}
+                  className="field-input"
+                  value={drafts.proxyDriver || data.defaultProxyDriver}
+                  onChange={(e) => setDrafts({ ...drafts, proxyDriver: e.target.value })}
+                >
+                  {proxyDriverOptions(data.proxyDrivers, data.defaultProxyDriver).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id={`setting-${field.key}`}
+                  className="field-input"
+                  type="text"
+                  value={drafts[field.key] ?? ''}
+                  placeholder={placeholder}
+                  onChange={(e) => setDrafts({ ...drafts, [field.key]: e.target.value })}
+                />
+              )}
+              <p className="settings-help">{help}</p>
+              <div className="actions-cell">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={savingKey === field.key}
+                  onClick={() => save(field.key, drafts[field.key] === '' ? null : drafts[field.key])}
+                >
+                  {savingKey === field.key ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-danger"
+                  disabled={savingKey === field.key || !data?.settings[field.key]}
+                  onClick={() => save(field.key, null)}
+                >
+                  Clear
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <h3>Derived (read-only)</h3>
       <PageDescription>
