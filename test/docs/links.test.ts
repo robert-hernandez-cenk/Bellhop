@@ -6,8 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 // Documentation link check (specs/013-condense-readme-docs/contracts/link-check.md).
 // Scans README.md, CONTRIBUTING.md, CLAUDE.md and every *.md under docs/, and
-// fails once listing every
-// relative link or anchor that no longer resolves.
+// fails once listing every relative link or anchor that no longer resolves.
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const README_LINE_LIMIT = 200;
