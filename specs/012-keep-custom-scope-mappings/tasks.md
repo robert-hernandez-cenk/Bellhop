@@ -24,7 +24,7 @@ root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create `test/fixtures/authentik/propertymappings-scope.json` from the live capture described in research.md R1 (a read-only `GET /api/v3/propertymappings/provider/scope/?page_size=100`), redacted per constitution Principle I: every `pk` replaced by an obviously fake UUID in the `00000000-0000-4000-8000-0000000000NN` style other fixtures use, the custom (`managed: null`) mapping's `name`/`description`/`expression` replaced by example values (e.g. name `example-app email (verified via social source)`), built-in mappings kept as captured. Keep the `pagination`/`results`/`autocomplete` top-level shape and every result key.
+- [x] T001 Create `test/fixtures/authentik/propertymappings-scope.json` from the live capture described in research.md R1 (a read-only `GET /api/v3/propertymappings/provider/scope/?page_size=100`), redacted per constitution Principle I: every `pk` replaced by an obviously fake UUID in the `00000000-0000-4000-8000-0000000000NN` style other fixtures use, the custom (`managed: null`) mapping's `name`/`description`/`expression` replaced by example values (e.g. name `example-app email (verified via social source)`), built-in mappings kept as captured. Keep the `pagination`/`results`/`autocomplete` top-level shape and every result key.
 
 ---
 
