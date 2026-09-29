@@ -160,8 +160,18 @@ function buildSnapshotCommand(paths: string[]): string {
 // command, and its reload command.
 export function fileDriver(def: {
   id: ProxyDriverId;
+  // Optional so a test-only fileDriver(...) call that doesn't care about
+  // the Settings dropdown label doesn't have to supply one -- defaults to
+  // the id itself, same convention as statusPage's null default below.
+  label?: string;
   capabilities: DriverCapabilities;
+  // Always a real path here, never null -- a file-configured driver always
+  // has a file (data-model.md "ReverseProxyDriver (extended)": only the
+  // 'none' driver's own defaultConfigPath is null).
   defaultConfigPath: string;
+  // Optional, defaulting to null (no status page) -- only the shipped Caddy
+  // driver sets this today.
+  statusPage?: { suggestedPath: string } | null;
   render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
   validateCommand(configPath: string): string;
   reloadCommand: string;
@@ -176,8 +186,10 @@ export function fileDriver(def: {
 }): ReverseProxyDriver {
   return {
     id: def.id,
+    label: def.label ?? def.id,
     capabilities: def.capabilities,
     defaultConfigPath: def.defaultConfigPath,
+    statusPage: def.statusPage ?? null,
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
       const files = def

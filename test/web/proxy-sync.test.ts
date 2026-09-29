@@ -239,8 +239,10 @@ test('syncProxyLive logs a skip line and makes no Cloudflare call when Cloudflar
 function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
   return {
     id: id as ReverseProxyDriver['id'],
+    label: 'Fake',
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/fake/fake.conf',
+    statusPage: null,
     async plan(): Promise<ProxyPlan> {
       return { preview: '', payload: undefined };
     },

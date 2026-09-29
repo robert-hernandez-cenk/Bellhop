@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../../src/lib/inventory.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../../src/lib/proxy/driver.ts';
+import { NO_PROXY_SYNC_MESSAGE, NO_PROXY_STATUS_PAGE_ERROR } from '../../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../../src/lib/proxy/ids.ts';
-import { getDriver, driverDeps, registerDriverForTests } from '../../../src/lib/proxy/index.ts';
+import { PROXY_DRIVER_IDS, getDriver, driverDeps, registerDriverForTests, DEFAULT_PROXY_DRIVER_ID, listDrivers } from '../../../src/lib/proxy/index.ts';
 import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
 import { fileDriver } from '../../../src/lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../src/lib/proxy/routes.ts';
 import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
@@ -22,14 +24,17 @@ function baseInventory(overrides: Partial<Inventory> = {}): Inventory {
 
 // A minimal fake driver, same shape/convention as test/lib/proxy/driver.test.ts's
 // own fakeDriver -- id is cast through ProxyDriverId since PROXY_DRIVER_IDS
-// only lists 'caddy' (src/lib/proxy/ids.ts), and this test needs
+// only lists 'caddy'/'none' (src/lib/proxy/ids.ts), and this test needs
 // a second, test-only id to exercise the registry without touching the real
-// driver list.
+// driver list. `label`/`statusPage` are required by ReverseProxyDriver but
+// unused by these tests.
 function fakeDriver(id: string): ReverseProxyDriver {
   return {
     id: id as ProxyDriverId,
+    label: 'Fake',
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/fake/fake.conf',
+    statusPage: null,
     async plan(): Promise<ProxyPlan> {
       return { preview: '', payload: undefined };
     },
@@ -62,6 +67,51 @@ test('getDriver throws a named error for an id no registered driver has, with th
     () => getDriver(inv),
     /^Error: Unknown proxyDriver 'nginx' -- run: bellhop set-config proxyDriver caddy --apply$/
   );
+});
+
+test('getDriver returns noneDriver when proxyDriver is "none"', () => {
+  const inv = baseInventory({ proxyDriver: 'none' });
+  assert.equal(getDriver(inv), noneDriver);
+});
+
+// --- driver ids / registry metadata (issue #33) ----------------------------
+
+test('PROXY_DRIVER_IDS equals [caddy, none]', () => {
+  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'none']);
+});
+
+test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
+  assert.equal(DEFAULT_PROXY_DRIVER_ID, 'caddy');
+});
+
+test('listDrivers returns Caddy then None, in registration order', () => {
+  assert.deepEqual(listDrivers(), [caddyDriver, noneDriver]);
+});
+
+test('Caddy driver metadata: label, defaultConfigPath, statusPage', () => {
+  assert.equal(caddyDriver.label, 'Caddy');
+  assert.equal(caddyDriver.defaultConfigPath, '/etc/caddy/Caddyfile');
+  assert.deepEqual(caddyDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });
+});
+
+test('None driver metadata: label, defaultConfigPath, statusPage, capabilities', () => {
+  assert.equal(noneDriver.id, 'none');
+  assert.equal(noneDriver.label, 'No proxy');
+  assert.equal(noneDriver.defaultConfigPath, null);
+  assert.equal(noneDriver.statusPage, null);
+  assert.deepEqual(noneDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false });
+});
+
+test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
+  const ssh = new FakeSSHClient(defaultResponder);
+  const deps = { ssh, inventory: baseInventory(), proxyHost: 'pve1', configPath: '/etc/caddy/Caddyfile' };
+  const plan = await noneDriver.plan([], { externalPort: 443 }, deps);
+  assert.equal(plan.preview, NO_PROXY_SYNC_MESSAGE);
+
+  await noneDriver.apply(plan, deps);
+  assert.equal(ssh.history.length, 0, 'apply() must make no SSH calls');
+
+  await assert.rejects(() => noneDriver.snapshot(deps), new RegExp(`^Error: ${NO_PROXY_STATUS_PAGE_ERROR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
 });
 
 // --- driverDeps -------------------------------------------------------------

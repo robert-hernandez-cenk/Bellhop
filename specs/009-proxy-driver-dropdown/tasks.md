@@ -21,7 +21,7 @@ None needed: existing project, dependencies installed.
 
 **Purpose**: The `none` id and driver metadata that every story reads.
 
-- [ ] T001 Write failing tests in `test/lib/proxy/index.test.ts` and `test/lib/proxy/driver.test.ts`. Cover:
+- [x] T001 Write failing tests in `test/lib/proxy/index.test.ts` and `test/lib/proxy/driver.test.ts`. Cover:
   - `PROXY_DRIVER_IDS` equals `['caddy', 'none']`.
   - `getDriver({ ...inv, proxyDriver: 'none' }).id === 'none'`, and an unset setting still returns `caddy`.
   - `DEFAULT_PROXY_DRIVER_ID === 'caddy'`.
@@ -32,26 +32,26 @@ None needed: existing project, dependencies installed.
   - `checkCapabilities` returns `[]` for forward and oidc routes under `noneDriver`.
   - None's `plan()` preview equals `NO_PROXY_SYNC_MESSAGE`, `apply()` resolves with no SSH calls, and `snapshot()` rejects with `NO_PROXY_STATUS_PAGE_ERROR`.
   - `SettingsSchema.safeParse({ proxyDriver: 'none' })` succeeds and `{ proxyDriver: 'nginx' }` fails; put these in `test/lib/inventory.test.ts` or wherever SettingsSchema is already tested.
-- [ ] T002 Add `'none'` to `PROXY_DRIVER_IDS` in `src/lib/proxy/ids.ts` and update its comment.
-- [ ] T003 Extend `ReverseProxyDriver` in `src/lib/proxy/driver.ts`:
+- [x] T002 Add `'none'` to `PROXY_DRIVER_IDS` in `src/lib/proxy/ids.ts` and update its comment.
+- [x] T003 Extend `ReverseProxyDriver` in `src/lib/proxy/driver.ts`:
   - Add `label: string`.
   - Change to `defaultConfigPath: string | null` ("null = the driver uses no configuration file").
   - Add `statusPage: { suggestedPath: string } | null` ("null = no status page served").
   - Export `managesProxy(driver)`, which is `false` only for the `none` driver.
   - Export the constants `NO_PROXY_SYNC_MESSAGE` and `NO_PROXY_STATUS_PAGE_ERROR` with the exact text from `contracts/commands-and-messages.md`. The error text uses `settingFix('proxyDriver', 'caddy')` from `src/lib/settings-hint.ts`.
-- [ ] T004 Thread `label` and `statusPage` through `fileDriver(def)` in `src/lib/proxy/file-driver.ts`. Its own `defaultConfigPath` stays a non-null `string`, since a file-configured driver always has a file. Then set `label: 'Caddy'` and `statusPage: { suggestedPath: '/usr/share/caddy/index.html' }` in `src/lib/proxy/drivers/caddy.ts`.
-- [ ] T005 Create `src/lib/proxy/drivers/none.ts` exporting `noneDriver`, with the metadata above:
+- [x] T004 Thread `label` and `statusPage` through `fileDriver(def)` in `src/lib/proxy/file-driver.ts`. Its own `defaultConfigPath` stays a non-null `string`, since a file-configured driver always has a file. Then set `label: 'Caddy'` and `statusPage: { suggestedPath: '/usr/share/caddy/index.html' }` in `src/lib/proxy/drivers/caddy.ts`.
+- [x] T005 Create `src/lib/proxy/drivers/none.ts` exporting `noneDriver`, with the metadata above:
   - `plan()` returns `{ preview: NO_PROXY_SYNC_MESSAGE, payload: null }`.
   - `apply()` is a no-op.
   - `snapshot()` throws `new Error(NO_PROXY_STATUS_PAGE_ERROR)`.
   - A short header comment explains that "none" means Bellhop manages no reverse proxy, not that none exists (issue #33).
-- [ ] T006 Update the registry in `src/lib/proxy/index.ts`:
+- [x] T006 Update the registry in `src/lib/proxy/index.ts`:
   - Register `noneDriver` after Caddy.
   - Export `DEFAULT_PROXY_DRIVER_ID = 'caddy'` and use it in `getDriver` instead of the literal.
   - Export `listDrivers(): ReverseProxyDriver[]`, in registration order.
   - In `driverDeps`, resolve `configPath` as `inventory.proxyConfigPath ?? driver.defaultConfigPath`. When the result is `null`, throw `Error("The '<id>' proxy driver has no default config path -- " + settingFix('proxyConfigPath', '</absolute/path>'))`.
   - Fix any other compile errors caused by the nullable `defaultConfigPath`, for example in `test/lib/proxy/*` fakes, which now need `label`/`statusPage`.
-- [ ] T007 Run `npm run typecheck` and `npm test`. T001 should now pass and everything else stays green.
+- [x] T007 Run `npm run typecheck` and `npm test`. T001 should now pass and everything else stays green.
 
 **Checkpoint**: `none` is a valid, registered driver. Nothing user-visible has changed yet.
 

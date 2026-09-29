@@ -2,6 +2,11 @@ import type { SSHClient } from '../ssh-client.ts';
 import type { Inventory } from '../inventory.ts';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
 import type { ProxyDriverId } from './ids.ts';
+// settings-hint.ts only imports a *type* from inventory.ts, and inventory.ts
+// only imports PROXY_DRIVER_IDS (a value) from ./ids.ts -- neither of those
+// reaches back into this file, so importing settingFix here as an ordinary
+// value import creates no cycle.
+import { settingFix } from '../settings-hint.ts';
 
 export type ProxyAuthMode = 'forward' | 'oidc';
 
@@ -28,12 +33,43 @@ export interface ProxyPlan {
 
 export interface ReverseProxyDriver {
   id: ProxyDriverId;
+  // The Settings page's dropdown label (data-model.md "ReverseProxyDriver
+  // (extended)") -- 'Caddy', 'No proxy', etc.
+  label: string;
   capabilities: DriverCapabilities;
-  defaultConfigPath: string;
+  // null = the driver uses no configuration file (only the 'none' driver
+  // today). driverDeps() in src/lib/proxy/index.ts only ever calls this on
+  // a driver that managesProxy(), so a managed, file-configured driver with
+  // defaultConfigPath: null and no proxyConfigPath override is a
+  // programming error, not a reachable runtime state for 'none'.
+  defaultConfigPath: string | null;
+  // null = no status page served (only the 'none' driver today) --
+  // render-status-page reads this before it reads statusPagePath.
+  statusPage: { suggestedPath: string } | null;
   plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan>;
   apply(plan: ProxyPlan, deps: DriverDeps): Promise<void>; // throws on failure
   snapshot(deps: DriverDeps): Promise<string>; // throws on failure
 }
+
+// false only for the 'none' driver (issue #33) -- every real caller reads
+// this instead of comparing driver.id === 'none' directly, so a future
+// driver that also manages no proxy (unlikely, but the seam should not
+// assume there is exactly one) only has to say so through this metadata.
+export function managesProxy(driver: ReverseProxyDriver): boolean {
+  return driver.id !== 'none';
+}
+
+// The exact text contracts/commands-and-messages.md pins for every
+// proxyDriver: 'none' caller (sync-proxy, syncProxyLive, migrate-guest, the
+// CLI, and the sync-proxy web/MCP operation) -- one shared string so none
+// of them can drift from each other.
+export const NO_PROXY_SYNC_MESSAGE = "proxyDriver is 'none' -- Bellhop manages no reverse proxy, so there is nothing to write";
+
+// Thrown by runRenderStatusPage (CLI and operation) before any SSH call when
+// the active driver's statusPage is null -- there is neither a managed
+// proxy nor a document root to write the page to.
+export const NO_PROXY_STATUS_PAGE_ERROR =
+  "proxyDriver is 'none' -- there is no Bellhop-managed proxy to serve a status page -- " + settingFix('proxyDriver', 'caddy');
 
 export interface CapabilityError {
   owner: ProxyRoute['owner'];
