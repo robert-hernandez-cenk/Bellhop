@@ -18,3 +18,9 @@ Expect:
 2. Call `get_vpn_gateway_status` with a real gateway name. Compare it with the Dashboard gateway card.
 3. Call `list_vpn_gateway_servers`, `list_vpn_gateway_cities` (a country from step 2's list), and `list_vpn_gateway_groups` (NordVPN; on PIA, expect the "not supported by this provider" error).
 4. Only with the operator's go-ahead: `connect_vpn_gateway` to the gateway's *current* country, so traffic lands where it already was. Then confirm with status.
+
+## Verification record (2026-09-29)
+
+- `npm run typecheck`: clean. `npm test`: 1801 tests, 1799 pass, 0 fail, 2 skipped (pre-existing). `npm run web:build`: built.
+- Live, read-only, through the real MCP server over stdio against three NordVPN gateways: `get_vpn_gateway_status` returned the agent's full status shape for each, `list_vpn_gateway_servers` returned 150 countries, `list_vpn_gateway_cities` returned the current country's cities, and `list_vpn_gateway_groups` returned 19 groups. An unknown name gave `isError` with `Unknown VPN gateway: <name>`.
+- Not verified live: `connect_vpn_gateway`, because it switches real traffic, and a PIA gateway, because none is deployed. Both are covered by the automated tests.
