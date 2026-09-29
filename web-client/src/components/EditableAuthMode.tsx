@@ -176,15 +176,22 @@ function parseLocal(value: string): string[] {
   return Array.from(new Set(value.split(';').map((s) => s.trim()).filter(Boolean)));
 }
 
-// The "callback urls" row -- a ';'-separated Callback URLs
-// input, saved on blur, admin-only. Never itself triggers the OIDC-client
-// deletion confirmation (only switching modes or clearing the access tier
-// does, per FR-022a) -- the server still validates each URL is an absolute
-// http(s) address (400 otherwise), surfaced the same way any other save
-// error is.
-export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
+// One of the two additive OIDC callback-URL lists a guest carries (issue
+// #22): the web browser's own callback (oidcRedirectUris) and a native
+// app's (oidcMobileRedirectUris). Both fields are ';'-separated inputs
+// saved on blur, admin-only, sharing every bit of edit/save/error/
+// Authentik-banner handling -- see useOidcUrlListField below.
+type OidcUrlListFieldName = 'oidcRedirectUris' | 'oidcMobileRedirectUris';
+
+// Shared state/save logic for one OIDC callback-URL list field. Neither
+// field itself triggers the OIDC-client deletion confirmation (only
+// switching modes or clearing the access tier does, per FR-022a) -- the
+// server still validates each URL is an absolute http(s) address (400
+// otherwise), surfaced the same way any other save error is.
+function useOidcUrlListField(guest: GuestEntry, onSaved: () => void, field: OidcUrlListFieldName) {
   const { whoami } = useWhoAmI();
-  const [value, setValue] = useState((guest.oidcRedirectUris ?? []).join('; '));
+  const storedValue = guest[field];
+  const [value, setValue] = useState((storedValue ?? []).join('; '));
   const [status, setStatus] = useState<SaveStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
@@ -193,13 +200,18 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
   const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
 
   useEffect(() => {
-    setValue((guest.oidcRedirectUris ?? []).join('; '));
-  }, [guest.oidcRedirectUris]);
+    setValue((storedValue ?? []).join('; '));
+    // storedValue (guest[field]) is the real dependency; guest/field are
+    // stable props of the calling component for the lifetime of this hook
+    // instance, included so a future field/guest identity change is never
+    // silently missed by the linter's exhaustive-deps rule.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedValue]);
 
   const isAdmin = !!whoami?.isAdmin;
 
   const save = async () => {
-    if (sameList(parseLocal(value), guest.oidcRedirectUris ?? [])) return;
+    if (sameList(parseLocal(value), storedValue ?? [])) return;
     setStatus('saving');
     setError(null);
     setConflicts([]);
@@ -207,7 +219,7 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
     setDiscoveryFailures([]);
     setSkipped([]);
     try {
-      const res = await patchGuest(guest.name, { oidcRedirectUris: value });
+      const res = await patchGuest(guest.name, { [field]: value });
       setConflicts(res.authentikConflicts ?? []);
       setConflictAdoptable(res.authentikConflictAdoptable === true);
       setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
@@ -225,15 +237,33 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
     }
   };
 
+  return { value, setValue, status, setStatus, error, conflicts, conflictAdoptable, skipped, discoveryFailures, isAdmin, save };
+}
+
+interface OidcUrlListFieldProps extends Props {
+  field: OidcUrlListFieldName;
+  placeholder: string;
+  disabledTitle: string;
+  // Extra help text rendered unconditionally below the "Only used in OIDC
+  // mode." note -- only the mobile-redirect field has one today.
+  helpNote?: string;
+}
+
+// Shared render for one OIDC callback-URL list row -- the input, its
+// notes, and the same Authentik banners every Editable* OIDC row shows.
+function OidcUrlListField({ guest, onSaved, field, placeholder, disabledTitle, helpNote }: OidcUrlListFieldProps) {
+  const { value, setValue, status, setStatus, error, conflicts, conflictAdoptable, skipped, discoveryFailures, isAdmin, save } =
+    useOidcUrlListField(guest, onSaved, field);
+
   return (
     <div>
       <input
         className="inline-input"
         type="text"
         value={value}
-        placeholder="https://media.example.com/auth/callback"
+        placeholder={placeholder}
         disabled={!isAdmin || status === 'saving'}
-        title={isAdmin ? undefined : 'Only an admin may change callback URLs'}
+        title={isAdmin ? undefined : disabledTitle}
         onChange={(e) => {
           setValue(e.target.value);
           setStatus('idle');
@@ -241,6 +271,7 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
         onBlur={save}
       />
       {!isOidcEffective(guest) && <div className="field-note">Only used in OIDC mode.</div>}
+      {helpNote && <div className="field-note">{helpNote}</div>}
       {status === 'saving' && <span className="save-status">Saving…</span>}
       {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
       {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
@@ -256,85 +287,32 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
   );
 }
 
-// The "mobile app redirect urls" row -- modelled on EditableOidcRedirectUris
-// above (same edit/save/error/admin/Authentik-banner handling), but PATCHes
-// the separate, additive oidcMobileRedirectUris list (issue #22). Never
-// itself triggers the OIDC-client deletion confirmation, same as the
-// callback-urls row.
-export function EditableOidcMobileRedirectUris({ guest, onSaved }: Props) {
-  const { whoami } = useWhoAmI();
-  const [value, setValue] = useState((guest.oidcMobileRedirectUris ?? []).join('; '));
-  const [status, setStatus] = useState<SaveStatus>('idle');
-  const [error, setError] = useState<string | null>(null);
-  const [conflicts, setConflicts] = useState<string[]>([]);
-  const [discoveryFailures, setDiscoveryFailures] = useState<OidcDiscoveryFailure[]>([]);
-  const [conflictAdoptable, setConflictAdoptable] = useState(false);
-  const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
-
-  useEffect(() => {
-    setValue((guest.oidcMobileRedirectUris ?? []).join('; '));
-  }, [guest.oidcMobileRedirectUris]);
-
-  const isAdmin = !!whoami?.isAdmin;
-
-  const save = async () => {
-    if (sameList(parseLocal(value), guest.oidcMobileRedirectUris ?? [])) return;
-    setStatus('saving');
-    setError(null);
-    setConflicts([]);
-    setConflictAdoptable(false);
-    setDiscoveryFailures([]);
-    setSkipped([]);
-    try {
-      const res = await patchGuest(guest.name, { oidcMobileRedirectUris: value });
-      setConflicts(res.authentikConflicts ?? []);
-      setConflictAdoptable(res.authentikConflictAdoptable === true);
-      setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
-      setSkipped(res.oidcSkipped ?? []);
-      if (res.proxySynced) {
-        setStatus('saved');
-      } else {
-        setStatus('proxy-error');
-        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
-      }
-      onSaved();
-    } catch (err) {
-      setStatus('error');
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
+// The "callback urls" row -- the web browser's own OIDC callback address.
+// Rendered/behaved identically to before this was factored out: same
+// placeholder, same disabled title, no extra help note.
+export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
   return (
-    <div>
-      <input
-        className="inline-input"
-        type="text"
-        value={value}
-        placeholder="com.example.app:/auth/callback"
-        disabled={!isAdmin || status === 'saving'}
-        title={isAdmin ? undefined : 'Only an admin may change mobile app redirect URLs'}
-        onChange={(e) => {
-          setValue(e.target.value);
-          setStatus('idle');
-        }}
-        onBlur={save}
-      />
-      {!isOidcEffective(guest) && <div className="field-note">Only used in OIDC mode.</div>}
-      <div className="field-note">
-        For a native app&apos;s sign-in callback (custom scheme or its mobile-redirect page). Adds one consent click
-        to mobile sign-ins only.
-      </div>
-      {status === 'saving' && <span className="save-status">Saving…</span>}
-      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
-      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
-      {error && <div className="warning-banner">{error}</div>}
-      <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={isAdmin} />
-      <AuthentikSkipBanner skipped={skipped} />
-      {discoveryFailures.length > 0 && (
-        <div className="warning-banner">
-          OIDC discovery check failed: {discoveryFailures.map((f) => `${f.slug} (${f.issuer}): ${f.error}`).join('; ')}
-        </div>
-      )}
-    </div>
+    <OidcUrlListField
+      guest={guest}
+      onSaved={onSaved}
+      field="oidcRedirectUris"
+      placeholder="https://media.example.com/auth/callback"
+      disabledTitle="Only an admin may change callback URLs"
+    />
+  );
+}
+
+// The "mobile app redirect urls" row -- a native app's own callback
+// address, additive to oidcRedirectUris (issue #22).
+export function EditableOidcMobileRedirectUris({ guest, onSaved }: Props) {
+  return (
+    <OidcUrlListField
+      guest={guest}
+      onSaved={onSaved}
+      field="oidcMobileRedirectUris"
+      placeholder="com.example.app:/auth/callback"
+      disabledTitle="Only an admin may change mobile app redirect URLs"
+      helpNote="For a native app's sign-in callback (custom scheme or its mobile-redirect page). Adds one consent click to mobile sign-ins only."
+    />
   );
 }
