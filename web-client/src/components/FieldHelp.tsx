@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
+import type { FocusEvent } from 'react';
 
 // Generic field-label + info-marker disclosure (issue #34). Deliberately has
 // no import of any help-text map -- the caller (AdvancedGuestModal today,
@@ -8,9 +9,10 @@ import { useEffect, useId, useRef } from 'react';
 // state so at most one explanation is open at a time across a whole modal.
 //
 // tabIndex={-1} on the popover is deliberate: clicking inside the popover
-// (to select text, say) focuses it, which is what lets the outside-pointerdown
-// listener below (T007) treat "moved into the popover" as staying open rather
-// than closing.
+// (to select text, say) focuses it, which is what lets the containment
+// checks below -- the outside-pointerdown listener (T007) and the
+// pinned-blur-close rule (T009) -- treat "moved into the popover" as staying
+// open rather than closing.
 
 interface FieldHelpProps {
   field: string;
@@ -22,7 +24,7 @@ interface FieldHelpProps {
   onClose(): void;
 }
 
-export function FieldHelp({ field, text, open, onHover, onToggle, onClose }: FieldHelpProps) {
+export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClose }: FieldHelpProps) {
   const id = useId();
   const wrapperRef = useRef<HTMLSpanElement>(null);
 
@@ -43,6 +45,19 @@ export function FieldHelp({ field, text, open, onHover, onToggle, onClose }: Fie
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [open, onClose]);
 
+  // T009 (US3): a pinned explanation closes once focus leaves both the
+  // button and the popover -- shared by the button's and the popover's own
+  // onBlur below, since either can be the one losing focus (clicking inside
+  // the popover moves focus there; tabbing away from it should still close).
+  // An unpinned (hover-only) explanation is left alone here -- hover-out
+  // already handles that case via onHover.
+  function handleBlur(e: FocusEvent) {
+    if (!pinned) return;
+    const next = e.relatedTarget as Node | null;
+    if (wrapperRef.current && next && wrapperRef.current.contains(next)) return;
+    onClose();
+  }
+
   return (
     <span className="field-help" ref={wrapperRef}>
       {field}
@@ -59,11 +74,22 @@ export function FieldHelp({ field, text, open, onHover, onToggle, onClose }: Fie
           if (e.pointerType === 'mouse') onHover(false);
         }}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          // Escape closes the explanation, not the modal (research R4) --
+          // stopPropagation so a future modal-level Escape handler never
+          // sees this keypress. Focus is deliberately left on the button:
+          // Escape doesn't move focus by default, and nothing here moves it.
+          if (open && e.key === 'Escape') {
+            e.stopPropagation();
+            onClose();
+          }
+        }}
+        onBlur={handleBlur}
       >
         ⓘ
       </button>
       {open && (
-        <div id={id} className="field-help-popover" tabIndex={-1}>
+        <div id={id} className="field-help-popover" tabIndex={-1} onBlur={handleBlur}>
           {text}
         </div>
       )}

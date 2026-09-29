@@ -102,7 +102,7 @@ None. The existing `web-client/` app and test layout are used as they are.
 
 **Independent Test**: keyboard only, open and close each explanation.
 
-- [ ] T009 [US3] In `web-client/src/components/FieldHelp.tsx`:
+- [x] T009 [US3] In `web-client/src/components/FieldHelp.tsx`:
   - An `onKeyDown` on the button handles `Escape` while open: call `onClose()` and `e.stopPropagation()`, and leave focus on the button (research R4).
   - An `onBlur` on the button calls `onClose()` when `pinned`, unless `e.relatedTarget` is inside the popover.
   - Enter/Space already toggle through the native button's `click`.
