@@ -600,12 +600,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
   driver rather than untangling Caddy-specific code throughout the toolkit.
-  Caddy and nginx (issue #30) are the two drivers that ship and actually
-  manage a proxy -- an admin-API Caddy driver, and drivers for Nginx Proxy
-  Manager/HAProxy, are follow-up issues (its shape was checked against all
-  four on paper first; see `specs/006-reverse-proxy-driver/research.md`).
-  A third registered driver, `none`, ships alongside them as of issue #33
-  -- see "A driver that manages no reverse proxy at all" below.
+  Caddy, nginx (issue #30), and Nginx Proxy Manager (issue #31) are the
+  three drivers that ship and actually manage a proxy -- an admin-API
+  Caddy driver and an HAProxy Data Plane API driver are the remaining
+  follow-up issues (its shape was checked against all four candidates on
+  paper first; see `specs/006-reverse-proxy-driver/research.md`). A fourth
+  registered driver, `none`, ships alongside them as of issue #33 -- see
+  "A driver that manages no reverse proxy at all" below.
   Single-operator-assumption
   update: this toolkit is no longer hard-wired to Caddy -- exactly one
   driver is active per deployment (`proxyDriver`, a per-deployment choice,
@@ -658,8 +659,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   "render this file", with `fileDriver` supplying everything a
   file-configured driver needs on top of that); `index.ts`'s
   `getDriver(inventory)` resolves the `proxyDriver` setting (unset means
-  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'nginx'`, issue #30, and
-  `'none'`, issue #33, are the other registered ids;
+  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'nginx'` (issue #30),
+  `'nginx-proxy-manager'` (issue #31), and `'none'` (issue #33) are the
+  other registered ids;
   an id no registered driver has -- only reachable by hand-editing
   `bellhop.db`, since the schema's own zod enum already rejects any other
   value at load time -- throws `"Unknown proxyDriver '<id>' -- run: bellhop
@@ -667,11 +669,22 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `driverDeps(inventory, ssh, driver)` resolves the rest of what
   `plan()`/`apply()`/`snapshot()` need (`proxyHost` from the entry flagged
   `proxy: true`, throwing `"No inventory entry has 'proxy: true'"` if none
-  is; `configPath` from the `proxyConfigPath` setting, else the driver's
-  own `defaultConfigPath`, throwing if that resolves to `null` -- only
-  reachable for a driver that manages no proxy, which every real caller
-  short-circuits around before `driverDeps` ever runs). `index.ts` also
-  exports `listDrivers()` (every registered driver, Caddy, nginx, then None, in
+  is; `configPath: string | null` from the `proxyConfigPath` setting, else
+  the driver's own `defaultConfigPath` -- or `null`, ignoring any
+  `proxyConfigPath`, when that `defaultConfigPath` is itself `null` (issue
+  #31, research.md R11): a driver with no configuration file at all (the
+  Nginx Proxy Manager driver, which reconciles over REST instead) has
+  nowhere for `proxyConfigPath` to point, so that setting is silently
+  ignored rather than used as a fallback file path -- `driverDeps` no
+  longer throws over this the way it once did for a driver that manages no
+  proxy at all (`'none'`, which every real caller short-circuits around
+  before `driverDeps` ever runs, so this case never actually reaches it
+  either). A file-configured driver (`fileDriver`) never has a null
+  `defaultConfigPath` in practice, so this resolution never reaches it; it
+  resolves `configPath` through its own helper, which still throws a
+  programming-error message if it's ever handed `null`. `index.ts` also
+  exports `listDrivers()` (every registered driver, Caddy, nginx, Nginx
+  Proxy Manager, then None, in
   registration order -- the Settings page's dropdown source), and
   `driver.ts` exports `managesProxy(driver)` (`driver.id !==
   NO_PROXY_DRIVER_ID`, the constant in `ids.ts` -- `false` only for the
@@ -836,7 +849,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false }` --
   nginx cannot obtain its own certificate the way Caddy's DNS-01 does, so
   it never leaves a stale `_acme-challenge` record behind for
-  `prune-acme-challenges` to find (see that bullet below).
+  `prune-acme-challenges` to find (see that bullet below). As of issue #31,
+  everything this bullet describes from the two `map` blocks through the
+  last `location` -- the whole body of one `server {}` block -- is
+  rendered by one shared function, `renderServerBody`
+  (`src/lib/proxy/nginx-locations.ts`), extracted out of this file so the
+  Nginx Proxy Manager driver's `advanced_config` can never drift from what
+  this driver renders (FR-016, see that driver's own bullet below); the
+  output is unchanged byte-for-byte from before the extraction, so
+  everything below still describes exactly what this driver's own file
+  contains.
   `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`,
   `statusPage: { suggestedPath: '/var/www/html/index.html' }` (the
   Debian/Ubuntu nginx package's default document root -- serving it is the
@@ -944,6 +966,115 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   DNS-01 does, one operator-managed certificate (in practice a wildcard
   for the domain, issued and renewed by something like `certbot`) covers
   every site this driver generates instead.
+- **Nginx Proxy Manager driver** (`src/lib/proxy/drivers/nginx-proxy-manager.ts`,
+  `src/lib/npm-client.ts`, issue #31) is the third driver that ships, and
+  the first *managed* driver with no configuration file of its own
+  (research.md R11): `defaultConfigPath: null`, so `driverDeps` resolves
+  its `configPath` to `null` rather than throwing (see the driver-interface
+  bullet above -- `DriverDeps.configPath` is `string | null` precisely for
+  this driver), and the Settings page hides Proxy config path/Status page
+  path/the TLS fields for it the same way it already hides them for
+  `none`. `capabilities: { authModes: ['forward', 'oidc'],
+  acmeDns01ViaCloudflare: false }`; `statusPage: null` too, since it has no
+  document root of its own to serve one from.
+
+  `NpmClient` (`src/lib/npm-client.ts`) wraps Nginx Proxy Manager's (NPM's)
+  REST API the same injection pattern as `AuthentikClient`/
+  `CloudflareClient`: a plain interface, a `zod`-validated `RealNpmClient`,
+  and `buildNpmClient(inventory)`, which reads `NPM_API_EMAIL`/
+  `NPM_API_PASSWORD` (and optional `NPM_API_URL`, else derived from the
+  `proxy: true` entry's `ip` at port 81) from `data/nginx-proxy-manager.env`
+  -- dotenv-loaded by the same three entry points (`src/cli.ts`,
+  `src/web/server.ts`, `src/mcp/server.ts`) that load
+  `data/cloudflare-api.env` -- throwing a named error before any request
+  when either credential is missing, or when no URL can be derived either
+  way. It logs into `/api/tokens` lazily, once per `plan()`/`apply()`/
+  `snapshot()` call (each builds its own client via `clientFor`), and never
+  refreshes -- a sync takes seconds against NPM's one-day token (research
+  R1). Every request carries `AbortSignal.timeout(NPM_REQUEST_TIMEOUT_MS)`
+  (10s), except `requestCertificate`, which gets
+  `NPM_CERTIFICATE_TIMEOUT_MS` (180s) since NPM runs certbot synchronously
+  inside that one request (research R3). `NpmCertificateSchema` carries no
+  `meta` field at all, so a certificate's PEM body/private key (NPM's own
+  `meta` on a custom certificate) is dropped at the parse boundary and can
+  never reach a preview, a log, `snapshot()`, or an error message,
+  whichever caller reads a certificate (research R8's "Security note").
+
+  **Ownership** (research R4): the first line of every Bellhop-owned proxy
+  host's `advanced_config` is `NPM_OWNERSHIP_MARKER`, a `# Managed by
+  Bellhop sync-proxy...` comment visible in NPM's own UI -- `isOwned(host)`
+  is the one predicate every other function in the file uses, and deleting
+  that line by hand is a deliberate "hand this host back to me" (mirrors
+  the nginx driver's `ownedHeader`). `planNpmSync` (the pure planning
+  function `plan()` calls) matches each route to the *owned* host keyed by
+  its canonical (`hostnames[0]`) name; an *unowned* host claiming any of a
+  route's names -- canonical or alias -- makes that route a `conflict`
+  instead of a create/update. The route's own already-owned host, if it
+  has one, is marked matched *before* the conflict check runs, so a
+  conflicting route's own live host is never swept up by "every owned host
+  no route matched -> delete" the way an unrelated stale host would be.
+  Matching is fully case-insensitive on both sides (NPM itself is) -- every
+  stored/compared hostname is lower-cased first, so a route and a host
+  differing only in case are never a false conflict or a spurious drift.
+
+  **Update ordering**: NPM rejects a write naming a hostname another proxy
+  host still holds (`"<name> is already in use"`), so when an alias moves
+  from one Bellhop host to another in the same apply, the update releasing
+  it must run before the update claiming it. `orderUpdates` is a stable
+  topological sort over the planned updates (`x` must precede `y` when
+  `x`'s *current* domain names include one `y`'s *desired* names include);
+  ties keep route order, and a genuine cycle (two hosts swapping aliases)
+  can't be ordered at all -- it keeps route order and fails loudly on
+  NPM's own rejection rather than silently reordering into something
+  wrong. Deletes always run first and creates always run last (research
+  R10), so a name is freed before anything could reclaim it.
+
+  **Certificates** (research R8): `chooseCertificate` keeps a host's
+  current certificate while it still covers every route hostname and
+  isn't expired; otherwise it picks the qualifying certificate with the
+  latest `expires_on` (lowest id on a tie); with none qualifying,
+  `apply()` has NPM request one over its default HTTP-01 challenge right
+  before that route's own create/update (`requestCertificate`, using the
+  login email as certbot's contact -- the 2.16 schema has no separate
+  `letsencrypt_email` field). A failed request throws naming the route and
+  NPM's own error and leaves the existing host (an update) or no host at
+  all (a create) untouched.
+
+  **Read-back** (research R6): NPM accepts a host nginx later rejects, so
+  after every create/update the driver re-`GET`s that host and throws if
+  `meta.nginx_online === false`, quoting `meta.nginx_err` -- the failure
+  names the id, the canonical hostname, and that the site is offline until
+  the next successful sync. The first NPM error of any kind stops
+  `apply()` outright; a non-empty `conflicts` list only throws *after*
+  every other create/update/delete has run, naming every conflicting
+  route together.
+
+  `desiredProxyHost` calls the same shared `renderServerBody`
+  (`src/lib/proxy/nginx-locations.ts`) the nginx driver's own bullet above
+  describes, extracted out of that file for exactly this (FR-016): the
+  nginx driver passes its own `$bellhop_http_host`/
+  `$bellhop_connection_upgrade` `map` variables, this driver passes NPM's
+  own template built-ins (`$http_host`/`$http_connection`, since
+  `advanced_config` sits inside NPM's own `server {}` and a `map` is only
+  valid at `http {}` level -- research R5), so the two drivers' rendered
+  bodies can never drift apart. Every Bellhop host also gets the same
+  fixed R9 settings sent in full on every create/update
+  (`ssl_forced`/`http2_support`/`allow_websocket_upgrade`: on;
+  `block_exploits`/`caching_enabled`/`hsts_*`/`trust_forwarded_proto`: off;
+  `access_list_id: 0`; `locations: []`), so a hand-edit to any of them in
+  NPM's UI is drift the next sync silently reverts rather than a setting
+  read back from NPM first.
+
+  `test/support/fake-npm-client.ts`'s `FakeNpmClient` is the in-memory
+  `NpmClient` every driver test uses (assigns ids the way NPM does,
+  replicates NPM's duplicate-hostname rejection, can be told to mark
+  writes offline or fail a certificate request) -- no network, same
+  precedent as `FakeSSHClient`/`FakeAuthentikClient`/`FakeCloudflareClient`.
+  `test/lib/npm-client.test.ts` instead pins `RealNpmClient` itself against
+  **captured, redacted fixtures** in `test/fixtures/nginx-proxy-manager/`
+  (real Nginx Proxy Manager 2.16.0 responses, tokens/PEM bodies/loopback
+  addresses replaced, shape unchanged -- constitution Principle I), the
+  same convention `authentik-client.test.ts` established.
 - **`sync-authentik`**
   (`src/commands/networking/sync-authentik.ts`) is `sync-proxy`'s
   counterpart for the Authentik side of issue #80's per-app forward-auth:
@@ -2591,7 +2722,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
   managesProxy, usesSharedCertificate, configPathNote }`, Caddy, nginx,
-  then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
+  Nginx Proxy Manager, then None) and `defaultProxyDriver`
+  (`DEFAULT_PROXY_DRIVER_ID`) to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
   tested with plain `node --test`, same convention as `admin-nav.ts`)
@@ -2605,12 +2737,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   path, and Proxy TLS certificate/key fields apply at all: a driver whose
   `managesProxy` is `false` (only `none` today) hides all of them
   entirely rather than showing them disabled or empty; a managed driver
-  always shows Proxy config path (placeholder its `defaultConfigPath`, or
-  empty with "Required: this driver has no default." help text when that
-  is `null`, with the driver's own `configPathNote` appended when it has
-  one -- nginx's says it replaces the whole file and refuses one it didn't
-  generate, Caddy's that only the managed section is replaced), shows
-  Status page path only when its `suggestedStatusPagePath` is non-null,
+  with a `defaultConfigPath` shows Proxy config path with that path as its
+  placeholder (the driver's own `configPathNote` appended to the help text
+  when it has one -- nginx's says it replaces the whole file and refuses
+  one it didn't generate, Caddy's that only the managed section is
+  replaced); a managed driver with no config file at all
+  (`defaultConfigPath: null` -- issue #31, the Nginx Proxy Manager driver,
+  which reconciles over REST instead) hides the config path field the same
+  way a driver that manages no proxy does, since there is no file for the
+  field to name or override -- research.md R11 notes the old "Required:
+  this driver has no default" empty-with-help-text state this replaced was
+  never actually reachable before a real driver had `defaultConfigPath:
+  null` to trigger it. Every managed driver shows Status page path only
+  when its `suggestedStatusPagePath` is non-null (`null` for Nginx Proxy
+  Manager too, since it has no document root to serve one from),
   and shows the two TLS fields only when `usesSharedCertificate` is true
   (`showTlsFields`; nginx only, issue #30 -- driver metadata, never an id
   comparison in the page); an unrecognized id (never reachable through the
@@ -2746,7 +2886,8 @@ the same rigor as any other correctness bug.
   otherwise-tracked `inventory/` directory (see "Inventory" above). Copy
   `inventory/bellhop.db` (plus its `-wal`/`-shm` sidecar files, for a
   consistent snapshot), `data/authentik.env` and, when present,
-  `data/cloudflare-api.env` across from the operator's deployment checkout
+  `data/cloudflare-api.env` and `data/nginx-proxy-manager.env` across from
+  the operator's deployment checkout
   (the one the web service actually runs from), `mkdir -p`-ing the
   worktree's `data/` first. Never seed from the main checkout: main holds
   no real data at all — no `inventory/bellhop.db`, no `data/` — so running
