@@ -28,7 +28,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 ## Phase 2: Foundational (blocks US1 and US2)
 
-- [ ] T002 In `src/lib/inventory.ts`, add the `oidcMobileRedirectUris` field. Tests go in `test/lib/inventory.test.ts`.
+- [x] T002 In `src/lib/inventory.ts`, add the `oidcMobileRedirectUris` field. Tests go in `test/lib/inventory.test.ts`.
   - **Tests first**: custom scheme `app.example:///oauth-callback` accepted; `https://books.example.com/auth/openid/mobile-redirect` accepted; `javascript:x`, `JavaScript:x`, `data:text/plain,x`, `file:///etc/passwd` and `vbscript:x` rejected; a value with a space or no scheme rejected; save/load round-trip for a host, a guest and an external site; a database created without the column (build one with a raw `CREATE TABLE` from the pre-feature schema, or use `ensureColumn` absence) loads with the field undefined; `oidcConfigErrors` reports a URI present in both lists, naming it.
   - **Validation**: add `isValidMobileRedirectUri(value)` next to `isAbsoluteHttpUrl`. The rule, from research R1: "no whitespace or control characters, `new URL(value)` parses, scheme (lower-cased, minus the colon) not in `javascript`, `data`, `file`, `vbscript`".
   - **Schema**: add `OidcMobileRedirectUriSchema` and an optional `oidcMobileRedirectUris: z.array(OidcMobileRedirectUriSchema).optional()` on `HostEntrySchema`, `GuestEntrySchema` and `ExternalSiteSchema`.
@@ -46,7 +46,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 **Independent Test**: Set a mobile URI via `runEditGuest` on an OIDC guest, run `runSyncAuthentik` against `FakeAuthentikClient`, assert the provider's `redirectUris` = web ∪ mobile (strict), and assert a second run reports no `oidcUpdates`.
 
-- [ ] T003 [US1] In `src/commands/networking/sync-authentik.ts`, export `clientRedirectUris(entry)`, returning the deduplicated `[...oidcRedirectUris ?? [], ...oidcMobileRedirectUris ?? []]` in first-seen order.
+- [x] T003 [US1] In `src/commands/networking/sync-authentik.ts`, export `clientRedirectUris(entry)`, returning the deduplicated `[...oidcRedirectUris ?? [], ...oidcMobileRedirectUris ?? []]` in first-seen order.
   - Add `oidcMobileRedirectUris` to `CandidateEntry`/`SubdomainOwner` and copy it in `candidateEntries`.
   - In `planOidc`, pass `clientRedirectUris(entry)` to `desiredOAuth2Settings`, but keep the `missing-redirect-uris` skip testing the web list only (FR-004).
   - **Tests first**, in `test/commands/sync-authentik.test.ts`:
@@ -55,21 +55,21 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
     - an unchanged second run reports no update;
     - an OIDC entry with only mobile URIs is still skipped as `missing-redirect-uris`;
     - a forward-mode entry's mobile list is ignored.
-- [ ] T004 [P] [US1] In `src/commands/networking/adopt-oidc-client.ts`, use `clientRedirectUris(entry)` wherever the entry's redirect URIs feed `desiredOAuth2Settings`, and pass `oidcMobileRedirectUris` through wherever the entry is re-shaped (around lines 108 and 139). **Tests first**, in `test/commands/adopt-oidc-client.test.ts`: adopting an entry with mobile URIs previews and applies `redirect_uris` drift that includes them.
-- [ ] T005 [US1] In `src/operations/edit-guest.ts`, wire the field into both edit paths.
+- [x] T004 [P] [US1] In `src/commands/networking/adopt-oidc-client.ts`, use `clientRedirectUris(entry)` wherever the entry's redirect URIs feed `desiredOAuth2Settings`, and pass `oidcMobileRedirectUris` through wherever the entry is re-shaped (around lines 108 and 139). **Tests first**, in `test/commands/adopt-oidc-client.test.ts`: adopting an entry with mobile URIs previews and applies `redirect_uris` drift that includes them.
+- [x] T005 [US1] In `src/operations/edit-guest.ts`, wire the field into both edit paths.
   - `applyGuestEdits` handles `'oidcMobileRedirectUris' in body` via `parseOidcMobileRedirectUris(asDelimited(...))`.
   - Add `oidcMobileRedirectUris: z.union([z.string(), z.array(z.string())]).optional()` to `EDIT_GUEST_SHAPE`. Describe it as "Mobile app redirect URIs (array or ';'-separated; custom schemes allowed; javascript:, data:, file:, vbscript: rejected). Adds a consent click to mobile sign-ins only. Admin only."
   - Make sure `commitGuestEdit`'s `oidcConfigErrors` call receives the updated entry, so the cross-list rule fires.
   - **Tests first**, in `test/operations/edit-guest.test.ts`: array and `;`-string inputs parse; `javascript:` is rejected with an error naming it; a cross-list duplicate is rejected; an empty string clears the field.
-- [ ] T006 [US1] In `src/web/routes/dashboard.ts`, extend the admin gate to the mobile list.
+- [x] T006 [US1] In `src/web/routes/dashboard.ts`, extend the admin gate to the mobile list.
   - `oidcEditChangeError` also compares `oidcMobileRedirectUris`, order-sensitive like `sameOidcRedirectUris`.
   - The route's trigger condition includes `'oidcMobileRedirectUris' in req.body`.
   - The 403 message becomes "Only an admin may change an app's auth mode, callback URLs or mobile redirect URLs".
   - **Tests first**, in `test/web/routes/dashboard.test.ts`: a non-admin changing the mobile list gets 403; a non-admin re-submitting the unchanged list is allowed; an admin change succeeds and persists.
-- [ ] T007 [P] [US1] In `src/mcp/build-server.ts`, add `oidcMobileRedirectUris` to the `edit_guest` tool description's field list. **Test** in `test/mcp/build-server.test.ts`: an `edit_guest` call with `oidcMobileRedirectUris: ['app.example:///oauth-callback']` saves it (follow the existing `oidcRedirectUris` edit test).
-- [ ] T008 [P] [US1] In `inventory/hosts.yaml.example`, add a commented `oidcMobileRedirectUris` example under the existing OIDC example guest, `app.example:///oauth-callback`, with a one-line comment on when to use it. **Test** in `test/commands/import-yaml-inventory.test.ts`: importing a YAML with `oidcMobileRedirectUris` on a host, a guest and an external site round-trips all three. Also check that the example file itself still imports, if an existing test does that.
-- [ ] T009 [P] [US1] In `web-client/src/api/types.ts`, add `oidcMobileRedirectUris?: string[]` to `GuestEntry` (and to the host/external-site types if they carry `oidcRedirectUris`).
-- [ ] T010 [US1] Confirm `sync-inventory` preserves the field. **Test** in the existing `sync-inventory` test file (find it under `test/commands/`): an existing guest with `oidcMobileRedirectUris` keeps it after a sync that refreshes its ip. Make a code change only if the test fails.
+- [x] T007 [P] [US1] In `src/mcp/build-server.ts`, add `oidcMobileRedirectUris` to the `edit_guest` tool description's field list. **Test** in `test/mcp/build-server.test.ts`: an `edit_guest` call with `oidcMobileRedirectUris: ['app.example:///oauth-callback']` saves it (follow the existing `oidcRedirectUris` edit test).
+- [x] T008 [P] [US1] In `inventory/hosts.yaml.example`, add a commented `oidcMobileRedirectUris` example under the existing OIDC example guest, `app.example:///oauth-callback`, with a one-line comment on when to use it. **Test** in `test/commands/import-yaml-inventory.test.ts`: importing a YAML with `oidcMobileRedirectUris` on a host, a guest and an external site round-trips all three. Also check that the example file itself still imports, if an existing test does that.
+- [x] T009 [P] [US1] In `web-client/src/api/types.ts`, add `oidcMobileRedirectUris?: string[]` to `GuestEntry` (and to the host/external-site types if they carry `oidcRedirectUris`).
+- [x] T010 [US1] Confirm `sync-inventory` preserves the field. **Test** in the existing `sync-inventory` test file (find it under `test/commands/`): an existing guest with `oidcMobileRedirectUris` keeps it after a sync that refreshes its ip. Make a code change only if the test fails.
 
 **Checkpoint**: US1 is complete and independently testable. Commit `Add mobile redirect URIs to OIDC clients (#22, US1)`.
 
