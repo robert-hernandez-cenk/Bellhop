@@ -153,8 +153,8 @@ function buildSnapshotCommand(paths: string[]): string {
 }
 
 // Builds a ReverseProxyDriver for a proxy that's configured entirely by
-// files delivered to the proxy host (Caddy today; nginx/HAProxy are
-// candidate future drivers -- research.md R1/R8). Owns the full
+// files delivered to the proxy host (Caddy and nginx today, issue #30;
+// HAProxy is a candidate future driver). Owns the full
 // render -> back up -> write -> validate -> restore-or-reload cycle so a
 // new file-configured driver only has to supply `render`, its validate
 // command, and its reload command.

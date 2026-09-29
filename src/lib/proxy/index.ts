@@ -3,6 +3,7 @@ import { findProxyEntry } from '../inventory.ts';
 import type { SSHClient } from '../ssh-client.ts';
 import type { DriverDeps, ReverseProxyDriver } from './driver.ts';
 import { caddyDriver } from './drivers/caddy.ts';
+import { nginxDriver } from './drivers/nginx.ts';
 import { PROXY_DRIVER_IDS, type ProxyDriverId } from './ids.ts';
 
 // Re-exported rather than redefined -- ids.ts is the dependency-free source,
@@ -14,13 +15,17 @@ export { PROXY_DRIVER_IDS, type ProxyDriverId };
 // register a driver under an id PROXY_DRIVER_IDS doesn't list -- getDriver
 // itself only ever looks up ids that either come from PROXY_DRIVER_IDS-typed
 // inventory data or were added through that same test-only hook.
-const DRIVERS = new Map<string, ReverseProxyDriver>([[caddyDriver.id, caddyDriver]]);
+const DRIVERS = new Map<string, ReverseProxyDriver>([
+  [caddyDriver.id, caddyDriver],
+  [nginxDriver.id, nginxDriver],
+]);
 
-// inventory.proxyDriver ?? 'caddy' -- the only currently-shipped driver, so
+// inventory.proxyDriver ?? 'caddy' -- 'caddy' is the default when unset, so
 // an unset setting behaves exactly as if every inventory had always named
-// it. The thrown case (an id no registered driver has) is only reachable if
-// bellhop.db was edited by hand: InventorySchema's own zod enum already
-// rejects any other value at load time.
+// it; 'nginx' (issue #30) is the other shipped driver and is only ever used
+// when named explicitly. The thrown case (an id no registered driver has) is
+// only reachable if bellhop.db was edited by hand: InventorySchema's own zod
+// enum already rejects any other value at load time.
 export function getDriver(inventory: Inventory): ReverseProxyDriver {
   const id = inventory.proxyDriver ?? 'caddy';
   const driver = DRIVERS.get(id);

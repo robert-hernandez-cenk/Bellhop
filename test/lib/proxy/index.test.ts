@@ -5,6 +5,7 @@ import type { ProxyPlan, ReverseProxyDriver } from '../../../src/lib/proxy/drive
 import type { ProxyDriverId } from '../../../src/lib/proxy/ids.ts';
 import { getDriver, driverDeps, registerDriverForTests } from '../../../src/lib/proxy/index.ts';
 import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { fileDriver } from '../../../src/lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../src/lib/proxy/routes.ts';
 import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
@@ -64,6 +65,11 @@ test('getDriver throws a named error for an id no registered driver has, with th
   );
 });
 
+test('getDriver returns nginxDriver when proxyDriver is "nginx" (issue #30)', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx' });
+  assert.equal(getDriver(inv), nginxDriver);
+});
+
 // --- driverDeps -------------------------------------------------------------
 
 test("driverDeps resolves proxyHost from the entry flagged proxy: true, and configPath from the driver default when proxyConfigPath is unset", () => {
@@ -99,6 +105,13 @@ test("driverDeps throws \"No inventory entry has 'proxy: true'\" when no entry h
   });
   const ssh = new FakeSSHClient(defaultResponder);
   assert.throws(() => driverDeps(inv, ssh, caddyDriver), /^Error: No inventory entry has 'proxy: true'$/);
+});
+
+test('driverDeps resolves configPath to the nginx driver default when proxyConfigPath is unset (issue #30)', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx' });
+  const ssh = new FakeSSHClient(defaultResponder);
+  const deps = driverDeps(inv, ssh, nginxDriver);
+  assert.equal(deps.configPath, '/etc/nginx/conf.d/bellhop.conf');
 });
 
 // --- registerDriverForTests (test-only hook) -------------------------------
