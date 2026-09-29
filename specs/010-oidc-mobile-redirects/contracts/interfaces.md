@@ -91,7 +91,7 @@ Update lines use `~ <object>: <detail>`; delete lines use `- <object>`.
 
 | Surface | Field | Rules |
 |---|---|---|
-| `PATCH /api/guests/:name` (Dashboard) | `oidcMobileRedirectUris`: `;`-joined string or array | Parsed by `parseOidcMobileRedirectUris` (400 on an invalid URI). Admin-only in both directions (403 otherwise, `oidcEditChangeError`). Cross-list duplicates give 400 via `oidcConfigErrors`. |
+| `PATCH /api/inventory/guests/:name` (Dashboard) | `oidcMobileRedirectUris`: `;`-joined string or array | Parsed by `parseOidcMobileRedirectUris` (400 on an invalid URI). Admin-only in both directions (403 otherwise, `oidcEditChangeError`). Cross-list duplicates give 400 via `oidcConfigErrors`. |
 | MCP `edit_guest` (`EDIT_GUEST_SHAPE`) | `oidcMobileRedirectUris: string \| string[]` optional | Same parse and cross-list rules via `applyGuestEdits` and `commitGuestEdit`. No admin check. The tool description lists the field. |
 | `import-yaml-inventory` | `oidcMobileRedirectUris: [..]` on hosts, guests, external sites | Zod item validation only (no cross-list check, consistent with load). |
 | `GuestEntry` in `web-client/src/api/types.ts` | `oidcMobileRedirectUris?: string[]` | — |
