@@ -575,10 +575,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
   driver rather than untangling Caddy-specific code throughout the toolkit.
-  Caddy is the only driver that ships this round -- an admin-API Caddy
-  driver, and drivers for nginx/Nginx Proxy Manager/HAProxy, are follow-up
-  issues (its shape was checked against all four on paper first; see
-  `specs/006-reverse-proxy-driver/research.md`). Single-operator-assumption
+  Caddy is the only driver that ships this round that actually manages a
+  proxy -- an admin-API Caddy driver, and drivers for nginx/Nginx Proxy
+  Manager/HAProxy, are follow-up issues (its shape was checked against all
+  four on paper first; see `specs/006-reverse-proxy-driver/research.md`).
+  A second registered driver, `none`, ships alongside it as of issue #33 --
+  see "A driver that manages no reverse proxy at all" below.
+  Single-operator-assumption
   update: this toolkit is no longer hard-wired to Caddy -- exactly one
   driver is active per deployment (`proxyDriver`, a per-deployment choice,
   not a per-entry one), and a future driver only has to declare what it
@@ -601,15 +604,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`PathPattern[]`) and raw (`string[]`, stored order) `unauthenticatedPaths`)
   -- tier enforcement stays entirely Authentik's job, in `sync-authentik`
   below. `driver.ts` defines the `ReverseProxyDriver` interface itself
-  (`id`, `capabilities`, `defaultConfigPath`, `plan()`/`apply()`/
-  `snapshot()`) and `checkCapabilities(routes, driver)`; `file-driver.ts`'s
+  (`id`, `label` -- the Settings page dropdown's option text --,
+  `capabilities`, `defaultConfigPath: string | null` (`null` means the
+  driver uses no configuration file), `statusPage: { suggestedPath:
+  string } | null` (`null` means it serves no status page), `plan()`/
+  `apply()`/`snapshot()`) and `checkCapabilities(routes, driver)`;
+  `file-driver.ts`'s
   `fileDriver(...)` is a shared builder for any driver configured by files
   (Caddy today; nginx/HAProxy are candidates -- three of the five analysed
   mechanisms have no file at all, e.g. Caddy's own admin API, so the
   top-level contract is "reconcile these routes" rather than "render this
   file", with `fileDriver` supplying everything a file-configured driver
   needs on top of that); `index.ts`'s `getDriver(inventory)` resolves the
-  `proxyDriver` setting (unset means `'caddy'`, the only registered id;
+  `proxyDriver` setting (unset means `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`);
   an id no registered driver has -- only reachable by hand-editing
   `bellhop.db`, since the schema's own zod enum already rejects any other
   value at load time -- throws `"Unknown proxyDriver '<id>' -- run: bellhop
@@ -618,7 +625,40 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `plan()`/`apply()`/`snapshot()` need (`proxyHost` from the entry flagged
   `proxy: true`, throwing `"No inventory entry has 'proxy: true'"` if none
   is; `configPath` from the `proxyConfigPath` setting, else the driver's
-  own `defaultConfigPath`).
+  own `defaultConfigPath`, throwing if that resolves to `null` -- only
+  reachable for a driver that manages no proxy, which every real caller
+  short-circuits around before `driverDeps` ever runs). `index.ts` also
+  exports `listDrivers()` (every registered driver, Caddy then None, in
+  registration order -- the Settings page's dropdown source) and
+  `managesProxy(driver)` (`false` only for the `none` driver below, so a
+  caller never has to compare `driver.id === 'none'` directly).
+
+  **A driver that manages no reverse proxy at all** (`src/lib/proxy/
+  drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
+  update: not every deployment has a Bellhop-managed reverse proxy in
+  front of it, whether that's a hand-configured proxy or none at all) is
+  the second registered driver, selected the same way as Caddy via
+  `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
+  `defaultConfigPath` and `statusPage` are both `null`, and its
+  `capabilities` accept both `forward` and `oidc` auth modes (so
+  `checkCapabilities` never rejects a gated entry under it -- the
+  assumption is that whatever proxy the operator does run enforces
+  `forward_auth` itself) with `acmeDns01ViaCloudflare: false`. Its `plan()`
+  returns `{ preview: NO_PROXY_SYNC_MESSAGE, payload: null }` with no
+  routes/context ever consulted, `apply()` is a no-op, and `snapshot()`
+  throws `NO_PROXY_STATUS_PAGE_ERROR` -- both constants defined in
+  `driver.ts` alongside `managesProxy` so every caller shares the exact
+  text. `runSyncProxy` (`src/commands/networking/sync-proxy.ts`) checks
+  `managesProxy(driver)` immediately after `getDriver` and, when false,
+  returns `{ proxyHost: null, driver: driver.id, preview:
+  NO_PROXY_SYNC_MESSAGE, applied: opts.apply === true }` before
+  `driverDeps`/`buildRoutes`/`checkCapabilities` ever run -- those would
+  otherwise throw over a missing `proxy: true` entry or a missing
+  `authentik` ip that "no proxy" makes irrelevant. `SyncProxyResult.
+  proxyHost` is therefore `string | null`; the CLI and the `sync-proxy`
+  operation (`src/operations/maintenance.ts`) print/log `result.preview`
+  via `logInfo` instead of their usual "Generated/Wrote ... for <host>"
+  lines whenever it's `null`.
 
   **Capability enforcement** (FR-011/FR-012): `checkCapabilities` returns
   one `CapabilityError` per route whose `auth.mode` isn't in the active
@@ -1146,7 +1186,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   command itself throws, naming the `set-config statusPagePath
   </absolute/path> --apply` fix; the two automated callers below treat an
   unset `statusPagePath` as a no-op, logging one line and continuing rather
-  than failing the rest of their run. The page shows two fetched-fresh
+  than failing the rest of their run. As of issue #33, the active driver's
+  own `statusPage` metadata is checked first, before `statusPagePath`: a
+  driver that serves no status page at all (`proxyDriver: 'none'`) throws
+  `NO_PROXY_STATUS_PAGE_ERROR` from the standalone command regardless of
+  whether `statusPagePath` happens to be set, since there is neither a
+  managed proxy nor a document root to write to. The exported
+  `statusPageSkipReason(inventory)` is the one place that decides, for the
+  two automated callers, whether their render should even run: it returns
+  the driver's own skip line first, else the existing
+  `statusPagePathSkipMessage()` when `statusPagePath` is unset, else
+  `null` when the render should actually happen -- `syncProxyLive` and
+  `migrate-guest`'s post-move push both call it and `logInfo` whatever
+  non-null reason comes back instead of duplicating either check inline.
+  The page shows two fetched-fresh
   `<pre>` blocks (HTML-escaped): a
   human-readable YAML snapshot of the current inventory (`src/cli.ts` calls
   `loadInventory` then the `yaml` package's `stringify` on the result and
@@ -2152,9 +2205,35 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   value rejected by the CLI is rejected identically here, and a `null`/`''`
   submitted value clears the setting the same way `set-config --unset`
   does. As of issue #10, `SettingsSchema`/the page's field list both add
-  `proxyDriver` (placeholder `caddy`, the only registered id) and
-  `proxyConfigPath` (placeholder `/etc/caddy/Caddyfile`, the Caddy driver's
-  own `defaultConfigPath`) alongside the pre-existing six. The page also
+  `proxyDriver` and `proxyConfigPath` alongside the pre-existing six.
+  `proxyDriver` renders as a `<select>`, not the plain `<input>` every other
+  setting gets: as of issue #33, `settingsResponse()` (`src/web/routes/
+  settings.ts`, shared by GET and PATCH so the two can never disagree)
+  adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
+  to `{ id, label, defaultConfigPath, suggestedStatusPagePath }`, Caddy
+  then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
+  response, and the page's `proxyDriverOptions(drivers, defaultId)`
+  (`web-client/src/lib/settings-display.ts`, framework-free so it's
+  tested with plain `node --test`, same convention as `admin-nav.ts`)
+  turns that into the dropdown's options, suffixing only the default
+  driver's label with `" (default)"`. The displayed value is
+  `drafts.proxyDriver || data.defaultProxyDriver`, so an unset setting
+  shows as the default driver selected, and Save/Clear round-trip exactly
+  like every other field. The same file's `proxyFieldView(selectedId,
+  drivers)` decides, for whichever driver is currently selected in that
+  *unsaved* dropdown value, whether the Proxy config path and Status page
+  path fields apply at all: a driver whose `defaultConfigPath`/
+  `suggestedStatusPagePath` is `null` (only `none` today) hides the
+  matching field entirely rather than showing it disabled or empty, and an
+  unrecognized id (never reachable through the dropdown itself, but
+  defensive) hides both. `SettingsPage.tsx` uses the shown field's own
+  placeholder/help text from `proxyFieldView`'s result in place of the
+  static Caddy-specific ones the `FIELDS` table used to hardcode for
+  `proxyConfigPath` (`statusPagePath`'s help text stays static; only its
+  placeholder is driver-driven). Hiding a field is display-only: its
+  draft and stored value are never touched, and no PATCH is ever sent
+  because a field stopped being shown -- an operator who switches back to
+  a driver that uses it sees the old value still there. The page also
   shows two *derived* values (`derivedValues()`, `src/web/routes/
   settings.ts`) read-only, for
   the same reason the Dashboard shows other server-computed state: nothing

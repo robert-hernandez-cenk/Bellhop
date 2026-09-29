@@ -144,11 +144,11 @@ None needed: existing project, dependencies installed.
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T030 [P] Update `README.md`:
+- [x] T030 [P] Update `README.md`:
   - "Reverse proxy drivers" section: document the `none` driver ("No proxy": Bellhop writes no proxy config, sync-proxy is a no-op, render-status-page fails, the push-live step skips the status page, forward-auth entries are allowed and assumed enforced by your own proxy).
   - Settings table row for `proxyDriver`: allowed values `caddy`/`none`.
   - Settings page description: the dropdown and conditional fields.
-- [ ] T031 [P] Update `CLAUDE.md`:
+- [x] T031 [P] Update `CLAUDE.md`:
   - Driver-interface bullet: `none` driver, `label`/`defaultConfigPath: string | null`/`statusPage`, `managesProxy`, `listDrivers`, `DEFAULT_PROXY_DRIVER_ID`.
   - `render-status-page` bullet: the `none` error and the `statusPageSkipReason` skip.
   - Settings page bullet: `proxyDrivers`/`defaultProxyDriver` in the response, dropdown, and conditional fields via `proxyFieldView`.
