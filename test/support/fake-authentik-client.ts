@@ -18,6 +18,12 @@ import type {
   UpdateUserInput,
 } from '../../src/lib/authentik-client.ts';
 
+// Mirrors the real client's own model-string constants (authentik-client.ts,
+// research.md R4/R7) -- a stage/policy is only "owned" by sync-authentik when
+// its meta_model_name matches one of these.
+const CONSENT_STAGE_MODEL = 'authentik_stages_consent.consentstage';
+const EXPRESSION_POLICY_MODEL = 'authentik_policies_expression.expressionpolicy';
+
 // Deterministic fake credentials/lookups for native OIDC gating (issue #1) --
 // a real Authentik instance always has at least the stock self-signed
 // certificate and the three managed OpenID scope mappings, so these let an
@@ -51,6 +57,25 @@ export interface FakeAuthentikSeed {
   oauth2Providers?: Array<AuthentikOAuth2Provider & { clientId?: string; clientSecret?: string }>;
   signingKeys?: Record<string, string>;
   scopeMappings?: Record<string, string>;
+  // Mobile-consent step (issue #22, research.md R4/R7). Seeded objects use
+  // the same shape the real AuthentikClient interface hands back, so a test
+  // can seed exactly what a prior list/create call would have returned.
+  stages?: Array<AuthentikStageRef & { mode?: string }>;
+  policies?: AuthentikPolicyRef[];
+  flowStageBindings?: AuthentikFlowStageBinding[];
+  // `targetId` here is a flow-stage binding's own `id` (its pk) -- the same
+  // field AuthentikPolicyBindingDetail.targetId reports back (the live
+  // quirk, research.md R4/R7), not the policyBindingModelId used to query
+  // for it. Resolved against `flowStageBindings` above at construction time.
+  targetPolicyBindings?: Array<{ id: string; targetId: string; policyId: string }>;
+  // getDefaultAuthorizationFlowId() returns this when given, else its
+  // existing hardcoded 'default-flow'.
+  authorizationFlowId?: string;
+  // Method names (e.g. 'createExpressionPolicy') that should throw instead
+  // of performing their normal in-memory behavior -- for exercising
+  // sync-authentik's per-step error handling without contriving real state
+  // to trigger a failure.
+  failOn?: Set<string>;
 }
 
 export class FakeAuthentikClient implements AuthentikClient {
@@ -63,7 +88,33 @@ export class FakeAuthentikClient implements AuthentikClient {
   private oauth2Providers: Map<string, FakeOAuth2ProviderRecord>;
   private signingKeys: Map<string, string>;
   private scopeMappings: Map<string, string>;
+  // Mobile-consent step (issue #22). `mode`/`expression` are only ever
+  // present on a consent-model stage / expression-model policy respectively,
+  // mirroring how the real API's per-type endpoints are the only place those
+  // fields are readable/writable at all.
+  private stages: Map<string, { id: string; name: string; model: string; mode?: string }>;
+  private policies: Map<string, { id: string; name: string; model: string; expression?: string }>;
+  private flowStageBindings: Map<string, AuthentikFlowStageBinding>;
+  // `flowStageBindingId` is the flow-stage binding's own pk -- stored
+  // alongside `policyBindingModelId` (what a real create/list call actually
+  // addresses) so listPolicyBindingsForTarget can reproduce the live quirk:
+  // queried by policyBindingModelId, but each result's own `targetId`
+  // reports the flow-stage binding's pk instead (research.md R4/R7).
+  private targetPolicyBindings: Array<{
+    id: string;
+    policyBindingModelId: string;
+    flowStageBindingId: string;
+    policyId: string;
+  }>;
+  private authorizationFlowId: string;
+  private failOn: Set<string>;
   private nextId = 1;
+
+  // Incremented on every clearFlowCache() call -- a dedicated counter (issue
+  // #22), distinct from `calls` below, so a test asserting "the cache was
+  // cleared exactly once" doesn't have to filter/count `calls` entries by
+  // string.
+  cacheClears = 0;
 
   // Every mutating call, in call order, for tests that assert "nothing
   // changed" or check that a particular reconcile step actually ran --
@@ -89,6 +140,27 @@ export class FakeAuthentikClient implements AuthentikClient {
     );
     this.signingKeys = new Map(Object.entries(seed.signingKeys ?? DEFAULT_SIGNING_KEYS));
     this.scopeMappings = new Map(Object.entries(seed.scopeMappings ?? DEFAULT_SCOPE_MAPPINGS));
+    this.stages = new Map((seed.stages ?? []).map((s) => [s.id, { id: s.id, name: s.name, model: s.model, mode: s.mode }]));
+    this.policies = new Map(
+      (seed.policies ?? []).map((p) => [p.id, { id: p.id, name: p.name, model: p.model, expression: p.expression }])
+    );
+    this.flowStageBindings = new Map((seed.flowStageBindings ?? []).map((b) => [b.id, { ...b }]));
+    this.targetPolicyBindings = (seed.targetPolicyBindings ?? []).map((b) => {
+      const binding = this.flowStageBindings.get(b.targetId);
+      if (!binding) {
+        throw new Error(
+          `FakeAuthentikSeed: targetPolicyBindings references unknown flow-stage binding '${b.targetId}'`
+        );
+      }
+      return {
+        id: b.id,
+        policyBindingModelId: binding.policyBindingModelId,
+        flowStageBindingId: b.targetId,
+        policyId: b.policyId,
+      };
+    });
+    this.authorizationFlowId = seed.authorizationFlowId ?? 'default-flow';
+    this.failOn = seed.failOn ?? new Set();
 
     // Advance nextId past the highest numeric id in seed data to avoid
     // collisions. An application's own slug-derived id is excluded, matching
@@ -103,6 +175,10 @@ export class FakeAuthentikClient implements AuthentikClient {
       ...(seed.proxyProviders ?? []).map((p) => p.id),
       ...(seed.applications ?? []).map((a) => a.providerId).filter((p): p is string => p != null),
       ...(seed.oauth2Providers ?? []).map((p) => p.id),
+      ...(seed.stages ?? []).map((s) => s.id),
+      ...(seed.policies ?? []).map((p) => p.id),
+      ...(seed.flowStageBindings ?? []).flatMap((b) => [b.id, b.policyBindingModelId]),
+      ...(seed.targetPolicyBindings ?? []).map((b) => b.id),
     ];
     const numericIds = allIds
       .map((id) => Number.parseInt(id, 10))
@@ -167,6 +243,57 @@ export class FakeAuthentikClient implements AuthentikClient {
   private toPublicOAuth2Provider(record: FakeOAuth2ProviderRecord): AuthentikOAuth2Provider {
     const { clientId: _clientId, clientSecret: _clientSecret, ...rest } = record;
     return rest;
+  }
+
+  // Issue #22: lets a test force a specific method to throw (matched by the
+  // interface method's own name), for exercising sync-authentik's per-step
+  // error handling -- e.g. a consent-policy create failing -- without having
+  // to contrive real state to trigger it.
+  private checkFailOn(method: string): void {
+    if (this.failOn.has(method)) {
+      throw new Error(`FakeAuthentikClient: forced failure for ${method}`);
+    }
+  }
+
+  private requireStage(id: string): { id: string; name: string; model: string; mode?: string } {
+    const stage = this.stages.get(id);
+    if (!stage) throw new Error(`Unknown stage: ${id}`);
+    return stage;
+  }
+
+  // The real API's consent-stage endpoints (get/update/delete) 404 on a pk
+  // that exists but names a different stage type, since they're served by a
+  // type-specific viewset -- mirrored here rather than only checking
+  // presence in the generic `stages` map.
+  private requireConsentStage(id: string): { id: string; name: string; model: string; mode?: string } {
+    const stage = this.requireStage(id);
+    if (stage.model !== CONSENT_STAGE_MODEL) {
+      throw new Error(`Stage ${id} is not a consent stage (model: ${stage.model})`);
+    }
+    return stage;
+  }
+
+  private requirePolicy(id: string): { id: string; name: string; model: string; expression?: string } {
+    const policy = this.policies.get(id);
+    if (!policy) throw new Error(`Unknown policy: ${id}`);
+    return policy;
+  }
+
+  private requireFlowStageBinding(id: string): AuthentikFlowStageBinding {
+    const binding = this.flowStageBindings.get(id);
+    if (!binding) throw new Error(`Unknown flow-stage binding: ${id}`);
+    return binding;
+  }
+
+  // Mirrors Authentik's own FK cascade: removing a flow-stage binding takes
+  // its policy bindings with it (research.md R4/R7's "Authentik cascades").
+  // Used by both the public deleteFlowStageBinding and deleteStage's own
+  // cascade -- the latter never logs a separate deleteFlowStageBinding call,
+  // since no such API call is actually made when a stage delete cascades in
+  // real Authentik.
+  private cascadeRemoveFlowStageBinding(id: string): void {
+    this.targetPolicyBindings = this.targetPolicyBindings.filter((b) => b.flowStageBindingId !== id);
+    this.flowStageBindings.delete(id);
   }
 
   async listUsers(): Promise<AuthentikUser[]> {
@@ -420,7 +547,7 @@ export class FakeAuthentikClient implements AuthentikClient {
   }
 
   async getDefaultAuthorizationFlowId(): Promise<string> {
-    return 'default-flow';
+    return this.authorizationFlowId;
   }
 
   async getDefaultInvalidationFlowId(): Promise<string> {
@@ -515,61 +642,174 @@ export class FakeAuthentikClient implements AuthentikClient {
     });
   }
 
-  // Mobile-consent step (issue #22): minimal stubs only, added so this class
-  // still satisfies `AuthentikClient` after T011 grew the interface. T012
-  // replaces these with real in-memory behavior.
-  findStageByName(_name: string): Promise<AuthentikStageRef | undefined> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+  // Mobile-consent step (issue #22, research.md R4/R7): in-memory behavior
+  // matching the real endpoints' documented quirks -- see the class-field
+  // comments above for the storage shape and cascade rules.
+  async findStageByName(name: string): Promise<AuthentikStageRef | undefined> {
+    this.checkFailOn('findStageByName');
+    const match = [...this.stages.values()].find((s) => s.name === name);
+    return match ? { id: match.id, name: match.name, model: match.model } : undefined;
   }
-  getConsentStage(_id: string): Promise<AuthentikConsentStage> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async getConsentStage(id: string): Promise<AuthentikConsentStage> {
+    this.checkFailOn('getConsentStage');
+    const stage = this.requireConsentStage(id);
+    return { id: stage.id, name: stage.name, mode: stage.mode ?? 'always_require' };
   }
-  createConsentStage(_input: { name: string; mode: string }): Promise<AuthentikConsentStage> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async createConsentStage(input: { name: string; mode: string }): Promise<AuthentikConsentStage> {
+    this.checkFailOn('createConsentStage');
+    const id = this.newId();
+    this.stages.set(id, { id, name: input.name, model: CONSENT_STAGE_MODEL, mode: input.mode });
+    this.calls.push(`createConsentStage ${input.name}`);
+    return { id, name: input.name, mode: input.mode };
   }
-  updateConsentStage(_id: string, _input: { mode: string }): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async updateConsentStage(id: string, input: { mode: string }): Promise<void> {
+    this.checkFailOn('updateConsentStage');
+    const stage = this.requireConsentStage(id);
+    this.stages.set(id, { ...stage, mode: input.mode });
+    this.calls.push(`updateConsentStage ${id}`);
   }
-  deleteStage(_id: string): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async deleteStage(id: string): Promise<void> {
+    this.checkFailOn('deleteStage');
+    this.requireConsentStage(id);
+    for (const binding of [...this.flowStageBindings.values()].filter((b) => b.stageId === id)) {
+      this.cascadeRemoveFlowStageBinding(binding.id);
+    }
+    this.stages.delete(id);
+    this.calls.push(`deleteStage ${id}`);
   }
-  findPolicyByName(_name: string): Promise<AuthentikPolicyRef | undefined> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async findPolicyByName(name: string): Promise<AuthentikPolicyRef | undefined> {
+    this.checkFailOn('findPolicyByName');
+    const match = [...this.policies.values()].find((p) => p.name === name);
+    return match ? { id: match.id, name: match.name, model: match.model, expression: match.expression } : undefined;
   }
-  createExpressionPolicy(_input: { name: string; expression: string }): Promise<AuthentikPolicyRef> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async createExpressionPolicy(input: { name: string; expression: string }): Promise<AuthentikPolicyRef> {
+    this.checkFailOn('createExpressionPolicy');
+    const id = this.newId();
+    this.policies.set(id, { id, name: input.name, model: EXPRESSION_POLICY_MODEL, expression: input.expression });
+    this.calls.push(`createExpressionPolicy ${input.name}`);
+    return { id, name: input.name, model: EXPRESSION_POLICY_MODEL, expression: input.expression };
   }
-  updateExpressionPolicy(_id: string, _input: { expression: string }): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async updateExpressionPolicy(id: string, input: { expression: string }): Promise<void> {
+    this.checkFailOn('updateExpressionPolicy');
+    const policy = this.requirePolicy(id);
+    this.policies.set(id, { ...policy, expression: input.expression });
+    this.calls.push(`updateExpressionPolicy ${id}`);
   }
-  deletePolicy(_id: string): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async deletePolicy(id: string): Promise<void> {
+    this.checkFailOn('deletePolicy');
+    this.requirePolicy(id);
+    this.policies.delete(id);
+    this.calls.push(`deletePolicy ${id}`);
   }
-  listFlowStageBindings(_flowId: string): Promise<AuthentikFlowStageBinding[]> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async listFlowStageBindings(flowId: string): Promise<AuthentikFlowStageBinding[]> {
+    this.checkFailOn('listFlowStageBindings');
+    return [...this.flowStageBindings.values()].filter((b) => b.flowId === flowId);
   }
-  createFlowStageBinding(_input: {
+
+  async createFlowStageBinding(input: {
     flowId: string;
     stageId: string;
     order: number;
     evaluateOnPlan: boolean;
     reEvaluatePolicies: boolean;
   }): Promise<AuthentikFlowStageBinding> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+    this.checkFailOn('createFlowStageBinding');
+    const binding: AuthentikFlowStageBinding = {
+      id: this.newId(),
+      // Distinct from `id` -- a real flow-stage binding's pk and its
+      // policybindingmodel_ptr_id are two different columns (research.md R4).
+      policyBindingModelId: this.newId(),
+      flowId: input.flowId,
+      stageId: input.stageId,
+      order: input.order,
+      evaluateOnPlan: input.evaluateOnPlan,
+      reEvaluatePolicies: input.reEvaluatePolicies,
+    };
+    this.flowStageBindings.set(binding.id, binding);
+    this.calls.push(`createFlowStageBinding ${input.flowId} ${input.stageId}`);
+    return binding;
   }
-  updateFlowStageBinding(_id: string, _input: { evaluateOnPlan: boolean; reEvaluatePolicies: boolean }): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async updateFlowStageBinding(
+    id: string,
+    input: { evaluateOnPlan: boolean; reEvaluatePolicies: boolean }
+  ): Promise<void> {
+    this.checkFailOn('updateFlowStageBinding');
+    const binding = this.requireFlowStageBinding(id);
+    this.flowStageBindings.set(id, {
+      ...binding,
+      evaluateOnPlan: input.evaluateOnPlan,
+      reEvaluatePolicies: input.reEvaluatePolicies,
+    });
+    this.calls.push(`updateFlowStageBinding ${id}`);
   }
-  deleteFlowStageBinding(_id: string): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async deleteFlowStageBinding(id: string): Promise<void> {
+    this.checkFailOn('deleteFlowStageBinding');
+    this.requireFlowStageBinding(id);
+    this.cascadeRemoveFlowStageBinding(id);
+    this.calls.push(`deleteFlowStageBinding ${id}`);
   }
-  listPolicyBindingsForTarget(_targetId: string): Promise<AuthentikPolicyBindingDetail[]> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  // The live quirk (research.md R4/R7): queried by the flow-stage binding's
+  // policyBindingModelId, but each returned detail's own targetId reports
+  // the flow-stage binding's pk instead -- mirrored exactly here rather than
+  // "fixed", since production code (and its tests) depend on this shape.
+  async listPolicyBindingsForTarget(targetId: string): Promise<AuthentikPolicyBindingDetail[]> {
+    this.checkFailOn('listPolicyBindingsForTarget');
+    return this.targetPolicyBindings
+      .filter((b) => b.policyBindingModelId === targetId)
+      .map((b) => ({ id: b.id, targetId: b.flowStageBindingId, policyId: b.policyId }));
   }
-  createPolicyToTargetBinding(_input: { targetId: string; policyId: string }): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  // `input.targetId` here is a policyBindingModelId (what production code
+  // actually addresses this create call with -- see the interface's own
+  // comment), not the flow-stage binding's own id.
+  async createPolicyToTargetBinding(input: { targetId: string; policyId: string }): Promise<void> {
+    this.checkFailOn('createPolicyToTargetBinding');
+    const binding = [...this.flowStageBindings.values()].find((b) => b.policyBindingModelId === input.targetId);
+    if (!binding) {
+      throw new Error(`Unknown policy binding model: ${input.targetId}`);
+    }
+    this.targetPolicyBindings.push({
+      id: this.newId(),
+      policyBindingModelId: input.targetId,
+      flowStageBindingId: binding.id,
+      policyId: input.policyId,
+    });
+    this.calls.push(`createPolicyToTargetBinding ${input.targetId} ${input.policyId}`);
   }
-  clearFlowCache(): Promise<void> {
-    throw new Error('not implemented in FakeAuthentikClient yet');
+
+  async clearFlowCache(): Promise<void> {
+    this.checkFailOn('clearFlowCache');
+    this.cacheClears++;
+    this.calls.push('clearFlowCache');
+  }
+
+  // Test-only accessors -- not part of the AuthentikClient interface, same
+  // precedent as listPolicyBindingsForTest above.
+  listStagesForTest(): Array<{ id: string; name: string; model: string; mode?: string }> {
+    return [...this.stages.values()];
+  }
+
+  listPoliciesForTest(): Array<{ id: string; name: string; model: string; expression?: string }> {
+    return [...this.policies.values()];
+  }
+
+  listFlowStageBindingsForTest(): AuthentikFlowStageBinding[] {
+    return [...this.flowStageBindings.values()];
+  }
+
+  listTargetPolicyBindingsForTest(): Array<{ id: string; targetId: string; policyId: string }> {
+    return this.targetPolicyBindings.map((b) => ({ id: b.id, targetId: b.flowStageBindingId, policyId: b.policyId }));
   }
 }
