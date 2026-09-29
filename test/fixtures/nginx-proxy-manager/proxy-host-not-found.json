@@ -1,0 +1,9 @@
+{
+  "status": 404,
+  "body": {
+    "error": {
+      "code": 404,
+      "message": "Not Found - 9999"
+    }
+  }
+}

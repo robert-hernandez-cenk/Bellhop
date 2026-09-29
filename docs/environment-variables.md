@@ -128,6 +128,15 @@ Environment variables and local files that override Bellhop's defaults.
   checkout, this file must also
   set `WEB_UI_AUTH_MODE=authentik`** — see [Running without
   Authentik](authentik.md#running-without-authentik) for why.
+- `data/nginx-proxy-manager.env` (required only when `proxyDriver` is
+  `nginx-proxy-manager` — see [Nginx Proxy Manager
+  driver](reverse-proxy/nginx-proxy-manager.md)) — a gitignored file
+  holding `NPM_API_EMAIL`/`NPM_API_PASSWORD`, the admin credentials
+  `sync-proxy` logs into Nginx Proxy Manager's REST API with, and the
+  optional `NPM_API_URL` override. Loaded by the CLI, the web UI, and the
+  MCP server, same as the other files in this section. Unset
+  `NPM_API_URL` derives `http://<the proxy: true entry's ip>:81` from
+  inventory instead — NPM's own admin UI/API port.
 - `data/cloudflare-api.env` (optional) — a gitignored file holding
   `CLOUDFLARE_DNS_API_TOKEN`, a Cloudflare API token scoped to Zone:Read +
   DNS:Edit on the inventory `domain`'s zone. Loaded by both the CLI and the

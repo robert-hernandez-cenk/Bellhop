@@ -7,6 +7,8 @@ import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.t
 import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../src/lib/proxy/ids.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
+import { createNpmDriver } from '../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
+import { FakeNpmClient } from '../support/fake-npm-client.ts';
 
 // A driver that declares no forward-auth support -- exercises T034/FR-011's
 // refusal path. `id` is cast through ProxyDriverId since PROXY_DRIVER_IDS
@@ -459,6 +461,54 @@ test('sync-proxy (nginx driver) --apply writes the owned conf file via "cat >", 
   assert.match(ssh.history[0].command, /cat > '\/etc\/nginx\/conf\.d\/bellhop\.conf' <</, 'writes the owned file whole via cat >');
   assert.match(ssh.history[0].command, /if ! nginx -t; then/, 'validates with nginx -t');
   assert.match(ssh.history[0].command, /systemctl reload nginx$/m, 'ends with the reload command');
+});
+
+// --- Nginx Proxy Manager driver (issue #31, US1) -----------------------------
+//
+// The real nginxProxyManagerDriver builds its client from the environment,
+// so these tests register a createNpmDriver instance around a FakeNpmClient
+// under a test-only id -- spread rather than mutated, since the driver's
+// methods close over their client and never read `this`.
+function registerFakeNpm(client: FakeNpmClient): { id: ProxyDriverId; unregister: () => void } {
+  const driver: ReverseProxyDriver = { ...createNpmDriver({ clientFor: () => client }), id: 'fake-npm' as ProxyDriverId };
+  return { id: driver.id, unregister: registerDriverForTests(driver) };
+}
+
+test('sync-proxy (Nginx Proxy Manager driver) dry run returns its preview, applied: false, and writes nothing -- with configPath null', async () => {
+  const client = new FakeNpmClient();
+  const { id, unregister } = registerFakeNpm(client);
+  try {
+    const inv: Inventory = { ...inventory, proxyDriver: id, proxyConfigPath: '/etc/caddy/Caddyfile' };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const result = await runSyncProxy({}, { ssh, inventory: inv });
+    assert.equal(result.proxyHost, 'pve1');
+    assert.equal(result.driver, id);
+    assert.equal(result.applied, false);
+    assert.match(result.preview, /^Nginx Proxy Manager at http:\/\/192\.0\.2\.30:81\n/);
+    assert.match(result.preview, /\+ create {2}media\.example\.com, movies\.example\.com -> http:\/\/192\.168\.1\.50:8080/);
+    assert.deepEqual(client.writes(), []);
+    assert.equal(ssh.history.length, 0, 'the NPM driver never uses SSH');
+  } finally {
+    unregister();
+  }
+});
+
+test('sync-proxy (Nginx Proxy Manager driver) --apply creates the proxy hosts and returns applied: true', async () => {
+  const client = new FakeNpmClient();
+  const { id, unregister } = registerFakeNpm(client);
+  try {
+    const inv: Inventory = { ...inventory, proxyDriver: id };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const result = await runSyncProxy({ apply: true }, { ssh, inventory: inv });
+    assert.equal(result.applied, true);
+    assert.deepEqual(
+      [...client.hosts.values()].map((h) => h.domain_names),
+      [['media.example.com', 'movies.example.com'], ['other.example.com']]
+    );
+    assert.equal(ssh.history.length, 0);
+  } finally {
+    unregister();
+  }
 });
 
 // Issue #33 US2: under proxyDriver: 'none', runSyncProxy must short-circuit

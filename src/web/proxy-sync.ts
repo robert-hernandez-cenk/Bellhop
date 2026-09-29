@@ -87,6 +87,15 @@ async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: 
   }
 }
 
+export interface SyncProxyLiveDeps {
+  ssh: SSHClient;
+  inventory: Inventory;
+  authentik: AuthentikClient;
+  cloudflare?: CloudflareClient;
+  // Passed through to sync-authentik's discovery check; tests inject one.
+  fetchImpl?: typeof fetch;
+}
+
 // The one place every auto-sync trigger (a subdomains-bearing create-guest
 // apply, a Dashboard subdomain/authGroup edit) pushes a change live:
 // writes the proxy configuration (sync-proxy), regenerates the status page from
@@ -96,18 +105,37 @@ async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: 
 // Cloudflare -- treated as one combined "push live" step so the artifacts
 // always move together rather than drifting apart. `cloudflare` is optional
 // and defaults to unconfigured, same convention as AppDeps.impersonationStore.
-export async function syncProxyLive(deps: {
-  ssh: SSHClient;
-  inventory: Inventory;
-  authentik: AuthentikClient;
-  cloudflare?: CloudflareClient;
-  // Passed through to sync-authentik's discovery check; tests inject one.
-  fetchImpl?: typeof fetch;
-}): Promise<SyncProxyLiveResult> {
-  const syncResult = await runSyncProxy({ apply: true }, deps);
-  // Under proxyDriver: 'none' (issue #33) sync-proxy writes nothing; say so
-  // in the job log rather than passing over the step silently.
-  if (syncResult.proxyHost === null) logInfo(syncResult.preview);
+//
+// When sync-proxy itself fails (a failed write/validate, or a lasting
+// conflict the Nginx Proxy Manager driver reports on every sync), the
+// failure is warned, the status page and the ACME prune are skipped (both
+// describe or clean up after a proxy configuration that did not land), but
+// sync-authentik still runs exactly as it would have (FR-023, operator
+// decision): otherwise one conflicting route elsewhere would stop every
+// Dashboard save from reconciling Authentik, and a guest just switched to
+// OIDC -- whose forward-auth gate the proxy may already have dropped -- would
+// never get its OpenID client. The original sync-proxy error is then
+// rethrown, so every caller reports the proxy failure exactly as before
+// (commitGuestEdit's proxySynced: false/proxyError, a failed provisioning
+// job). A sync-authentik error in that case is only warned, so it can never
+// mask the proxy error.
+export async function syncProxyLive(deps: SyncProxyLiveDeps): Promise<SyncProxyLiveResult> {
+  try {
+    const syncResult = await runSyncProxy({ apply: true }, deps);
+    // Under proxyDriver: 'none' (issue #33) sync-proxy writes nothing; say so
+    // in the job log rather than passing over the step silently.
+    if (syncResult.proxyHost === null) logInfo(syncResult.preview);
+  } catch (proxyError) {
+    logWarn(
+      `sync-proxy: failed — ${errorText(proxyError)} -- skipping the status page and the ACME challenge prune; still reconciling Authentik`
+    );
+    try {
+      await syncAuthentikLive(deps);
+    } catch (authentikError) {
+      logWarn(`sync-authentik: failed — ${errorText(authentikError)}`);
+    }
+    throw proxyError;
+  }
   // The status page is opt-in: an operator who has not configured a path
   // never gets an index.html written to their proxy host, and a driver that
   // manages no proxy at all (issue #33, proxyDriver: 'none') has nowhere to
@@ -120,6 +148,18 @@ export async function syncProxyLive(deps: {
     const inventorySnapshot = stringify(deps.inventory);
     await runRenderStatusPage({ apply: true }, deps, inventorySnapshot);
   }
+  const result = await syncAuthentikLive(deps);
+  await pruneAcmeChallengesLive(deps.cloudflare ?? new UnconfiguredCloudflareClient(), deps.inventory);
+  return result;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// The Authentik half of syncProxyLive: runs sync-authentik when Authentik is
+// configured, logs what it reports, and returns it for the Dashboard.
+async function syncAuthentikLive(deps: SyncProxyLiveDeps): Promise<SyncProxyLiveResult> {
   let result: SyncProxyLiveResult = {
     authentikConflicts: [],
     authentikAdoptableConflicts: [],
@@ -180,6 +220,5 @@ export async function syncProxyLive(deps: {
       authentikMobileConsentProblems: mobileConsentProblems,
     };
   }
-  await pruneAcmeChallengesLive(deps.cloudflare ?? new UnconfiguredCloudflareClient(), deps.inventory);
   return result;
 }

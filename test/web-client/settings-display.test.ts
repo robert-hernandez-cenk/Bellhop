@@ -100,16 +100,20 @@ test('proxyFieldView appends a driver-supplied configPathNote to the config path
   );
 });
 
-// managesProxy, not defaultConfigPath, decides whether the config path field
-// applies at all: a managed driver with no default still needs a path, and
-// one that manages no proxy never does.
-test('proxyFieldView shows the config path field for a managed driver with no default, saying it is required', () => {
+// issue #31 (T005): a managed driver with no config file at all (e.g. Nginx
+// Proxy Manager, which is REST-managed) hides the config path field
+// entirely rather than showing it as "required" -- there is no default
+// config-path state left to show for a managed driver with
+// defaultConfigPath: null; only a driver that manages no proxy used to hide
+// it. Paired with no suggested status page path and no shared certificate,
+// all three fields are hidden.
+test('proxyFieldView hides all three fields for a managed driver with no config file, no status page, and no shared certificate', () => {
   const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null }];
   const view = proxyFieldView('nodefault', drivers);
-  assert.equal(view.showConfigPath, true);
-  assert.equal(view.configPathPlaceholder, '');
-  assert.equal(view.configPathHelp, 'Config path for the No Default driver. Required: this driver has no default.');
-  assert.equal(view.showStatusPagePath, false, 'a managed driver with no suggested status page path hides that field');
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.configPathHelp, undefined, 'no "required" help text is shown once the field itself is hidden');
+  assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showTlsFields, false);
 });
 
 test('proxyFieldView hides the config path field for a driver that manages no proxy, even if it reports a default path', () => {

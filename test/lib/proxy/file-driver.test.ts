@@ -224,6 +224,42 @@ test('fileDriver.plan: several files join their content with a newline', async (
   assert.deepEqual(plan.payload, files);
 });
 
+// issue #31 (T004): DriverDeps.configPath is string | null (research.md
+// R11) -- null only for a driver with no config file at all (e.g. a
+// REST-managed driver like Nginx Proxy Manager), never reachable for a
+// fileDriver-built driver in practice, since every one of those declares a
+// real defaultConfigPath. plan()/apply()/snapshot() each resolve configPath
+// through the same programming-error guard, so a driver that somehow does
+// see null here fails loudly and by name rather than passing null through
+// to render()/validateCommand()/a `cat` command.
+test('fileDriver.plan/apply/snapshot throw a named programming-error message when deps.configPath is null', async () => {
+  const driver = fileDriver({
+    id: 'nginx',
+    label: 'Test driver',
+    statusPage: null,
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf',
+    render: () => [ownedFile('/etc/nginx/conf.d/bellhop.conf', 'server {}')],
+    validateCommand: () => 'nginx -t',
+    reloadCommand: 'systemctl reload nginx',
+  });
+  const deps = {
+    ssh: new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })),
+    inventory: { domain: 'example.com', hosts: [], guests: [] } as Inventory,
+    proxyHost: 'pve1',
+    configPath: null,
+  };
+  await assert.rejects(
+    () => driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps),
+    /^Error: nginx driver requires a config path$/
+  );
+  await assert.rejects(
+    () => driver.apply({ preview: '', payload: [] }, deps),
+    /^Error: nginx driver requires a config path$/
+  );
+  await assert.rejects(() => driver.snapshot(deps), /^Error: nginx driver requires a config path$/);
+});
+
 // --- (c) fileDriver(...).apply() ------------------------------------------
 
 test('fileDriver.apply: sends exactly one runRemote call, whose command equals buildFileDriverScript(files, validateCommand(configPath), reloadCommand)', async () => {

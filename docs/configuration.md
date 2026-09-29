@@ -66,10 +66,10 @@ field never clears its stored value — see
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
-| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`nginx`/`none` |
-| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx; `none` has no config file at all) |
-| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
-| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`nginx`/`nginx-proxy-manager`/`none` |
+| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx; `nginx-proxy-manager` and `none` have no config file at all, and hide this field on the Settings page) |
+| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy, `nginx-proxy-manager`, and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy, `nginx-proxy-manager`, and `none`, and shown on the Settings page only while nginx is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 

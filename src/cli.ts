@@ -50,6 +50,13 @@ dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 // data/cloudflare.env -- that is the cloudflare-ddns container's answer file,
 // which nothing in src/ reads. A missing file is a silent no-op.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
+
+// Mirrors src/web/server.ts: the gitignored data/nginx-proxy-manager.env
+// supplies NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for
+// the nginx-proxy-manager proxy driver (issue #31). A missing file is a
+// silent no-op -- buildNpmClient() throws its own named error only once a
+// command actually tries to reach NPM.
+dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
 export function fstabPath(): string | undefined {
   return process.env.FSTAB_PATH;
 }

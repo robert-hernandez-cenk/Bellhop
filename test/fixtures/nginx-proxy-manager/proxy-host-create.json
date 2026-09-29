@@ -1,0 +1,60 @@
+{
+  "status": 201,
+  "body": {
+    "id": 1,
+    "created_on": "2026-09-29 20:52:46",
+    "modified_on": "2026-09-29 20:52:46",
+    "owner_user_id": 1,
+    "domain_names": [
+      "app.example.test",
+      "app2.example.test"
+    ],
+    "forward_host": "192.0.2.20",
+    "forward_port": 81,
+    "access_list_id": 0,
+    "certificate_id": 1,
+    "ssl_forced": true,
+    "caching_enabled": false,
+    "block_exploits": false,
+    "advanced_config": "# Managed by Bellhop sync-proxy. Do not edit: changes here are replaced on the next sync.\nclient_max_body_size 0;\nproxy_buffering off;\nproxy_request_buffering off;\nproxy_read_timeout 1d;\nproxy_send_timeout 1d;\n\nlocation / {\n        proxy_pass http://192.0.2.20:81;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Forwarded-For $remote_addr;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header X-Forwarded-Port 443;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection $http_connection;\n}",
+    "meta": {
+      "bellhop": true
+    },
+    "allow_websocket_upgrade": true,
+    "http2_support": true,
+    "forward_scheme": "http",
+    "enabled": true,
+    "locations": [],
+    "hsts_enabled": false,
+    "hsts_subdomains": false,
+    "trust_forwarded_proto": false,
+    "certificate": {
+      "id": 1,
+      "created_on": "2026-09-29 20:52:24",
+      "modified_on": "2026-09-29 20:52:24",
+      "owner_user_id": 1,
+      "is_deleted": false,
+      "provider": "other",
+      "nice_name": "Wildcard example.test",
+      "domain_names": [
+        "*.example.test"
+      ],
+      "expires_on": "2027-09-29 20:52:25",
+      "meta": {}
+    },
+    "owner": {
+      "id": 1,
+      "created_on": "2026-09-29 20:52:09",
+      "modified_on": "2026-09-29 20:52:09",
+      "is_disabled": false,
+      "email": "admin@example.com",
+      "name": "Admin",
+      "nickname": "admin",
+      "avatar": "//www.gravatar.com/avatar/00000000000000000000000000000000?default=mm",
+      "roles": [
+        "admin"
+      ]
+    },
+    "access_list": null
+  }
+}

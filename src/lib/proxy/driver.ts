@@ -22,8 +22,15 @@ export interface DriverDeps {
   // src/lib/proxy/index.ts.
   proxyHost: string;
   // inventory.proxyConfigPath ?? driver.defaultConfigPath, resolved by
-  // driverDeps().
-  configPath: string;
+  // driverDeps() -- null when the active driver's own defaultConfigPath is
+  // null (issue #31: a REST-managed driver with no config file at all, e.g.
+  // Nginx Proxy Manager), regardless of whether proxyConfigPath is set --
+  // a driver with no file has nowhere for that setting to point. A
+  // file-configured driver (fileDriver, src/lib/proxy/file-driver.ts) never
+  // sees null here in practice, since its own defaultConfigPath is always a
+  // real path; it resolves this through its own helper that throws a
+  // programming-error message if it ever does.
+  configPath: string | null;
 }
 
 export interface ProxyPlan {
@@ -37,11 +44,13 @@ export interface ReverseProxyDriver {
   // (extended)") -- 'Caddy', 'No proxy', etc.
   label: string;
   capabilities: DriverCapabilities;
-  // null = the driver uses no configuration file (only the 'none' driver
-  // today). driverDeps() in src/lib/proxy/index.ts only ever calls this on
-  // a driver that managesProxy(), so a managed, file-configured driver with
-  // defaultConfigPath: null and no proxyConfigPath override is a
-  // programming error, not a reachable runtime state for 'none'.
+  // null = the driver uses no configuration file -- the 'none' driver, and
+  // (issue #31) a REST-managed driver like Nginx Proxy Manager. For either,
+  // driverDeps() returns configPath: null rather than throwing (see
+  // DriverDeps.configPath above); it is only a file-configured driver
+  // (fileDriver, src/lib/proxy/file-driver.ts) declaring defaultConfigPath:
+  // null that would be a programming error, since fileDriver always needs a
+  // real path -- not a reachable state for any driver that ships today.
   defaultConfigPath: string | null;
   // null = no status page served (only the 'none' driver today) --
   // render-status-page checks managesProxy() first, then this, then
