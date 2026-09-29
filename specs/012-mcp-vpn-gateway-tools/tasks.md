@@ -61,8 +61,8 @@ None. No new dependencies or configuration.
 
 **Independent Test**: each tool returns the fake gateway's list, and cities forwards the country.
 
-- [ ] T006 [US2] In `test/mcp/build-server.test.ts`, add tests: `list_vpn_gateway_servers` returns the fake `/servers` array; `list_vpn_gateway_cities` with `{ name, country: 'Germany' }` hits `/cities?country=Germany` and returns the array, and without `country` hits `/cities?country=`; `list_vpn_gateway_groups` returns the fake `/groups` array; a PIA gateway answering 404 `{ error: 'server-group selection not supported by this provider' }` gives `isError` with that text.
-- [ ] T007 [US2] In `src/mcp/build-server.ts`, register `list_vpn_gateway_servers` (`{ name }`), `list_vpn_gateway_cities` (`{ name, country: z.string().default('').describe(...) }`), and `list_vpn_gateway_groups` (`{ name }`), each through `refresh()` plus the shared function plus `gatewayResult`. Descriptions say what each lists. Groups notes it is NordVPN-only (PIA reports not supported), and cities notes the country names come from `list_vpn_gateway_servers`.
+- [x] T006 [US2] In `test/mcp/build-server.test.ts`, add tests: `list_vpn_gateway_servers` returns the fake `/servers` array; `list_vpn_gateway_cities` with `{ name, country: 'Germany' }` hits `/cities?country=Germany` and returns the array, and without `country` hits `/cities?country=`; `list_vpn_gateway_groups` returns the fake `/groups` array; a PIA gateway answering 404 `{ error: 'server-group selection not supported by this provider' }` gives `isError` with that text.
+- [x] T007 [US2] In `src/mcp/build-server.ts`, register `list_vpn_gateway_servers` (`{ name }`), `list_vpn_gateway_cities` (`{ name, country: z.string().default('').describe(...) }`), and `list_vpn_gateway_groups` (`{ name }`), each through `refresh()` plus the shared function plus `gatewayResult`. Descriptions say what each lists. Groups notes it is NordVPN-only (PIA reports not supported), and cities notes the country names come from `list_vpn_gateway_servers`.
 
 **Checkpoint**: US2 tests pass.
 

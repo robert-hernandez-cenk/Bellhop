@@ -57,14 +57,16 @@ test('tool list covers the registry, read-only, and job tools, and nothing exclu
     'create_lxc', 'install_app', 'delete_guest', 'update_all', 'guest_power', 'set_config', 'sync_authentik', 'sync_proxy',
     'adopt_oidc_client',
     'edit_guest', 'get_inventory', 'get_guest_status', 'audit_nfs_mounts', 'list_install_apps', 'check_install_app',
-    'get_vpn_gateway_status',
+    'get_vpn_gateway_status', 'list_vpn_gateway_servers', 'list_vpn_gateway_cities', 'list_vpn_gateway_groups',
     'list_jobs', 'get_job', 'wait_for_job', 'answer_job_prompt', 'dismiss_job_prompt', 'cancel_job',
   ]) {
     assert.ok(names.includes(expected), `missing tool ${expected}`);
   }
   assert.ok(!names.includes('migrate_nfs_mount'));
   assert.ok(!names.includes('sync_caddy'), 'no sync_caddy alias');
-  assert.ok(!names.some((n) => /user|group|permission|imperson|import_yaml/.test(n)));
+  // list_vpn_gateway_groups legitimately contains "group" (a VPN server
+  // group, e.g. Double VPN/P2P) -- excluded here, not a user/group tool.
+  assert.ok(!names.filter((n) => !n.startsWith('list_vpn_gateway_groups')).some((n) => /user|group|permission|imperson|import_yaml/.test(n)));
 });
 
 test('operation tool schemas mark required fields and default apply to false', async () => {
@@ -538,4 +540,61 @@ test('get_vpn_gateway_status reloads inventory before each call', async () => {
 
   await call('get_vpn_gateway_status', { name: NORDVPN_GW });
   assert.equal(seen[1], 'http://192.0.2.16:8080/status');
+});
+
+test('list_vpn_gateway_servers returns the fake /servers array', async () => {
+  const servers = [{ name: 'Germany', code: 'DE' }, { name: 'Netherlands', code: 'NL' }];
+  const fetchImpl = (async (url: string) => {
+    assert.equal(url, 'http://192.0.2.15:8080/servers');
+    return { ok: true, status: 200, json: async () => servers } as Response;
+  }) as unknown as typeof fetch;
+  const { call } = await setup({ inventory: vpnGatewayInventory(), fetchImpl });
+  const result = await call('list_vpn_gateway_servers', { name: NORDVPN_GW });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(parse(result), servers);
+});
+
+test('list_vpn_gateway_cities forwards the country query and returns the fake array', async () => {
+  const cities = [{ name: 'Berlin', id: '1' }];
+  const seen: string[] = [];
+  const fetchImpl = (async (url: string) => {
+    seen.push(url);
+    return { ok: true, status: 200, json: async () => cities } as Response;
+  }) as unknown as typeof fetch;
+  const { call } = await setup({ inventory: vpnGatewayInventory(), fetchImpl });
+  const result = await call('list_vpn_gateway_cities', { name: NORDVPN_GW, country: 'Germany' });
+  assert.deepEqual(parse(result), cities);
+  assert.equal(seen[0], 'http://192.0.2.15:8080/cities?country=Germany');
+});
+
+test('list_vpn_gateway_cities without a country sends an empty query value', async () => {
+  const seen: string[] = [];
+  const fetchImpl = (async (url: string) => {
+    seen.push(url);
+    return { ok: true, status: 200, json: async () => [] } as Response;
+  }) as unknown as typeof fetch;
+  const { call } = await setup({ inventory: vpnGatewayInventory(), fetchImpl });
+  await call('list_vpn_gateway_cities', { name: NORDVPN_GW });
+  assert.equal(seen[0], 'http://192.0.2.15:8080/cities?country=');
+});
+
+test('list_vpn_gateway_groups returns the fake /groups array', async () => {
+  const groups = [{ name: 'Double VPN', identifier: 'legacy_double_vpn' }];
+  const fetchImpl = (async (url: string) => {
+    assert.equal(url, 'http://192.0.2.15:8080/groups');
+    return { ok: true, status: 200, json: async () => groups } as Response;
+  }) as unknown as typeof fetch;
+  const { call } = await setup({ inventory: vpnGatewayInventory(), fetchImpl });
+  const result = await call('list_vpn_gateway_groups', { name: NORDVPN_GW });
+  assert.deepEqual(parse(result), groups);
+});
+
+test('list_vpn_gateway_groups on a PIA gateway answering 404 is an isError with the provider message', async () => {
+  const fetchImpl = (async () =>
+    ({ ok: false, status: 404, json: async () => ({ error: 'server-group selection not supported by this provider' }) }) as Response
+  ) as unknown as typeof fetch;
+  const { call } = await setup({ inventory: vpnGatewayInventory(), fetchImpl });
+  const result = await call('list_vpn_gateway_groups', { name: PIA_GW });
+  assert.equal(result.isError, true);
+  assert.equal(result.content[0].text, 'server-group selection not supported by this provider');
 });
