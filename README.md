@@ -626,7 +626,10 @@ migrate-nfs-mount) and maintenance actions (sync-inventory) from forms
 instead of flags, and streams every action's live log via WebSocket on a Job
 page — every job also lands in Job History afterward. Each guest row also
 has its own Start/Shutdown icon buttons (`guest-power` under the hood) for
-one-off actions without opening a form.
+one-off actions without opening a form. A guest row's Advanced link opens a
+modal with its less-common fields (auth group, unauthenticated paths, vpn,
+and the rest); each one has an ⓘ next to its label with a one-to-two-sentence
+explanation, reachable by hover, tap or keyboard.
 Updating apt packages and community-script apps has its own dedicated
 `/update` page instead, showing a card per host/guest with an apt-update
 icon and, for guests with an app installed, a second community-script-update

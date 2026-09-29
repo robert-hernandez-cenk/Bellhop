@@ -97,10 +97,47 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .advanced-link { background: none; border: none; padding: 0; color: var(--accent); font-size: 13px; cursor: pointer; text-decoration: none; }
 .advanced-link:hover { text-decoration: underline; }
 .advanced-modal-fields { margin-bottom: 20px; }
-.form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.form-row-label { flex: 0 0 auto; width: 110px; font-size: 12px; opacity: 0.7; }
+.form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; position: relative; }
+/* color, not opacity (issue #34 fix round 1): an opacity < 1 creates a new
+   stacking context, which trapped FieldHelp's popover -- rendered inside this
+   label -- under its 0.7 alpha and under its own z-index: 10, both invisible
+   to (and outranked by) later .form-row siblings' content. color-mix against
+   the themed --text-primary keeps today's dimmed look in both themes without
+   creating that context. */
+.form-row-label { flex: 0 0 auto; width: 110px; font-size: 12px; color: color-mix(in srgb, var(--text-primary) 70%, transparent); display: flex; align-items: center; gap: 4px; }
 .form-row-value { flex: 1; min-width: 0; }
 .form-row-value input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
+.field-help-button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  line-height: 1;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.field-help-button:hover, .field-help-button:focus-visible { color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.field-help-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin-top: 2px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .button-icon { display: inline-flex; align-items: center; justify-content: center; padding: 8px; }
 .update-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .update-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -223,6 +260,10 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 400; }
 .modal-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 20px; width: 420px; max-width: 90vw; }
+/* The guest Advanced modal (issue #34) has 15 rows, taller than a phone
+   viewport, so its box scrolls. The field explanation popovers are
+   positioned inside it (against their .form-row), so they scroll with it. */
+.advanced-modal-box { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
 .col-expand { width: 1.5em; text-align: center; color: var(--text-secondary); }
 .expandable-row { cursor: pointer; }
 .host-detail { display: flex; flex-direction: column; gap: 16px; padding: 8px 0 4px; }
