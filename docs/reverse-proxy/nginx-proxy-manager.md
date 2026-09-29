@@ -9,7 +9,8 @@ routes with [Nginx Proxy Manager](https://nginxproxymanager.com/)'s (NPM's)
 own REST API instead, so the Settings page hides Proxy config path, Status
 page path, and the TLS certificate/key fields entirely: none of them apply
 when there's no config file, no status page, and no shared certificate to
-configure. Tested against NPM 2.16.
+configure. Tested against NPM 2.16; an older release may reject some of
+the fields Bellhop sends on a create or update.
 
 ## Credentials
 
@@ -51,8 +52,17 @@ reclaiming the host.
 Everything below the marker — a plain reverse-proxy `location /`, or the
 whole Authentik forward-auth check plus exempt-path locations for a gated
 route — is the same body the [nginx driver](nginx.md) renders inside its
-own `server {}` block, so switching between the two drivers never changes
-what a backend receives.
+own `server {}` block, with two differences in what a backend receives,
+both because a `map` (which the nginx driver uses for these two headers)
+cannot be declared inside a proxy host's custom configuration:
+
+- **`Connection`**: on a request that isn't a WebSocket upgrade, this
+  driver passes the client's own `Connection` header through
+  (`$http_connection`, NPM's own convention), where the nginx driver sends
+  an empty one.
+- **`Host`**: this driver sends `$http_host` with no `$host` fallback, so
+  a request that arrives with no `Host` header at all reaches the backend
+  with an empty one; the nginx driver falls back to the server name.
 
 ## Settings Bellhop forces
 
@@ -76,25 +86,45 @@ With no covering certificate, `sync-proxy --apply` has NPM request one
 over its default HTTP-01 challenge, using the login email above as the
 certificate's contact address — **the hostname must already be reachable
 from the internet on port 80 through NPM** before the sync that creates
-it runs. A certificate Bellhop requested is never deleted later, even
+it runs. A hostname Let's Encrypt can never validate that way (a LAN-only
+name, or one behind split DNS) fails that request on every sync, and each
+attempt can hold a Dashboard save for up to 3 minutes while NPM waits on
+certbot — create a covering wildcard certificate in NPM (a DNS-challenge
+Let's Encrypt one, or your own) for such names instead. A certificate Bellhop requested is never deleted later, even
 once no proxy host still uses it — remove an unused one by hand in NPM if
 you want it gone.
 
 ## Conflicts
 
-A route whose hostname a proxy host NPM already has claims — one with no
-marker, or a different first line — is a **conflict**, never claimed or
-overwritten:
+A route whose hostname another host in NPM already claims — a proxy host
+with no marker (or a different first line), or any redirection host or 404
+host, since NPM refuses to give a proxy host a name either of those holds —
+is a **conflict**, never claimed or overwritten. The line names which kind
+of host holds it (NPM numbers each kind separately):
 
 ```text
 ! conflict docs.example.com: already claimed by proxy host #9 (not created by Bellhop), entry 'docs-lxc' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual
+! conflict go.example.com: already claimed by redirection host #1 (not created by Bellhop), entry 'go-lxc' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual
 ```
 
 `--apply` still applies every other route's create, update, and delete;
 only once those finish does it fail, naming every conflicting route, its
-inventory entry, and the claiming proxy host id(s). Resolve it by deleting
-or renaming the hand-made host in NPM, or by marking the inventory entry
+inventory entry, and the claiming host(s). Resolve it by deleting or
+renaming the other host in NPM, or by marking the inventory entry
 `proxyManual` if its proxy configuration is meant to stay hand-authored.
+Redirection and 404 hosts are only ever read, never changed.
+
+While a route is in conflict, its own Bellhop proxy host (if it already
+has one) is left exactly as it was — including any alias that has since
+moved to another inventory entry. If a later sync then fails with
+NPM's `<name> is already in use`, resolve the conflict first: the moved
+alias is still held by that untouched host until its own route syncs
+again.
+
+In the web UI, a failing proxy sync (a conflict included) no longer stops
+the rest of a Dashboard save or provisioning job from reconciling Authentik:
+the status page and the stale ACME challenge cleanup are skipped, Authentik
+is still synced, and the save or job then reports the proxy error as before.
 
 ## When nginx rejects a generated host
 
@@ -109,7 +139,10 @@ Nginx Proxy Manager saved proxy host #12 (media.example.com) but nginx rejected 
 ```
 
 The site stays offline until the next successful sync fixes it — nothing
-here rolls the configuration back automatically.
+here rolls the configuration back automatically. That next sync always
+rewrites a Bellhop host NPM reports offline, even when none of its settings
+changed (`~ update  media.example.com (#12): nginx_online`), so fixing
+the cause and syncing again brings it back.
 
 ## No status page
 

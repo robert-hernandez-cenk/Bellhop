@@ -36,6 +36,13 @@ guest-edit time, naming the entry, the driver, and the fix — never
 silently dropped, which would leave that entry reachable with no gate in
 front of it.
 
+When the web UI's push-live step (a Dashboard guest edit, or a
+provisioning job with subdomains) finds `sync-proxy` failing under any
+driver, it still reconciles Authentik, skips the status page render and
+the stale ACME-challenge cleanup, and then reports the proxy failure as
+before — so one route the proxy keeps refusing never stops Authentik from
+being synced for everything else. The CLI's `sync-proxy` still just fails.
+
 **"No proxy" (`proxyDriver: none`) is for an operator whose reverse proxy
 is managed by hand, or who has none at all.** It's a real, selectable
 driver, not an error state: `sync-proxy` (CLI, web, and MCP alike)

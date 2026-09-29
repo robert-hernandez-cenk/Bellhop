@@ -92,8 +92,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Guests reference their parent host by name and carry a `vmid`. Optional
   `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive reverse-proxy
   generation through whichever driver is active (issue #10 — see the
-  "Reverse-proxy driver interface" bullet below; Caddy and nginx, issue
-  #30, are the two drivers that ship today) — `subdomains` is a list (a host or guest can
+  "Reverse-proxy driver interface" bullet below; Caddy, nginx (issue
+  #30), and Nginx Proxy Manager (issue #31) are the three drivers that
+  manage a proxy today) — `subdomains` is a list (a host or guest can
   front more than one subdomain; `sync-proxy` emits one route per entry in
   the list, all pointing at the same `ip`/`port`);
   `insecureBackendTls` — see the driver-interface bullet below;
@@ -698,8 +699,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
   update: not every deployment has a Bellhop-managed reverse proxy in
   front of it, whether that's a hand-configured proxy or none at all) is
-  the third registered driver, selected the same way as Caddy/nginx via
-  `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
+  the fourth registered driver, selected the same way as the other three
+  via `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
   `defaultConfigPath` and `statusPage` are both `null`, and its
   `capabilities` accept both `forward` and `oidc` auth modes (so
   `checkCapabilities` never rejects a gated entry under it -- the
@@ -745,8 +746,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   about to become live configuration or a specific entry is being saved --
   never from `validateInventory()` itself (FR-013), so changing
   `proxyDriver` can never make an already-saved inventory fail to load;
-  Caddy and nginx both support both modes, so this never actually triggers
-  today, but it
+  Caddy, nginx, and Nginx Proxy Manager all support both modes, so this
+  never actually triggers today, but it
   is the guarantee every future driver inherits.
 
   **`fileDriver(def)`** owns the full render -> back up -> write ->
@@ -999,6 +1000,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `meta` on a custom certificate) is dropped at the parse boundary and can
   never reach a preview, a log, `snapshot()`, or an error message,
   whichever caller reads a certificate (research R8's "Security note").
+  Every other proxy-host field but `id`/`domain_names`/the `forward_*`
+  target/`enabled` is optional with a default (`false` for the flags,
+  `0` for `certificate_id`/`access_list_id`, `''` for
+  `advanced_config`), so a row from an older NPM release or one missing a
+  newer field still parses (an owned one then just shows as drift), and a
+  certificate's `expires_on` may be `null`, which counts as expired.
+  The driver is tested against NPM 2.16; an older release may reject the
+  fields Bellhop sends.
 
   **Ownership** (research R4): the first line of every Bellhop-owned proxy
   host's `advanced_config` is `NPM_OWNERSHIP_MARKER`, a `# Managed by
@@ -1009,7 +1018,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   function `plan()` calls) matches each route to the *owned* host keyed by
   its canonical (`hostnames[0]`) name; an *unowned* host claiming any of a
   route's names -- canonical or alias -- makes that route a `conflict`
-  instead of a create/update. The route's own already-owned host, if it
+  instead of a create/update. "Unowned" includes every redirection host and
+  404 host (`listRedirectionHosts`/`listDeadHosts`, research R13 --
+  verified live that NPM refuses a proxy host naming a hostname either kind
+  holds): those are never owned, written, or deleted, and the conflict
+  line names the kind holding the name (`proxy host #N` /
+  `redirection host #N` / `404 host #N`, since NPM ids are per kind). The route's own already-owned host, if it
   has one, is marked matched *before* the conflict check runs, so a
   conflicting route's own live host is never swept up by "every owned host
   no route matched -> delete" the way an unrelated stale host would be.
@@ -1044,7 +1058,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   after every create/update the driver re-`GET`s that host and throws if
   `meta.nginx_online === false`, quoting `meta.nginx_err` -- the failure
   names the id, the canonical hostname, and that the site is offline until
-  the next successful sync. The first NPM error of any kind stops
+  the next successful sync. That next sync is what brings it back:
+  `planNpmSync` treats an owned host whose `meta.nginx_online` is
+  `false` as drift even when every field matches (the pseudo-field
+  `nginx_online` in its changed list), so it is rewritten in full and
+  read back again rather than left offline as `= ok` forever. The first NPM error of any kind stops
   `apply()` outright; a non-empty `conflicts` list only throws *after*
   every other create/update/delete has run, naming every conflicting
   route together.
@@ -1468,7 +1486,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   reaches this the same way subdomain edits
   reach `sync-proxy`: via `syncProxyLive`, which now runs `sync-proxy`,
   `render-status-page`, and `sync-authentik` back to back, then
-  `prune-acme-challenges` (below), as one combined push-live step.
+  `prune-acme-challenges` (below), as one combined push-live step. When
+  `sync-proxy` itself throws (a failed write/validate, or a route the
+  Nginx Proxy Manager driver reports as a conflict on every sync), the
+  step warns, skips `render-status-page` and `prune-acme-challenges`,
+  still runs `sync-authentik` exactly as it otherwise would, and then
+  rethrows the original `sync-proxy` error (FR-023 in
+  `specs/014-nginx-proxy-manager-driver/spec.md`, an operator decision) --
+  so one lasting proxy-side conflict elsewhere can never stop a Dashboard
+  save from reconciling Authentik, while every caller still reports the
+  proxy failure as before (`proxySynced: false`/`proxyError` from
+  `commitGuestEdit`, a failed provisioning job). A `sync-authentik`
+  error on that path is only warned, so it never masks the proxy error.
+  Applies to every driver; the CLI's own `sync-proxy` is unchanged.
 
   Changing `authMode`/`oidcRedirectUris`/`oidcMobileRedirectUris` through
   the Dashboard's guest PATCH
@@ -1527,8 +1557,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   guest's own entries from both as one `oidcSkipped` list (rendered by
   `AuthentikSkipBanner`). That matters because the push-live step writes
   the proxy configuration *before* it syncs Authentik: switching to OIDC drops the
-  `forward_auth` gate first, so a skipped or failed sync leaves the app
-  ungated at the edge until the next successful one.
+  `forward_auth` gate first, so a skipped or failed *Authentik* sync leaves
+  the app ungated at the edge until the next successful one. A failed
+  *proxy* sync no longer does (FR-023, above): `sync-authentik` still runs
+  after it, so the OpenID client is still created even when some other
+  route's proxy configuration could not be written.
 - **OIDC credentials and adoption**
   (`src/commands/networking/oidc-credentials.ts`, `adopt-oidc-client.ts`,
   `src/web/routes/oidc.ts`, issue #1) are `sync-authentik`'s companion
@@ -2518,7 +2551,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   proxy was a deliberate choice over an app-embedded OIDC client: Authentik
   and the proxy own the session, and this app holds no session state of
   its own. Which proxy fronts the web UI is whatever runs on the
-  `proxy: true` entry -- Caddy or nginx, per `proxyDriver` -- and the
+  `proxy: true` entry -- Caddy, nginx, or Nginx Proxy Manager, per
+  `proxyDriver` -- and the
   firewall scope follows that entry, not the driver choice.
 - **Web UI user/group management** (`src/web/routes/users.ts`,
   `src/web/routes/groups.ts`): full CRUD on Authentik users/groups from

@@ -1,18 +1,20 @@
 // The Nginx Proxy Manager driver (issue #31): the first managed driver with
 // no configuration file. It reconciles one NPM proxy host per route over
 // NPM's REST API (src/lib/npm-client.ts) instead of writing a file over
-// SSH. Two halves: pure planning over (routes, NPM's hosts, NPM's
-// certificates) -> NpmSyncPlan, and the driver object, which lists, plans,
+// SSH. Two halves: pure planning over (routes, NPM's proxy hosts, NPM's
+// certificates, and the redirection/404 hosts that also hold names) ->
+// NpmSyncPlan, and the driver object, which lists, plans,
 // previews, and applies exactly the plan it previewed (never re-listing or
 // re-diffing, so preview and apply cannot disagree). Behavior is pinned by
 // specs/014-nginx-proxy-manager-driver/contracts/driver-and-client.md and
-// research.md R4-R10.
+// research.md R4-R10 and R13.
 
 import type { Inventory } from '../../inventory.ts';
 import {
   buildNpmClient,
   type NpmCertificate,
   type NpmClient,
+  type NpmNameHolder,
   type NpmProxyHost,
   type NpmProxyHostBody,
 } from '../../npm-client.ts';
@@ -47,9 +49,10 @@ export function certificateCovers(cert: NpmCertificate, hostname: string): boole
   });
 }
 
-// NPM's `expires_on` is UTC `YYYY-MM-DD HH:MM:SS`; anything else is NaN,
-// which every comparison below treats as expired.
+// NPM's `expires_on` is UTC `YYYY-MM-DD HH:MM:SS`; null (no expiry recorded)
+// or anything else is NaN, which every comparison below treats as expired.
 function expiryMs(cert: NpmCertificate): number {
+  if (cert.expires_on === null) return Number.NaN;
   const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(cert.expires_on);
   if (!m) return Number.NaN;
   const [y, mo, d, h, mi, s] = m.slice(1).map(Number);
@@ -157,7 +160,23 @@ export type NpmRoutePlan =
   // orderUpdates needs to run a name's release before its claim.
   | { action: 'update'; owner: Owner; hostId: number; desired: DesiredProxyHost; changed: string[]; currentDomainNames: string[] }
   | { action: 'unchanged'; owner: Owner; hostId: number; hostnames: string[] }
-  | { action: 'conflict'; owner: Owner; canonical: string; hostnames: string[]; hostIds: number[] };
+  | { action: 'conflict'; owner: Owner; canonical: string; hostnames: string[]; claimants: NpmClaimant[] };
+
+// A host Bellhop does not own that holds one of a route's names. NPM ids are
+// per kind (proxy host #1 and redirection host #1 are different hosts), so
+// the kind always travels with the id.
+export type NpmClaimantKind = 'proxy' | 'redirection' | 'dead';
+export interface NpmClaimant {
+  kind: NpmClaimantKind;
+  id: number;
+}
+
+// Redirection and 404 hosts (research R13): never owned, never written, but
+// they hold names NPM will not let a proxy host take.
+export interface NpmOtherHosts {
+  redirectionHosts?: NpmNameHolder[];
+  deadHosts?: NpmNameHolder[];
+}
 
 export interface NpmSyncPlan {
   routes: NpmRoutePlan[];
@@ -169,10 +188,18 @@ export function planNpmSync(
   ctx: ProxyContext,
   hosts: NpmProxyHost[],
   certificates: NpmCertificate[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  others: NpmOtherHosts = {}
 ): NpmSyncPlan {
   const owned = hosts.filter(isOwned);
-  const unowned = hosts.filter((h) => !isOwned(h));
+  // Every name holder Bellhop does not own, in claimant order: proxy hosts,
+  // then redirection hosts, then 404 hosts.
+  const unowned: { kind: NpmClaimantKind; id: number; domain_names: string[] }[] = [
+    ...hosts.filter((h) => !isOwned(h)).map((h) => ({ kind: 'proxy' as const, id: h.id, domain_names: h.domain_names })),
+    ...(others.redirectionHosts ?? []).map((h) => ({ kind: 'redirection' as const, id: h.id, domain_names: h.domain_names })),
+    ...(others.deadHosts ?? []).map((h) => ({ kind: 'dead' as const, id: h.id, domain_names: h.domain_names })),
+  ];
+  const kindOrder: NpmClaimantKind[] = ['proxy', 'redirection', 'dead'];
   const matched = new Set<number>();
   const planned: NpmRoutePlan[] = [];
 
@@ -185,7 +212,8 @@ export function planNpmSync(
     const host = owned.find((h) => !matched.has(h.id) && (h.domain_names[0] ?? '').toLowerCase() === names[0]);
     if (host) matched.add(host.id);
 
-    // Rule 3: an unowned host claiming any of this route's names blocks it.
+    // Rule 3: an unowned host of any kind claiming any of this route's names
+    // blocks it.
     const claimants = unowned.filter((h) => h.domain_names.some((d) => names.includes(d.toLowerCase())));
     if (claimants.length > 0) {
       const claimed = route.hostnames.filter((h) =>
@@ -196,7 +224,9 @@ export function planNpmSync(
         owner: route.owner,
         canonical: route.hostnames[0],
         hostnames: claimed,
-        hostIds: claimants.map((c) => c.id).sort((a, b) => a - b),
+        claimants: claimants
+          .map(({ kind, id }) => ({ kind, id }))
+          .sort((a, b) => kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind) || a.id - b.id),
       });
       continue;
     }
@@ -208,6 +238,10 @@ export function planNpmSync(
       continue;
     }
     const changed = changedFields(host, desired);
+    // A host nginx refused to load stays offline until NPM regenerates its
+    // configuration, even when every field already matches -- so it is drift
+    // too. The rewrite resends the full body and the read-back decides.
+    if (host.meta.nginx_online === false) changed.push('nginx_online');
     planned.push(
       changed.length === 0
         ? { action: 'unchanged', owner: route.owner, hostId: host.id, hostnames: names }
@@ -274,6 +308,23 @@ function hostIdList(ids: number[]): string {
   return ids.map((id) => `#${id}`).join(', ');
 }
 
+const CLAIMANT_LABEL: Record<NpmClaimantKind, string> = {
+  proxy: 'proxy host',
+  redirection: 'redirection host',
+  dead: '404 host',
+};
+
+// "proxy host #9, #10, redirection host #1": ids grouped under their kind,
+// in the plan's own claimant order (proxy, redirection, 404).
+function claimantList(claimants: NpmClaimant[]): string {
+  const groups: string[] = [];
+  for (const kind of Object.keys(CLAIMANT_LABEL) as NpmClaimantKind[]) {
+    const ids = claimants.filter((c) => c.kind === kind).map((c) => c.id);
+    if (ids.length > 0) groups.push(`${CLAIMANT_LABEL[kind]} ${hostIdList(ids)}`);
+  }
+  return groups.join(', ');
+}
+
 function routeLine(entry: NpmRoutePlan): string {
   switch (entry.action) {
     case 'create': {
@@ -287,7 +338,7 @@ function routeLine(entry: NpmRoutePlan): string {
     case 'unchanged':
       return `  = ok      ${entry.hostnames[0]} (#${entry.hostId})`;
     case 'conflict':
-      return `  ! conflict ${entry.hostnames.join(', ')}: already claimed by proxy host ${hostIdList(entry.hostIds)} (not created by Bellhop), entry '${entry.owner.name}' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`;
+      return `  ! conflict ${entry.hostnames.join(', ')}: already claimed by ${claimantList(entry.claimants)} (not created by Bellhop), entry '${entry.owner.name}' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`;
   }
 }
 
@@ -385,9 +436,15 @@ async function applyNpmPlan(client: NpmClient, plan: NpmSyncPlan): Promise<void>
   }
   const conflicts = plan.routes.filter((r) => r.action === 'conflict');
   if (conflicts.length > 0) {
-    const list = conflicts.map((c) => `${c.canonical} (entry '${c.owner.name}', ${hostIdList(c.hostIds)})`).join(', ');
+    // Only proxy hosts in the way: the original wording, bare ids. Any
+    // redirection or 404 host involved: every claimant is named by kind.
+    const proxyOnly = conflicts.every((c) => c.claimants.every((h) => h.kind === 'proxy'));
+    const holders = (c: Extract<NpmRoutePlan, { action: 'conflict' }>): string =>
+      proxyOnly ? hostIdList(c.claimants.map((h) => h.id)) : claimantList(c.claimants);
+    const list = conflicts.map((c) => `${c.canonical} (entry '${c.owner.name}', ${holders(c)})`).join(', ');
+    const noun = proxyOnly ? 'proxy host' : 'host';
     throw new Error(
-      `${conflicts.length} route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: ${list} -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual`
+      `${conflicts.length} route(s) skipped because a ${noun} not created by Bellhop already claims their hostnames: ${list} -- delete or change those ${noun}s in Nginx Proxy Manager, or mark the entries proxyManual`
     );
   }
 }
@@ -404,8 +461,13 @@ export function createNpmDriver(opts: { clientFor: (inventory: Inventory) => Npm
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
       const client = opts.clientFor(deps.inventory);
-      const [hosts, certificates] = await Promise.all([client.listProxyHosts(), client.listCertificates()]);
-      const plan = planNpmSync(routes, ctx, hosts, certificates);
+      const [hosts, certificates, redirectionHosts, deadHosts] = await Promise.all([
+        client.listProxyHosts(),
+        client.listCertificates(),
+        client.listRedirectionHosts(),
+        client.listDeadHosts(),
+      ]);
+      const plan = planNpmSync(routes, ctx, hosts, certificates, new Date(), { redirectionHosts, deadHosts });
       const payload: NpmPayload = { plan };
       return { preview: formatNpmPlan(plan, client.baseUrl), payload };
     },

@@ -134,6 +134,14 @@ before that patch and carries no `nginx_online` (`proxy-host-create.json`).
 **Rationale**: without the read-back, a broken sync would report success
 while the site is down.
 
+**Recovery** (final review F1): an owned host NPM reports offline
+(`meta.nginx_online === false`) is planned as an update even when every R9
+field already matches, with the pseudo-field `nginx_online` in its changed
+list (`~ update  app.example.com (#3): nginx_online`). Only a write makes
+NPM regenerate the host's configuration, so without this the host would be
+`= ok` — and offline — forever; the apply `PUT`s the full body and the
+read-back above decides whether it came back.
+
 ## R7. Request-level validation and errors
 
 - Unknown fields are rejected (`additionalProperties: false`):
@@ -218,8 +226,12 @@ locations              []
 ```
 
 A Bellhop host is *drifted* when any of these differs (with `locations:
-null` treated as `[]`); the preview names the drifted fields, and apply
-`PUT`s the full body. `forward_*` duplicates what `advanced_config`'s own
+null` treated as `[]`), or when NPM reports it offline (R6); the preview
+names the drifted fields, and apply `PUT`s the full body. A field missing
+from an older or hand-made row reads as its default (`false`, `0`, or
+`''`), so such a row parses and simply shows as drift (final review F4);
+a certificate's `expires_on` may be `null`, treated as expired. Tested
+against NPM 2.16 only; an older release may reject fields Bellhop sends. `forward_*` duplicates what `advanced_config`'s own
 `proxy_pass` already does, but keeps NPM's UI and `$server`/`$port`
 variables truthful.
 
@@ -228,7 +240,8 @@ Caddy and the nginx driver do neither; `hsts` stays off for the same reason.
 
 ## R10. Plan/apply shape
 
-**Decision**: `plan()` logs in, lists proxy hosts and certificates, and
+**Decision**: `plan()` logs in, lists proxy hosts and certificates (and,
+per R13, redirection and 404 hosts), and
 computes an `NpmSyncPlan` (data-model.md): `creates`, `updates` (with changed
 field names), `deletes`, `certificateRequests`, `conflicts`, `unchanged`.
 `apply()` runs deletes, then updates, then creates (so a hostname moving
@@ -270,3 +283,27 @@ does.
 
 **Rationale**: `DriverDeps` stays free of an NPM-specific field, and the
 driver is testable without a network.
+
+## R13. Redirection hosts and 404 hosts hold names too
+
+**Decision**: `plan()` also lists redirection hosts
+(`GET /api/nginx/redirection-hosts`) and 404 hosts
+(`GET /api/nginx/dead-hosts`), read through a minimal schema
+(`{ id, domain_names }`, every other field ignored). Neither kind is ever
+owned, written, or deleted. A route any of whose hostnames one of them holds
+(case-insensitive) is a conflict exactly like an unowned proxy host (R4), and
+the conflict line and the final apply error name the kind holding it:
+`already claimed by redirection host #1` / `404 host #1` /
+`proxy host #1` — NPM numbers each kind separately, so an id alone is
+ambiguous. With only proxy hosts in the way, the wording is unchanged.
+
+**Evidence**: against NPM 2.16.0, creating a proxy host naming
+`docs.example.test` while a redirection host already held that name was
+refused with `400 "docs.example.test is already in use"` — the same
+rejection as for a duplicate proxy host (R7). The two list responses are
+captured in `redirection-hosts-list.json` and `dead-hosts-list.json`.
+
+**Rationale**: without these lists, such a route would be planned as a
+create that NPM then rejects, stopping the apply partway through (the first
+NPM error stops it) instead of being reported as a conflict up front with
+every other change still applied.

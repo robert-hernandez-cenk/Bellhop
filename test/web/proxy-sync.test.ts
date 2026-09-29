@@ -602,3 +602,64 @@ test('syncProxyLive returns adoptable conflicts and logs them with the adopt-oid
   assert.ok(logs.warn.some((l) => l.includes(`sync-authentik: plex — ${OAUTH2_CONFLICT_EXPLANATION}`)));
   assert.ok(!logs.warn.some((l) => l.includes(CONFLICT_EXPLANATION)), 'never the resolve-by-hand wording');
 });
+
+// Final review F3 (operator decision, FR-023): when sync-proxy fails -- e.g.
+// a lasting Nginx Proxy Manager conflict on an unrelated route -- the push-live
+// step still reconciles Authentik, so a guest just switched to OIDC still
+// gets its OpenID client; it skips the status page and the ACME prune, then
+// rethrows the original sync-proxy error so every caller keeps reporting the
+// proxy failure as before.
+test('syncProxyLive: a failing sync-proxy still runs sync-authentik, skips the status page and prune, and rethrows the same error', async () => {
+  const failure = new Error('fake proxy apply failed: already in use');
+  const snapshots: string[] = [];
+  const failing: ReverseProxyDriver = {
+    id: 'fake-driver-apply-throws-f3' as ReverseProxyDriver['id'],
+    label: 'Fake',
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/fake/fake.conf',
+    statusPage: { suggestedPath: '/var/www/html/index.html' },
+    async plan(): Promise<ProxyPlan> {
+      return { preview: 'fake plan', payload: null };
+    },
+    async apply(): Promise<void> {
+      throw failure;
+    },
+    async snapshot(): Promise<string> {
+      snapshots.push('snapshot');
+      return '';
+    },
+  };
+  const unregister = registerDriverForTests(failing);
+  try {
+    const gated: Inventory = {
+      domain: 'example.com',
+      statusPagePath: '/var/www/html/index.html',
+      proxyDriver: failing.id as Inventory['proxyDriver'],
+      hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+      guests: [
+        { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      ],
+    };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const authentik = new FakeAuthentikClient();
+    const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+    let caught: unknown;
+    const logs = await captureLogs(async () => {
+      try {
+        await syncProxyLive({ ssh, inventory: gated, authentik, cloudflare });
+      } catch (err) {
+        caught = err;
+      }
+    });
+
+    assert.equal(caught, failure, 'rejects with the very same sync-proxy error');
+    assert.ok(authentik.calls.includes('createApplication sonarr'), 'sync-authentik still ran');
+    assert.deepEqual(snapshots, [], 'render-status-page never read the proxy configuration');
+    assert.equal(ssh.history.length, 0, 'nor wrote a status page');
+    assert.deepEqual(cloudflare.history, [], 'prune-acme-challenges never ran');
+    assert.ok(logs.warn.some((l) => l.includes('fake proxy apply failed: already in use')), 'the failure is warned');
+  } finally {
+    unregister();
+  }
+});

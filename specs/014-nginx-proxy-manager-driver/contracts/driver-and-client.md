@@ -25,8 +25,16 @@ interface NpmClient {
   deleteProxyHost(id: number): Promise<void>;
   listCertificates(): Promise<NpmCertificate[]>;
   requestCertificate(domainNames: string[]): Promise<{ id: number }>;
+  listRedirectionHosts(): Promise<NpmNameHolder[]>;  // GET /api/nginx/redirection-hosts, read only
+  listDeadHosts(): Promise<NpmNameHolder[]>;         // GET /api/nginx/dead-hosts, read only
 }
 ```
+
+`NpmNameHolder` = `{ id: number; domain_names: string[] }` (research R13;
+every other field ignored). `NpmProxyHost`'s flags and ids other than
+`id`/`domain_names`/`forward_*`/`enabled` default when missing
+(`false`, `0`, `''` for `advanced_config`);
+`NpmCertificate.expires_on` is `string | null`, null meaning expired.
 
 - Logs in lazily on first call (`POST /api/tokens`), once per client.
 - Every request: `AbortSignal.timeout(NPM_REQUEST_TIMEOUT_MS)` (10 000);
@@ -50,9 +58,11 @@ Header line, then one line per route in route order, then deletes:
 Nginx Proxy Manager at http://192.0.2.30:81
   + create  app.example.com, www.example.com -> http://192.0.2.10:8080  [certificate: #3 Wildcard example.com]
   ~ update  media.example.com (#12): forward_port, advanced_config
+  ~ update  tv.example.com (#13): nginx_online
   = ok      wiki.example.com (#14)
   + create  new.example.com -> https://192.0.2.11:443  [certificate: request Let's Encrypt for new.example.com]
   ! conflict docs.example.com: already claimed by proxy host #9 (not created by Bellhop), entry 'docs-lxc' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual
+  ! conflict go.example.com: already claimed by redirection host #1 (not created by Bellhop), entry 'go-lxc' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual
   - delete  old.example.com (#7)
 N change(s), M conflict(s)
 ```
@@ -60,8 +70,13 @@ N change(s), M conflict(s)
 With no changes and no conflicts, the last line is `No changes`.
 
 A conflict line lists the route's hostnames the unmarked host(s) claim, the
-claiming host ids, and the inventory entry (`route.owner.name`):
-`  ! conflict <claimed hostnames>: already claimed by proxy host #<ids> (not created by Bellhop), entry '<name>' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`.
+claiming hosts grouped by kind, and the inventory entry (`route.owner.name`):
+`  ! conflict <claimed hostnames>: already claimed by <claimants> (not created by Bellhop), entry '<name>' -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual`,
+where `<claimants>` is `proxy host #<ids>`, `redirection host #<ids>` and
+`404 host #<ids>`, each present only when non-empty, in that order, joined
+with `, ` (e.g. `proxy host #9, #10, redirection host #1`). An `update`
+whose only change is `nginx_online` rewrites a host NPM reports offline
+(research R6).
 
 ## `apply()`
 
@@ -74,7 +89,11 @@ create/update. After each create/update, `getProxyHost(id)`; if
 `meta.nginx_online === false`:
 `Error("Nginx Proxy Manager saved proxy host #<id> (<canonical>) but nginx rejected its configuration: <nginx_err> -- the site is offline until the next successful sync")`.
 The first error stops the apply. After all changes, when conflicts exist:
-`Error("<n> route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: <canonical> (entry '<name>', #<ids>)[, ...] -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual")`.
+`Error("<n> route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: <canonical> (entry '<name>', #<ids>)[, ...] -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual")`
+when only proxy hosts are in the way; when any redirection or 404 host is,
+`Error("<n> route(s) skipped because a host not created by Bellhop already claims their hostnames: <canonical> (entry '<name>', <claimants>)[, ...] -- delete or change those hosts in Nginx Proxy Manager, or mark the entries proxyManual")`,
+every entry naming its claimants by kind as in the preview. Redirection and
+404 hosts are never written.
 
 ## `snapshot()`
 

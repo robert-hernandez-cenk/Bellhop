@@ -1002,3 +1002,123 @@ test('NPM snapshot: no owned hosts at all -> just the header, "0 proxy host(s)"'
   const result = await driver.snapshot(deps);
   assert.equal(result, 'Nginx Proxy Manager at http://192.0.2.30:81 -- 0 proxy host(s) managed by Bellhop');
 });
+
+// =============================================================================
+// Final review F1: an owned host nginx left offline is rewritten
+// =============================================================================
+
+test('F1: an owned host matching every desired field but offline -> "~ update ... : nginx_online", applied, read back online', async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  await setup(inv([TWO_ROUTES[1]]), client).sync();
+  const host = client.hosts.get(1)!;
+  host.meta = { nginx_online: false, nginx_err: 'nginx: [emerg] host not found in upstream' };
+  client.clearCalls();
+
+  const { plan, driver, deps } = setup(inv([TWO_ROUTES[1]]), client);
+  const result = await plan();
+  assert.equal(
+    result.preview,
+    [
+      'Nginx Proxy Manager at http://192.0.2.30:81',
+      '  ~ update  wiki.example.com (#1): nginx_online',
+      '1 change(s), 0 conflict(s)',
+    ].join('\n')
+  );
+  await driver.apply(result, deps);
+  assert.deepEqual(client.writes().map((w) => [w.method, w.id]), [['updateProxyHost', 1]]);
+  assert.equal(client.hosts.get(1)!.meta.nginx_online, true);
+});
+
+test('F1: the same host with nginx_online true or undefined stays "= ok"', async () => {
+  for (const meta of [{ nginx_online: true, nginx_err: null }, {}]) {
+    const client = new FakeNpmClient({ certificates: [WILDCARD] });
+    await setup(inv([TWO_ROUTES[1]]), client).sync();
+    client.hosts.get(1)!.meta = meta;
+    const result = await setup(inv([TWO_ROUTES[1]]), client).plan();
+    assert.equal(
+      result.preview,
+      ['Nginx Proxy Manager at http://192.0.2.30:81', '  = ok      wiki.example.com (#1)', 'No changes'].join('\n'),
+      JSON.stringify(meta)
+    );
+  }
+});
+
+// =============================================================================
+// Final review F2: redirection hosts and 404 hosts claim hostnames too
+// =============================================================================
+
+test('F2: a redirection host holding a route name -> conflict naming "redirection host #N"; never written; apply error says so', async () => {
+  const client = new FakeNpmClient({
+    certificates: [WILDCARD],
+    redirectionHosts: [{ id: 1, domain_names: ['www.example.com'] }],
+  });
+  const { plan, driver, deps } = setup(inv(TWO_ROUTES), client);
+  const result = await plan();
+  assert.equal(
+    result.preview,
+    [
+      'Nginx Proxy Manager at http://192.0.2.30:81',
+      `  ! conflict www.example.com: already claimed by redirection host #1 (not created by Bellhop), entry 'app' -- ${CONFLICT_HINT}`,
+      '  + create  wiki.example.com -> http://192.0.2.11:3000  [certificate: #3 Wildcard example.com]',
+      '1 change(s), 1 conflict(s)',
+    ].join('\n')
+  );
+  await assert.rejects(
+    () => driver.apply(result, deps),
+    new Error(
+      "1 route(s) skipped because a host not created by Bellhop already claims their hostnames: app.example.com (entry 'app', redirection host #1) -- delete or change those hosts in Nginx Proxy Manager, or mark the entries proxyManual"
+    )
+  );
+  assert.deepEqual(client.writes().map((w) => w.method), ['createProxyHost']);
+  assert.deepEqual(client.redirectionHosts, [{ id: 1, domain_names: ['www.example.com'] }]);
+});
+
+test('F2: a 404 host holding a canonical name -> conflict naming "404 host #N", matched case-insensitively', async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD], deadHosts: [{ id: 4, domain_names: ['Wiki.Example.com'] }] });
+  const result = await setup(inv([TWO_ROUTES[1]]), client).plan();
+  assert.match(
+    result.preview,
+    /^ {2}! conflict wiki\.example\.com: already claimed by 404 host #4 \(not created by Bellhop\), entry 'wiki' -- /m
+  );
+});
+
+test('F2: claimants of several kinds are grouped by kind, proxy hosts first; ids are per kind', async () => {
+  const client = new FakeNpmClient({
+    certificates: [WILDCARD],
+    hosts: [npmHost({ id: 1, domain_names: ['app.example.com'] })],
+    redirectionHosts: [{ id: 1, domain_names: ['www.example.com'] }],
+    deadHosts: [{ id: 2, domain_names: ['www.example.com'] }],
+  });
+  const { plan, driver, deps } = setup(inv([TWO_ROUTES[0]]), client);
+  const result = await plan();
+  assert.match(
+    result.preview,
+    /^ {2}! conflict app\.example\.com, www\.example\.com: already claimed by proxy host #1, redirection host #1, 404 host #2 \(not created by Bellhop\), entry 'app' -- /m
+  );
+  await assert.rejects(
+    () => driver.apply(result, deps),
+    new Error(
+      "1 route(s) skipped because a host not created by Bellhop already claims their hostnames: app.example.com (entry 'app', proxy host #1, redirection host #1, 404 host #2) -- delete or change those hosts in Nginx Proxy Manager, or mark the entries proxyManual"
+    )
+  );
+  assert.deepEqual(client.writes(), []);
+});
+
+test('F2: planNpmSync takes redirection and 404 hosts as an optional last argument', () => {
+  const inventory = inv([TWO_ROUTES[1]]);
+  const routes = buildRoutes(inventory);
+  const ctx = buildProxyContext(inventory);
+  const plan = planNpmSync(routes, ctx, [], [WILDCARD], NOW, { redirectionHosts: [], deadHosts: [{ id: 7, domain_names: ['wiki.example.com'] }] });
+  assert.deepEqual(plan.routes[0].action === 'conflict' && plan.routes[0].claimants, [{ kind: 'dead', id: 7 }]);
+});
+
+// =============================================================================
+// Final review F4: a certificate with no expiry is never selected
+// =============================================================================
+
+test('F4: chooseCertificate never selects a certificate whose expires_on is null', () => {
+  const names = ['app.example.com'];
+  const noExpiry: NpmCertificate = { ...cert(1, names), expires_on: null };
+  assert.deepEqual(chooseCertificate(names, [noExpiry], 1, NOW), { kind: 'request', domainNames: names });
+  assert.equal(chosenId(chooseCertificate(names, [noExpiry, cert(2, names)], 1, NOW)), 2);
+});

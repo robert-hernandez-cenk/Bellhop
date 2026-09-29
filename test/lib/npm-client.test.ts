@@ -315,3 +315,68 @@ test('buildNpmClient strips a trailing / or /api from NPM_API_URL', () => {
     assert.equal(buildNpmClient(fixtureInventory()).baseUrl, 'http://198.51.100.5:81');
   });
 });
+
+// =============================================================================
+// Final review F2: redirection hosts and 404 hosts claim hostnames too
+// =============================================================================
+
+test('listRedirectionHosts parses the captured list down to id + domain_names', async () => {
+  const { impl, calls } = tableFetch({
+    ...loginOk(),
+    [`GET ${BASE_URL}/api/nginx/redirection-hosts`]: fixture('redirection-hosts-list.json'),
+  });
+  const client = new RealNpmClient(BASE_URL, 'ops@example.com', 'secret', impl);
+  assert.deepEqual(await client.listRedirectionHosts(), [{ id: 1, domain_names: ['docs.example.test'] }]);
+  assert.equal(calls.at(-1)!.authorization, `Bearer ${fixture('token-create.json').body.token}`);
+});
+
+test('listDeadHosts parses the captured list down to id + domain_names', async () => {
+  const { impl } = tableFetch({
+    ...loginOk(),
+    [`GET ${BASE_URL}/api/nginx/dead-hosts`]: fixture('dead-hosts-list.json'),
+  });
+  const client = new RealNpmClient(BASE_URL, 'ops@example.com', 'secret', impl);
+  assert.deepEqual(await client.listDeadHosts(), [{ id: 1, domain_names: ['gone.example.test'] }]);
+});
+
+// =============================================================================
+// Final review F4: older or hand-made rows still parse
+// =============================================================================
+
+test('listProxyHosts parses a row missing the newer optional fields, defaulting them to false/0/""', async () => {
+  const list = fixture('proxy-hosts-list.json');
+  const row = list.body.find((h: { id: number }) => h.id === 4);
+  for (const key of [
+    'trust_forwarded_proto',
+    'hsts_subdomains',
+    'hsts_enabled',
+    'ssl_forced',
+    'http2_support',
+    'allow_websocket_upgrade',
+    'block_exploits',
+    'caching_enabled',
+    'access_list_id',
+    'certificate_id',
+    'advanced_config',
+  ]) {
+    delete row[key];
+  }
+  const { impl } = tableFetch({ ...loginOk(), [`GET ${BASE_URL}/api/nginx/proxy-hosts`]: list });
+  const client = new RealNpmClient(BASE_URL, 'ops@example.com', 'secret', impl);
+  const host = (await client.listProxyHosts()).find((h) => h.id === 4)!;
+  assert.equal(host.trust_forwarded_proto, false);
+  assert.equal(host.hsts_subdomains, false);
+  assert.equal(host.ssl_forced, false);
+  assert.equal(host.access_list_id, 0);
+  assert.equal(host.certificate_id, 0);
+  assert.equal(host.advanced_config, '');
+});
+
+test('listCertificates parses a certificate whose expires_on is null', async () => {
+  const list = fixture('certificates-list.json');
+  list.body[0].expires_on = null;
+  const { impl } = tableFetch({ ...loginOk(), [`GET ${BASE_URL}/api/nginx/certificates`]: list });
+  const client = new RealNpmClient(BASE_URL, 'ops@example.com', 'secret', impl);
+  const [certificate] = await client.listCertificates();
+  assert.equal(certificate.expires_on, null);
+});

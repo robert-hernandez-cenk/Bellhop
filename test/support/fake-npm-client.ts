@@ -4,11 +4,21 @@
 // mark the next writes offline (meta.nginx_online: false, as NPM does when
 // nginx rejects a host's advanced_config -- research R6) or to fail a
 // certificate request (research R8's certbot failure). Like NPM, it rejects a
-// create/update naming a hostname another proxy host already holds.
-import type { NpmCertificate, NpmClient, NpmProxyHost, NpmProxyHostBody } from '../../src/lib/npm-client.ts';
+// create/update naming a hostname another proxy host -- or a redirection or
+// 404 host (research R13), which it holds read-only -- already holds.
+import type { NpmCertificate, NpmClient, NpmNameHolder, NpmProxyHost, NpmProxyHostBody } from '../../src/lib/npm-client.ts';
 
 export interface FakeNpmCall {
-  method: 'listProxyHosts' | 'getProxyHost' | 'createProxyHost' | 'updateProxyHost' | 'deleteProxyHost' | 'listCertificates' | 'requestCertificate';
+  method:
+    | 'listProxyHosts'
+    | 'getProxyHost'
+    | 'createProxyHost'
+    | 'updateProxyHost'
+    | 'deleteProxyHost'
+    | 'listCertificates'
+    | 'requestCertificate'
+    | 'listRedirectionHosts'
+    | 'listDeadHosts';
   id?: number;
   body?: NpmProxyHostBody;
   domainNames?: string[];
@@ -45,6 +55,10 @@ export class FakeNpmClient implements NpmClient {
   readonly baseUrl: string;
   readonly hosts = new Map<number, NpmProxyHost>();
   certificates: NpmCertificate[] = [];
+  // Redirection and 404 hosts: listed, and holding their names, but never
+  // written by the driver.
+  redirectionHosts: NpmNameHolder[] = [];
+  deadHosts: NpmNameHolder[] = [];
   readonly calls: FakeNpmCall[] = [];
   // When set, every create/update is stored with nginx_online: false and
   // this nginx_err, as NPM does after nginx fails to load the host.
@@ -54,8 +68,18 @@ export class FakeNpmClient implements NpmClient {
   private nextHostId = 1;
   private nextCertificateId = 1;
 
-  constructor(opts: { baseUrl?: string; hosts?: NpmProxyHost[]; certificates?: NpmCertificate[] } = {}) {
+  constructor(
+    opts: {
+      baseUrl?: string;
+      hosts?: NpmProxyHost[];
+      certificates?: NpmCertificate[];
+      redirectionHosts?: NpmNameHolder[];
+      deadHosts?: NpmNameHolder[];
+    } = {}
+  ) {
     this.baseUrl = opts.baseUrl ?? 'http://192.0.2.30:81';
+    this.redirectionHosts = structuredClone(opts.redirectionHosts ?? []);
+    this.deadHosts = structuredClone(opts.deadHosts ?? []);
     for (const host of opts.hosts ?? []) this.seedHost(host);
     for (const cert of opts.certificates ?? []) {
       this.certificates.push(cert);
@@ -81,10 +105,13 @@ export class FakeNpmClient implements NpmClient {
   // order that claims a name before its old holder released it fails here
   // the way it does live.
   private assertNamesFree(method: string, path: string, body: NpmProxyHostBody, selfId?: number): void {
+    const others: { domain_names: string[] }[] = [
+      ...[...this.hosts.values()].filter((h) => h.id !== selfId),
+      ...this.redirectionHosts,
+      ...this.deadHosts,
+    ];
     for (const name of body.domain_names) {
-      const holder = [...this.hosts.values()].find(
-        (h) => h.id !== selfId && h.domain_names.some((d) => d.toLowerCase() === name.toLowerCase())
-      );
+      const holder = others.find((h) => h.domain_names.some((d) => d.toLowerCase() === name.toLowerCase()));
       if (holder) throw new Error(`Nginx Proxy Manager API 400 ${method} ${path}: ${name} is already in use`);
     }
   }
@@ -132,6 +159,16 @@ export class FakeNpmClient implements NpmClient {
   async listCertificates(): Promise<NpmCertificate[]> {
     this.calls.push({ method: 'listCertificates' });
     return this.certificates.map((c) => structuredClone(c));
+  }
+
+  async listRedirectionHosts(): Promise<NpmNameHolder[]> {
+    this.calls.push({ method: 'listRedirectionHosts' });
+    return structuredClone(this.redirectionHosts);
+  }
+
+  async listDeadHosts(): Promise<NpmNameHolder[]> {
+    this.calls.push({ method: 'listDeadHosts' });
+    return structuredClone(this.deadHosts);
   }
 
   async requestCertificate(domainNames: string[]): Promise<{ id: number }> {

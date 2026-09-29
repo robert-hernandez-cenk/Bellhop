@@ -36,24 +36,31 @@ const NpmProxyHostMetaSchema = z.object({
   nginx_err: z.string().nullable().optional(),
 });
 
+// Only what ownership and matching read is required (id, domain_names, the
+// forward_* target, enabled); every other flag and id defaults, so a row from
+// an older NPM release, or a hand-made one missing a newer field (e.g.
+// trust_forwarded_proto), still parses -- and, if owned, simply shows up as
+// drift and is rewritten with the full R9 body (final review F4).
+const flag = () => z.boolean().optional().default(false);
+
 export const NpmProxyHostSchema = z.object({
   id: z.number(),
   domain_names: z.array(z.string()),
   forward_scheme: z.enum(['http', 'https']),
   forward_host: z.string(),
   forward_port: z.number(),
-  certificate_id: z.number(),
-  ssl_forced: z.boolean(),
-  http2_support: z.boolean(),
-  allow_websocket_upgrade: z.boolean(),
-  block_exploits: z.boolean(),
-  caching_enabled: z.boolean(),
-  hsts_enabled: z.boolean(),
-  hsts_subdomains: z.boolean(),
-  trust_forwarded_proto: z.boolean(),
+  certificate_id: z.number().optional().default(0),
+  ssl_forced: flag(),
+  http2_support: flag(),
+  allow_websocket_upgrade: flag(),
+  block_exploits: flag(),
+  caching_enabled: flag(),
+  hsts_enabled: flag(),
+  hsts_subdomains: flag(),
+  trust_forwarded_proto: flag(),
   enabled: z.boolean(),
-  access_list_id: z.number(),
-  advanced_config: z.string(),
+  access_list_id: z.number().optional().default(0),
+  advanced_config: z.string().optional().default(''),
   // NPM reads back null on a host created without locations, and [] when
   // sent (research R7) -- both mean "none," so both normalise to [] here.
   locations: z
@@ -69,11 +76,22 @@ export const NpmCertificateSchema = z.object({
   provider: z.string(),
   nice_name: z.string(),
   domain_names: z.array(z.string()),
-  // UTC `YYYY-MM-DD HH:MM:SS`; an unparseable value is treated as expired by
-  // the driver's certificate selection, not by this schema.
-  expires_on: z.string(),
+  // UTC `YYYY-MM-DD HH:MM:SS`; null (no expiry recorded) or an unparseable
+  // value is treated as expired by the driver's certificate selection, not
+  // by this schema.
+  expires_on: z.string().nullable(),
 });
 export type NpmCertificate = z.infer<typeof NpmCertificateSchema>;
+
+// A redirection host or a 404 ("dead") host. Bellhop never creates, edits or
+// deletes either kind; it only reads which hostnames they hold, because NPM
+// refuses a proxy host naming a hostname a host of any kind already holds
+// (research R13). Every other field is ignored.
+export const NpmNameHolderSchema = z.object({
+  id: z.number(),
+  domain_names: z.array(z.string()),
+});
+export type NpmNameHolder = z.infer<typeof NpmNameHolderSchema>;
 
 const TokenResponseSchema = z.object({
   token: z.string(),
@@ -116,6 +134,9 @@ export interface NpmClient {
   deleteProxyHost(id: number): Promise<void>;
   listCertificates(): Promise<NpmCertificate[]>;
   requestCertificate(domainNames: string[]): Promise<{ id: number }>;
+  // Read only -- Bellhop never writes either kind (research R13).
+  listRedirectionHosts(): Promise<NpmNameHolder[]>;
+  listDeadHosts(): Promise<NpmNameHolder[]>;
 }
 
 // -- Error mapping -------------------------------------------------------
@@ -295,6 +316,16 @@ export class RealNpmClient implements NpmClient {
       timeoutMs: NPM_CERTIFICATE_TIMEOUT_MS,
     });
     return CreatedSchema.parse(res);
+  }
+
+  async listRedirectionHosts(): Promise<NpmNameHolder[]> {
+    const body = await this.request('GET', '/api/nginx/redirection-hosts');
+    return z.array(NpmNameHolderSchema).parse(body);
+  }
+
+  async listDeadHosts(): Promise<NpmNameHolder[]> {
+    const body = await this.request('GET', '/api/nginx/dead-hosts');
+    return z.array(NpmNameHolderSchema).parse(body);
   }
 }
 

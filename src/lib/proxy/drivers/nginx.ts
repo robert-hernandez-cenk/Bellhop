@@ -3,12 +3,6 @@ import type { FileSpec } from '../file-driver.ts';
 import { fileDriver } from '../file-driver.ts';
 import { quote, renderServerBody, type ServerBodyVars } from '../nginx-locations.ts';
 
-// Re-exported so a caller that imported `quote` from this file before the
-// issue #31 extraction (src/lib/proxy/nginx-locations.ts) keeps working --
-// this file's own quote() usage (ssl_certificate/ssl_certificate_key below)
-// is this same re-exported binding.
-export { quote };
-
 // The whole file is generated and replaced wholesale on every apply
 // ('owned' mode, research R8) -- unlike the Caddy driver, nginx has no
 // admin API and no other file this toolkit's operator hand-authors

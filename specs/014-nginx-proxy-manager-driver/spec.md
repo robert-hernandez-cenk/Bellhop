@@ -299,7 +299,8 @@ file fields are hidden.
 - **FR-011**: Apply MUST perform exactly what the dry run listed: create
   missing proxy hosts, update drifted ones in place, and delete marked
   proxy hosts that match no route.
-- **FR-012**: An unmarked proxy host claiming any hostname of a route MUST
+- **FR-012**: An unmarked proxy host (or any redirection or 404 host,
+  research R13) claiming any hostname of a route MUST
   be reported as a conflict and never modified; that route MUST be skipped;
   every other change MUST still be applied; and apply MUST then fail with
   an error naming each conflict and its resolution.
@@ -345,6 +346,18 @@ file fields are hidden.
   the driver, its credentials file, the certificate behaviour, and the
   ownership rule, and MUST record the single-deployment assumptions it
   makes.
+
+**Push-live step** (added in the final code review, operator decision)
+
+- **FR-023**: When the web UI's push-live step (`syncProxyLive`, run by a
+  Dashboard guest edit or a provisioning job) finds `sync-proxy` failing —
+  for any driver, including a route this driver keeps reporting as a
+  conflict — it MUST warn, skip the status page render and the stale ACME
+  challenge prune, still reconcile Authentik exactly as it otherwise would
+  (when Authentik is configured), and then fail with the original
+  `sync-proxy` error, so every caller reports the proxy failure as before.
+  An Authentik failure on that path MUST only be warned, never replace the
+  proxy error. The CLI's own `sync-proxy` command is unchanged.
 
 ### Key Entities
 
