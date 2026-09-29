@@ -1563,7 +1563,12 @@ test('OIDC: a mobile-only change on an owned client is reported as redirect_uris
   const callsBeforeApply = authentik.calls.length;
   const applied = await runSyncAuthentik({ apply: true }, { authentik, inventory: edited, fetchImpl: okFetch() });
   assert.deepEqual(applied.oidcUpdates, [{ slug: 'media', changes: ['redirect_uris'] }]);
-  assert.deepEqual(authentik.calls.slice(callsBeforeApply), [`updateOAuth2Provider ${providerId}`]);
+  // The first mobile URI also creates the consent step (T014, tested in
+  // sync-authentik-mobile-consent.test.ts); the client gets only this PATCH.
+  assert.deepEqual(
+    authentik.calls.slice(callsBeforeApply).filter((c) => c.includes('OAuth2') || c.includes('Application')),
+    [`updateOAuth2Provider ${providerId}`]
+  );
 
   const provider = (await authentik.listOAuth2Providers())[0];
   assert.deepEqual(provider.redirectUris, [

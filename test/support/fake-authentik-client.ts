@@ -512,8 +512,13 @@ export class FakeAuthentikClient implements AuthentikClient {
     return this.policyBindings.map((b) => ({ id: b.id, targetId: b.targetId, groupId: b.groupId }));
   }
 
+  // One endpoint (DELETE /api/v3/policies/bindings/<id>/) serves every kind
+  // of policy binding, so this also removes a policy-to-flow-stage-binding
+  // one -- how sync-authentik deletes the mobile-consent policy binding.
   async deletePolicyBinding(id: string): Promise<void> {
+    this.checkFailOn('deletePolicyBinding');
     this.policyBindings = this.policyBindings.filter((b) => b.id !== id);
+    this.targetPolicyBindings = this.targetPolicyBindings.filter((b) => b.id !== id);
     this.calls.push(`deletePolicyBinding ${id}`);
   }
 
@@ -547,6 +552,7 @@ export class FakeAuthentikClient implements AuthentikClient {
   }
 
   async getDefaultAuthorizationFlowId(): Promise<string> {
+    this.checkFailOn('getDefaultAuthorizationFlowId');
     return this.authorizationFlowId;
   }
 
