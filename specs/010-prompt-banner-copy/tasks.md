@@ -69,8 +69,8 @@ None. No new dependencies or project structure.
 
 **Independent Test**: `promptBannerView('stall', …)`'s `hint` contains `"${dismissLabel}"` and `dismissLabel === 'Not a question — keep waiting'`; `promptBannerView(null, …)` has the same label and no hint.
 
-- [ ] T009 [US3] In `test/web-client/prompt-banner.test.ts`, change the `stall` test to the contract's new hint text and assert `dismissLabel === 'Not a question — keep waiting'`, `hintStrong: true`, `quiet: 'answers'`, and that `hint.includes(\`"${dismissLabel}"\`)`; change the `null` test to assert the same label with `hint: null`, `quiet: null`. Add one test over all four keys (`'expected'`, `'heuristic'`, `'stall'`, `null`) asserting no `dismissLabel` equals `Not stuck — keep waiting` (SC-002) and that any hint naming a control in quotes names that view's own `dismissLabel` (SC-003). Confirm they fail.
-- [ ] T010 [US3] In `web-client/src/lib/prompt-banner.ts`, set the `stall` and `none` labels, and build the stall hint from a shared `NOT_A_QUESTION_LABEL` constant so the hint and the button can't drift. Run `npm test`; T009 passes.
+- [x] T009 [US3] In `test/web-client/prompt-banner.test.ts`, change the `stall` test to the contract's new hint text and assert `dismissLabel === 'Not a question — keep waiting'`, `hintStrong: true`, `quiet: 'answers'`, and that `hint.includes(\`"${dismissLabel}"\`)`; change the `null` test to assert the same label with `hint: null`, `quiet: null`. Add one test over all four keys (`'expected'`, `'heuristic'`, `'stall'`, `null`) asserting no `dismissLabel` equals `Not stuck — keep waiting` (SC-002) and that any hint naming a control in quotes names that view's own `dismissLabel` (SC-003). Confirm they fail.
+- [x] T010 [US3] In `web-client/src/lib/prompt-banner.ts`, set the `stall` and `none` labels, and build the stall hint from a shared `NOT_A_QUESTION_LABEL` constant so the hint and the button can't drift. Run `npm test`; T009 passes.
 
 **Checkpoint**: All three stories complete.
 

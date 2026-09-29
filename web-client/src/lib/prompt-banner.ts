@@ -21,9 +21,10 @@ export interface PromptBannerView {
 
 type BannerEntry = (matchedIndex: number | null, expectedCount: number) => PromptBannerView;
 
-// Today's only dismiss-button label -- every origin uses it for now; a
-// later phase gives 'expected' and the rest their own labels (research R2/R3).
-const TODAY_DISMISS_LABEL = 'Not stuck — keep waiting';
+// The dismiss label for every origin that isn't a confirmed 'expected'
+// question -- also quoted verbatim inside the stall hint, so the two can't
+// drift apart (US3, contracts/banner-copy.md).
+const NOT_A_QUESTION_LABEL = 'Not a question — keep waiting';
 
 const BANNER_VIEWS: Record<PromptOrigin | 'none', BannerEntry> = {
   expected: (matchedIndex, expectedCount) => ({
@@ -41,20 +42,20 @@ const BANNER_VIEWS: Record<PromptOrigin | 'none', BannerEntry> = {
         ? "Looks like a question, but it doesn't match any prompt in this app's install script — it may not be one."
         : 'Looks like a question, but there were no known prompts for this app to check it against — it may not be one.',
     hintStrong: false,
-    dismissLabel: 'Not a question — keep waiting',
+    dismissLabel: NOT_A_QUESTION_LABEL,
     quiet: null,
   }),
   stall: () => ({
     hint:
-      'Output stopped for 5 minutes and this does not match any known prompt — it may not be a question at all. The line above is the last output received. Dismiss to keep waiting, or answer if it is in fact a prompt.',
+      `Output stopped for 5 minutes and this does not match any known prompt — it may not be a question at all. The line above is the last output received. Choose "${NOT_A_QUESTION_LABEL}" to keep waiting, or answer if it is in fact a prompt.`,
     hintStrong: true,
-    dismissLabel: TODAY_DISMISS_LABEL,
+    dismissLabel: NOT_A_QUESTION_LABEL,
     quiet: 'answers',
   }),
   none: () => ({
     hint: null,
     hintStrong: false,
-    dismissLabel: TODAY_DISMISS_LABEL,
+    dismissLabel: NOT_A_QUESTION_LABEL,
     quiet: null,
   }),
 };
