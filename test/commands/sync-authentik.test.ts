@@ -1675,10 +1675,10 @@ test('OIDC: a missing signing key skips every OIDC entry, naming AUTHENTIK_OIDC_
 
 test('OIDC: a missing scope mapping skips every OIDC entry with kind missing-scope-mapping', async () => {
   const authentik = new FakeAuthentikClient({
-    scopeMappings: {
-      'goauthentik.io/providers/oauth2/scope-openid': 'scope-openid-1',
-      'goauthentik.io/providers/oauth2/scope-profile': 'scope-profile-1',
-    },
+    scopeMappings: [
+      { id: 'scope-openid-1', managed: 'goauthentik.io/providers/oauth2/scope-openid', scopeName: 'openid' },
+      { id: 'scope-profile-1', managed: 'goauthentik.io/providers/oauth2/scope-profile', scopeName: 'profile' },
+    ],
   });
   await seedLadderGroups(authentik);
   const result = await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });

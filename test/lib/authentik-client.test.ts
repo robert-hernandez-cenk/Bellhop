@@ -413,6 +413,57 @@ test('RealAuthentikClient.listOAuth2Providers excludes a proxy provider pk prese
   );
 });
 
+// --- Scope property mappings (issue #16) -----------------------------------
+
+// The live capture (research.md R1) has no top-level `count` -- only
+// `pagination.count` -- and includes a custom (`managed: null`) mapping
+// alongside the built-in ones, exactly the case listScopeMappings exists for.
+test('RealAuthentikClient.listScopeMappings maps pk -> id, scope_name -> scopeName, and null managed -> managed absent', async () => {
+  const propertyMappings = fixture('propertymappings-scope.json');
+  await withStubbedFetch(
+    (url) =>
+      url.includes('/propertymappings/provider/scope/?page_size=100') ? json(propertyMappings) : new Response(null, { status: 204 }),
+    async (client, requests) => {
+      const mappings = await client.listScopeMappings();
+      assert.equal(requests[0]?.url, 'https://auth.example.com/api/v3/propertymappings/provider/scope/?page_size=100');
+      assert.equal(mappings.length, 10);
+      assert.deepEqual(mappings[2], {
+        id: '00000000-0000-4000-8000-000000000042',
+        managed: 'goauthentik.io/providers/oauth2/scope-email',
+        scopeName: 'email',
+      });
+      const custom = mappings.find((m) => m.id === '00000000-0000-4000-8000-000000000043');
+      assert.deepEqual(custom, {
+        id: '00000000-0000-4000-8000-000000000043',
+        managed: undefined,
+        scopeName: 'email',
+      });
+    }
+  );
+});
+
+// Driven from the real fixture shape (pagination.count bumped above the
+// result count) rather than a fabricated response -- same rationale as
+// findPolicyByName's own truncation test above: the count Authentik actually
+// reports lives under pagination.count, and the old guard read a top-level
+// `count` that never existed, so it never fired (research.md R1).
+test('RealAuthentikClient.listScopeMappings throws when Authentik reports more mappings than the page returned', async () => {
+  const propertyMappings = fixture('propertymappings-scope.json') as {
+    pagination: Record<string, unknown>;
+    results: unknown[];
+  };
+  const truncated = {
+    ...propertyMappings,
+    pagination: { ...propertyMappings.pagination, count: propertyMappings.results.length + 1 },
+  };
+  await withStubbedFetch(
+    () => json(truncated),
+    async (client) => {
+      await assert.rejects(client.listScopeMappings(), /pagination is not implemented/);
+    }
+  );
+});
+
 // --- Mobile-consent step (issue #22, T011) --------------------------------
 
 test('UnconfiguredAuthentikClient rejects the mobile-consent-step methods too', async () => {

@@ -7,6 +7,7 @@ import type {
   AuthentikPolicyBinding,
   AuthentikPolicyRef,
   AuthentikProxyProvider,
+  AuthentikScopeMapping,
   AuthentikStageRef,
   OAuth2ProviderSettings,
 } from '../../lib/authentik-client.ts';
@@ -1234,7 +1235,16 @@ async function applyMobileConsent(
 }
 
 export type OidcInstanceSettings =
-  | { ok: true; signingKeyId: string; scopeMappingIds: string[] }
+  | {
+      ok: true;
+      signingKeyId: string;
+      scopeMappingIds: string[];
+      // issue #16: every listed mapping's id -> scope name, so
+      // diffOAuth2Settings can tell whether a required scope is covered by
+      // some attached mapping (built-in or custom) rather than requiring the
+      // exact built-in id. data-model.md "Scope coverage rule".
+      scopeNameById: ReadonlyMap<string, string>;
+    }
   | { ok: false; kind: 'missing-signing-key' | 'missing-scope-mapping'; reason: string };
 
 // The instance-wide half of an OpenID client's settings (research R3): the
@@ -1255,7 +1265,22 @@ export async function resolveOidcInstanceSettings(authentik: AuthentikClient): P
     };
   }
   try {
-    return { ok: true, signingKeyId, scopeMappingIds: await authentik.getScopeMappingIds(OIDC_SCOPE_MAPPINGS) };
+    // One listing (issue #16, research.md R2) supplies both halves: the
+    // three built-in ids, resolved by managed id below exactly as
+    // getScopeMappingIds used to, and scopeNameById, every listed mapping's
+    // id -> scope name -- an id with no managed id (a custom mapping) is
+    // simply never a candidate here, but still appears in scopeNameById.
+    const mappings = await authentik.listScopeMappings();
+    const idByManaged = new Map(
+      mappings.filter((m): m is AuthentikScopeMapping & { managed: string } => m.managed != null).map((m) => [m.managed, m.id])
+    );
+    const scopeMappingIds = OIDC_SCOPE_MAPPINGS.map((managed) => {
+      const id = idByManaged.get(managed);
+      if (!id) throw new Error(`No Authentik scope property mapping found for managed id '${managed}'`);
+      return id;
+    });
+    const scopeNameById = new Map(mappings.map((m) => [m.id, m.scopeName]));
+    return { ok: true, signingKeyId, scopeMappingIds, scopeNameById };
   } catch (err) {
     return { ok: false, kind: 'missing-scope-mapping', reason: `could not resolve the OpenID scope mappings: ${errorMessage(err)}` };
   }

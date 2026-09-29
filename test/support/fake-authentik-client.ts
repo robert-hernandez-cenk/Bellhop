@@ -10,6 +10,7 @@ import type {
   AuthentikPolicyBindingDetail,
   AuthentikPolicyRef,
   AuthentikProxyProvider,
+  AuthentikScopeMapping,
   AuthentikStageRef,
   AuthentikUser,
   CreateUserInput,
@@ -31,11 +32,11 @@ const EXPRESSION_POLICY_MODEL = 'authentik_policies_expression.expressionpolicy'
 const DEFAULT_SIGNING_KEYS: Record<string, string> = {
   'authentik Self-signed Certificate': 'key-1',
 };
-const DEFAULT_SCOPE_MAPPINGS: Record<string, string> = {
-  'goauthentik.io/providers/oauth2/scope-openid': 'scope-openid-1',
-  'goauthentik.io/providers/oauth2/scope-profile': 'scope-profile-1',
-  'goauthentik.io/providers/oauth2/scope-email': 'scope-email-1',
-};
+const DEFAULT_SCOPE_MAPPINGS: AuthentikScopeMapping[] = [
+  { id: 'scope-openid-1', managed: 'goauthentik.io/providers/oauth2/scope-openid', scopeName: 'openid' },
+  { id: 'scope-profile-1', managed: 'goauthentik.io/providers/oauth2/scope-profile', scopeName: 'profile' },
+  { id: 'scope-email-1', managed: 'goauthentik.io/providers/oauth2/scope-email', scopeName: 'email' },
+];
 
 // client_id/client_secret sit outside AuthentikOAuth2Provider itself (the
 // real interface deliberately keeps them off that type -- see
@@ -56,7 +57,7 @@ export interface FakeAuthentikSeed {
   outpost?: AuthentikOutpost;
   oauth2Providers?: Array<AuthentikOAuth2Provider & { clientId?: string; clientSecret?: string }>;
   signingKeys?: Record<string, string>;
-  scopeMappings?: Record<string, string>;
+  scopeMappings?: AuthentikScopeMapping[];
   // Mobile-consent step (issue #22, research.md R4/R7). Seeded objects use
   // the same shape the real AuthentikClient interface hands back, so a test
   // can seed exactly what a prior list/create call would have returned.
@@ -87,7 +88,7 @@ export class FakeAuthentikClient implements AuthentikClient {
   private policyBindings: Array<{ id: string; targetId: string; groupId?: string }> = [];
   private oauth2Providers: Map<string, FakeOAuth2ProviderRecord>;
   private signingKeys: Map<string, string>;
-  private scopeMappings: Map<string, string>;
+  private scopeMappings: AuthentikScopeMapping[];
   // Mobile-consent step (issue #22). `mode`/`expression` are only ever
   // present on a consent-model stage / expression-model policy respectively,
   // mirroring how the real API's per-type endpoints are the only place those
@@ -120,7 +121,7 @@ export class FakeAuthentikClient implements AuthentikClient {
   // changed" or check that a particular reconcile step actually ran --
   // e.g. 'createOAuth2Provider media', 'updateApplication media',
   // 'deleteProxyProvider 3'. Read-only lookups (getSigningKeyId,
-  // getScopeMappingIds, getOAuth2Credentials, every list*/get*) are not
+  // listScopeMappings, getOAuth2Credentials, every list*/get*) are not
   // logged, matching this array's purpose of tracking state changes.
   readonly calls: string[] = [];
 
@@ -139,7 +140,7 @@ export class FakeAuthentikClient implements AuthentikClient {
       ])
     );
     this.signingKeys = new Map(Object.entries(seed.signingKeys ?? DEFAULT_SIGNING_KEYS));
-    this.scopeMappings = new Map(Object.entries(seed.scopeMappings ?? DEFAULT_SCOPE_MAPPINGS));
+    this.scopeMappings = seed.scopeMappings ?? DEFAULT_SCOPE_MAPPINGS;
     this.stages = new Map((seed.stages ?? []).map((s) => [s.id, { id: s.id, name: s.name, model: s.model, mode: s.mode }]));
     this.policies = new Map(
       (seed.policies ?? []).map((p) => [p.id, { id: p.id, name: p.name, model: p.model, expression: p.expression }])
@@ -640,12 +641,8 @@ export class FakeAuthentikClient implements AuthentikClient {
     return id;
   }
 
-  async getScopeMappingIds(managed: string[]): Promise<string[]> {
-    return managed.map((m) => {
-      const id = this.scopeMappings.get(m);
-      if (!id) throw new Error(`No Authentik scope property mapping found for managed id '${m}'`);
-      return id;
-    });
+  async listScopeMappings(): Promise<AuthentikScopeMapping[]> {
+    return [...this.scopeMappings];
   }
 
   // Mobile-consent step (issue #22, research.md R4/R7): in-memory behavior
