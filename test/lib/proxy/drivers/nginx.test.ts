@@ -450,6 +450,119 @@ test('render: a forward-gated inventory with no authentik:true entry still throw
   );
 });
 
+// --- (g) exempt paths under the outpost's own namespace are skipped --------
+// Fix round 1: an exempt location under /outpost.goauthentik.io would
+// outrank the outpost passthrough location and send the auth_request
+// subrequest to the backend instead of the outpost, ungating the site (an
+// exact location always wins; ^~ beats the outpost's bare-string prefix
+// location). Both shapes must therefore produce no location of their own,
+// with location / still carrying the full auth_request block.
+
+test('render: an exact exempt path under /outpost.goauthentik.io produces no location, and location / still carries auth_request', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/outpost.goauthentik.io/auth/nginx'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+    assert.doesNotMatch(content, /location = "\/outpost\.goauthentik\.io/);
+  });
+});
+
+test('render: an exempt path equal to exactly /outpost.goauthentik.io (no trailing slash, no wildcard) produces no location, and location / still carries auth_request', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/outpost.goauthentik.io'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+    assert.doesNotMatch(content, /location = "\/outpost\.goauthentik\.io"/);
+  });
+});
+
+test('render: a prefix exempt path under /outpost.goauthentik.io/* produces no location, and location / still carries auth_request', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/outpost.goauthentik.io/*'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+    assert.doesNotMatch(content, /location \^~ "\/outpost\.goauthentik\.io/);
+  });
+});
+
+test('render: an outpost-namespace exempt path alongside an ordinary one only renders the ordinary one', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/health', '/outpost.goauthentik.io/*'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      '',
+      '    location = "/health" {',
+      ...APP_PROXY_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+  });
+});
+
+// --- (h) an exempt path containing a backslash ------------------------------
+// Pins escape order (\ escaped before ") at the location level, not just
+// via a direct quote() unit check.
+
+test('render: an exempt path containing a backslash is emitted quoted and escaped', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/a\\b'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      '',
+      '    location = "/a\\\\b" {',
+      ...APP_PROXY_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+  });
+});
+
 // --- executed-script test (research R9): the 'owned' delivery path ---------
 
 function shAvailable(): boolean {

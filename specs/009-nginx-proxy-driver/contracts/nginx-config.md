@@ -111,7 +111,12 @@ Differences from the ungated block:
    <proxy lines>
        }
    ```
-   A path's `\` and `"` are backslash-escaped inside the quotes.
+   A path's `\` and `"` are backslash-escaped inside the quotes. A pattern
+   whose path is exactly `/outpost.goauthentik.io`, or anything under
+   `/outpost.goauthentik.io/`, produces no location at all -- it is silently
+   skipped (never thrown on), since such a location would outrank the
+   outpost passthrough location below and misroute its `auth_request`
+   subrequest to the site's own backend (research R7).
 4. Then the outpost passthrough and sign-in locations, with
    `ctx.outpost` = `192.0.2.20:9000`:
    ```nginx

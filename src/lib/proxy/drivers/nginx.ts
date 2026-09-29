@@ -130,15 +130,45 @@ function dedupeExemptPatterns(patterns: PathPattern[]): PathPattern[] {
   return result;
 }
 
+// A pattern whose path is the outpost's own namespace -- exactly
+// `/outpost.goauthentik.io`, or anything under `/outpost.goauthentik.io/`
+// (a deeper exact path, or the `/outpost.goauthentik.io/*` prefix, which
+// parses to path `/outpost.goauthentik.io/`). Skipped (never rendered as a
+// location, never thrown on) rather than exempted: an exact location always
+// wins nginx's location-matching, and `^~` beats a bare-string prefix, so
+// either shape would outrank the `location /outpost.goauthentik.io`
+// passthrough below and send the `auth_request` subrequest to the site's
+// own backend instead of the outpost -- a backend answering 2xx for an
+// unrecognized path would then ungate the whole site. Caddy's
+// `handle /outpost.goauthentik.io/*` sends these requests to the outpost
+// regardless of any `not path` exemption (issue #10), so silently skipping
+// the pattern here reproduces that same behavior rather than failing a
+// sync over an entry Caddy handles fine.
+function isOutpostPrefixed(pattern: PathPattern): boolean {
+  return pattern.path === '/outpost.goauthentik.io' || pattern.path.startsWith('/outpost.goauthentik.io/');
+}
+
+// The route's exempt patterns, deduped and with the outpost's own namespace
+// silently dropped (see isOutpostPrefixed) -- computed once by
+// renderServerBlock and threaded through to both the `location /`
+// root-exemption check and exemptLocations below, rather than each
+// recomputing it from the route's raw exemptPaths.
+function candidateExemptPatterns(route: ProxyRoute): PathPattern[] {
+  if (route.auth.mode !== 'forward') return [];
+  return dedupeExemptPatterns(route.auth.exemptPaths).filter((pattern) => !isOutpostPrefixed(pattern));
+}
+
 // One location per unique exempt pattern other than the root prefix
 // (contract "Forward-gated route" #3, research R7): exact -> `location =`,
 // prefix -> `location ^~` (wins over any regex location an operator include
 // might add, matching Caddy's own `path /api/*` semantics). Each contains
 // only the proxy lines -- no auth_request -- and is preceded by a blank line,
-// since every location in a server block is blank-line-separated.
+// since every location in a server block is blank-line-separated. Takes the
+// already-deduped, already outpost-filtered pattern list (see
+// candidateExemptPatterns) rather than the route's raw exemptPaths.
 function exemptLocations(patterns: PathPattern[], backend: ProxyRoute['backend'], ctx: ProxyContext): string[] {
   const lines: string[] = [];
-  for (const pattern of dedupeExemptPatterns(patterns)) {
+  for (const pattern of patterns) {
     if (isRootPrefix(pattern)) continue;
     const selector = pattern.kind === 'exact' ? '=' : '^~';
     lines.push('', `    location ${selector} ${quote(pattern.path)} {`, ...proxyLines(backend, ctx), '    }');
@@ -203,8 +233,8 @@ function renderServerBlock(route: ProxyRoute, ctx: ProxyContext): string[] {
     return [...head, '', '    location / {', ...proxyLines(route.backend, ctx), '    }', '}'];
   }
 
-  const dedupedExempt = dedupeExemptPatterns(route.auth.exemptPaths);
-  const rootExempted = dedupedExempt.some(isRootPrefix);
+  const exemptPatterns = candidateExemptPatterns(route);
+  const rootExempted = exemptPatterns.some(isRootPrefix);
 
   const locationRoot = [
     '    location / {',
@@ -219,7 +249,7 @@ function renderServerBlock(route: ProxyRoute, ctx: ProxyContext): string[] {
     '    proxy_buffer_size 32k;',
     '',
     ...locationRoot,
-    ...exemptLocations(route.auth.exemptPaths, route.backend, ctx),
+    ...exemptLocations(exemptPatterns, route.backend, ctx),
     ...outpostLocations(ctx),
     '}',
   ];

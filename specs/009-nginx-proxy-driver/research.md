@@ -144,6 +144,18 @@ settings as `location /` and no `auth_request`:
 - prefix `/*` -> no extra location; `location /` itself drops
   `auth_request` (and its sign-in/identity lines), since a second
   `location /` fails `nginx -t` with a duplicate-location error.
+- exactly `/outpost.goauthentik.io`, or anything under
+  `/outpost.goauthentik.io/` (an exact deeper path, or the prefix
+  `/outpost.goauthentik.io/*`) -> **skipped entirely, not thrown on**:
+  `nginx`'s location matching always prefers an exact (`=`) match, and a
+  `^~` prefix beats a bare-string prefix, so either shape would outrank
+  `location /outpost.goauthentik.io` (R3) and send the `auth_request`
+  subrequest to the site's own backend instead of the outpost -- a backend
+  answering 2xx for an unrecognized path would then ungate the whole site.
+  Caddy's `handle /outpost.goauthentik.io/*` (issue #10) sends these
+  requests to the outpost regardless of any `not path` exemption, so
+  silently dropping the pattern here reproduces that same behavior rather
+  than failing a sync over an entry Caddy handles fine.
 
 Paths are written as double-quoted strings with `\` and `"` escaped, so
 spaces, `;`, `{`, or `#` in a path are matched literally instead of
