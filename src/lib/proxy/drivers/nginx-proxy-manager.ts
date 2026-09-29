@@ -83,7 +83,10 @@ export type DesiredProxyHost = Omit<NpmProxyHostBody, 'certificate_id'> & { cert
 export function desiredProxyHost(route: ProxyRoute, ctx: ProxyContext, certificate: CertificateChoice): DesiredProxyHost {
   const lines = renderServerBody(route, ctx, { host: '$http_host', connection: '$http_connection' });
   return {
-    domain_names: [...route.hostnames],
+    // Lower-cased: matching is case-insensitive, so what Bellhop sends (and
+    // compares for drift) must be too, or a mixed-case subdomain would drift
+    // on every sync.
+    domain_names: route.hostnames.map((h) => h.toLowerCase()),
     forward_scheme: route.backend.insecureTls || route.backend.port === 443 ? 'https' : 'http',
     forward_host: route.backend.ip,
     forward_port: route.backend.port,
@@ -131,12 +134,17 @@ const COMPARED_FIELDS = [
 ] as const;
 
 function changedFields(host: NpmProxyHost, desired: DesiredProxyHost): string[] {
+  const current: Record<string, unknown> = {
+    ...host,
+    // desired.domain_names is already lower-cased; compare host names the same way.
+    domain_names: host.domain_names.map((d) => d.toLowerCase()),
+  };
   const wanted: Record<string, unknown> = {
     ...desired,
     // A requested certificate is by definition not the one the host has.
     certificate_id: desired.certificate.kind === 'existing' ? desired.certificate.id : undefined,
   };
-  return COMPARED_FIELDS.filter((field) => JSON.stringify(host[field]) !== JSON.stringify(wanted[field]));
+  return COMPARED_FIELDS.filter((field) => JSON.stringify(current[field]) !== JSON.stringify(wanted[field]));
 }
 
 // -- Plan (data-model.md NpmSyncPlan) -------------------------------------------
@@ -169,6 +177,12 @@ export function planNpmSync(
   for (const route of routes) {
     const names = route.hostnames.map((h) => h.toLowerCase());
 
+    // Rule 1: the owned host keyed by this route's canonical name. Marked
+    // matched before the conflict check, so a conflicting route's own live
+    // host is skipped along with the route rather than deleted by rule 2.
+    const host = owned.find((h) => !matched.has(h.id) && (h.domain_names[0] ?? '').toLowerCase() === names[0]);
+    if (host) matched.add(host.id);
+
     // Rule 3: an unowned host claiming any of this route's names blocks it.
     const claimants = unowned.filter((h) => h.domain_names.some((d) => names.includes(d.toLowerCase())));
     if (claimants.length > 0) {
@@ -185,19 +199,16 @@ export function planNpmSync(
       continue;
     }
 
-    // Rule 1: the owned host keyed by this route's canonical name.
-    const host = owned.find((h) => !matched.has(h.id) && (h.domain_names[0] ?? '').toLowerCase() === names[0]);
-    const certificate = chooseCertificate(route.hostnames, certificates, host?.certificate_id, now);
+    const certificate = chooseCertificate(names, certificates, host?.certificate_id, now);
     const desired = desiredProxyHost(route, ctx, certificate);
     if (!host) {
       planned.push({ action: 'create', owner: route.owner, desired });
       continue;
     }
-    matched.add(host.id);
     const changed = changedFields(host, desired);
     planned.push(
       changed.length === 0
-        ? { action: 'unchanged', owner: route.owner, hostId: host.id, hostnames: [...route.hostnames] }
+        ? { action: 'unchanged', owner: route.owner, hostId: host.id, hostnames: names }
         : { action: 'update', owner: route.owner, hostId: host.id, desired, changed }
     );
   }

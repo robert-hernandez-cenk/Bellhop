@@ -294,3 +294,46 @@ test('nginxProxyManagerDriver metadata matches the contract', () => {
   assert.equal(nginxProxyManagerDriver.usesSharedCertificate, undefined);
   assert.equal(nginxProxyManagerDriver.configPathNote, undefined);
 });
+
+// --- Fix round 1 -------------------------------------------------------------
+
+test("NPM: a conflicting route keeps its own live Bellhop host -- no delete, no writes to either host, then the conflict error", async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  // Live, owned host #1 for app.example.com.
+  await setup(inv([{ name: 'app', ip: '192.0.2.10', port: 8080, subdomains: ['app'] }]), client).sync();
+  // A hand-made host claims the alias the route is about to add.
+  client.seedHost(npmHost({ id: 9, domain_names: ['www.example.com'], advanced_config: '# my own config' }));
+  client.clearCalls();
+
+  const { plan, driver, deps } = setup(inv([TWO_ROUTES[0]]), client);
+  const result = await plan();
+  assert.match(result.preview, /^ {2}! conflict www\.example\.com: already claimed by proxy host #9 \(not created by Bellhop\)/m);
+  assert.doesNotMatch(result.preview, /^ {2}- delete/m);
+  await assert.rejects(
+    () => driver.apply(result, deps),
+    new Error(
+      '1 route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: app.example.com (#9) -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual'
+    )
+  );
+  assert.deepEqual(client.writes(), []);
+  assert.ok(client.hosts.has(1));
+  assert.ok(client.hosts.has(9));
+});
+
+test('planNpmSync: a mixed-case route hostname against an owned host holding the lower-cased names is "= ok" (idempotent)', async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  const inventory = inv([TWO_ROUTES[0]]);
+  await setup(inventory, client).sync();
+  assert.deepEqual(client.hosts.get(1)!.domain_names, ['app.example.com', 'www.example.com']);
+
+  const [route] = buildRoutes(inventory);
+  const mixed = { ...route, hostnames: ['App.Example.com', 'WWW.example.com'] };
+  const plan = planNpmSync([mixed], buildProxyContext(inventory), await client.listProxyHosts(), [WILDCARD]);
+  assert.deepEqual(plan.routes.map((r) => r.action), ['unchanged']);
+  assert.deepEqual(plan.deletes, []);
+
+  // And a new mixed-case route is created with lower-cased names.
+  const fresh = planNpmSync([mixed], buildProxyContext(inventory), [], [WILDCARD]);
+  const create = fresh.routes[0];
+  assert.deepEqual(create.action === 'create' && create.desired.domain_names, ['app.example.com', 'www.example.com']);
+});
