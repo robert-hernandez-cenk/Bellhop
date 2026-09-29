@@ -1076,7 +1076,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `data/authentik.env` needs a few scopes forward-auth-only gating never
   required: read/write on OAuth2/OpenID Providers, read on
   certificate-keypairs and scope/property mappings, and update on
-  Applications -- see README's "OIDC mode" section. With *no* candidate in
+  Applications -- see "OIDC mode" in `docs/authentik.md`. With *no* candidate in
   `authMode: 'oidc'` (gated or not), a failed OAuth2 listing is treated as
   an empty one (`listOAuth2ProvidersForRun`), so a forward-only deployment
   whose token predates this feature keeps working exactly as before; with
@@ -2014,7 +2014,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   whether an app can be updated, which has no knowledge of a fork-only
   app; both limitations are inherent to reusing community-scripts' own
   engine rather than bugs in this toolkit, and are recorded as known
-  limitations in README rather than worked around.
+  limitations in `docs/configuration.md` rather than worked around.
   `formatSourceNotice(source)` builds the one notice line both
   `runInstallApp`/`runUpdateApp` emit before doing anything else -- a
   `warn` (`logWarn`) telling the operator to rebase when the source
@@ -2390,7 +2390,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   themselves; `GroupsSection` stays a plain prop consumer, getting
   `adminGroups` passed down from `UsersPage`. Also gated behind the directory-capability check
   (`requireUserDirectory`, `src/web/auth.ts`) on top of `requireAdminGroup` —
-  see "Running without Authentik" in `README.md` for what happens when no
+  see "Running without Authentik" in `docs/authentik.md` for what happens when no
   `AUTHENTIK_API_URL`/`AUTHENTIK_API_TOKEN` are configured. `AuthentikClient`
   (`src/lib/authentik-client.ts`) wraps
   Authentik's REST API v3, modeled on the `SSHClient` injection pattern:
@@ -2781,6 +2781,15 @@ the same rigor as any other correctness bug.
   the three CI checks, branch-per-issue-via-PR). A change to any convention
   it restates updates it in the same change, the same way README/CLAUDE.md
   are.
+- **User documentation is split between `README.md` and `docs/`.** The
+  README is the newcomer's page -- intro, prerequisites, a quickstart, a
+  main-commands table and a documentation index -- and must stay within 200
+  lines; reference material lives in `docs/` (one page per topic, one page
+  per proxy driver under `docs/reverse-proxy/`). A behavior change updates
+  whichever page describes it. `test/docs/links.test.ts` (part of `npm
+  test`) enforces the README line budget and fails on any relative link or
+  heading anchor in `README.md`/`docs/` that doesn't resolve, so renaming a
+  heading means updating the links to it in the same change (issue #41).
 - **GitHub operations go through the `gh` CLI, not the GitHub MCP tools.**
   The GitHub MCP server's token is not reliably scoped to this repository
   (`mcp__github__*` calls come back 404/422 "resource does not exist or

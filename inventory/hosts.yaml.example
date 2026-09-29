@@ -94,8 +94,8 @@ guests:
     # enforced: "forward" puts the proxy's forward-auth in front of the app
     # (the default -- omit authMode entirely for this); "oidc" instead gives
     # the app its own Authentik OpenID Connect client, for an app with its
-    # own user accounts that can tell users apart itself. See README's
-    # "OIDC mode" section.
+    # own user accounts that can tell users apart itself. See the
+    # "OIDC mode" section of docs/authentik.md.
     authMode: oidc
     # oidcRedirectUris: required once authMode is "oidc" and this entry has
     # subdomains -- the app's own OIDC callback URL(s), read by sync-authentik

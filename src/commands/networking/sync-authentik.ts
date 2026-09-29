@@ -280,7 +280,7 @@ const CONSENT_MODE = 'always_require';
 // only, so an operator may move it (research R4).
 const CONSENT_BINDING_ORDER = 10;
 const MOBILE_CONSENT_ERROR_HINT =
-  " — check AUTHENTIK_AUTHORIZATION_FLOW_SLUG and the API token's stage/policy/flow permissions (README \"Authentik API token permissions\")";
+  " — check AUTHENTIK_AUTHORIZATION_FLOW_SLUG and the API token's stage/policy/flow permissions (docs/authentik.md \"Authentik API token permissions\")";
 
 // `name` is deliberately absent: the Application/Provider display name is
 // the slug verbatim (issue #156), so a second field holding the same value
@@ -981,8 +981,8 @@ export async function runSyncAuthentik(
 }
 
 // Every OAuth2 provider, for ownership. A forward-only deployment whose API
-// token predates OIDC mode may lack OAuth2 read access (README "Authentik
-// API token permissions"); when no candidate is in OIDC mode, a failed
+// token predates OIDC mode may lack OAuth2 read access (docs/authentik.md,
+// "Authentik API token permissions"); when no candidate is in OIDC mode, a failed
 // listing is treated as "no OAuth2 providers" -- exactly how this command
 // behaved before OAuth2 ownership existed: an OAuth2-backed Application at a
 // gated slug reads as an unowned conflict and is never touched. With any

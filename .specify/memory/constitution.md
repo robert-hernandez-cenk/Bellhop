@@ -102,8 +102,9 @@ Captured fixtures catch mismatches with real APIs that invented fixtures hide.
   viewport of 640px or narrower before it is reported complete. Tables MUST follow the
   `data-label` card-layout convention below the breakpoint, and themed styles MUST target
   `:root[data-theme='dark']`.
-- A user-visible behavior change MUST update `README.md` in the same change. A change to
-  architecture or conventions MUST update `CLAUDE.md` in the same change.
+- A user-visible behavior change MUST update `README.md` or the relevant page under `docs/`
+  in the same change. A change to architecture or conventions MUST update `CLAUDE.md` in
+  the same change.
 
 **Rationale**: an operator who learns one command should be able to predict the rest. A dry
 run that matches the real apply is the toolkit's main safety mechanism, and it only works if
@@ -170,4 +171,4 @@ constitution wins, and the conflicting document MUST be corrected.
 - **Runtime guidance**: `CLAUDE.md` holds day-to-day development guidance and MUST stay
   consistent with this constitution.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-17 | **Last Amended**: 2026-09-23
+**Version**: 1.1.1 | **Ratified**: 2026-09-17 | **Last Amended**: 2026-09-29

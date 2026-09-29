@@ -90,11 +90,11 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
 
 ## Phase 6: User Story 4 - Pointers updated (P2)
 
-- [ ] T016 [US4] In `src/commands/networking/sync-authentik.ts`, change the hint `(README "Authentik API token permissions")` to `(docs/authentik.md "Authentik API token permissions")`. Update the nearby comment (about line 984) the same way. Update the expected string in `test/commands/sync-authentik-mobile-consent.test.ts` (about line 224).
-- [ ] T017 [P] [US4] Update comments: `src/web/auth.ts` line 46 → `docs/authentik.md`'s "Running without Authentik"; `inventory/hosts.yaml.example` lines 97-98 → `docs/authentik.md`'s "OIDC mode" section.
-- [ ] T018 [P] [US4] Update `CLAUDE.md`: "see README's "OIDC mode" section" → `docs/authentik.md`; "recorded as known limitations in README" → `docs/configuration.md`; ""Running without Authentik" in `README.md`" → `docs/authentik.md`.
-- [ ] T019 [P] [US4] Restate the documentation rule as "`README.md` or the relevant `docs/` page" in `CONTRIBUTING.md` (line 136), `.github/pull_request_template.md` (line 18) and `.specify/memory/constitution.md` (line 105). Bump the constitution to Version 1.1.1, Last Amended 2026-09-29 (research R6).
-- [ ] T020 [US4] Run quickstart.md step 4 (`git grep` for stale README pointers) and fix any remaining hits.
+- [x] T016 [US4] In `src/commands/networking/sync-authentik.ts`, change the hint `(README "Authentik API token permissions")` to `(docs/authentik.md "Authentik API token permissions")`. Update the nearby comment (about line 984) the same way. Update the expected string in `test/commands/sync-authentik-mobile-consent.test.ts` (about line 224).
+- [x] T017 [P] [US4] Update comments: `src/web/auth.ts` line 46 → `docs/authentik.md`'s "Running without Authentik"; `inventory/hosts.yaml.example` lines 97-98 → `docs/authentik.md`'s "OIDC mode" section.
+- [x] T018 [P] [US4] Update `CLAUDE.md`: "see README's "OIDC mode" section" → `docs/authentik.md`; "recorded as known limitations in README" → `docs/configuration.md`; ""Running without Authentik" in `README.md`" → `docs/authentik.md`.
+- [x] T019 [P] [US4] Restate the documentation rule as "`README.md` or the relevant `docs/` page" in `CONTRIBUTING.md` (line 136), `.github/pull_request_template.md` (line 18) and `.specify/memory/constitution.md` (line 105). Bump the constitution to Version 1.1.1, Last Amended 2026-09-29 (research R6).
+- [x] T020 [US4] Run quickstart.md step 4 (`git grep` for stale README pointers) and fix any remaining hits.
 
 **Checkpoint**: commit `Point README-section references at docs/ pages (#41, US4)`.
 

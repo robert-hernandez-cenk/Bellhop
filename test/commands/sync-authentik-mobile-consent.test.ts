@@ -221,7 +221,7 @@ const WEB_URIS = ['https://media.example.com/oauth/callback'];
 const MOBILE_A = 'app.example:///oauth-callback';
 const MOBILE_B = 'https://media.example.com/mobile-redirect';
 const HINT =
-  " — check AUTHENTIK_AUTHORIZATION_FLOW_SLUG and the API token's stage/policy/flow permissions (README \"Authentik API token permissions\")";
+  " — check AUTHENTIK_AUTHORIZATION_FLOW_SLUG and the API token's stage/policy/flow permissions (docs/authentik.md \"Authentik API token permissions\")";
 
 // Every mutating consent-step call the fake logs. Group-binding writes
 // (createPolicyBinding) never match, since each prefix ends in a space.
