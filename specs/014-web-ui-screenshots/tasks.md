@@ -63,7 +63,7 @@ Paths are relative to the repository root (the worktree).
 - [x] T017 [P] [US1] Add `install-app-catalog.png`, `job-log.png`, `update-page.png`, and `dashboard-phone.png` to `docs/web-ui.md`, each next to the paragraph describing that screen (add one short sentence introducing the phone card layout where the phone shot goes), each with descriptive alt text (FR-015, FR-016)
 - [x] T018 [P] [US1] Add `guest-access-oidc.png` to the `## OIDC mode` section of `docs/authentik.md` next to the text about per-guest settings, with alt text (FR-015)
 - [x] T019 [P] [US1] Add `settings-proxy-driver.png` to `docs/reverse-proxy/README.md` where choosing a driver is described, with alt text (FR-015)
-- [ ] T020 [US1] Run `npm test` (the docs link test checks every image link) and view the four pages rendered at desktop and phone width
+- [x] T020 [US1] Run `npm test` (the docs link test checks every image link) and view the four pages rendered at desktop and phone width
 
 **Checkpoint**: MVP — the docs show the web UI.
 
@@ -101,8 +101,8 @@ Paths are relative to the repository root (the worktree).
 ## Phase 6: Polish & cross-cutting
 
 - [x] T028 [P] Add a short `CLAUDE.md` note under Workflow conventions: the demo instance (`scripts/demo/`) is how screenshots are made, it must stay example-data-only (guarded by `test/scripts/demo/demo-inventory.test.ts`), and a UI change that alters a screenshotted screen regenerates them
-- [ ] T029 Run the full gate: `npm run typecheck`, `npm test`, `npm run web:build`
-- [ ] T030 Review the full branch diff (`git diff main...HEAD`), images included, for any real operational data (constitution workflow gate)
+- [x] T029 Run the full gate: `npm run typecheck`, `npm test`, `npm run web:build`
+- [x] T030 Review the full branch diff (`git diff main...HEAD`), images included, for any real operational data (constitution workflow gate)
 
 ---
 
