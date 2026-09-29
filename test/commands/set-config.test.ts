@@ -137,3 +137,49 @@ test('runSetConfig rejects a relative proxyConfigPath', () => {
     /must be an absolute path/
   );
 });
+
+test('runSetConfig round-trips proxyTlsCertificate through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig(
+    { key: 'proxyTlsCertificate', value: '/etc/ssl/example/fullchain.pem', apply: true },
+    { inventoryPath }
+  );
+  assert.equal(loadInventory(inventoryPath).proxyTlsCertificate, '/etc/ssl/example/fullchain.pem');
+  runSetConfig({ key: 'proxyTlsCertificate', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyTlsCertificate, undefined);
+});
+
+test('runSetConfig rejects a relative proxyTlsCertificate', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () =>
+      runSetConfig(
+        { key: 'proxyTlsCertificate', value: 'etc/ssl/example/fullchain.pem', apply: true },
+        { inventoryPath }
+      ),
+    /proxyTlsCertificate: must be an absolute path/
+  );
+});
+
+test('runSetConfig round-trips proxyTlsKey through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyTlsKey', value: '/etc/ssl/example/privkey.pem', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyTlsKey, '/etc/ssl/example/privkey.pem');
+  runSetConfig({ key: 'proxyTlsKey', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyTlsKey, undefined);
+});
+
+test('runSetConfig rejects a relative proxyTlsKey', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () =>
+      runSetConfig({ key: 'proxyTlsKey', value: 'etc/ssl/example/privkey.pem', apply: true }, { inventoryPath }),
+    /proxyTlsKey: must be an absolute path/
+  );
+});
+
+test('runSetConfig round-trips proxyDriver nginx through --apply', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'nginx');
+});

@@ -269,6 +269,8 @@ export interface SettingsValues {
   customScriptsBranch?: string;
   proxyDriver?: string;
   proxyConfigPath?: string;
+  proxyTlsCertificate?: string;
+  proxyTlsKey?: string;
 }
 
 export interface SettingsResponse {

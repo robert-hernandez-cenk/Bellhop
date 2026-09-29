@@ -38,13 +38,25 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
     key: 'proxyDriver',
     label: 'Proxy driver',
     placeholder: 'caddy',
-    help: 'Which reverse-proxy driver sync-proxy/render-status-page use. Unset: the caddy default (the only driver that ships today).',
+    help: 'Which reverse-proxy driver sync-proxy/render-status-page use. Unset: the caddy default, or nginx.',
   },
   {
     key: 'proxyConfigPath',
     label: 'Proxy config path',
     placeholder: '/etc/caddy/Caddyfile',
     help: "Overrides the active driver's own default config path. Unset: that default.",
+  },
+  {
+    key: 'proxyTlsCertificate',
+    label: 'Proxy TLS certificate',
+    placeholder: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    help: "Absolute path on the proxy host to the TLS certificate the nginx driver serves for every site. Unset: certbot's own path for the inventory domain. The Caddy driver ignores this.",
+  },
+  {
+    key: 'proxyTlsKey',
+    label: 'Proxy TLS key',
+    placeholder: '/etc/letsencrypt/live/example.com/privkey.pem',
+    help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site. Unset: certbot's own path for the inventory domain. The Caddy driver ignores this.",
   },
   {
     key: 'customScriptsRepo',

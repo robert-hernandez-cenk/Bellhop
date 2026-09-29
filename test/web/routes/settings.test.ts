@@ -178,3 +178,52 @@ test('PATCH /api/settings clears proxyConfigPath sent as null', async () => {
   assert.equal(res.status, 200);
   assert.equal(loadInventory(inventoryPath).proxyConfigPath, undefined);
 });
+
+test('PATCH /api/settings writes proxyTlsCertificate and proxyTlsKey', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyTlsCertificate, '/etc/letsencrypt/live/example.com/fullchain.pem');
+  assert.equal(res.body.settings.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyTlsCertificate, '/etc/letsencrypt/live/example.com/fullchain.pem');
+  assert.equal(onDisk.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+});
+
+test('PATCH /api/settings clears proxyTlsCertificate/proxyTlsKey sent as null', async () => {
+  const { app, inventoryPath } = testApp({
+    ...baseInventory(),
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyTlsCertificate: null,
+    proxyTlsKey: null,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyTlsCertificate, undefined);
+  assert.equal(res.body.settings.proxyTlsKey, undefined);
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyTlsCertificate, undefined);
+  assert.equal(onDisk.proxyTlsKey, undefined);
+});
+
+test('PATCH /api/settings rejects a relative proxyTlsCertificate, with the same message set-config produces', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyTlsCertificate: 'etc/letsencrypt/live/example.com/fullchain.pem',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /proxyTlsCertificate: must be an absolute path/);
+});
+
+test('PATCH /api/settings accepts proxyDriver nginx', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'nginx' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'nginx');
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'nginx');
+});
