@@ -11,7 +11,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 **Tests**: Required. The constitution (Principle III) and the run's TDD mandate apply: each implementation task starts by writing its failing tests, which must be seen failing before the code is written.
 
-**Organization**: Grouped by user story. All paths are relative to the worktree root `C:/Users/rcher/Dev/Bellhop-Worktrees/issue-22-oidc-mobile-redirects`. Never `cd` into it; use absolute paths, `git -C`, `npm --prefix`.
+**Organization**: Grouped by user story. All paths are relative to the issue worktree root. Never `cd` into it; use absolute paths, `git -C`, `npm --prefix`.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -22,7 +22,7 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 ## Phase 1: Setup
 
-- [x] T001 Capture redacted Authentik fixtures from the session scratchpad captures (`C:/Users/rcher/AppData/Local/Temp/claude/C--Users-rcher-Dev-Bellhop/7667a057-827f-4731-a6c3-554d77c73a29/scratchpad/live-shapes.txt`, `live-binding.json`, `live-policybinding.json`) into `test/fixtures/authentik/` as `stages-all-by-name.json`, `stages-consent-list.json`, `flows-bindings-by-target.json`, `policies-all.json`, `policies-bindings-by-target.json`. Keep every field name, type, nesting and array length. Replace every pk/uuid with an obviously fake UUID (e.g. `00000000-0000-4000-8000-00000000000N`), the stage and policy names with `mobile-app-consent`-style example names, expressions with a short example expression, and any hostname with `example.com` (constitution Principle I). `policies-all.json` may be trimmed to 2–3 results, but its `pagination` block must stay consistent with that count. Check the existing fixture location convention first (`test/fixtures/` or wherever `test/lib/authentik-client.test.ts` loads fixtures from) and follow it.
+- [x] T001 Capture redacted Authentik fixtures from read-only live captures kept outside the repository into `test/fixtures/authentik/` as `stages-all-by-name.json`, `stages-consent-list.json`, `flows-bindings-by-target.json`, `policies-all.json`, `policies-bindings-by-target.json`. Keep every field name, type, nesting and array length. Replace every pk/uuid with an obviously fake UUID (e.g. `00000000-0000-4000-8000-00000000000N`), the stage and policy names with example names, expressions with a short example expression, and any hostname with `example.com` (constitution Principle I). `policies-all.json` may be trimmed to 2–3 results, but its `pagination` block must stay consistent with that count. Check the existing fixture location convention first (`test/fixtures/` or wherever `test/lib/authentik-client.test.ts` loads fixtures from) and follow it.
 
 ---
 
@@ -161,15 +161,15 @@ description: "Task list for OIDC mobile-app redirect URIs, mobile consent step, 
 
 ## Phase 6: Polish & documentation
 
-- [ ] T022 [P] In `README.md`, update the "OIDC mode" section:
+- [x] T022 [P] In `README.md`, update the "OIDC mode" section:
   - the mobile app redirect URLs field (when to use it; custom schemes allowed; the rejected schemes; the no-overlap rule);
   - the consent step (object names, exact-match behavior, fails closed, removed when no mobile URIs remain, flow cache cleared);
   - the extra API token permissions once any mobile URI is set (read/write on consent stages, flow-stage bindings, expression policies and policy bindings; flow cache clear);
   - a note that an existing hand-made consent stage and policy on the same flow should be deleted, or mobile logins show two consent pages;
   - the Access tab.
-- [ ] T023 [P] In `CLAUDE.md`, describe `oidcMobileRedirectUris` in the inventory field description next to `oidcRedirectUris` (write-time-only cross-list rule, why). Describe the consent step in the `sync-authentik` bullet: ownership rules; the live-verified API quirks (`policies/all` ignores `name`, `flows/bindings` ignores `target__slug`, a policy binding targets `policybindingmodel_ptr_id`); failure isolation and the no-mobile-URI read-failure swallow; the cache clear. Also update the "Changing `authMode`/`oidcRedirectUris` through the Dashboard" paragraph to include the mobile list, and the MCP bullet's `edit_guest` field list. `CONTRIBUTING.md` needs no change unless a convention it restates changed; check.
-- [ ] T024 Run `npm --prefix <wt> run typecheck`, `npm --prefix <wt> test` and `npm --prefix <wt> run web:build`, and paste the real output. Then walk quickstart §1–§3. Quickstart §4 (live Authentik plus a phone) is left for the operator and recorded as unverified in the PR.
-- [ ] T025 Review the full `git -C <wt> diff origin/main...HEAD` for real operational data (constitution Principle I): no real hostnames, domains, IPs, UUIDs from the live capture, or the operator's real stage or policy names in fixtures, specs or commit messages.
+- [x] T023 [P] In `CLAUDE.md`, describe `oidcMobileRedirectUris` in the inventory field description next to `oidcRedirectUris` (write-time-only cross-list rule, why). Describe the consent step in the `sync-authentik` bullet: ownership rules; the live-verified API quirks (`policies/all` ignores `name`, `flows/bindings` ignores `target__slug`, a policy binding targets `policybindingmodel_ptr_id`); failure isolation and the no-mobile-URI read-failure swallow; the cache clear. Also update the "Changing `authMode`/`oidcRedirectUris` through the Dashboard" paragraph to include the mobile list, and the MCP bullet's `edit_guest` field list. `CONTRIBUTING.md` needs no change unless a convention it restates changed; check.
+- [x] T024 Run `npm --prefix <wt> run typecheck`, `npm --prefix <wt> test` and `npm --prefix <wt> run web:build`, and paste the real output. Then walk quickstart §1–§3. Quickstart §4 (live Authentik plus a phone) is left for the operator and recorded as unverified in the PR.
+- [x] T025 Review the full `git -C <wt> diff origin/main...HEAD` for real operational data (constitution Principle I): no real hostnames, domains, IPs, UUIDs from the live capture, or the operator's real stage or policy names in fixtures, specs or commit messages.
 
 ---
 
