@@ -1,4 +1,6 @@
+import { posix as posixPath } from 'node:path';
 import { runRemote } from '../targets.ts';
+import type { Inventory } from '../inventory.ts';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
 import type { DriverCapabilities, DriverDeps, ProxyPlan, ReverseProxyDriver } from './driver.ts';
 import type { ProxyDriverId } from './ids.ts';
@@ -22,6 +24,21 @@ export interface FileSpec {
   // replace that file whole, and the new driver's own validate command
   // would still pass since it never reads it. Omitted means no check.
   ownedHeader?: string;
+  // 'owned' only (research.md R5): write through a same-directory,
+  // dot-prefixed temp file (`mktemp '<dir>/.<base>.XXXXXX'`) and `mv -f` it
+  // over the real path, instead of truncating the real path in place with
+  // `cat >`. For a proxy whose file provider watches the directory and
+  // reloads on any change it sees (Traefik), an in-place `cat >` briefly
+  // exposes a half-written or empty file to that watcher; a same-filesystem
+  // rename is atomic, so the watcher only ever observes the old or the new
+  // content, never a partial one. `cp -p`/`chmod 644` before writing is what
+  // makes the temp file's mode match the file it is about to replace (a
+  // fresh `mktemp` file is 0600), so replacing a non-root-owned file does
+  // not lock the proxy out of it. Restoring an atomic file on failure uses
+  // the same same-directory-temp-file-then-mv-f convention. Caddy and nginx
+  // never set this -- both reload explicitly only after a successful
+  // validate, so a partial file is never read by either.
+  atomic?: boolean;
 }
 
 // The one definition of the managed-section markers: fileDriver both writes
@@ -69,7 +86,32 @@ export function singleQuote(value: string): string {
 // reload runs, so a reload failure is never treated as a reason to
 // restore: reload always runs against the new, already-validated
 // configuration.
-export function buildFileDriverScript(files: FileSpec[], validateCommand: string, reloadCommand: string): string {
+// The mktemp template for an atomic file's same-directory, dot-prefixed
+// temp name -- shared by the write step and the restore step, so the two
+// can never drift on the naming convention (research.md R5). posixPath
+// (node:path's posix flavor) is used rather than the platform path module
+// because the generated script always runs on the remote proxy host's
+// POSIX sh, regardless of what OS Bellhop itself runs on (Windows included).
+function atomicTempTemplate(filePath: string): string {
+  return `${posixPath.dirname(filePath)}/.${posixPath.basename(filePath)}.XXXXXX`;
+}
+
+export function buildFileDriverScript(
+  files: FileSpec[],
+  // null = no validate step at all (Traefik with no proxyApiUrl set,
+  // research.md R2) -- the script writes and reloads with nothing checked
+  // in between.
+  validateCommand: string | null,
+  // null = no reload line (Traefik never reloads -- its file provider's own
+  // watcher picks up the change once the write lands).
+  reloadCommand: string | null,
+  // Replaces the command text in the "... failed; restored previous
+  // configuration" message when the validate command itself isn't fit to
+  // echo back at an operator (Traefik's validate step is a multi-line
+  // polling subshell, not a one-line command). Omitted means the command
+  // text itself, unchanged for Caddy/nginx.
+  validateLabel?: string
+): string {
   const lines: string[] = ['set -e'];
 
   // 0. Refuse to replace an existing owned file this driver didn't write
@@ -109,7 +151,17 @@ export function buildFileDriverScript(files: FileSpec[], validateCommand: string
   files.forEach((file, i) => {
     const p = singleQuote(file.path);
     lines.push(`  if [ "$EXISTED_${i}" = "1" ]; then`);
-    lines.push(`    cp "$BAK_${i}" ${p}`);
+    if (file.mode === 'owned' && file.atomic) {
+      // Same same-directory-temp-file-then-mv-f convention as the write
+      // step below, so a restore is never a truncating `cp` either --
+      // research.md R5.
+      const tmpl = singleQuote(atomicTempTemplate(file.path));
+      lines.push(`    RESTORE_${i}="$(mktemp ${tmpl})"`);
+      lines.push(`    cp -p "$BAK_${i}" "$RESTORE_${i}"`);
+      lines.push(`    mv -f "$RESTORE_${i}" ${p}`);
+    } else {
+      lines.push(`    cp "$BAK_${i}" ${p}`);
+    }
     lines.push('  else');
     lines.push(`    rm -f ${p}`);
     lines.push('  fi');
@@ -129,7 +181,15 @@ export function buildFileDriverScript(files: FileSpec[], validateCommand: string
   files.forEach((file, i) => {
     const p = singleQuote(file.path);
     const heredocTag = `BELLHOP_FILE_${i}`;
-    if (file.mode === 'owned') {
+    if (file.mode === 'owned' && file.atomic) {
+      const tmpl = singleQuote(atomicTempTemplate(file.path));
+      lines.push(`TMP_${i}="$(mktemp ${tmpl})"`);
+      lines.push(`if [ -f ${p} ]; then cp -p ${p} "$TMP_${i}"; else chmod 644 "$TMP_${i}"; fi`);
+      lines.push(`cat > "$TMP_${i}" <<'${heredocTag}'`);
+      lines.push(file.content);
+      lines.push(heredocTag);
+      lines.push(`mv -f "$TMP_${i}" ${p}`);
+    } else if (file.mode === 'owned') {
       lines.push(`cat > ${p} <<'${heredocTag}'`);
       lines.push(file.content);
       lines.push(heredocTag);
@@ -150,17 +210,25 @@ export function buildFileDriverScript(files: FileSpec[], validateCommand: string
     }
   });
 
-  // 3. Validate; on failure the trap above restores every backup (removing
-  // files that did not exist before) once this exits non-zero.
-  lines.push(`if ! ${validateCommand}; then`);
-  lines.push(`  printf '%s failed; restored previous configuration\\n' ${singleQuote(validateCommand)} >&2`);
-  lines.push('  exit 1');
-  lines.push('fi');
+  // 3. Validate (when there is one); on failure the trap above restores
+  // every backup (removing files that did not exist before) once this
+  // exits non-zero. A null validateCommand (Traefik with no proxyApiUrl
+  // set) skips this block entirely -- there is nothing to check.
+  if (validateCommand !== null) {
+    const failureLabel = validateLabel ?? validateCommand;
+    lines.push(`if ! ${validateCommand}; then`);
+    lines.push(`  printf '%s failed; restored previous configuration\\n' ${singleQuote(failureLabel)} >&2`);
+    lines.push('  exit 1');
+    lines.push('fi');
+  }
 
-  // 4. Disarm every trap, remove backups, reload.
+  // 4. Disarm every trap, remove backups, reload (when there is one --
+  // Traefik's own file-provider watcher picks up the change on its own).
   lines.push('trap - EXIT HUP INT TERM');
   files.forEach((_file, i) => lines.push(`rm -f "$BAK_${i}"`));
-  lines.push(reloadCommand);
+  if (reloadCommand !== null) {
+    lines.push(reloadCommand);
+  }
 
   return lines.join('\n');
 }
@@ -226,13 +294,29 @@ export function fileDriver(def: {
   // defaulted, so a new driver has to decide whether it serves one instead
   // of quietly opting out by omission.
   statusPage: { suggestedPath: string } | null;
-  // See ReverseProxyDriver in ./driver.ts -- both optional, absent = false/
-  // no note.
+  // See ReverseProxyDriver in ./driver.ts -- all four optional, absent =
+  // false/no note.
   usesSharedCertificate?: boolean;
+  usesCertResolver?: boolean;
+  usesApiUrl?: boolean;
   configPathNote?: string;
   render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
-  validateCommand(configPath: string): string;
-  reloadCommand: string;
+  // Returns null when there is nothing to validate (Traefik with no
+  // proxyApiUrl set, research.md R2) -- buildFileDriverScript then emits no
+  // validate step at all. Takes the plan's own files and the inventory
+  // (rather than just configPath) because a validate step can need more
+  // than the path alone -- Traefik's API check needs every rendered
+  // router's name, which only the files themselves carry, and the
+  // configured proxyApiUrl, which only the inventory carries.
+  validateCommand(configPath: string, ctx: { files: FileSpec[]; inventory: Inventory }): string | null;
+  // Replaces the validate command's own text in the failure message --
+  // Traefik's validate step is a multi-line polling subshell, not a
+  // one-line command worth echoing back at an operator. Omitted means the
+  // command text itself (Caddy/nginx, unchanged).
+  validateLabel?: string;
+  // null = no reload line at all (Traefik: its file provider's own watcher
+  // picks up the change once the write lands, so there is nothing to run).
+  reloadCommand: string | null;
   // The absolute paths snapshot() reads, given the resolved configPath --
   // defaults to `[configPath]` (right for every single-file driver, Caddy
   // included). Deliberately independent of `render`: snapshot is read-only
@@ -249,6 +333,8 @@ export function fileDriver(def: {
     defaultConfigPath: def.defaultConfigPath,
     statusPage: def.statusPage,
     ...(def.usesSharedCertificate !== undefined ? { usesSharedCertificate: def.usesSharedCertificate } : {}),
+    ...(def.usesCertResolver !== undefined ? { usesCertResolver: def.usesCertResolver } : {}),
+    ...(def.usesApiUrl !== undefined ? { usesApiUrl: def.usesApiUrl } : {}),
     ...(def.configPathNote !== undefined ? { configPathNote: def.configPathNote } : {}),
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
@@ -262,8 +348,8 @@ export function fileDriver(def: {
     async apply(plan: ProxyPlan, deps: DriverDeps): Promise<void> {
       const configPath = requireConfigPath(deps, def.id);
       const files = plan.payload as FileSpec[];
-      const validateCommand = def.validateCommand(configPath);
-      const script = buildFileDriverScript(files, validateCommand, def.reloadCommand);
+      const validateCommand = def.validateCommand(configPath, { files, inventory: deps.inventory });
+      const script = buildFileDriverScript(files, validateCommand, def.reloadCommand, def.validateLabel);
       const result = await runRemote(deps.ssh, deps.inventory, deps.proxyHost, script);
       if (result.code !== 0) {
         throw new Error(`Failed to apply proxy configuration on '${deps.proxyHost}': ${result.stderr || result.stdout}`);

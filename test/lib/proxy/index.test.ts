@@ -84,8 +84,8 @@ test('getDriver returns noneDriver when proxyDriver is "none"', () => {
 
 // --- driver ids / registry metadata (issue #33) ----------------------------
 
-test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, haproxy, none]', () => {
-  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'none']);
+test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, haproxy, traefik, none]', () => {
+  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'traefik', 'none']);
 });
 
 test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
@@ -151,7 +151,15 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
 test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = { ssh, inventory: baseInventory(), proxyHost: 'pve1', configPath: '/etc/caddy/Caddyfile' };
-  const plan = await noneDriver.plan([], { externalPort: 443, tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' } }, deps);
+  const plan = await noneDriver.plan(
+    [],
+    {
+      externalPort: 443,
+      tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' },
+      certResolver: 'cloudflare',
+    },
+    deps
+  );
   assert.equal(plan.preview, NO_PROXY_SYNC_MESSAGE);
 
   await noneDriver.apply(plan, deps);

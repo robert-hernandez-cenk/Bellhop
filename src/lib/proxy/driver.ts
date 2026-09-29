@@ -64,6 +64,18 @@ export interface ReverseProxyDriver {
   // via DNS-01; 'none' writes nothing), so a driver that never reads those
   // settings needs no declaration.
   usesSharedCertificate?: boolean;
+  // true = this driver reads the proxyCertResolver setting (issue #35,
+  // Traefik only, which names its certificate resolver per route rather
+  // than obtaining a certificate itself the way Caddy's DNS-01 does or
+  // sharing one file pair the way nginx does). The Settings page shows that
+  // field only for a driver that sets this. Absent = false.
+  usesCertResolver?: boolean;
+  // true = this driver reads the proxyApiUrl setting (issue #35, Traefik
+  // only) to validate a rendered file against the proxy's own read-only
+  // API after writing it. The Settings page shows that field only for a
+  // driver that sets this. Absent = false (most drivers validate locally
+  // on the proxy host instead, e.g. `caddy validate`/`nginx -t`).
+  usesApiUrl?: boolean;
   // One sentence the Settings page appends to the Proxy config path help
   // for this driver -- how it treats that file (the whole file vs. a
   // managed section of it). Absent = nothing appended.

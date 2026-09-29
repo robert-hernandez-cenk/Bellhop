@@ -114,6 +114,7 @@ function ctx(externalPort = 443): ProxyContext {
       certificatePath: '/etc/letsencrypt/live/example.com/fullchain.pem',
       keyPath: '/etc/letsencrypt/live/example.com/privkey.pem',
     },
+    certResolver: 'cloudflare',
   };
 }
 

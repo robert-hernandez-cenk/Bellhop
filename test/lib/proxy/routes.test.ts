@@ -6,6 +6,7 @@ import {
   buildRoutes,
   buildProxyContext,
   buildRouteForEntry,
+  DEFAULT_CERT_RESOLVER,
   type ProxyRoute,
 } from '../../../src/lib/proxy/routes.ts';
 
@@ -280,7 +281,12 @@ const DEFAULT_TLS = {
 test('buildProxyContext: returns the outpost address and port when an authentik entry with an ip exists', () => {
   withPinnedOutpostPort(() => {
     const ctx = buildProxyContext(fixtureInventory());
-    assert.deepEqual(ctx, { outpost: { ip: '192.0.2.9', port: 9000 }, externalPort: 443, tls: DEFAULT_TLS });
+    assert.deepEqual(ctx, {
+      outpost: { ip: '192.0.2.9', port: 9000 },
+      externalPort: 443,
+      tls: DEFAULT_TLS,
+      certResolver: 'cloudflare',
+    });
   });
 });
 
@@ -291,7 +297,7 @@ test('buildProxyContext: omits outpost when no authentik entry has an ip', () =>
     guests: [],
   };
   const ctx = buildProxyContext(inv);
-  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS });
+  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS, certResolver: 'cloudflare' });
   assert.ok(!('outpost' in ctx));
 });
 
@@ -340,6 +346,30 @@ test('buildProxyContext: proxyTlsCertificate and proxyTlsKey default independent
     certificatePath: DEFAULT_TLS.certificatePath,
     keyPath: '/opt/certs/example.key',
   });
+});
+
+// issue #35: certResolver is the Traefik driver's own setting, inert for
+// every other driver -- same "always present, defaults independently"
+// precedent as tls above.
+
+test('buildProxyContext: certResolver defaults to DEFAULT_CERT_RESOLVER when proxyCertResolver is unset', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  assert.equal(buildProxyContext(inv).certResolver, DEFAULT_CERT_RESOLVER);
+  assert.equal(DEFAULT_CERT_RESOLVER, 'cloudflare');
+});
+
+test('buildProxyContext: certResolver uses the configured proxyCertResolver when set', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+    proxyCertResolver: 'my-resolver',
+  };
+  assert.equal(buildProxyContext(inv).certResolver, 'my-resolver');
 });
 
 // Sanity check that the exported ProxyRoute type shape lines up with what

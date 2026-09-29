@@ -32,7 +32,21 @@ export interface ProxyContext {
   // its own per-site certificate via DNS-01 (see TLS_BLOCK in
   // src/lib/proxy/drivers/caddy.ts).
   tls: { certificatePath: string; keyPath: string };
+  // The ACME certificate resolver name the Traefik driver (issue #35) sets
+  // on every rendered router's tls.certResolver -- inventory.proxyCertResolver
+  // when set, else DEFAULT_CERT_RESOLVER. Always present, the same
+  // "never handle the unset case" precedent as tls above. Ignored by every
+  // other driver, which either obtains its own certificate (Caddy) or
+  // shares the ctx.tls pair instead (nginx).
+  certResolver: string;
 }
+
+// research.md R10: a stock Traefik install has no certificate resolver
+// named this by default, but it is what the driver's own live-verified
+// research setup used, and it is a safe, memorable default for an operator
+// who names their own resolver 'cloudflare' too (the same DNS provider
+// Caddy's own hardcoded TLS_BLOCK uses).
+export const DEFAULT_CERT_RESOLVER = 'cloudflare';
 
 // A stored unauthenticatedPaths string -> its parsed form (data-model.md
 // "PathPattern"). Must start with '/'; '*' may appear only as the final
@@ -200,6 +214,7 @@ export function buildProxyContext(inventory: Inventory): ProxyContext {
       certificatePath: inventory.proxyTlsCertificate ?? `/etc/letsencrypt/live/${inventory.domain}/fullchain.pem`,
       keyPath: inventory.proxyTlsKey ?? `/etc/letsencrypt/live/${inventory.domain}/privkey.pem`,
     },
+    certResolver: inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER,
   };
   if (authentikEntry?.ip) {
     ctx.outpost = { ip: authentikEntry.ip, port: authentikConfig().outpostPort };
