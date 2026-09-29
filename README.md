@@ -85,7 +85,8 @@ npm run web:start
 ```
 
 See [Web UI](docs/web-ui.md) for the development server, authentication,
-and what each page does.
+and what each page does. To see the web UI without any of the above, run
+`npm run demo` instead — a throwaway instance with built-in example data.
 
 ## Commands
 

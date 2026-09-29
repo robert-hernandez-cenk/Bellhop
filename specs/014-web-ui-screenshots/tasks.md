@@ -90,9 +90,9 @@ Paths are relative to the repository root (the worktree).
 
 **Independent test**: `npm run demo`, click through every sidebar page, save a guest edit, stop, restart — the edit is gone and the checkout is unchanged.
 
-- [ ] T025 [US3] Create `scripts/demo/serve.ts` per contracts/commands.md: read `PORT` (default `3100`); if `web-client/dist/index.html` is missing print `The web UI has not been built yet. Run: npm run web:build` and exit 1; start the demo; print the running message; on `EADDRINUSE` print the port-in-use message and exit 1; on SIGINT/SIGTERM `close()` and exit 0
-- [ ] T026 [US3] Verify by hand (quickstart §2): every sidebar page renders with demo data and no "no authentication configured" banner; an install-app preview and a guest edit succeed; restart restores the original data; a second instance on the same port gets the port-in-use message; stop leaves no process listening
-- [ ] T027 [P] [US3] Document `npm run demo` in `docs/web-ui.md` (what it shows, that nothing reaches a real host, that changes vanish on stop, `PORT`) and point to it from `CONTRIBUTING.md`'s setup section as the no-infrastructure way to see the UI; add one line to the README's Documentation or Setup area only if the 200-line budget allows (FR-017, SC-003)
+- [x] T025 [US3] Create `scripts/demo/serve.ts` per contracts/commands.md: read `PORT` (default `3100`); if `web-client/dist/index.html` is missing print `The web UI has not been built yet. Run: npm run web:build` and exit 1; start the demo; print the running message; on `EADDRINUSE` print the port-in-use message and exit 1; on SIGINT/SIGTERM `close()` and exit 0
+- [x] T026 [US3] Verify by hand (quickstart §2): every sidebar page renders with demo data and no "no authentication configured" banner; an install-app preview and a guest edit succeed; restart restores the original data; a second instance on the same port gets the port-in-use message; stop leaves no process listening
+- [x] T027 [P] [US3] Document `npm run demo` in `docs/web-ui.md` (what it shows, that nothing reaches a real host, that changes vanish on stop, `PORT`) and point to it from `CONTRIBUTING.md`'s setup section as the no-infrastructure way to see the UI; add one line to the README's Documentation or Setup area only if the 200-line budget allows (FR-017, SC-003)
 
 **Checkpoint**: all three stories done.
 

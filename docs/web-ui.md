@@ -16,6 +16,24 @@ npm run web:start                 # production: one Express server serving both 
 `index.html`. Only `web:dev` runs a separate frontend process (Vite's dev
 server, for hot-reload), proxying API calls to the same backend.
 
+## Demo
+
+```bash
+npm run web:build
+npm run demo         # PORT=3200 npm run demo to use a different port
+```
+
+Prints `Bellhop demo running at http://127.0.0.1:3100 -- example data only,
+nothing reaches a real host. Press Ctrl+C to stop.` and serves the same web
+UI against a throwaway, fully populated example inventory — two Proxmox
+hosts, a handful of guests in various states, four job-history entries, and
+a signed-in `admin` user — with no Proxmox host, Authentik instance, or SSH
+key required. Every write (a guest edit, an install-app run, a settings
+change) lands only in a temporary directory that `Ctrl+C` removes along with
+the server; the repository's own inventory and `data/` are never read or
+written. Stopping and starting it again always comes back to the same
+starting data. Set `PORT` to run it on a port other than `3100`.
+
 The Dashboard shows inventory (hosts, guests, bridges, storages). Each guest
 row has its own Start/Shutdown icon buttons (`guest-power` under the hood)
 for one-off actions without opening a form. A guest row's Advanced link

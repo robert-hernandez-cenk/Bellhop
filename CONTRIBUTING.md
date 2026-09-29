@@ -24,6 +24,12 @@ are reviewed on a best-effort basis, with no guaranteed timeline.
 Follow the README's [Prerequisites](README.md#prerequisites) (Node.js 24
 or newer) and [Setup](README.md#setup) sections to install dependencies.
 
+To see the web UI without setting up any of that, run `npm run web:build`
+then `npm run demo` instead — it serves the real UI against a throwaway,
+built-in example inventory, with no Proxmox host or Authentik instance
+required, and every change vanishes when you stop it. See
+[Web UI](docs/web-ui.md#demo).
+
 Skip the README's first-time inventory step. It writes to the default
 inventory path, which is meant for an operator's real hosts. Build a
 throwaway inventory from the tracked example file instead:
