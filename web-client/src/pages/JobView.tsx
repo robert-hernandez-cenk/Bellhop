@@ -83,7 +83,7 @@ export function JobView() {
         read back from disk.
       </PageDescription>
       <div className="job-header">
-        <div>
+        <div className="job-header-main">
           <div className="job-title">
             {job.command}
             {job.target ? ` · ${job.target}` : ''}

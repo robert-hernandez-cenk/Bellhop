@@ -157,7 +157,8 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .prompt-banner-actions-stall > .button:not(:last-child):hover:not(:disabled), .prompt-banner-actions-stall .prompt-banner-freetext .button:hover:not(:disabled) { background: rgba(0, 0, 0, 0.08); }
 .prompt-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .prompt-banner-freetext { display: flex; gap: 8px; flex: 1; min-width: 200px; }
-.prompt-banner-freetext input { flex: 1; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.2); font: inherit; }
+/* issue #5: the input's intrinsic minimum width otherwise stretches the prompt banner past a 320px screen. */
+.prompt-banner-freetext input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.2); font: inherit; }
 .preview-pane { background: var(--bg-tertiary); color: var(--text-primary); padding: 10px; border-radius: 6px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); }
 .job-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .job-log {
@@ -171,11 +172,13 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
   font-size: 13px;
   line-height: 1.5;
 }
-.job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px 12px; }
+/* A target name with no break points (e.g. a long lxc/vm name) otherwise sets the header's minimum width past the screen at phone widths (issue #5); wrapping moves the status/actions below the title when they don't fit. */
+.job-header-main { min-width: 0; overflow-wrap: anywhere; }
 .job-header-actions { display: flex; align-items: center; gap: 10px; }
 .job-title { font-weight: 600; }
 .job-subtitle { color: var(--text-secondary); font-size: 12px; }
-.job-status-badge { padding: 4px 10px; border-radius: 12px; color: white; font-weight: 600; font-size: 12px; }
+.job-status-badge { padding: 4px 10px; border-radius: 12px; color: white; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .check-status { margin-left: 6px; font-weight: 700; }
 .check-ok { color: var(--success); }
 .check-missing { color: var(--error); }
@@ -307,6 +310,9 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
     justify-content: space-between;
     align-items: center;
     gap: 10px;
+    /* issue #5: `anywhere` (unlike `break-word`) lowers the cell's min-content so the flex value can shrink to fit, and it's inherited, so text in child links/spans wraps too; right alignment keeps wrapped values aligned with single-line ones. */
+    overflow-wrap: anywhere;
+    text-align: right;
   }
   .data-table td::before {
     content: attr(data-label);
@@ -314,16 +320,18 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
     color: var(--text-secondary);
     flex-shrink: 0;
   }
+  /* A detail panel (issue #5 code review) is a block of content, not a single value -- the mobile .data-table tbody td rule above sets text-align: right for label/value cells, and since text-align is inherited that was right-aligning whole panels and checklists too. */
   .data-table td.host-detail-cell {
     display: block;
+    text-align: start;
   }
   .data-table td.host-detail-cell::before {
     content: none;
   }
   .app-suggestions { max-height: 50vh; }
   .app-suggestion { padding: 12px; font-size: 15px; }
-  /* No mobile rules existed for the prompt banner at all (issue #160 follow-up) -- stack the action row instead of wrapping it, so Yes/No/Submit/Dismiss and the freetext input never get clipped or pushed off-screen at narrow widths. */
-  .prompt-banner-actions { flex-direction: column; align-items: stretch; }
+  /* No mobile rules existed for the prompt banner at all (issue #160 follow-up) -- stack the action row instead of wrapping it, so Yes/No/Submit/Dismiss and the freetext input never get clipped or pushed off-screen at narrow widths. flex-wrap: nowrap (issue #5) keeps the base rule's flex-wrap: wrap from making this a multi-line column: a wrapping flex container sizes each line's cross size from its widest item rather than from the container, so the line followed the 293px form instead of the 256px viewport, and align-items: stretch then widened every button to match. */
+  .prompt-banner-actions { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
   .prompt-banner-freetext { min-width: 0; }
 }
 

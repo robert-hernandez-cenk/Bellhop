@@ -64,8 +64,9 @@ so you can explore them safely.
   they reach job history, logs or the jobs database.
 - A web UI change must be checked in a browser at desktop width and at a
   mobile width of 640px or narrower. New tables follow the existing
-  `data-label` card layout below that breakpoint, and dark-mode styles
-  target `:root[data-theme='dark']`.
+  `data-label` card layout below that breakpoint, a long card value wraps
+  (`overflow-wrap: anywhere`, right-aligned) rather than truncating, and
+  dark-mode styles target `:root[data-theme='dark']`.
 
 ## Testing
 

@@ -1734,7 +1734,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   matching its column header, shown via CSS `::before` since `<thead>` is
   hidden in this layout — rather than horizontal-scrolling the table as-is;
   any new table added to the web UI should follow this same `data-label`
-  convention, not a scroll container. Theme is controlled by
+  convention, not a scroll container. A long card value wraps
+  (`overflow-wrap: anywhere`, right-aligned) rather than truncating, and a
+  flex row holding a user-supplied name needs `min-width: 0` plus
+  `overflow-wrap: anywhere` on the item that shrinks (see
+  `.job-header-main`, issue #5). Theme is controlled by
   `ThemeContext`/`ThemeToggle` (`web-client/src/lib/theme.tsx`), not the
   raw `prefers-color-scheme` media query directly: the user's choice
   (`'light' | 'dark' | 'system'`, persisted in `localStorage`, defaulting
