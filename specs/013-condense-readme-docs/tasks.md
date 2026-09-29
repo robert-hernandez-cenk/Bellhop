@@ -20,7 +20,7 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
 
 ## Phase 2: Foundational (test first)
 
-- [ ] T002 Write `test/docs/links.test.ts` per `contracts/link-check.md` and research R1-R3:
+- [x] T002 Write `test/docs/links.test.ts` per `contracts/link-check.md` and research R1-R3:
   - Collect `README.md` plus every `*.md` under `docs/` (recursive, from the repository root).
   - Assert `README.md` has ≤ 200 lines. On failure, report the count and the limit.
   - Extract inline links outside fenced code blocks (```/~~~) and inline code spans. Skip targets with a URL scheme.
@@ -73,20 +73,20 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
 **Goal**: README ≤ 200 lines per `contracts/docs-layout.md`.
 **Independent test**: `wc -l README.md` ≤ 200; the quickstart can be followed on the page.
 
-- [ ] T013 [US1] Rewrite `README.md` per `contracts/docs-layout.md`:
+- [x] T013 [US1] Rewrite `README.md` per `contracts/docs-layout.md`:
   - Intro (lines 1-13), with "Reverse proxy drivers below" becoming a link to `docs/reverse-proxy/`.
   - `## Prerequisites` unchanged.
   - `## Setup` quickstart: npm install/link, workspace note, import the example inventory, a one-line pointer to `docs/configuration.md#hand-editing-the-inventory`, `set-config nfsServer`, `sync-inventory` (dry run, then `--apply`), `web:build`/`web:start`.
   - `## Commands`: a 10-15 row table linking `docs/commands.md`.
   - `## Documentation`: an index of all ten pages plus `CLAUDE.md`.
   - Contributing, Security and License unchanged.
-- [ ] T014 [US1] Run `node --import tsx --test test/docs/links.test.ts` and fix every reported break until it passes.
+- [x] T014 [US1] Run `node --import tsx --test test/docs/links.test.ts` and fix every reported break until it passes.
 
 **Checkpoint**: commit `Condense README to a quickstart and documentation index (#41, US1)`.
 
 ## Phase 5: User Story 3 - Links stay correct (P2)
 
-- [ ] T015 [US3] Prove the test catches breakage (quickstart.md step 2): temporarily break one anchor in `docs/configuration.md`, confirm the failure message names the file and anchor, then revert. Commit the test with US1 if not already committed.
+- [x] T015 [US3] Prove the test catches breakage (quickstart.md step 2): temporarily break one anchor in `docs/configuration.md`, confirm the failure message names the file and anchor, then revert. Commit the test with US1 if not already committed.
 
 ## Phase 6: User Story 4 - Pointers updated (P2)
 
