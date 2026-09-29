@@ -1,4 +1,4 @@
-import type { ProxyContext, ProxyRoute } from '../routes.ts';
+import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver } from '../file-driver.ts';
 
@@ -34,14 +34,14 @@ const MAP_BLOCKS = [
 
 // nginx double-quoted string: backslash-escape `\` then `"` (order matters,
 // so an existing backslash from the first pass is never re-escaped by the
-// second). Used for certificate paths here; User Story 2 reuses this for
-// exempt-path locations.
+// second). Used for certificate paths, and for every exempt-path location
+// below.
 export function quote(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-// The lines shared by `location /` and (User Story 2) every exempt
-// location, for one backend (contract "Proxy lines", research R4/R5).
+// The lines shared by `location /` and every exempt location, for one
+// backend (contract "Proxy lines", research R4/R5).
 // Parity with Caddy's reverse_proxy defaults: nginx's own defaults are the
 // opposite of Caddy's on every one of these points (Host becomes the
 // upstream address, no forwarded headers, no WebSocket upgrade, a 1 MB body
@@ -81,12 +81,112 @@ function proxyLines(backend: ProxyRoute['backend'], ctx: ProxyContext): string[]
   return lines;
 }
 
-// One server block for an ungated or OIDC-mode route (contract "Ungated or
-// OIDC route"). A forward-gated route renders identically here in User
-// Story 1 -- User Story 2 adds the Authentik forward-auth lines/locations
-// for route.auth.mode === 'forward', following research R3/R7.
-function renderServerBlock(route: ProxyRoute, ctx: ProxyContext): string[] {
+// Authentik's standalone-nginx recipe's identity-forwarding lines for
+// `location /` on a forward-gated route (contract "Forward-gated route" #2,
+// research R3): auth_request against the outpost, the sign-in redirect on
+// 401, the Set-Cookie pass-back, and the five identity headers (username,
+// groups, email, name, uid -- no entitlements, matching the Caddy driver's
+// own five, research R3). Omitted entirely when the route's own '/*' exempt
+// pattern already exempts everything (a second `location /` would fail
+// `nginx -t` with a duplicate-location error, research R7).
+const FORWARD_AUTH_LINES = [
+  '        auth_request /outpost.goauthentik.io/auth/nginx;',
+  '        error_page 401 = @goauthentik_proxy_signin;',
+  '        auth_request_set $bellhop_auth_cookie $upstream_http_set_cookie;',
+  '        add_header Set-Cookie $bellhop_auth_cookie;',
+  '        auth_request_set $bellhop_authentik_username $upstream_http_x_authentik_username;',
+  '        auth_request_set $bellhop_authentik_groups $upstream_http_x_authentik_groups;',
+  '        auth_request_set $bellhop_authentik_email $upstream_http_x_authentik_email;',
+  '        auth_request_set $bellhop_authentik_name $upstream_http_x_authentik_name;',
+  '        auth_request_set $bellhop_authentik_uid $upstream_http_x_authentik_uid;',
+  '        proxy_set_header X-authentik-username $bellhop_authentik_username;',
+  '        proxy_set_header X-authentik-groups $bellhop_authentik_groups;',
+  '        proxy_set_header X-authentik-email $bellhop_authentik_email;',
+  '        proxy_set_header X-authentik-name $bellhop_authentik_name;',
+  '        proxy_set_header X-authentik-uid $bellhop_authentik_uid;',
+];
+
+// A parsed exempt pattern is the root prefix ("/*" as authored) -- the one
+// pattern that, per research R7, produces no location of its own and instead
+// removes the forward-auth lines from `location /` (a second `location /`
+// would collide with the first under nginx's own routing rules).
+function isRootPrefix(pattern: PathPattern): boolean {
+  return pattern.kind === 'prefix' && pattern.path === '/';
+}
+
+// Dedupe on (kind, path), keeping first-seen (stored) order -- two
+// unauthenticatedPaths entries that parse to the same pattern (e.g. a typo'd
+// duplicate) must still produce only one location, or nginx -t fails with a
+// duplicate-location error.
+function dedupeExemptPatterns(patterns: PathPattern[]): PathPattern[] {
+  const seen = new Set<string>();
+  const result: PathPattern[] = [];
+  for (const pattern of patterns) {
+    const key = `${pattern.kind}:${pattern.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(pattern);
+  }
+  return result;
+}
+
+// One location per unique exempt pattern other than the root prefix
+// (contract "Forward-gated route" #3, research R7): exact -> `location =`,
+// prefix -> `location ^~` (wins over any regex location an operator include
+// might add, matching Caddy's own `path /api/*` semantics). Each contains
+// only the proxy lines -- no auth_request -- and is preceded by a blank line,
+// since every location in a server block is blank-line-separated.
+function exemptLocations(patterns: PathPattern[], backend: ProxyRoute['backend'], ctx: ProxyContext): string[] {
+  const lines: string[] = [];
+  for (const pattern of dedupeExemptPatterns(patterns)) {
+    if (isRootPrefix(pattern)) continue;
+    const selector = pattern.kind === 'exact' ? '=' : '^~';
+    lines.push('', `    location ${selector} ${quote(pattern.path)} {`, ...proxyLines(backend, ctx), '    }');
+  }
+  return lines;
+}
+
+// The outpost passthrough and sign-in named locations (contract
+// "Forward-gated route" #4, research R3), verbatim from Authentik's
+// standalone-nginx recipe under bellhop-prefixed variable names. Always
+// present on a forward-gated route, including when the '/*' exempt pattern
+// has emptied `location /` of its own auth lines -- both are still reachable
+// destinations (the sign-in redirect, and the auth_request subrequest
+// target on every other location).
+function outpostLocations(ctx: ProxyContext): string[] {
+  // ctx.outpost is guaranteed set here: buildRoutes already throws the
+  // missing-authentik error before producing a 'forward' route when no
+  // authentik:true entry has an ip, and buildProxyContext derives outpost
+  // from that same entry (same justification as the Caddy driver).
+  const outpostAddr = `${ctx.outpost!.ip}:${ctx.outpost!.port}`;
   return [
+    '',
+    '    location /outpost.goauthentik.io {',
+    `        proxy_pass http://${outpostAddr}/outpost.goauthentik.io;`,
+    '        proxy_set_header Host $bellhop_http_host;',
+    '        proxy_set_header X-Original-URL $scheme://$bellhop_http_host$request_uri;',
+    '        add_header Set-Cookie $bellhop_auth_cookie;',
+    '        auth_request_set $bellhop_auth_cookie $upstream_http_set_cookie;',
+    '        proxy_pass_request_body off;',
+    '        proxy_set_header Content-Length "";',
+    '    }',
+    '',
+    '    location @goauthentik_proxy_signin {',
+    '        internal;',
+    '        add_header Set-Cookie $bellhop_auth_cookie;',
+    '        return 302 /outpost.goauthentik.io/start?rd=$scheme://$bellhop_http_host$request_uri;',
+    '    }',
+  ];
+}
+
+// One server block per route (contract "Ungated or OIDC route" /
+// "Forward-gated route"). An ungated or OIDC-mode route gets a single plain
+// `location /`; a forward-gated route additionally gets the server-level
+// buffer lines Authentik's recipe calls for (research R3), the identity
+// lines on `location /` (unless a '/*' exempt pattern removes them), one
+// location per other exempt pattern, and the outpost/sign-in locations.
+function renderServerBlock(route: ProxyRoute, ctx: ProxyContext): string[] {
+  const head = [
     'server {',
     '    listen 443 ssl;',
     '    listen [::]:443 ssl;',
@@ -97,10 +197,30 @@ function renderServerBlock(route: ProxyRoute, ctx: ProxyContext): string[] {
     '',
     '    client_max_body_size 0;',
     '    proxy_buffering off;',
-    '',
+  ];
+
+  if (route.auth.mode !== 'forward') {
+    return [...head, '', '    location / {', ...proxyLines(route.backend, ctx), '    }', '}'];
+  }
+
+  const dedupedExempt = dedupeExemptPatterns(route.auth.exemptPaths);
+  const rootExempted = dedupedExempt.some(isRootPrefix);
+
+  const locationRoot = [
     '    location / {',
     ...proxyLines(route.backend, ctx),
+    ...(rootExempted ? [] : FORWARD_AUTH_LINES),
     '    }',
+  ];
+
+  return [
+    ...head,
+    '    proxy_buffers 8 16k;',
+    '    proxy_buffer_size 32k;',
+    '',
+    ...locationRoot,
+    ...exemptLocations(route.auth.exemptPaths, route.backend, ctx),
+    ...outpostLocations(ctx),
     '}',
   ];
 }

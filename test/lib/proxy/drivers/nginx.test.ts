@@ -1,10 +1,9 @@
 // User Story 1 (issue #30): render tests pinned against
-// specs/009-nginx-proxy-driver/contracts/nginx-config.md, plus one executed
-// -script test proving the 'owned'-mode delivery path (research R9) --
-// forward-gated rendering is User Story 2's job (test/lib/proxy/drivers/
-// nginx.test.ts grows those cases in that phase; this file only has to
-// prove a forward-gated route renders no differently from an ungated one
-// for now, per the task brief).
+// specs/009-nginx-proxy-driver/contracts/nginx-config.md's "Ungated or OIDC
+// route" section, plus one executed-script test proving the 'owned'-mode
+// delivery path (research R9). User Story 2 (below, "Forward-gated routes")
+// adds the Authentik forward-auth gating cases against that contract's
+// "Forward-gated route" section.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
@@ -188,6 +187,267 @@ test('nginxDriver declares its id, default config path, and capabilities', () =>
   assert.equal(nginxDriver.id, 'nginx');
   assert.equal(nginxDriver.defaultConfigPath, '/etc/nginx/conf.d/bellhop.conf');
   assert.deepEqual(nginxDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false });
+});
+
+// --- User Story 2: forward-gated routes -------------------------------------
+
+// buildProxyContext resolves ctx.outpost from an authentik:true entry's own
+// ip plus authentikConfig().outpostPort (AUTHENTIK_OUTPOST_PORT) -- pinned
+// here (and restored after) rather than left to whatever the developer's
+// shell happens to have set, same convention as
+// test/lib/proxy/drivers/caddy.test.ts.
+const ORIGINAL_OUTPOST_PORT = process.env.AUTHENTIK_OUTPOST_PORT;
+
+function withPinnedOutpostPort(fn: () => void): void {
+  process.env.AUTHENTIK_OUTPOST_PORT = '9000';
+  try {
+    fn();
+  } finally {
+    if (ORIGINAL_OUTPOST_PORT === undefined) delete process.env.AUTHENTIK_OUTPOST_PORT;
+    else process.env.AUTHENTIK_OUTPOST_PORT = ORIGINAL_OUTPOST_PORT;
+  }
+}
+
+// One authentik:true entry (ip 192.0.2.20; with AUTHENTIK_OUTPOST_PORT
+// pinned to '9000' above, ctx.outpost becomes 192.0.2.20:9000) plus one
+// forward-gated guest (ip 192.0.2.30, port 8080, subdomain 'app') built from
+// the given overrides -- e.g. unauthenticatedPaths.
+function gatedInventory(guestOverrides: Record<string, unknown> = {}): Inventory {
+  return inv({
+    guests: [
+      { name: 'auth-lxc', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.0.2.20', authentik: true },
+      {
+        name: 'app-lxc',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        port: 8080,
+        subdomains: ['app'],
+        authGroup: 'bellhop-users',
+        ...guestOverrides,
+      },
+    ],
+  });
+}
+
+// app-lxc's own proxy lines (contract "Proxy lines"), reused verbatim by
+// `location /` and every exempt location.
+const APP_PROXY_LINES = [
+  '        proxy_pass http://192.0.2.30:8080;',
+  '        proxy_http_version 1.1;',
+  '        proxy_set_header Host $bellhop_http_host;',
+  '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+  '        proxy_set_header X-Forwarded-Proto $scheme;',
+  '        proxy_set_header X-Forwarded-Host $bellhop_http_host;',
+  '        proxy_set_header X-Forwarded-Port 443;',
+  '        proxy_set_header Upgrade $http_upgrade;',
+  '        proxy_set_header Connection $bellhop_connection_upgrade;',
+];
+
+// Authentik's identity-forwarding lines appended to `location /` (contract
+// "Forward-gated route" #2): five identity headers (username, groups,
+// email, name, uid), no entitlements.
+const FORWARD_AUTH_LINES = [
+  '        auth_request /outpost.goauthentik.io/auth/nginx;',
+  '        error_page 401 = @goauthentik_proxy_signin;',
+  '        auth_request_set $bellhop_auth_cookie $upstream_http_set_cookie;',
+  '        add_header Set-Cookie $bellhop_auth_cookie;',
+  '        auth_request_set $bellhop_authentik_username $upstream_http_x_authentik_username;',
+  '        auth_request_set $bellhop_authentik_groups $upstream_http_x_authentik_groups;',
+  '        auth_request_set $bellhop_authentik_email $upstream_http_x_authentik_email;',
+  '        auth_request_set $bellhop_authentik_name $upstream_http_x_authentik_name;',
+  '        auth_request_set $bellhop_authentik_uid $upstream_http_x_authentik_uid;',
+  '        proxy_set_header X-authentik-username $bellhop_authentik_username;',
+  '        proxy_set_header X-authentik-groups $bellhop_authentik_groups;',
+  '        proxy_set_header X-authentik-email $bellhop_authentik_email;',
+  '        proxy_set_header X-authentik-name $bellhop_authentik_name;',
+  '        proxy_set_header X-authentik-uid $bellhop_authentik_uid;',
+];
+
+// The outpost passthrough and sign-in named locations (contract
+// "Forward-gated route" #4), with ctx.outpost = 192.0.2.20:9000. Always
+// present on a forward-gated route.
+const OUTPOST_LOCATIONS = [
+  '',
+  '    location /outpost.goauthentik.io {',
+  '        proxy_pass http://192.0.2.20:9000/outpost.goauthentik.io;',
+  '        proxy_set_header Host $bellhop_http_host;',
+  '        proxy_set_header X-Original-URL $scheme://$bellhop_http_host$request_uri;',
+  '        add_header Set-Cookie $bellhop_auth_cookie;',
+  '        auth_request_set $bellhop_auth_cookie $upstream_http_set_cookie;',
+  '        proxy_pass_request_body off;',
+  '        proxy_set_header Content-Length "";',
+  '    }',
+  '',
+  '    location @goauthentik_proxy_signin {',
+  '        internal;',
+  '        add_header Set-Cookie $bellhop_auth_cookie;',
+  '        return 302 /outpost.goauthentik.io/start?rd=$scheme://$bellhop_http_host$request_uri;',
+  '    }',
+];
+
+// The head of app-lxc's server block, through the (gated-only) buffer lines
+// and the blank line before `location /`.
+function gatedServerHead(): string[] {
+  return [
+    'server {',
+    '    listen 443 ssl;',
+    '    listen [::]:443 ssl;',
+    '    server_name app.example.com;',
+    '',
+    '    ssl_certificate "/etc/letsencrypt/live/example.com/fullchain.pem";',
+    '    ssl_certificate_key "/etc/letsencrypt/live/example.com/privkey.pem";',
+    '',
+    '    client_max_body_size 0;',
+    '    proxy_buffering off;',
+    '    proxy_buffers 8 16k;',
+    '    proxy_buffer_size 32k;',
+    '',
+  ];
+}
+
+// --- (a) gated route, no exempt paths ---------------------------------------
+
+test('render: forward-gated route with no exempt paths -> buffer lines, full auth_request block in location /, outpost and sign-in locations', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory());
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+  });
+});
+
+// --- (b) exempt /health and /api/* -------------------------------------------
+
+test('render: exempt /health and /api/* -> location = "/health" and location ^~ "/api/" after location /, each with only proxy lines, in stored order', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/health', '/api/*'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      '',
+      '    location = "/health" {',
+      ...APP_PROXY_LINES,
+      '    }',
+      '',
+      '    location ^~ "/api/" {',
+      ...APP_PROXY_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+  });
+});
+
+// --- (c) duplicate exempt entries -> one location each ----------------------
+
+test('render: duplicate exempt entries produce one location each, in first-seen order', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/health', '/health', '/api/*', '/api/*'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      '',
+      '    location = "/health" {',
+      ...APP_PROXY_LINES,
+      '    }',
+      '',
+      '    location ^~ "/api/" {',
+      ...APP_PROXY_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+  });
+});
+
+// --- (d) exempt /* -----------------------------------------------------------
+
+test('render: exempt /* -> location / has proxy lines only (no auth lines), no location ^~ "/", outpost and sign-in locations still present', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/*'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+    assert.doesNotMatch(content, /location \^~ "\/"/);
+  });
+});
+
+// --- (e) an exempt path containing a quote and a space ----------------------
+
+test('render: an exempt path containing a quote and a space is emitted quoted and escaped', () => {
+  withPinnedOutpostPort(() => {
+    const content = configOf(gatedInventory({ unauthenticatedPaths: ['/say "hi'] }));
+    const expected = [
+      SKELETON,
+      '',
+      ...gatedServerHead(),
+      '    location / {',
+      ...APP_PROXY_LINES,
+      ...FORWARD_AUTH_LINES,
+      '    }',
+      '',
+      `    location = "/say \\"hi" {`,
+      ...APP_PROXY_LINES,
+      '    }',
+      ...OUTPOST_LOCATIONS,
+      '}',
+    ].join('\n');
+    assert.equal(content, expected);
+  });
+});
+
+// --- (f) no authentik:true entry -> buildRoutes's own error, unhandled ------
+
+test('render: a forward-gated inventory with no authentik:true entry still throws the existing missing-authentik error from buildRoutes', () => {
+  const inventory = inv({
+    guests: [
+      {
+        name: 'app-lxc',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        port: 8080,
+        subdomains: ['app'],
+        authGroup: 'bellhop-users',
+      },
+    ],
+  });
+  assert.throws(
+    () => configOf(inventory),
+    /^Error: Entry 'app-lxc' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set$/
+  );
 });
 
 // --- executed-script test (research R9): the 'owned' delivery path ---------
