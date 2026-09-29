@@ -647,6 +647,19 @@ a conflict rather than touching it. Run `bellhop adopt-oidc-client <name>
 management — its client ID and secret never change, so the app's existing
 login configuration keeps working.
 
+**Custom scope mappings.** A new OpenID client gets Authentik's three
+built-in scope mappings, for `openid`, `profile` and `email`. On an existing
+client (a routine sync, or adoption), Bellhop checks those scopes by *scope
+name*: each one needs some attached mapping with that scope name, built-in
+or your own. A custom mapping is therefore kept. The typical case is a
+custom `email` mapping that sets `email_verified`, since Authentik's
+built-in one always reports it as false and some apps refuse unverified
+sign-ins. Mappings for other scopes are left alone too. Only a required
+scope with no mapping at all counts as drift, and the fix adds the built-in
+mapping for it while keeping everything already attached. The flip side:
+if someone swaps a built-in mapping for another mapping with the same scope
+name, Bellhop no longer puts the built-in one back.
+
 **Authentik API token permissions.** OIDC mode needs a few more scopes on
 the token in `data/authentik.env` than forward-auth-only gating did: read
 and write on OAuth2/OpenID Providers (not just Proxy Providers), read on
