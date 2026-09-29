@@ -673,21 +673,40 @@ export function parseAuthGroup(raw: unknown): string | undefined {
   return name === '' ? undefined : name;
 }
 
+// Exactly `/outpost.goauthentik.io`, or anything under
+// `/outpost.goauthentik.io/` (which covers the `/outpost.goauthentik.io/*`
+// prefix form too). Every forward-gated route sends this namespace to the
+// Authentik outpost regardless of any exemption (Caddy's
+// `handle /outpost.goauthentik.io/*`; nginx skips such a pattern at render
+// time, since its own exempt location would outrank the outpost's).
+function isOutpostNamespacePath(pattern: string): boolean {
+  return pattern === '/outpost.goauthentik.io' || pattern.startsWith('/outpost.goauthentik.io/');
+}
+
 // Semicolon-delimited free text (the web UI's Unauthenticated Paths field)
 // -> a deduplicated list of proxy path-matcher globs, or undefined when
 // empty so an entry with none doesn't grow a pointless
 // `unauthenticatedPaths: []`. Throws on a non-empty pattern that isn't one
-// of the two accepted forms (isValidUnauthenticatedPath -- same rule
-// UnauthenticatedPathSchema enforces, so a guest edit and a schema load can
-// never disagree), unlike parseSubdomains's silent-drop behavior -- a
-// pattern that silently never matches as intended is a worse experience
-// than a rejected save.
+// of the two accepted forms (isValidUnauthenticatedPath -- the same rule
+// UnauthenticatedPathSchema enforces), unlike parseSubdomains's silent-drop
+// behavior -- a pattern that silently never matches as intended is a worse
+// experience than a rejected save. The edit rule is deliberately stricter
+// than the schema in one respect: a path in the Authentik outpost's own
+// namespace (isOutpostNamespacePath) is rejected here but still loads from
+// a saved inventory, so an entry saved before this rule existed never makes
+// the inventory unloadable (the drivers already ignore such an exemption).
 export function parseUnauthenticatedPaths(raw: unknown): string[] | undefined {
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const list = Array.from(new Set(raw.split(';').map((s) => s.trim()).filter(Boolean)));
   for (const pattern of list) {
     if (!isValidUnauthenticatedPath(pattern)) {
       throw new Error(`Invalid unauthenticated path '${pattern}' (${UNAUTHENTICATED_PATH_MESSAGE})`);
+    }
+    if (isOutpostNamespacePath(pattern)) {
+      throw new Error(
+        `Invalid unauthenticated path '${pattern}': paths under /outpost.goauthentik.io belong to the Authentik outpost ` +
+          `and are always routed to it, so they can't be exempted -- remove this entry`
+      );
     }
   }
   return list.length > 0 ? list : undefined;

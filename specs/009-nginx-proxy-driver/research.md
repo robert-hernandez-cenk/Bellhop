@@ -82,11 +82,13 @@ Differences from the recipe, each deliberate:
 ## R4. Parity with Caddy's `reverse_proxy` defaults
 
 **Decision**: every proxied location sets `proxy_http_version 1.1`,
-`Host $bellhop_http_host`, `X-Forwarded-For $proxy_add_x_forwarded_for`,
+`Host $bellhop_http_host`, `X-Forwarded-For $remote_addr`,
 `X-Forwarded-Proto $scheme`, `X-Forwarded-Host $bellhop_http_host`,
 `X-Forwarded-Port 443`, `Upgrade $http_upgrade`,
 `Connection $bellhop_connection_upgrade`; the server sets
-`client_max_body_size 0` and `proxy_buffering off`.
+`client_max_body_size 0`, `proxy_buffering off`,
+`proxy_request_buffering off`, `proxy_read_timeout 1d` and
+`proxy_send_timeout 1d`.
 
 **Rationale**: Caddy passes the original `Host`, sets
 `X-Forwarded-For/Proto/Host`, proxies WebSockets, never caps request
@@ -96,6 +98,16 @@ without upgrade, a 1 MB body limit, buffered responses). Backends that work
 behind the Caddy driver today (photo uploads, WebSocket UIs, server-sent
 events) would break on switching drivers otherwise. `X-Forwarded-Port 443`
 matches the Caddy driver's unconditional `header_up` (issue #91).
+
+`X-Forwarded-For` is *set* to `$remote_addr` rather than appended to with
+`$proxy_add_x_forwarded_for` (code review): Caddy 2.5+ with no
+`trusted_proxies` replaces any client-supplied value with the connecting
+address, and appending would let a client pose as a LAN address to a
+backend that trusts the header. Caddy also streams request bodies and has
+no upstream read timeout, while nginx buffers an upload whole and drops an
+upstream idle for 60 seconds — cutting off a quiet WebSocket or
+server-sent-events stream — hence request buffering off and one-day
+read/send timeouts.
 
 `$bellhop_http_host` is the recipe's `$ak_http_host` map: `$http_host`,
 falling back to `$host`, so an explicit port in `Host` survives.
@@ -130,7 +142,11 @@ replaces the `listen ... http2` parameter, which now warns); picking either
 breaks or warns on some supported distribution release. A port-80 redirect
 would compete with the operator's own default server and with certbot's
 HTTP-01 webroot if they use one. Both are left to the operator's own
-configuration and listed as out of scope in the spec.
+configuration and listed as out of scope in the spec. Without a
+`default_server`, an unknown hostname or SNI name on 443 falls through to
+the first generated block unless the operator declares one; emitting one
+would collide with an operator's own and fail `nginx -t`, so README
+recommends an operator-side `ssl_reject_handshake on;` catch-all instead.
 
 ## R7. Exempt paths
 
@@ -155,7 +171,11 @@ settings as `location /` and no `auth_request`:
   Caddy's `handle /outpost.goauthentik.io/*` (issue #10) sends these
   requests to the outpost regardless of any `not path` exemption, so
   silently dropping the pattern here reproduces that same behavior rather
-  than failing a sync over an entry Caddy handles fine.
+  than failing a sync over an entry Caddy handles fine. Code review added
+  an edit-time rule on top: a guest edit (`parseUnauthenticatedPaths`)
+  rejects such a path with an error saying it belongs to the outpost, so
+  it is never saved silently inert; the render-time skip stays as defense
+  in depth for an entry saved before that rule (the schema still loads it).
 
 Paths are written as double-quoted strings with `\` and `"` escaped, so
 spaces, `;`, `{`, or `#` in a path are matched literally instead of
@@ -176,7 +196,12 @@ depend on the inventory.
 
 **Rationale**: `'owned'` mode replaces the file whole (006 R6); a header
 tells anyone opening it not to hand-edit. Emitting maps unconditionally
-keeps the render simple and costs nothing.
+keeps the render simple and costs nothing. The header also marks the file
+as Bellhop's (code review): `proxyConfigPath` is shared across drivers, so
+it can still point at a Caddyfile after a driver switch, and `nginx -t`
+would pass after replacing it since conf.d never includes it. An apply
+therefore refuses to replace an existing file whose first line isn't the
+header (`FileSpec.ownedHeader`), before any backup or write.
 
 ## R9. Testing the delivery path
 

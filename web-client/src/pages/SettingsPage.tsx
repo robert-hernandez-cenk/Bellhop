@@ -43,8 +43,8 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder: string; help:
   {
     key: 'proxyConfigPath',
     label: 'Proxy config path',
-    placeholder: '/etc/caddy/Caddyfile',
-    help: "Overrides the active driver's own default config path. Unset: that default.",
+    placeholder: "the active driver's default",
+    help: "Overrides the active driver's config path. Unset: caddy uses /etc/caddy/Caddyfile, nginx /etc/nginx/conf.d/bellhop.conf. nginx replaces the whole file, and refuses to replace a file it didn't generate.",
   },
   {
     key: 'proxyTlsCertificate',

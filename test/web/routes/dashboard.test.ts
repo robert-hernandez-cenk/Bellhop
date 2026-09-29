@@ -275,6 +275,24 @@ test('PATCH /api/inventory/guests/:name rejects an unauthenticatedPaths pattern 
   assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').unauthenticatedPaths, undefined, 'a rejected PATCH must not write anything');
 });
 
+test('PATCH /api/inventory/guests/:name rejects an unauthenticatedPaths entry in the Authentik outpost namespace', async () => {
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
+    guests: [
+      { name: 'auth-lxc', type: 'lxc', vmid: 4009, host: 'pve1', ip: '192.168.1.9', authentik: true },
+      { name: 'sonarr', type: 'lxc', vmid: 4010, host: 'pve1', ip: '192.168.1.10', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+    ],
+  };
+  const app = testApp(inventory);
+  const res = await asAdmin(request(app).patch('/api/inventory/guests/sonarr')).send({ unauthenticatedPaths: '/api/*; /outpost.goauthentik.io/*' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /'\/outpost\.goauthentik\.io\/\*'.*Authentik outpost/);
+
+  const invRes = await request(app).get('/api/inventory');
+  assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').unauthenticatedPaths, undefined, 'a rejected PATCH must not write anything');
+});
+
 test('PATCH /api/inventory/guests/:name clears unauthenticatedPaths when given an empty string', async () => {
   const inventory: Inventory = {
     domain: 'example.com',

@@ -75,12 +75,15 @@ test('render: one ungated route with two subdomains -> full server block, canoni
     '',
     '    client_max_body_size 0;',
     '    proxy_buffering off;',
+    '    proxy_request_buffering off;',
+    '    proxy_read_timeout 1d;',
+    '    proxy_send_timeout 1d;',
     '',
     '    location / {',
     '        proxy_pass http://192.0.2.10:8080;',
     '        proxy_http_version 1.1;',
     '        proxy_set_header Host $bellhop_http_host;',
-    '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+    '        proxy_set_header X-Forwarded-For $remote_addr;',
     '        proxy_set_header X-Forwarded-Proto $scheme;',
     '        proxy_set_header X-Forwarded-Host $bellhop_http_host;',
     '        proxy_set_header X-Forwarded-Port 443;',
@@ -179,6 +182,10 @@ test('render returns exactly one owned FileSpec at configPath', () => {
   assert.equal(files.length, 1);
   assert.equal(files[0].path, '/etc/nginx/conf.d/bellhop.conf');
   assert.equal(files[0].mode, 'owned');
+  // The first line an existing file must carry for an apply to replace it
+  // (the owned-file guard in buildFileDriverScript) -- the header itself.
+  assert.equal(files[0].ownedHeader, HEADER);
+  assert.equal(files[0].content.split('\n')[0], HEADER);
 });
 
 // --- (h) driver metadata -----------------------------------------------------
@@ -237,7 +244,7 @@ const APP_PROXY_LINES = [
   '        proxy_pass http://192.0.2.30:8080;',
   '        proxy_http_version 1.1;',
   '        proxy_set_header Host $bellhop_http_host;',
-  '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+  '        proxy_set_header X-Forwarded-For $remote_addr;',
   '        proxy_set_header X-Forwarded-Proto $scheme;',
   '        proxy_set_header X-Forwarded-Host $bellhop_http_host;',
   '        proxy_set_header X-Forwarded-Port 443;',
@@ -301,6 +308,9 @@ function gatedServerHead(): string[] {
     '',
     '    client_max_body_size 0;',
     '    proxy_buffering off;',
+    '    proxy_request_buffering off;',
+    '    proxy_read_timeout 1d;',
+    '    proxy_send_timeout 1d;',
     '    proxy_buffers 8 16k;',
     '    proxy_buffer_size 32k;',
     '',
@@ -676,4 +686,91 @@ test('nginxDriver apply script, executed: a successful "nginx -t" writes the new
   // same convention the file-driver tests use for a managed-section file.
   assert.equal(readFileSync(confPath, 'utf8'), `${newContent}\n`, 'the new content must be written whole');
   assert.equal(readFileSync(systemctlLogPath, 'utf8').trim(), 'reload nginx', 'systemctl reload nginx must have run exactly once');
+});
+
+// --- executed-script tests: the owned-file header guard (issue #30 review) ---
+// proxyConfigPath is shared across drivers, so a value left over from Caddy
+// (/etc/caddy/Caddyfile) would otherwise be replaced whole by an nginx apply
+// -- and `nginx -t` would still pass, since conf.d never includes it.
+
+function runGuardedApply(existingContent: string | undefined): {
+  status: number | null;
+  stderr: string;
+  confPath: string;
+  nginxLogPath: string;
+  systemctlLogPath: string;
+  newContent: string;
+} {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-nginx-guard-'));
+  const stubDir = mkdtempSync(join(tmpdir(), 'bellhop-nginx-guard-stubs-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const confPath = posix(join(tmpDir, 'bellhop.conf'));
+  const nginxLogPath = posix(join(tmpDir, 'nginx.log'));
+  const systemctlLogPath = posix(join(tmpDir, 'systemctl.log'));
+  if (existingContent !== undefined) writeFileSync(confPath, existingContent);
+
+  // The real render output, so the FileSpec carries the driver's own ownedHeader.
+  const files = render([], buildProxyContext(inv()), confPath);
+  const script = buildFileDriverScript(files, 'nginx -t', 'systemctl reload nginx');
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, script);
+
+  const nginxPath = join(stubDir, 'nginx');
+  writeFileSync(nginxPath, `#!/bin/sh\necho "$@" >> '${nginxLogPath}'\nexit 0\n`);
+  chmodSync(nginxPath, 0o755);
+  const systemctlPath = join(stubDir, 'systemctl');
+  writeFileSync(systemctlPath, `#!/bin/sh\necho "$@" >> '${systemctlLogPath}'\n`);
+  chmodSync(systemctlPath, 0o755);
+
+  const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}` };
+  const result = spawnSync('sh', [scriptPath], { env });
+  return {
+    status: result.status,
+    stderr: String(result.stderr),
+    confPath,
+    nginxLogPath,
+    systemctlLogPath,
+    newContent: files[0].content,
+  };
+}
+
+test('nginxDriver apply script, executed: an existing file without the generated header is refused, left byte-identical, and never validated or reloaded', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+  const foreign = 'example.com {\n    reverse_proxy 192.0.2.10:8080\n}\n';
+  const run = runGuardedApply(foreign);
+
+  assert.notEqual(run.status, 0, `expected a non-zero exit, stderr: ${run.stderr}`);
+  assert.equal(readFileSync(run.confPath, 'utf8'), foreign, 'the foreign file must be left byte-identical');
+  assert.ok(!existsSync(run.nginxLogPath), 'nginx -t must not have run');
+  assert.ok(!existsSync(run.systemctlLogPath), 'systemctl must not have been called');
+  assert.ok(run.stderr.includes(run.confPath), 'the refusal names the path');
+  assert.match(run.stderr, /proxyConfigPath/, 'the refusal says how to fix it');
+});
+
+test('nginxDriver apply script, executed: an existing file starting with the generated header is replaced normally', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+  const run = runGuardedApply(`${HEADER}\n\nserver {\n    server_name old.example.com;\n}\n`);
+
+  assert.equal(run.status, 0, `expected exit 0, stderr: ${run.stderr}`);
+  assert.equal(readFileSync(run.confPath, 'utf8'), `${run.newContent}\n`);
+  assert.equal(readFileSync(run.nginxLogPath, 'utf8').trim(), '-t');
+  assert.equal(readFileSync(run.systemctlLogPath, 'utf8').trim(), 'reload nginx');
+});
+
+test('nginxDriver apply script, executed: a file that does not exist yet is created normally', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+  const run = runGuardedApply(undefined);
+
+  assert.equal(run.status, 0, `expected exit 0, stderr: ${run.stderr}`);
+  assert.equal(readFileSync(run.confPath, 'utf8'), `${run.newContent}\n`);
+  assert.equal(readFileSync(run.systemctlLogPath, 'utf8').trim(), 'reload nginx');
 });

@@ -368,6 +368,38 @@ test('parseUnauthenticatedPaths throws on a pattern missing a leading slash, nam
   assert.throws(() => parseUnauthenticatedPaths('/api/*; system'), /Invalid unauthenticated path 'system'/);
 });
 
+// issue #30 review: the Authentik outpost's own namespace is always routed
+// to the outpost (Caddy's `handle /outpost.goauthentik.io/*`, nginx's
+// outpost location), so an exemption there could never take effect --
+// rejected at edit time rather than silently dropped by a driver.
+test('parseUnauthenticatedPaths rejects every form of a path in the outpost namespace, naming why', () => {
+  for (const bad of [
+    '/outpost.goauthentik.io',
+    '/outpost.goauthentik.io/',
+    '/outpost.goauthentik.io/*',
+    '/outpost.goauthentik.io/auth/nginx',
+    '/outpost.goauthentik.io/start/*',
+  ]) {
+    assert.throws(
+      () => parseUnauthenticatedPaths(`/health; ${bad}`),
+      (err: Error) =>
+        err.message.includes(`'${bad}'`) && /belong.* to the Authentik outpost/.test(err.message) && /can't be exempted/.test(err.message),
+      bad
+    );
+  }
+});
+
+test('parseUnauthenticatedPaths still accepts a path that merely starts with the outpost name', () => {
+  assert.deepEqual(parseUnauthenticatedPaths('/outpost.goauthentik.iox; /outpost.goauthentik.io-docs/*'), [
+    '/outpost.goauthentik.iox',
+    '/outpost.goauthentik.io-docs/*',
+  ]);
+});
+
+test('UnauthenticatedPathSchema still loads a saved outpost-namespace path (only the edit rule is stricter)', () => {
+  assert.equal(UnauthenticatedPathSchema.safeParse('/outpost.goauthentik.io/*').success, true);
+});
+
 // issue #10, US4/T038: a path exemption is restricted to the two forms
 // every reverse proxy can express -- an exact path, or a prefix ending in
 // /*. Anything else (a '*' anywhere but as a trailing "/*") is rejected,

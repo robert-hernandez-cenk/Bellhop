@@ -368,8 +368,12 @@ Settings page). It owns one whole file on the proxy host, defaulting to
 everything else already on the box is left alone. `sync-proxy` renders one
 HTTPS `server` block per subdomain-bearing entry, forwarding to its
 backend the same way the Caddy driver does (the original `Host`, the
-client's address and scheme, external port 443, WebSocket upgrades,
-unbuffered streaming, no request-body size limit) and, for a
+client's address — `X-Forwarded-For` is set to the connecting address, not
+appended to, so a client can't pose as a LAN address — and scheme,
+external port 443, WebSocket upgrades, unbuffered streaming of responses
+and request bodies, a one-day idle timeout so quiet WebSocket and
+server-sent-events connections stay open, no request-body size limit) and,
+for a
 forward-gated entry, checks every request against the embedded Authentik
 outpost the same way Caddy's `forward_auth` does, including
 `unauthenticatedPaths` exemptions; an `oidc`-mode or ungated entry gets no
@@ -390,6 +394,13 @@ exactly that path:
 certbot certonly --dns-cloudflare -d example.com -d '*.example.com'
 ```
 
+A wildcard covers one label only: `*.example.com` matches
+`grafana.example.com` but not `grafana.lab.example.com`. A multi-label
+subdomain such as `grafana.lab` needs its own coverage on the same
+certificate (for example an extra `-d '*.lab.example.com'`) — nginx serves
+the certificate regardless and does not warn, so browsers see a name
+mismatch instead.
+
 Add a certbot deploy hook that reloads nginx after every renewal (for
 example a script under `/etc/letsencrypt/renewal-hooks/deploy/` running
 `systemctl reload nginx`) — issuing and renewing the certificate, and
@@ -406,10 +417,31 @@ use `proxyConfigPath` for a different layout) and that it was built with
 the `auth_request` module (standard in the Debian/Ubuntu and nginx.org
 packages).
 
-Switching `proxyDriver` from `caddy` to `nginx` (or back) never touches
-the other driver's own files: an old Caddyfile's `bellhop-managed` section
-is left in place, still valid, for you to retire by hand once nginx is
-serving the same sites.
+No generated block is a `default_server`, so a request on port 443 for a
+hostname (or TLS SNI name) no block claims falls through to nginx's default
+server — the first generated block, unless your own configuration declares
+a `default_server` — and gets that site's certificate and backend. Bellhop
+doesn't emit one itself, since it would collide with a `default_server` of
+your own and fail `nginx -t`. To reject unknown names instead, add a
+catch-all to your own configuration (nginx 1.19.4 or later):
+
+```nginx
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_reject_handshake on;
+}
+```
+
+Switching `proxyDriver` from `caddy` to `nginx` (or back) leaves the other
+driver's own files in place: an old Caddyfile's `bellhop-managed` section
+stays, still valid, for you to retire by hand once nginx is serving the
+same sites. `proxyConfigPath` is shared by both drivers, though, so clear
+it (`bellhop set-config proxyConfigPath --unset --apply`) or repoint it
+when switching. The nginx driver replaces its file whole, so it refuses to
+overwrite an existing file whose first line isn't its own generated header
+— an apply with `proxyConfigPath` still pointing at a Caddyfile fails with
+that error and leaves the Caddyfile untouched.
 
 **Upgrading an existing installation needs no manual steps in most
 cases.** An inventory created by an older version upgrades itself

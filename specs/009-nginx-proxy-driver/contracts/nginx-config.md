@@ -32,7 +32,7 @@ Shared by `location /` and every exempt location, for backend
         proxy_pass <scheme>://192.0.2.10:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $bellhop_http_host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $bellhop_http_host;
         proxy_set_header X-Forwarded-Port 443;
@@ -63,6 +63,9 @@ server {
 
     client_max_body_size 0;
     proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 1d;
+    proxy_send_timeout 1d;
 
     location / {
 <proxy lines>
@@ -77,7 +80,7 @@ paths come from `ctx.tls` and are double-quoted.
 
 Differences from the ungated block:
 
-1. After `proxy_buffering off;`:
+1. After `proxy_send_timeout 1d;`:
    ```nginx
        proxy_buffers 8 16k;
        proxy_buffer_size 32k;
@@ -116,7 +119,8 @@ Differences from the ungated block:
    `/outpost.goauthentik.io/`, produces no location at all -- it is silently
    skipped (never thrown on), since such a location would outrank the
    outpost passthrough location below and misroute its `auth_request`
-   subrequest to the site's own backend (research R7).
+   subrequest to the site's own backend (research R7). A guest edit
+   rejects such a path before it's saved; the skip covers one saved earlier.
 4. Then the outpost passthrough and sign-in locations, with
    `ctx.outpost` = `192.0.2.20:9000`:
    ```nginx
@@ -141,9 +145,13 @@ Locations inside a server are separated by one blank line.
 
 ## Delivery (unchanged `fileDriver` contract)
 
-- Payload: `[{ path: configPath, mode: 'owned', content }]`.
+- Payload: `[{ path: configPath, mode: 'owned', content, ownedHeader }]`,
+  where `ownedHeader` is the file's first line (the header comment above).
 - Preview: `content`, exactly.
-- Apply: back up `configPath` (or note absence), write it whole, `nginx -t`;
+- Apply: first, if `configPath` exists and its first line is not exactly
+  `ownedHeader`, print an error naming the path and how to fix it
+  (repoint or unset `proxyConfigPath`, or remove the file) and exit
+  non-zero before any backup, write, validate, or reload. Then back up `configPath` (or note absence), write it whole, `nginx -t`;
   on failure restore/remove and exit non-zero without reloading; on success
   `systemctl reload nginx`.
 - Snapshot: `cat <configPath>`.

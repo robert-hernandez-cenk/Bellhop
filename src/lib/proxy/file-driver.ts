@@ -15,6 +15,13 @@ export interface FileSpec {
   // block (appending it if absent), leaving everything else on the file
   // untouched -- see data-model.md "FileSpec (file drivers)".
   mode: 'owned' | 'managed-section';
+  // 'owned' only: the exact first line an existing file must start with
+  // for an apply to replace it. proxyConfigPath is shared across drivers,
+  // so it can still point at another driver's file (a Caddyfile left over
+  // from the Caddy driver, say) -- an owned-mode apply would otherwise
+  // replace that file whole, and the new driver's own validate command
+  // would still pass since it never reads it. Omitted means no check.
+  ownedHeader?: string;
 }
 
 // The one definition of the managed-section markers: fileDriver both writes
@@ -64,6 +71,24 @@ export function singleQuote(value: string): string {
 // configuration.
 export function buildFileDriverScript(files: FileSpec[], validateCommand: string, reloadCommand: string): string {
   const lines: string[] = ['set -e'];
+
+  // 0. Refuse to replace an existing owned file this driver didn't write
+  // (its first line isn't the driver's ownedHeader). Runs before any
+  // backup, trap, or write, so a refusal leaves every file untouched and
+  // needs no restore.
+  files.forEach((file) => {
+    if (file.mode !== 'owned' || file.ownedHeader === undefined) return;
+    const p = singleQuote(file.path);
+    const message =
+      `Refusing to replace ${file.path}: the file exists but was not written by this proxy driver ` +
+      `(its first line is not the driver's generated header). To use this driver, point proxyConfigPath ` +
+      `at a different file (bellhop set-config proxyConfigPath <path> --apply, or ` +
+      `bellhop set-config proxyConfigPath --unset --apply for the driver's default), or remove the file.`;
+    lines.push(`if [ -f ${p} ] && [ "$(head -n 1 ${p})" != ${singleQuote(file.ownedHeader)} ]; then`);
+    lines.push(`  printf '%s\\n' ${singleQuote(message)} >&2`);
+    lines.push('  exit 1');
+    lines.push('fi');
+  });
 
   // 1. Back up each file, or record that it did not exist.
   files.forEach((file, i) => {
