@@ -78,7 +78,7 @@ None. No new dependencies or project structure.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T011 [P] In `CLAUDE.md`'s `install-app` prompt-relay paragraph, after the sentence ending "flag a stall as a guess rather than a detected question.", add one sentence: the banner's hint, dismiss label and button emphasis per origin all come from one `Record<PromptOrigin | 'none', …>` table, `promptBannerView()` in `web-client/src/lib/prompt-banner.ts` (issue #4), so a new origin can't ship without copy. Confirm `README.md` and `CONTRIBUTING.md` don't restate the banner's labels (update only if they do).
+- [x] T011 [P] In `CLAUDE.md`'s `install-app` prompt-relay paragraph, after the sentence ending "flag a stall as a guess rather than a detected question.", add one sentence: the banner's hint, dismiss label and button emphasis per origin all come from one `Record<PromptOrigin | 'none', …>` table, `promptBannerView()` in `web-client/src/lib/prompt-banner.ts` (issue #4), so a new origin can't ship without copy. Confirm `README.md` and `CONTRIBUTING.md` don't restate the banner's labels (update only if they do).
 - [ ] T012 Follow `specs/010-prompt-banner-copy/quickstart.md`: seed the five paused rows and check each at 1280px and 390px, light and dark, against `contracts/banner-copy.md`. Save screenshots for the PR.
 - [ ] T013 Run `npm run typecheck`, `npm test`, `npm run web:build`; all pass.
 
