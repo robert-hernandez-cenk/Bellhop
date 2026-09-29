@@ -122,7 +122,7 @@ the demo. Every page renders with example data, and the checkout is unchanged af
 - Live timestamps (job start times, relative times such as "3 minutes ago"): the demo's
   seeded jobs use fixed times, so regenerated images differ only where the UI changed.
 - A developer's own `data/*.env` sets `WEB_UI_AUTH_MODE=authentik` or Authentik credentials:
-  the demo ignores them and always runs as a local operator with no Authentik.
+  the demo ignores them and always presents the signed-in demo `admin` with no Authentik.
 - The Users and Permissions pages need a real Authentik instance, so the demo hides them the
   same way any deployment without Authentik does. They are not screenshotted.
 
@@ -149,8 +149,9 @@ the demo. Every page renders with example data, and the checkout is unchanged af
 - **FR-005**: The demo instance MUST start with a few finished jobs, each with a log, and those
   jobs MUST use fixed timestamps.
 - **FR-006**: The demo instance MUST NOT read or write the checkout's real inventory database,
-  its `data/` directory, or any credential file, and MUST run as the local operator with
-  Authentik and Cloudflare unconfigured, regardless of the developer's environment.
+  its `data/` directory, or any credential file, and MUST present every visitor as a signed-in
+  demo administrator (`admin`, as a reverse proxy's forward-auth would) with Authentik and
+  Cloudflare unconfigured, regardless of the developer's environment.
 - **FR-007**: Everything the demo instance writes MUST go to its temporary location, which MUST
   be removed when the demo stops.
 - **FR-008**: The project MUST provide a `demo` command that starts the demo instance on a local
