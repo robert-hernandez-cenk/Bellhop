@@ -240,6 +240,7 @@ test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () 
   assert.deepEqual(res.body.proxyDrivers, [
     { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
     { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
     { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
@@ -252,6 +253,7 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
   assert.deepEqual(res.body.proxyDrivers, [
     { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
     { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
     { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');

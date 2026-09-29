@@ -4,9 +4,8 @@
 // (constitution: never trust a third-party response body without
 // validating it), and a build function that fails the same clear way
 // whichever caller (CLI/web/MCP) is missing credentials. The driver that
-// uses this client (src/lib/proxy/drivers/nginx-proxy-manager.ts) lands in
-// a later change; this file has no proxy-driver-shaped logic in it, only
-// "talk to NPM."
+// uses this client is src/lib/proxy/drivers/nginx-proxy-manager.ts; this
+// file has no proxy-driver-shaped logic in it, only "talk to NPM."
 
 import { z } from 'zod';
 import { findProxyEntry, type Inventory } from './inventory.ts';

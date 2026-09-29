@@ -8,6 +8,7 @@ import { PROXY_DRIVER_IDS, getDriver, driverDeps, registerDriverForTests, DEFAUL
 import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
 import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
+import { nginxProxyManagerDriver } from '../../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
 import { fileDriver } from '../../../src/lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../src/lib/proxy/routes.ts';
 import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
@@ -82,8 +83,6 @@ test('getDriver returns noneDriver when proxyDriver is "none"', () => {
 
 // --- driver ids / registry metadata (issue #33) ----------------------------
 
-// nginx-proxy-manager (issue #31) is listed here ahead of its driver's own
-// registration -- see T002's comment in src/lib/proxy/ids.ts.
 test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, none]', () => {
   assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'none']);
 });
@@ -92,8 +91,20 @@ test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
   assert.equal(DEFAULT_PROXY_DRIVER_ID, 'caddy');
 });
 
-test('listDrivers returns Caddy, nginx, then None, in registration order', () => {
-  assert.deepEqual(listDrivers(), [caddyDriver, nginxDriver, noneDriver]);
+test('listDrivers returns Caddy, nginx, Nginx Proxy Manager, then None, in registration order', () => {
+  assert.deepEqual(listDrivers(), [caddyDriver, nginxDriver, nginxProxyManagerDriver, noneDriver]);
+});
+
+test('getDriver returns nginxProxyManagerDriver when proxyDriver is "nginx-proxy-manager" (issue #31)', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx-proxy-manager' });
+  assert.equal(getDriver(inv), nginxProxyManagerDriver);
+  assert.equal(managesProxy(nginxProxyManagerDriver), true);
+});
+
+test('driverDeps returns configPath: null for the Nginx Proxy Manager driver, even when proxyConfigPath is set', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx-proxy-manager', proxyConfigPath: '/etc/nginx/conf.d/bellhop.conf' });
+  const deps = driverDeps(inv, new FakeSSHClient(defaultResponder), nginxProxyManagerDriver);
+  assert.equal(deps.configPath, null);
 });
 
 test('Caddy driver metadata: label, defaultConfigPath, statusPage', () => {
