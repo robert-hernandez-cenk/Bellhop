@@ -48,9 +48,9 @@ root.
 
 **Independent Test**: an owned client with a custom `email` mapping reports no drift on sync.
 
-- [ ] T007 [US1] Write failing unit tests for `diffOAuth2Settings(current, desired, scopeNameById)` in `test/commands/sync-authentik.test.ts` (update the existing diff test to pass a `scopeNameById` built from the three built-ins): (a) a custom mapping for a required scope → no `property_mappings` change; (b) a required scope with no mapping → `property_mappings` reported, patch = current ids in order followed by the built-in id of each missing scope; (c) an extra mapping for an unrequired scope (e.g. `offline_access`) → no change; (d) an attached id absent from `scopeNameById` is kept and covers no scope.
-- [ ] T008 [US1] Write failing sync tests in `test/commands/sync-authentik.test.ts`: an owned OIDC client whose mappings are `scope-openid-1`, `scope-profile-1` and a seeded custom `email`-scope mapping yields `oidcUpdates: []` on dry run and apply, and its `propertyMappingIds` are unchanged afterwards; an owned client with `scope-openid-1`, `scope-profile-1` and an `offline_access` mapping gets `property_mappings` drift and, after apply, holds its old ids followed by `scope-email-1`. Adjust the existing drift test near the `['scope-email-1', 'scope-openid-1']` fixture so its expectation matches the new rule (the missing `profile` scope is appended, existing ids kept).
-- [ ] T009 [US1] Implement the rule in `diffOAuth2Settings` in `src/commands/networking/sync-authentik.ts` per data-model.md "Scope coverage rule" (required third parameter; required names from `desired.propertyMappingIds`; patch keeps current order and appends missing built-ins). Update its comment (research R4 note now: scope mappings compared by scope name). Pass `scopeNameById` from `planOidc` to both `diffOAuth2Settings` calls (owned drift and orphan reuse).
+- [x] T007 [US1] Write failing unit tests for `diffOAuth2Settings(current, desired, scopeNameById)` in `test/commands/sync-authentik.test.ts` (update the existing diff test to pass a `scopeNameById` built from the three built-ins): (a) a custom mapping for a required scope → no `property_mappings` change; (b) a required scope with no mapping → `property_mappings` reported, patch = current ids in order followed by the built-in id of each missing scope; (c) an extra mapping for an unrequired scope (e.g. `offline_access`) → no change; (d) an attached id absent from `scopeNameById` is kept and covers no scope.
+- [x] T008 [US1] Write failing sync tests in `test/commands/sync-authentik.test.ts`: an owned OIDC client whose mappings are `scope-openid-1`, `scope-profile-1` and a seeded custom `email`-scope mapping yields `oidcUpdates: []` on dry run and apply, and its `propertyMappingIds` are unchanged afterwards; an owned client with `scope-openid-1`, `scope-profile-1` and an `offline_access` mapping gets `property_mappings` drift and, after apply, holds its old ids followed by `scope-email-1`. Adjust the existing drift test near the `['scope-email-1', 'scope-openid-1']` fixture so its expectation matches the new rule (the missing `profile` scope is appended, existing ids kept).
+- [x] T009 [US1] Implement the rule in `diffOAuth2Settings` in `src/commands/networking/sync-authentik.ts` per data-model.md "Scope coverage rule" (required third parameter; required names from `desired.propertyMappingIds`; patch keeps current order and appends missing built-ins). Update its comment (research R4 note now: scope mappings compared by scope name). Pass `scopeNameById` from `planOidc` to both `diffOAuth2Settings` calls (owned drift and orphan reuse).
 
 **Checkpoint**: US1 tests pass.
 
@@ -60,14 +60,14 @@ root.
 
 **Independent Test**: adoption preview for a client differing only by a custom `email` mapping lists only the marker.
 
-- [ ] T010 [US2] Write a failing test in `test/commands/adopt-oidc-client.test.ts`: an adoptable unmarked client matching the desired settings except a custom `email` mapping (seeded in `scopeMappings`) in place of `scope-email-1`; the preview's OpenID settings changes are empty (only the `meta_publisher` marker is set), and after apply the client's `propertyMappingIds` are unchanged.
-- [ ] T011 [US2] Pass `instance.scopeNameById` to `diffOAuth2Settings` in `src/commands/networking/adopt-oidc-client.ts`.
+- [x] T010 [US2] Write a failing test in `test/commands/adopt-oidc-client.test.ts`: an adoptable unmarked client matching the desired settings except a custom `email` mapping (seeded in `scopeMappings`) in place of `scope-email-1`; the preview's OpenID settings changes are empty (only the `meta_publisher` marker is set), and after apply the client's `propertyMappingIds` are unchanged.
+- [x] T011 [US2] Pass `instance.scopeNameById` to `diffOAuth2Settings` in `src/commands/networking/adopt-oidc-client.ts`.
 
 ---
 
 ## Phase 5: User Story 3 — New clients are unchanged (P2)
 
-- [ ] T012 [US3] Add or confirm a test in `test/commands/sync-authentik.test.ts` that a newly created OIDC client carries exactly `['scope-openid-1', 'scope-profile-1', 'scope-email-1']` even when the instance also lists a custom `email` mapping.
+- [x] T012 [US3] Add or confirm a test in `test/commands/sync-authentik.test.ts` that a newly created OIDC client carries exactly `['scope-openid-1', 'scope-profile-1', 'scope-email-1']` even when the instance also lists a custom `email` mapping.
 
 ---
 

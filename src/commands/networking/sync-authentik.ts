@@ -462,15 +462,29 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   return left.size === right.size && [...left].every((v) => right.has(v));
 }
 
-// research.md R4: grant types and scope mappings compared as sets, redirect
-// URIs as a set of (matching_mode, url). Returns the Authentik field name of
-// every drifted setting, in a fixed order, and a patch carrying only those
-// fields. Credentials are not part of DesiredOAuth2Settings, so a patch
-// built here can never rotate client_id/client_secret (FR-009). Shared with
-// the adopt action, whose preview must show exactly this diff (FR-011a).
+// research.md R4: grant types compared as a set, redirect URIs as a set of
+// (matching_mode, url). Scope mappings (issue #16, data-model.md "Scope
+// coverage rule") are compared by scope name, not by id or as an exact set:
+// an operator can attach a custom mapping for a required scope (openid,
+// profile, email) in place of Bellhop's built-in one -- e.g. a custom email
+// mapping that sets email_verified from a social login source, which the
+// built-in email mapping always reports false -- and it must survive every
+// later sync. A required scope counts as covered when *any* attached
+// mapping (built-in or custom) has that scope name in scopeNameById; an
+// attached id absent from scopeNameById is kept but covers nothing (FR-006).
+// property_mappings drift is reported only when a required scope has no
+// covering mapping, and the fix keeps every currently attached id, in
+// order, and appends the desired (built-in) id of each uncovered scope --
+// never a wholesale replacement, so a custom mapping for a covered scope is
+// never touched. Returns the Authentik field name of every drifted setting,
+// in a fixed order, and a patch carrying only those fields. Credentials are
+// not part of DesiredOAuth2Settings, so a patch built here can never rotate
+// client_id/client_secret (FR-009). Shared with the adopt action, whose
+// preview must show exactly this diff (FR-011a).
 export function diffOAuth2Settings(
   current: AuthentikOAuth2Provider,
-  desired: DesiredOAuth2Settings
+  desired: DesiredOAuth2Settings,
+  scopeNameById: ReadonlyMap<string, string>
 ): { changes: string[]; patch: Partial<OAuth2ProviderSettings> } {
   const changes: string[] = [];
   const patch: Partial<OAuth2ProviderSettings> = {};
@@ -483,9 +497,16 @@ export function diffOAuth2Settings(
     changes.push('grant_types');
     patch.grantTypes = desired.grantTypes;
   }
-  if (!sameSet(current.propertyMappingIds, desired.propertyMappingIds)) {
+  const coveredScopeNames = new Set(
+    current.propertyMappingIds.map((id) => scopeNameById.get(id)).filter((name): name is string => name !== undefined)
+  );
+  const uncoveredDesiredIds = desired.propertyMappingIds.filter((id) => {
+    const name = scopeNameById.get(id);
+    return name !== undefined && !coveredScopeNames.has(name);
+  });
+  if (uncoveredDesiredIds.length > 0) {
     changes.push('property_mappings');
-    patch.propertyMappingIds = desired.propertyMappingIds;
+    patch.propertyMappingIds = [...current.propertyMappingIds, ...uncoveredDesiredIds];
   }
   if (current.signingKeyId !== desired.signingKeyId) {
     changes.push('signing_key');
@@ -1385,7 +1406,7 @@ async function planOidc(
     for (const entry of withUris) plan.skipped.push({ slug: entry.slug, kind: instance.kind, reason: instance.reason });
     return plan;
   }
-  const { signingKeyId, scopeMappingIds } = instance;
+  const { signingKeyId, scopeMappingIds, scopeNameById } = instance;
 
   for (const entry of withUris) {
     const settings = desiredOAuth2Settings(clientRedirectUris(entry), signingKeyId, scopeMappingIds);
@@ -1393,7 +1414,7 @@ async function planOidc(
     if (application && ownedKindBySlug.get(entry.slug) === 'oauth2') {
       // Owned as OAuth2, so this lookup always succeeds.
       const provider = oauth2ProvidersById.get(application.providerId!)!;
-      const { changes, patch } = diffOAuth2Settings(provider, settings);
+      const { changes, patch } = diffOAuth2Settings(provider, settings, scopeNameById);
       if (changes.length > 0) plan.updates.push({ slug: entry.slug, providerId: provider.id, changes, patch });
       continue;
     }
@@ -1407,7 +1428,7 @@ async function planOidc(
     plan.creates.push({
       slug: entry.slug,
       settings,
-      ...(orphan ? { orphan: { id: orphan.id, ...diffOAuth2Settings(orphan, settings) } } : {}),
+      ...(orphan ? { orphan: { id: orphan.id, ...diffOAuth2Settings(orphan, settings, scopeNameById) } } : {}),
       ...(application ? { switchFrom: application, renameOutgoing: naming.renameOutgoing } : {}),
     });
   }
