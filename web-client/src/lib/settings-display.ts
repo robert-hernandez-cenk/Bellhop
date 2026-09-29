@@ -33,7 +33,8 @@ export function proxyDriverOptions(
 
 // What the Settings page's Proxy config path/Status page path fields show
 // for whichever driver is currently selected in the (possibly unsaved)
-// dropdown -- issue #33's US3. `selectedId` is the caller's already-resolved
+// dropdown -- issue #33's US3 (and issue #26: a driver with usesConfigFile
+// false hides the config path field but keeps the status page one). `selectedId` is the caller's already-resolved
 // choice (`drafts.proxyDriver || data.defaultProxyDriver`, so it tracks the
 // unsaved selection per FR-006/FR-007's acceptance scenario 5), not looked
 // up against a separate default here. A driver that manages no proxy (only
@@ -62,6 +63,16 @@ export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): 
   const driver = drivers.find((d) => d.id === selectedId);
   if (!driver || !driver.managesProxy) {
     return { showConfigPath: false, showStatusPagePath: false, showTlsFields: false };
+  }
+  // A driver that writes no configuration file (the Caddy admin-API driver,
+  // issue #26) has no path to show; the status page can still apply.
+  if (!driver.usesConfigFile) {
+    return {
+      showConfigPath: false,
+      showStatusPagePath: driver.suggestedStatusPagePath !== null,
+      statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
+      showTlsFields: driver.usesSharedCertificate,
+    };
   }
   const baseHelp =
     driver.defaultConfigPath === null

@@ -22,8 +22,9 @@ export interface DriverDeps {
   // src/lib/proxy/index.ts.
   proxyHost: string;
   // inventory.proxyConfigPath ?? driver.defaultConfigPath, resolved by
-  // driverDeps().
-  configPath: string;
+  // driverDeps() -- null only for a driver with usesConfigFile: false
+  // (caddy-api, issue #26), which writes no file at all.
+  configPath: string | null;
 }
 
 export interface ProxyPlan {
@@ -55,6 +56,12 @@ export interface ReverseProxyDriver {
   // via DNS-01; 'none' writes nothing), so a driver that never reads those
   // settings needs no declaration.
   usesSharedCertificate?: boolean;
+  // false = the driver writes no configuration file at all (caddy-api,
+  // issue #26, reconciles Caddy's live configuration through its admin
+  // API): driverDeps() resolves configPath to null rather than requiring
+  // one, and the Settings page hides the Proxy config path field. Absent =
+  // true, so a file-configured driver needs no declaration.
+  usesConfigFile?: boolean;
   // One sentence the Settings page appends to the Proxy config path help
   // for this driver -- how it treats that file (the whole file vs. a
   // managed section of it). Absent = nothing appended.

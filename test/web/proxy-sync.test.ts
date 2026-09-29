@@ -295,6 +295,25 @@ test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME p
   assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx')));
 });
 
+// issue #26: the admin-API Caddy driver goes through the same push-live
+// step -- it reads Caddy's configuration, PATCHes it, then the status page
+// reads it back through the same admin API (FR-012, SC-006).
+test('syncProxyLive (real caddy-api driver) reads and PATCHes Caddy through its admin API, then renders the status page from it', async () => {
+  const apiInventory: Inventory = { ...inventory, proxyDriver: 'caddy-api' };
+  const ssh = new FakeSSHClient((_t, _u, c) =>
+    c.includes('-X PATCH')
+      ? { stdout: '\nBELLHOP_HTTP_STATUS=200\n', stderr: '', code: 0 }
+      : { stdout: 'HTTP/1.1 200 OK\r\nEtag: "/config/ 1"\r\n\r\nnull', stderr: '', code: 0 }
+  );
+  await syncProxyLive({ ssh, inventory: apiInventory, authentik: new UnconfiguredAuthentikClient() });
+  const commands = ssh.history.map((h) => h.command);
+  assert.match(commands[0], /systemctl is-active --quiet caddy\.service/, 'first call reads the config with the Caddyfile-mode check');
+  assert.match(commands[1], /-X PATCH .*If-Match: "\/config\/ 1"/, 'second call writes it conditionally');
+  assert.match(commands[1], /bellhop-route-plex\.example\.com/);
+  assert.doesNotMatch(commands[2], /systemctl/, 'the status page reads without the check');
+  assert.match(commands[3], /cat > '\/usr\/share\/caddy\/index\.html'/);
+});
+
 test('syncProxyLive treats an omitted cloudflare dep as unconfigured', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const logs = await captureLogs(() => syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient() }));

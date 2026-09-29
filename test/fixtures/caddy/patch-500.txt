@@ -1,0 +1,3 @@
+{"error":"loading new config: loading http app module: provision http: server srv0: setting up route handlers: route 0: loading handler modules: position 0: loading module 'nope': unknown module: http.handlers.nope"}
+
+BELLHOP_HTTP_STATUS=500

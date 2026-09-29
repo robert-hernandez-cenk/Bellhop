@@ -4,6 +4,7 @@ import type { SSHClient } from '../ssh-client.ts';
 import type { DriverDeps, ReverseProxyDriver } from './driver.ts';
 import { settingFix } from '../settings-hint.ts';
 import { caddyDriver } from './drivers/caddy.ts';
+import { caddyApiDriver } from './drivers/caddy-api.ts';
 import { nginxDriver } from './drivers/nginx.ts';
 import { noneDriver } from './drivers/none.ts';
 import { PROXY_DRIVER_IDS, type ProxyDriverId } from './ids.ts';
@@ -23,9 +24,11 @@ export const DEFAULT_PROXY_DRIVER_ID: ProxyDriverId = 'caddy';
 // itself only ever looks up ids that either come from PROXY_DRIVER_IDS-typed
 // inventory data or were added through that same test-only hook. Order
 // matters: this is registration order, and listDrivers() below returns it
-// verbatim (Caddy, nginx, then None) for the Settings dropdown.
+// verbatim (Caddy, Caddy (admin API), nginx, then None) for the Settings
+// dropdown.
 const DRIVERS = new Map<string, ReverseProxyDriver>([
   [caddyDriver.id, caddyDriver],
+  [caddyApiDriver.id, caddyApiDriver],
   [nginxDriver.id, nginxDriver],
   [noneDriver.id, noneDriver],
 ]);
@@ -55,15 +58,19 @@ export function getDriver(inventory: Inventory): ReverseProxyDriver {
 // Resolves the DriverDeps contracts/driver-interface.md's plan()/apply()/
 // snapshot() all take: proxyHost from the entry flagged proxy: true,
 // configPath from the proxyConfigPath setting when set, else the
-// active driver's own defaultConfigPath. Only ever called for a driver that
-// managesProxy() -- a managed driver with defaultConfigPath: null and no
-// proxyConfigPath override is a programming error (data-model.md
-// "driverDeps()"), not a state 'none' can reach, since callers short-circuit
-// around 'none' before this runs.
+// active driver's own defaultConfigPath -- or null for a driver that writes
+// no file (usesConfigFile: false, caddy-api, issue #26). Only ever called
+// for a driver that managesProxy() -- a file-configured driver with
+// defaultConfigPath: null and no proxyConfigPath override is a programming
+// error (data-model.md "driverDeps()"), not a state 'none' can reach, since
+// callers short-circuit around 'none' before this runs.
 export function driverDeps(inventory: Inventory, ssh: SSHClient, driver: ReverseProxyDriver): DriverDeps {
   const proxyHost = findProxyEntry(inventory)?.name;
   if (!proxyHost) {
     throw new Error("No inventory entry has 'proxy: true'");
+  }
+  if (driver.usesConfigFile === false) {
+    return { ssh, inventory, proxyHost, configPath: null };
   }
   const configPath = inventory.proxyConfigPath ?? driver.defaultConfigPath;
   if (configPath === null) {

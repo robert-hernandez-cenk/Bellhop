@@ -238,9 +238,10 @@ test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () 
   const res = await asAdmin(request(app).get('/api/settings'));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
-    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE, usesConfigFile: true },
+    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null, usesConfigFile: false },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE, usesConfigFile: true },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });
@@ -250,11 +251,20 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
   const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
-    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE, usesConfigFile: true },
+    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null, usesConfigFile: false },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE, usesConfigFile: true },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
+});
+
+test('PATCH /api/settings accepts proxyDriver caddy-api', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'caddy-api' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'caddy-api');
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'caddy-api');
 });
 
 test('PATCH /api/settings writes proxyDriver "none" and persists it', async () => {

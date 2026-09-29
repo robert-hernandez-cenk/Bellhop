@@ -1,0 +1,2 @@
+# Captured HTTP responses keep their CRLF header lines byte-for-byte.
+test/fixtures/caddy/*.txt -text
