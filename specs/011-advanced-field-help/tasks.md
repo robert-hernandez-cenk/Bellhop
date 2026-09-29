@@ -21,7 +21,7 @@ None. The existing `web-client/` app and test layout are used as they are.
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-- [ ] T001 Create `test/web-client/advanced-field-help.test.ts` (`node:test`, `node:assert/strict`, importing `ADVANCED_FIELD_HELP` from `../../web-client/src/lib/advanced-field-help.ts`, like `test/web-client/prompt-banner.test.ts`). Tests:
+- [x] T001 Create `test/web-client/advanced-field-help.test.ts` (`node:test`, `node:assert/strict`, importing `ADVANCED_FIELD_HELP` from `../../web-client/src/lib/advanced-field-help.ts`, like `test/web-client/prompt-banner.test.ts`). Tests:
   - (a) the map equals the 15 label → text entries in `specs/011-advanced-field-help/contracts/field-help.md`, verbatim;
   - (b) every value is non-empty and has one or two sentences: split on `/[.!?](\s|$)/` after trimming, and count the non-empty parts;
   - (c) the FR-003 facts appear:
@@ -31,7 +31,7 @@ None. The existing `web-client/` app and test layout are used as they are.
     - `callback urls` mentions `No effect unless` and `OIDC mode`.
 
   Confirm the tests fail because the module is missing.
-- [ ] T002 Create `web-client/src/lib/advanced-field-help.ts`.
+- [x] T002 Create `web-client/src/lib/advanced-field-help.ts`.
   - Keep it framework-free: no React/DOM imports, and a header comment giving the same rationale as `web-client/src/lib/prompt-banner.ts`, plus a note that the modal's labels must match these keys.
   - Export `ADVANCED_FIELD_HELP: Readonly<Record<string, string>>` with the 15 entries from the contract, verbatim, in modal order.
   - Run `npm test`; T001 passes.
