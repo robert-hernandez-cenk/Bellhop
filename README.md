@@ -3,7 +3,7 @@
 A self-hosted app store for your Proxmox VE homelab. Bellhop installs
 appliances from [community-scripts](https://github.com/community-scripts/ProxmoxVE)
 into new LXC containers, then handles what comes after: inventory,
-reverse-proxy routes (Caddy today, through a pluggable driver — see
+reverse-proxy routes (Caddy or nginx, through a pluggable driver — see
 "Reverse proxy drivers" below), Authentik login gating, updates, and
 migrations between hosts. It ships as a web UI, a CLI, and an MCP server,
 and reaches your Proxmox hosts over SSH from your local machine.
@@ -315,12 +315,13 @@ and `adopt-oidc-client` are its companions for native OIDC gating; see
 
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see "Inventory-wide
-settings" below; unset means `caddy`, the default). Exactly one driver is
-active per deployment: it's a per-deployment choice, not a per-entry one,
-so every gated/reverse-proxied inventory entry is served by the same
-proxy. The web UI's Settings page presents this choice as a dropdown of
-every driver Bellhop supports, rather than a free-text field — see
-"Inventory-wide settings" below.
+settings" below; unset means `caddy`, the default; `nginx` and `none`
+are the other drivers that ship). Exactly one driver is active per
+deployment: it's a per-deployment choice, not a per-entry one, so every
+gated/reverse-proxied inventory entry is served by the same proxy. The web
+UI's Settings page presents this choice as a dropdown of every driver
+Bellhop supports, rather than a free-text field — see "Inventory-wide
+settings" below.
 
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
 both `forward` and `oidc`) and whether it issues TLS certificates itself
@@ -357,11 +358,11 @@ page render with one log line and continue, the same opt-in
 skip they already give an unset `statusPagePath`. The stale ACME-challenge
 cleanup is skipped too, through the same driver-capability check that
 skips it for any driver that doesn't issue certificates via Cloudflare
-DNS-01.
+DNS-01 (nginx included).
 
-A driver that's configured through a file (Caddy is; a future
-Caddy-admin-API/Nginx-Proxy-Manager/HAProxy-Data-Plane-API driver might
-not be) is built with a shared `fileDriver` helper: it backs up the
+A driver that's configured through a file (Caddy and nginx both are; a
+future Caddy-admin-API/Nginx-Proxy-Manager/HAProxy-Data-Plane-API driver
+might not be) is built with a shared `fileDriver` helper: it backs up the
 target file(s), writes the new content in place (either replacing a
 managed section while leaving everything else on the file untouched, or
 replacing a file Bellhop owns outright), runs the proxy's own validation
@@ -373,11 +374,108 @@ page makes `render-status-page` fail with a message saying to clear
 `statusPagePath` or pick another driver, and the push-live step logs a
 warning, not an info line, when `statusPagePath` is set but ignored.
 
+On both file-configured drivers (Caddy and nginx), a request to a forward-gated entry's exempt
+(`unauthenticatedPaths`) location skips the Authentik check entirely — any
+`X-authentik-*` identity headers on that request are whatever the client
+itself sent, unverified, so a backend must not trust them on an exempt
+path the way it can trust them everywhere else on a gated site.
+
 **Certificates are the operator's job for a driver that doesn't issue them
 itself.** Caddy issues its own via Cloudflare DNS-01 with no extra setup;
-a driver for a proxy that can't (plain nginx, HAProxy) will need an
-operator-managed certificate tool (`certbot`, `acme.sh`) running
-alongside it — Bellhop itself never issues or renews a certificate.
+nginx cannot obtain its own certificate, so every site the nginx driver
+generates shares one certificate/key pair instead — see "nginx driver"
+below. A future HAProxy driver would need the same kind of
+operator-managed certificate tool (`certbot`, `acme.sh`) running alongside
+it — Bellhop itself never issues or renews a certificate.
+
+### nginx driver
+
+Select it with `bellhop set-config proxyDriver nginx --apply` (or the
+Settings page). It owns one whole file on the proxy host, defaulting to
+`/etc/nginx/conf.d/bellhop.conf` (override with `proxyConfigPath`) —
+everything else already on the box is left alone. `sync-proxy` renders one
+HTTPS `server` block per subdomain-bearing entry, forwarding to its
+backend the same way the Caddy driver does (the original `Host`, the
+client's address — `X-Forwarded-For` is set to the connecting address, not
+appended to, so a client can't pose as a LAN address — and scheme,
+external port 443, WebSocket upgrades, unbuffered streaming of responses
+and request bodies, a one-day idle timeout so quiet WebSocket and
+server-sent-events connections stay open, no request-body size limit) and,
+for a
+forward-gated entry, checks every request against the embedded Authentik
+outpost the same way Caddy's `forward_auth` does, including
+`unauthenticatedPaths` exemptions; an `oidc`-mode or ungated entry gets no
+forward-auth at all.
+
+Its status page follows the same opt-in `statusPagePath` setting as
+Caddy's; the Settings page suggests `/var/www/html/index.html`, the
+Debian/Ubuntu nginx package's default document root. Serving that page
+(and restricting it to your LAN) is your own hand-authored `server`
+block's job, exactly as the status page's site block is for Caddy.
+
+Because nginx cannot obtain a certificate the way Caddy does through
+Cloudflare DNS-01, every site this driver generates shares one
+certificate/key pair — normally a wildcard for your domain, so that adding
+a subdomain never needs a certificate step of its own. Point Bellhop at it
+with the `proxyTlsCertificate`/`proxyTlsKey` settings (see "Inventory-wide
+settings" below); left unset, it looks for certbot's own default path for
+a certificate named after the inventory `domain`
+(`/etc/letsencrypt/live/<domain>/fullchain.pem`/`.../privkey.pem`). certbot
+names a certificate lineage after its first `-d`, so this issues it at
+exactly that path:
+
+```bash
+certbot certonly --dns-cloudflare -d example.com -d '*.example.com'
+```
+
+A wildcard covers one label only: `*.example.com` matches
+`grafana.example.com` but not `grafana.lab.example.com`. A multi-label
+subdomain such as `grafana.lab` needs its own coverage on the same
+certificate (for example an extra `-d '*.lab.example.com'`) — nginx serves
+the certificate regardless and does not warn, so browsers see a name
+mismatch instead.
+
+Add a certbot deploy hook that reloads nginx after every renewal (for
+example a script under `/etc/letsencrypt/renewal-hooks/deploy/` running
+`systemctl reload nginx`) — issuing and renewing the certificate, and
+making nginx pick up a renewal, are the operator's job; Bellhop only ever
+points nginx at the configured paths.
+
+Out of scope: redirecting port 80 to HTTPS (left to your own
+configuration, so it never clashes with your certificate tool's own
+webroot or default server) and HTTP/2 (its directive differs between
+supported nginx releases). Assumes a distribution-packaged nginx managed
+by systemd whose main configuration includes `/etc/nginx/conf.d/*.conf`
+inside its `http` block (the Debian/Ubuntu and upstream-package default —
+use `proxyConfigPath` for a different layout) and that it was built with
+the `auth_request` module (standard in the Debian/Ubuntu and nginx.org
+packages).
+
+No generated block is a `default_server`, so a request on port 443 for a
+hostname (or TLS SNI name) no block claims falls through to nginx's default
+server — the first generated block, unless your own configuration declares
+a `default_server` — and gets that site's certificate and backend. Bellhop
+doesn't emit one itself, since it would collide with a `default_server` of
+your own and fail `nginx -t`. To reject unknown names instead, add a
+catch-all to your own configuration (nginx 1.19.4 or later):
+
+```nginx
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_reject_handshake on;
+}
+```
+
+Switching `proxyDriver` from `caddy` to `nginx` (or back) leaves the other
+driver's own files in place: an old Caddyfile's `bellhop-managed` section
+stays, still valid, for you to retire by hand once nginx is serving the
+same sites. `proxyConfigPath` is shared by both drivers, though, so clear
+it (`bellhop set-config proxyConfigPath --unset --apply`) or repoint it
+when switching. The nginx driver replaces its file whole, so it refuses to
+overwrite an existing file whose first line isn't its own generated header
+— an apply with `proxyConfigPath` still pointing at a Caddyfile fails with
+that error and leaves the Caddyfile untouched.
 
 **Upgrading an existing installation needs no manual steps in most
 cases.** An inventory created by an older version upgrades itself
@@ -409,8 +507,9 @@ a step by hand:
 A gated entry (one with `authGroup` set) is enforced one of two ways,
 chosen per entry with `authMode`: `forward` (the default, and the only
 option before this feature existed) puts the active proxy driver's
-forward-auth in front of it (Caddy's `forward_auth`, today's only driver),
-checking every request against Authentik and forwarding a shared,
+forward-auth in front of it (Caddy's `forward_auth`, or the equivalent
+`auth_request` block on the nginx driver), checking every request against
+Authentik and forwarding a shared,
 already-authenticated identity in `X-authentik-*` headers; `oidc` instead
 gives the entry its own Authentik OpenID Connect client and lets the app
 run its own login. A driver that can't enforce a mode an entry needs is
@@ -609,7 +708,7 @@ claude mcp add --scope user bellhop -- npm --prefix /path/to/bellhop run --silen
 
 ## Inventory-wide settings
 
-Eight values live in the inventory database rather than in code, because
+Ten values live in the inventory database rather than in code, because
 they are specific to your network. Set them with `set-config`:
 
 ```bash
@@ -623,8 +722,9 @@ nothing. Admins can set the same values from the web UI's Settings page,
 where `proxyDriver` is a dropdown of the supported ids rather than a
 free-text field, and Proxy config path/Status page path are shown or
 hidden and given a matching placeholder based on whichever driver is
-currently selected in that dropdown (unsaved changes included) — see
-"Reverse proxy drivers" above.
+currently selected in that dropdown (unsaved changes included); the Proxy
+TLS certificate/key fields appear only while nginx is selected. Hiding a
+field never clears its stored value — see "Reverse proxy drivers" above.
 
 | Setting | Used by | When unset |
 |---|---|---|
@@ -632,13 +732,15 @@ currently selected in that dropdown (unsaved changes included) — see
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
-| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`none` |
-| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy; `none` has no config file at all) |
+| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`nginx`/`none` |
+| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx; `none` has no config file at all) |
+| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 
-See "Reverse proxy drivers" above for what `proxyDriver` and
-`proxyConfigPath` actually do.
+See "Reverse proxy drivers" above for what `proxyDriver`, `proxyConfigPath`,
+and the nginx driver's `proxyTlsCertificate`/`proxyTlsKey` actually do.
 
 `statusPagePath` unset is a hard failure only for the standalone
 `render-status-page` command; the web UI's combined push-live step and

@@ -23,3 +23,15 @@ test('prune-acme-challenges --help documents the --apply flag', () => {
   assert.match(output, /--apply/);
   assert.match(output, /_acme-challenge/);
 });
+
+test('set-config --help lists every setting key', async () => {
+  const { SETTINGS_KEYS } = await import('../src/lib/inventory.ts');
+  const output = execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'set-config', '--help'], {
+    encoding: 'utf8',
+  });
+  // commander wraps long descriptions, so compare on whitespace-collapsed text.
+  const flat = output.replace(/\s+/g, ' ');
+  for (const key of SETTINGS_KEYS) {
+    assert.ok(flat.includes(key), `set-config --help should list ${key}`);
+  }
+});

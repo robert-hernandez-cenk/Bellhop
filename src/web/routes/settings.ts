@@ -37,7 +37,7 @@ function derivedValues(inv: Inventory) {
   };
 }
 
-// Every registered proxy driver, in registration order (Caddy first, then
+// Every registered proxy driver, in registration order (Caddy, nginx, then
 // None) -- issue #33: the Settings page's dropdown is populated from this
 // rather than a hardcoded option list, so a future driver needs no client
 // change. Independent of inventory: every driver is always listed, whether
@@ -49,6 +49,8 @@ function proxyDriversInfo() {
     defaultConfigPath: driver.defaultConfigPath,
     suggestedStatusPagePath: driver.statusPage?.suggestedPath ?? null,
     managesProxy: managesProxy(driver),
+    usesSharedCertificate: driver.usesSharedCertificate ?? false,
+    configPathNote: driver.configPathNote ?? null,
   }));
 }
 

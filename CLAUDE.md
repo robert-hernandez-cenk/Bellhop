@@ -92,8 +92,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Guests reference their parent host by name and carry a `vmid`. Optional
   `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive reverse-proxy
   generation through whichever driver is active (issue #10 — see the
-  "Reverse-proxy driver interface" bullet below; Caddy is the only driver
-  that ships today) — `subdomains` is a list (a host or guest can
+  "Reverse-proxy driver interface" bullet below; Caddy and nginx, issue
+  #30, are the two drivers that ship today) — `subdomains` is a list (a host or guest can
   front more than one subdomain; `sync-proxy` emits one route per entry in
   the list, all pointing at the same `ip`/`port`);
   `insecureBackendTls` — see the driver-interface bullet below;
@@ -113,7 +113,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `authMode` (optional, hosts/guests/external_sites, issue #1) names *how*
   a gated entry's tier is enforced: `forward` (absent means this, the
   original behavior) puts the active proxy driver's forward-auth in front
-  of it (Caddy's `forward_auth`, today's only driver), addressed
+  of it (Caddy's `forward_auth` or nginx's `auth_request`), addressed
   at whichever entry has `authentik: true`; `oidc` instead gives the entry
   its own Authentik OpenID Connect client, so the app itself checks the
   login rather than the proxy. Every consumer (`buildRoutes`,
@@ -249,13 +249,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   which one entry has `proxy: true`; written by `saveInventory` but not
   currently read back by `loadInventory`, which instead reads the `proxy`
   boolean column already present directly on the owning `hosts`/`guests`
-  row), and `meta` (`domain` plus eight optional operator-specific scalars,
+  row), and `meta` (`domain` plus ten optional operator-specific scalars,
   issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`,
-  plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch` and the
+  plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch`, the
   issue #10 pair `proxyDriver`/`proxyConfigPath` (which reverse-proxy
   driver `src/lib/proxy/index.ts`'s `getDriver()` hands back, and its
   configuration-file location — see the "Reverse-proxy driver interface"
-  bullet below)
+  bullet below), and the issue #30 pair `proxyTlsCertificate`/
+  `proxyTlsKey` (the shared TLS certificate/key path pair the nginx
+  driver's every server block references — see the "nginx driver" bullet
+  below; inert for Caddy, which issues its own per-site certificate)
   — see `SettingsSchema`/`SETTINGS_KEYS` in
   `src/lib/inventory.ts`, spread into `InventorySchema` rather than nested
   under their own key, same flat placement as `domain`). Each used to be a
@@ -575,12 +578,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
   driver rather than untangling Caddy-specific code throughout the toolkit.
-  Caddy is the only driver that ships this round that actually manages a
-  proxy -- an admin-API Caddy driver, and drivers for nginx/Nginx Proxy
+  Caddy and nginx (issue #30) are the two drivers that ship and actually
+  manage a proxy -- an admin-API Caddy driver, and drivers for Nginx Proxy
   Manager/HAProxy, are follow-up issues (its shape was checked against all
   four on paper first; see `specs/006-reverse-proxy-driver/research.md`).
-  A second registered driver, `none`, ships alongside it as of issue #33 --
-  see "A driver that manages no reverse proxy at all" below.
+  A third registered driver, `none`, ships alongside them as of issue #33
+  -- see "A driver that manages no reverse proxy at all" below.
   Single-operator-assumption
   update: this toolkit is no longer hard-wired to Caddy -- exactly one
   driver is active per deployment (`proxyDriver`, a per-deployment choice,
@@ -590,6 +593,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Cloudflare DNS-01 with fixed resolvers (one domain, one DNS provider,
   one operator) -- unchanged in effect, just now confined entirely inside
   the Caddy driver instead of spread through a Caddy-specific generator.
+  The nginx driver (issue #30) adds two more of its own, both narrower:
+  its shared-certificate default is derived from the inventory `domain`,
+  not hardcoded, but its CA-bundle verification path and its `conf.d`
+  default config path both assume a Debian/Ubuntu nginx layout -- see the
+  "nginx driver" bullet below.
   Four files split the
   responsibility: `routes.ts`'s `buildRoutes(inventory)` derives a
   proxy-neutral `ProxyRoute[]` from `hosts[]`/`guests[]`/`externalSites[]`
@@ -598,8 +606,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `80`; throw the same missing-authentik error when a forward-gated route
   exists but no entry has `authentik: true` with an `ip`) -- and
   `buildProxyContext(inventory)` derives the shared `ProxyContext` (the
-  Authentik outpost's `ip`/`port`, and the fixed `externalPort` `443`); a
-  route never carries its auth *tier*, only its `mode`
+  Authentik outpost's `ip`/`port`; the fixed `externalPort` `443`; and,
+  issue #30, `tls: { certificatePath, keyPath }` -- the shared
+  certificate/key path pair a driver that cannot obtain its own per-site
+  certificate serves on every route, from `proxyTlsCertificate`/
+  `proxyTlsKey` when set, else certbot's own default path for the
+  inventory `domain`; always present, since `domain` is mandatory, so a
+  driver never has to handle "no certificate"; the Caddy driver ignores
+  it entirely, since it obtains its own per-site certificate via DNS-01);
+  a route never carries its auth *tier*, only its `mode`
   (`'ungated' | 'forward' | 'oidc'`, plus a forward route's parsed
   (`PathPattern[]`) and raw (`string[]`, stored order) `unauthenticatedPaths`)
   -- tier enforcement stays entirely Authentik's job, in `sync-authentik`
@@ -607,16 +622,22 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`id`, `label` -- the Settings page dropdown's option text --,
   `capabilities`, `defaultConfigPath: string | null` (`null` means the
   driver uses no configuration file), `statusPage: { suggestedPath:
-  string } | null` (`null` means it serves no status page), `plan()`/
-  `apply()`/`snapshot()`) and `checkCapabilities(routes, driver)`;
+  string } | null` (`null` means it serves no status page), two optional
+  Settings-page hints -- `usesSharedCertificate` (`true` means the driver
+  serves `ctx.tls`'s shared certificate, so the page shows the
+  `proxyTlsCertificate`/`proxyTlsKey` fields; nginx only) and
+  `configPathNote` (a sentence appended to the Proxy config path help) --,
+  `plan()`/`apply()`/`snapshot()`) and `checkCapabilities(routes, driver)`;
   `file-driver.ts`'s
   `fileDriver(...)` is a shared builder for any driver configured by files
-  (Caddy today; nginx/HAProxy are candidates -- three of the five analysed
-  mechanisms have no file at all, e.g. Caddy's own admin API, so the
-  top-level contract is "reconcile these routes" rather than "render this
-  file", with `fileDriver` supplying everything a file-configured driver
-  needs on top of that); `index.ts`'s `getDriver(inventory)` resolves the
-  `proxyDriver` setting (unset means `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`);
+  (Caddy and nginx, issue #30, both are; HAProxy is a candidate -- three of
+  the five analysed mechanisms have no file at all, e.g. Caddy's own admin
+  API, so the top-level contract is "reconcile these routes" rather than
+  "render this file", with `fileDriver` supplying everything a
+  file-configured driver needs on top of that); `index.ts`'s
+  `getDriver(inventory)` resolves the `proxyDriver` setting (unset means
+  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'nginx'`, issue #30, and
+  `'none'`, issue #33, are the other registered ids;
   an id no registered driver has -- only reachable by hand-editing
   `bellhop.db`, since the schema's own zod enum already rejects any other
   value at load time -- throws `"Unknown proxyDriver '<id>' -- run: bellhop
@@ -628,7 +649,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   own `defaultConfigPath`, throwing if that resolves to `null` -- only
   reachable for a driver that manages no proxy, which every real caller
   short-circuits around before `driverDeps` ever runs). `index.ts` also
-  exports `listDrivers()` (every registered driver, Caddy then None, in
+  exports `listDrivers()` (every registered driver, Caddy, nginx, then None, in
   registration order -- the Settings page's dropdown source), and
   `driver.ts` exports `managesProxy(driver)` (`driver.id !==
   NO_PROXY_DRIVER_ID`, the constant in `ids.ts` -- `false` only for the
@@ -642,7 +663,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
   update: not every deployment has a Bellhop-managed reverse proxy in
   front of it, whether that's a hand-configured proxy or none at all) is
-  the second registered driver, selected the same way as Caddy via
+  the third registered driver, selected the same way as Caddy/nginx via
   `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
   `defaultConfigPath` and `statusPage` are both `null`, and its
   `capabilities` accept both `forward` and `oidc` auth modes (so
@@ -689,7 +710,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   about to become live configuration or a specific entry is being saved --
   never from `validateInventory()` itself (FR-013), so changing
   `proxyDriver` can never make an already-saved inventory fail to load;
-  Caddy supports both modes, so this never actually triggers today, but it
+  Caddy and nginx both support both modes, so this never actually triggers
+  today, but it
   is the guarantee every future driver inherits.
 
   **`fileDriver(def)`** owns the full render -> back up -> write ->
@@ -698,10 +720,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   command, and its reload command, plus a required `label` and
   `statusPage` (no defaults, so a new driver can't silently show its bare
   id in the Settings dropdown or opt out of a status page by omission;
+  `usesSharedCertificate`/`configPathNote` are optional and passed
+  through unchanged;
   `configFiles()` optionally overrides which paths `snapshot()` reads;
   defaults to `[configPath]`). `apply()`
   builds one POSIX `sh` script (`buildFileDriverScript`, run via
-  `runRemote` on the proxy host) that: backs up every target file first
+  `runRemote` on the proxy host) that: first refuses, touching nothing, to
+  replace an existing `'owned'` file whose first line isn't that
+  `FileSpec`'s `ownedHeader` (when set -- see the nginx driver bullet);
+  backs up every target file
   (or records that it didn't exist); installs one `trap ... EXIT` once
   every backup exists, so *any* non-zero exit from that point on -- a
   write-phase command failing under `set -e`, or the validate command
@@ -741,8 +768,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   still succeeds when the current inventory is itself invalid (a bad
   `unauthenticatedPaths` entry, a missing `authentik` ip) the same a real
   `sync-proxy` run would fail on.
-- **Caddy driver** (`src/lib/proxy/drivers/caddy.ts`) is the one driver
-  that ships this round, built with `fileDriver`: `capabilities: {
+- **Caddy driver** (`src/lib/proxy/drivers/caddy.ts`) is the first driver
+  that shipped (and the default), built with `fileDriver`: `capabilities: {
   authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true }`,
   `defaultConfigPath: '/etc/caddy/Caddyfile'`, `validateCommand: caddy
   validate --adapter caddyfile --config <path>`, `reloadCommand:
@@ -782,6 +809,119 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   is only reached for a `'forward'` route, since `buildRoutes` already
   throws the missing-authentik error before producing one with no outpost
   to address.
+- **nginx driver** (`src/lib/proxy/drivers/nginx.ts`, issue #30) is the
+  second driver that ships, also built with `fileDriver`: `capabilities: {
+  authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false }` --
+  nginx cannot obtain its own certificate the way Caddy's DNS-01 does, so
+  it never leaves a stale `_acme-challenge` record behind for
+  `prune-acme-challenges` to find (see that bullet below).
+  `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`,
+  `statusPage: { suggestedPath: '/var/www/html/index.html' }` (the
+  Debian/Ubuntu nginx package's default document root -- serving it is the
+  operator's own hand-authored `server` block's job, as with Caddy's),
+  `usesSharedCertificate: true`, a `configPathNote` warning that the whole
+  file is replaced and a file it didn't generate is refused,
+  `validateCommand: nginx -t`, `reloadCommand: systemctl reload nginx`. Unlike the Caddy
+  driver's managed-section file, this one file is entirely Bellhop's own:
+  `render()` returns it in `'owned'` mode, replaced whole on every apply,
+  since nginx has no admin API and no other content this toolkit's
+  operator hand-authors alongside a managed section that would need
+  preserving. The file always opens with a "generated by Bellhop, do not
+  edit" header comment -- also its ownership mark: the `FileSpec` carries
+  it as `ownedHeader`, and `buildFileDriverScript` refuses (before any
+  backup or write, exiting non-zero with a message naming the path and the
+  `set-config proxyConfigPath` fix) to replace an existing file whose first
+  line isn't exactly that header, since `proxyConfigPath` is shared across
+  drivers and a Caddyfile path left over from the Caddy driver would
+  otherwise be replaced whole while `nginx -t` still passed -- then two `map` blocks emitted unconditionally, even
+  with zero routes, so the file's shape never depends on the inventory
+  (research R8): `$bellhop_connection_upgrade` (turns a WebSocket
+  `Upgrade` request's `Connection` header into `upgrade` and every other
+  request's into `''`, mirroring Caddy's own automatic WebSocket
+  passthrough) and `$bellhop_http_host` (Authentik's own nginx recipe's
+  `$ak_http_host` map under a different name: `$http_host`, falling back
+  to `$host`, so an explicit port in the original `Host` survives). Both
+  are Bellhop-prefixed rather than the recipe's own names because
+  `map`/variable names are global across the whole nginx configuration and
+  an operator's other files may already define the recipe's own names --
+  defining a `map` twice fails `nginx -t` (research R3). One `server`
+  block per route: `listen 443 ssl;` and `listen [::]:443 ssl;` (no
+  `http2` parameter -- its directive differs between supported nginx
+  releases, and no port-80 server -- both left to the operator's own
+  configuration, research R6), `server_name` listing `route.hostnames`
+  canonical-first, `ssl_certificate`/`ssl_certificate_key` from `ctx.tls`
+  (double-quoted), `client_max_body_size 0;`, `proxy_buffering off;`,
+  `proxy_request_buffering off;`, and `proxy_read_timeout 1d;`/
+  `proxy_send_timeout 1d;` (Caddy streams request bodies and has no
+  upstream read timeout; nginx's 60s default would cut off a quiet
+  WebSocket or server-sent-events stream).
+  Every proxied location repeats the same proxy-line block rather than
+  hoisting it to the `server` level (nginx only inherits
+  `proxy_set_header` onto a location that defines none of its own, and
+  every location here defines some, research R4) -- parity with Caddy's
+  `reverse_proxy` defaults: `proxy_http_version 1.1;`, `Host
+  $bellhop_http_host`, the `X-Forwarded-For`/`-Proto`/`-Host` triple
+  (`X-Forwarded-For` *set* to `$remote_addr`, never appended to, matching
+  Caddy 2.5+ without `trusted_proxies`, so a client can't pose as a LAN
+  address),
+  `X-Forwarded-Port` always `ctx.externalPort` (matching the Caddy
+  driver's own unconditional `header_up X-Forwarded-Port 443`, issue #91),
+  and the `Upgrade`/`Connection $bellhop_connection_upgrade` WebSocket
+  pair -- since nginx's own defaults are the opposite of Caddy's on every
+  one of these points, a backend that works behind the Caddy driver today
+  would otherwise break on switching drivers. The backend connection is
+  `https://` (plus `proxy_ssl_verify off;`) when the route's
+  `insecureTls` is set, or `https://` with `proxy_ssl_verify on;` and
+  `proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;`
+  (the Debian/Ubuntu CA bundle path -- a single-operator assumption, same
+  as this driver's `conf.d` default config path) when the backend port is
+  443 without `insecureTls`, else plain `http://` (research R5) -- this is
+  Caddy's own rule, and without the explicit `on` nginx would otherwise
+  silently skip the upstream-certificate verification Caddy performs
+  automatically for a port-443 backend. A forward-gated route additionally
+  gets `proxy_buffers 8 16k;`/`proxy_buffer_size 32k;` at the server level
+  (Authentik's recipe, sized for its large response headers) and, on
+  `location /` (omitted entirely when an exempt `/*` pattern already
+  exempts everything, since a second `location /` fails `nginx -t` with a
+  duplicate-location error), Authentik's standalone-nginx recipe verbatim
+  under bellhop-prefixed variable names: `auth_request
+  /outpost.goauthentik.io/auth/nginx;`, `error_page 401 =
+  @goauthentik_proxy_signin;`, the `Set-Cookie` pass-back, and the same
+  five identity headers the Caddy driver forwards -- username, groups,
+  email, name, uid, no `entitlements`, so both drivers hand a backend the
+  same identity (research R3). Each unique parsed `unauthenticatedPaths`
+  pattern (deduped on kind+path, outpost-namespace patterns dropped -- see
+  below) becomes its own location with the same proxy lines and no
+  `auth_request`: an exact path as `location = "<path>"`, a `/api/*`-style
+  prefix as `location ^~ "/api/"` (wins over any regex location an
+  operator include might add, matching Caddy's own `path /api/*`
+  semantics) -- except the bare `/*` pattern, which produces no location
+  of its own and instead removes the forward-auth lines from `location /`
+  itself (research R7); every path is double-quoted with `\`/`"`
+  backslash-escaped so it's matched literally. A pattern inside the
+  outpost's own `/outpost.goauthentik.io` namespace (that exact path, or
+  anything under it) is silently skipped rather than rendered or thrown
+  on: an exact or `^~` location there would outrank the
+  outpost-passthrough location below it under nginx's own location-match
+  precedence and misroute the `auth_request` subrequest to the site's own
+  backend instead of the outpost -- reproducing, not failing on, the same
+  case Caddy's own `handle /outpost.goauthentik.io/*` (issue #10) already
+  handles regardless of any `not path` exemption. A guest edit
+  (`parseUnauthenticatedPaths`, via `commitGuestEdit`) rejects such a path
+  outright, so this skip only ever applies to an entry saved before that
+  rule or written straight into `bellhop.db` -- the schema itself
+  (`UnauthenticatedPathSchema`) still accepts it, so a saved inventory
+  never becomes unloadable. The
+  `location /outpost.goauthentik.io`/`location @goauthentik_proxy_signin`
+  pair is always present on a forward-gated route, verbatim from
+  Authentik's recipe under the same bellhop-prefixed names. An OIDC-mode
+  or ungated route gets none of the forward-auth lines or locations at
+  all. The certificate/key pair every server block references is
+  `ctx.tls` (see the driver-interface bullet above) -- because nginx
+  cannot obtain a certificate itself the way Caddy's per-site Cloudflare
+  DNS-01 does, one operator-managed certificate (in practice a wildcard
+  for the domain, issued and renewed by something like `certbot`) covers
+  every site this driver generates instead.
 - **`sync-authentik`**
   (`src/commands/networking/sync-authentik.ts`) is `sync-proxy`'s
   counterpart for the Authentik side of issue #80's per-app forward-auth:
@@ -1129,8 +1269,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   The command's own name and behavior are unchanged by issue #10 -- only
   *when it runs inside `syncProxyLive`* is now gated on a driver
   capability (see below), since a driver without
-  `capabilities.acmeDns01ViaCloudflare` (nginx, HAProxy -- neither ships
-  today) never leaves one of these records behind in the first place.
+  `capabilities.acmeDns01ViaCloudflare` (the nginx driver, issue #30,
+  declares this `false` since it never touches DNS at all; HAProxy, not
+  yet shipped, would too) never leaves one of these records behind in the
+  first place.
   REST-only via
   `CloudflareClient` (`src/lib/cloudflare-client.ts`, the same
   real/unconfigured null-object pattern as `AuthentikClient`). Ownership is
@@ -1977,10 +2119,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
 - **Web UI authentication** (`src/web/auth.ts`): the entire web UI is
   gated behind a global `requireAuth` Express middleware, mounted in
   `src/web/app.ts` ahead of every route mount, that trusts the
-  `X-authentik-*` identity headers Caddy's `forward_auth` adds once a
-  request has been checked against a self-hosted Authentik instance —
+  `X-authentik-*` identity headers the reverse proxy fronting it (the
+  `proxy: true` entry's proxy -- Caddy's `forward_auth` or nginx's
+  `auth_request`) adds once a request has been checked against a
+  self-hosted Authentik instance —
   there is no OIDC client, login page, or session store anywhere in this
-  repo; Authentik and Caddy own the actual authentication session, and
+  repo; Authentik and the proxy own the actual authentication session, and
   this app only ever reads already-verified headers off the request
   (`resolveAuthUser`, also exported standalone for the WebSocket path
   below) -- the one exception is `req.user.groups` specifically, which an
@@ -1994,7 +2138,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   present, `authentik` requires them and 401s otherwise, and `none`
   ignores headers entirely. **The production Windows service must set
   `WEB_UI_AUTH_MODE=authentik`** in its own `data/authentik.env`
-  -- under the default `auto`, a Caddy config that lost its `forward_auth`
+  -- under the default `auto`, a proxy config that lost its forward-auth
   directive would silently serve every request as a full-admin local
   operator rather than failing closed. `WEB_UI_DEV_USER` remains the
   dev/test affordance for simulating a *specific non-admin group
@@ -2022,16 +2166,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   hardcoded literal, so the rule follows automatically if the proxy ever
   moves; its errors name `'proxy: true'`) rather than "any" LAN host —
   that scope is what prevents something other
-  than Caddy from reaching the app directly and spoofing the
-  `X-authentik-*` headers it trusts unconditionally. Forward-auth at Caddy
-  was a deliberate choice over an app-embedded OIDC client: Authentik and
-  Caddy own the session, and this app holds no session state of its own.
-  This bullet still names Caddy specifically, unlike the reverse-proxy
-  driver bullets above: it describes how *this app itself* trusts the
-  forward-auth headers a reverse proxy adds, which today is always Caddy
-  in front of it — `proxyDriver` only selects which driver `sync-proxy`
-  uses to generate configuration for inventory entries, not what fronts
-  the web UI's own auth.
+  than the proxy from reaching the app directly and spoofing the
+  `X-authentik-*` headers it trusts unconditionally. Forward-auth at the
+  proxy was a deliberate choice over an app-embedded OIDC client: Authentik
+  and the proxy own the session, and this app holds no session state of
+  its own. Which proxy fronts the web UI is whatever runs on the
+  `proxy: true` entry -- Caddy or nginx, per `proxyDriver` -- and the
+  firewall scope follows that entry, not the driver choice.
 - **Web UI user/group management** (`src/web/routes/users.ts`,
   `src/web/routes/groups.ts`): full CRUD on Authentik users/groups from
   inside the web UI, gated by a `requireAdminGroup` middleware
@@ -2224,13 +2365,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   value rejected by the CLI is rejected identically here, and a `null`/`''`
   submitted value clears the setting the same way `set-config --unset`
   does. As of issue #10, `SettingsSchema`/the page's field list both add
-  `proxyDriver` and `proxyConfigPath` alongside the pre-existing six.
+  `proxyDriver` and `proxyConfigPath` alongside the pre-existing six;
+  issue #30 adds `proxyTlsCertificate`/`proxyTlsKey` (placeholders
+  showing certbot's own default path for the inventory domain) beside
+  those, inert unless the nginx driver is active.
   `proxyDriver` renders as a `<select>`, not the plain `<input>` every other
   setting gets: as of issue #33, `settingsResponse()` (`src/web/routes/
   settings.ts`, shared by GET and PATCH so the two can never disagree)
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
-  managesProxy }`, Caddy
+  managesProxy, usesSharedCertificate, configPathNote }`, Caddy, nginx,
   then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
@@ -2241,15 +2385,23 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   shows as the default driver selected, and Save/Clear round-trip exactly
   like every other field. The same file's `proxyFieldView(selectedId,
   drivers)` decides, for whichever driver is currently selected in that
-  *unsaved* dropdown value, whether the Proxy config path and Status page
-  path fields apply at all: a driver whose `managesProxy` is `false` (only
-  `none` today) hides both entirely rather than showing them disabled or
-  empty; a managed driver always shows Proxy config path (placeholder its
-  `defaultConfigPath`, or empty with "Required: this driver has no
-  default." help text when that is `null`) and shows Status page path only
-  when its `suggestedStatusPagePath` is non-null; an unrecognized id
-  (never reachable through the dropdown itself, but defensive) hides
-  both. Until the driver list has loaded (or if the load fails) the
+  *unsaved* dropdown value, whether the Proxy config path, Status page
+  path, and Proxy TLS certificate/key fields apply at all: a driver whose
+  `managesProxy` is `false` (only `none` today) hides all of them
+  entirely rather than showing them disabled or empty; a managed driver
+  always shows Proxy config path (placeholder its `defaultConfigPath`, or
+  empty with "Required: this driver has no default." help text when that
+  is `null`, with the driver's own `configPathNote` appended when it has
+  one -- nginx's says it replaces the whole file and refuses one it didn't
+  generate, Caddy's that only the managed section is replaced), shows
+  Status page path only when its `suggestedStatusPagePath` is non-null,
+  and shows the two TLS fields only when `usesSharedCertificate` is true
+  (`showTlsFields`; nginx only, issue #30 -- driver metadata, never an id
+  comparison in the page); an unrecognized id (never reachable through the
+  dropdown itself, but defensive) hides all of them. The TLS fields also
+  stay hidden until the driver list has loaded, since unlike the other two
+  they mean nothing for the default driver. Until the driver list has
+  loaded (or if the load fails) the
   dropdown is a disabled, option-less `<select>` with its Save disabled,
   never a free-text input. `SettingsPage.tsx` uses the shown field's own
   placeholder/help text from `proxyFieldView`'s result in place of the

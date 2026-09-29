@@ -234,7 +234,7 @@ test('syncProxyLive logs a skip line and makes no Cloudflare call when Cloudflar
 
 // A minimal fake driver, same shape/convention as
 // test/lib/proxy/index.test.ts's own fakeDriver -- id is cast through
-// Inventory['proxyDriver'] since PROXY_DRIVER_IDS only lists 'caddy' this
+// Inventory['proxyDriver'] since PROXY_DRIVER_IDS only lists the shipped ids
 // round (src/lib/proxy/ids.ts), and this test needs a second, test-only id
 // to exercise the registry without touching the real driver list.
 function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
@@ -273,6 +273,22 @@ test('syncProxyLive skips the prune step (no Cloudflare calls) when the active d
   } finally {
     unregister();
   }
+});
+
+// The real nginx driver (issue #30, US1) has acmeDns01ViaCloudflare: false --
+// unlike the tests above, no registerDriverForTests fake is needed here,
+// since 'nginx' is a registered, shipped driver id.
+test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME prune, never touching Cloudflare', async () => {
+  const nginxInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'nginx' };
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-nginx-content', stderr: '', code: 0 }));
+  const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+  const logs = await captureLogs(() =>
+    syncProxyLive({ ssh, inventory: nginxInventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+  );
+  assert.equal(ssh.history.length, 1, 'only sync-proxy runs -- statusPagePath is unset and nothing is authGroup-gated');
+  assert.match(ssh.history[0].command, /nginx -t/);
+  assert.deepEqual(cloudflare.history, [], "nginx's capabilities has acmeDns01ViaCloudflare: false, so the prune never calls Cloudflare");
+  assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx')));
 });
 
 test('syncProxyLive treats an omitted cloudflare dep as unconfigured', async () => {

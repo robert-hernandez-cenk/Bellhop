@@ -269,6 +269,8 @@ export interface SettingsValues {
   customScriptsBranch?: string;
   proxyDriver?: string;
   proxyConfigPath?: string;
+  proxyTlsCertificate?: string;
+  proxyTlsKey?: string;
 }
 
 // One entry per registered reverse-proxy driver (src/lib/proxy/index.ts's
@@ -283,6 +285,13 @@ export interface ProxyDriverInfo {
   // false only for "No proxy" -- the server's managesProxy(), so the page
   // never has to compare ids to decide whether proxy fields apply.
   managesProxy: boolean;
+  // true only for a driver that serves every site with the one shared
+  // certificate the proxyTlsCertificate/proxyTlsKey settings name (nginx
+  // today, issue #30) -- the page shows those two fields only then.
+  usesSharedCertificate: boolean;
+  // Driver-supplied sentence appended to the Proxy config path help, e.g.
+  // nginx's "replaces this whole file" warning. null = none.
+  configPathNote: string | null;
 }
 
 export interface SettingsResponse {

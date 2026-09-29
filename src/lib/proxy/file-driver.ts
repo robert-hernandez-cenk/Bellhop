@@ -15,6 +15,13 @@ export interface FileSpec {
   // block (appending it if absent), leaving everything else on the file
   // untouched -- see data-model.md "FileSpec (file drivers)".
   mode: 'owned' | 'managed-section';
+  // 'owned' only: the exact first line an existing file must start with
+  // for an apply to replace it. proxyConfigPath is shared across drivers,
+  // so it can still point at another driver's file (a Caddyfile left over
+  // from the Caddy driver, say) -- an owned-mode apply would otherwise
+  // replace that file whole, and the new driver's own validate command
+  // would still pass since it never reads it. Omitted means no check.
+  ownedHeader?: string;
 }
 
 // The one definition of the managed-section markers: fileDriver both writes
@@ -64,6 +71,24 @@ export function singleQuote(value: string): string {
 // configuration.
 export function buildFileDriverScript(files: FileSpec[], validateCommand: string, reloadCommand: string): string {
   const lines: string[] = ['set -e'];
+
+  // 0. Refuse to replace an existing owned file this driver didn't write
+  // (its first line isn't the driver's ownedHeader). Runs before any
+  // backup, trap, or write, so a refusal leaves every file untouched and
+  // needs no restore.
+  files.forEach((file) => {
+    if (file.mode !== 'owned' || file.ownedHeader === undefined) return;
+    const p = singleQuote(file.path);
+    const message =
+      `Refusing to replace ${file.path}: the file exists but was not written by this proxy driver ` +
+      `(its first line is not the driver's generated header). To use this driver, point proxyConfigPath ` +
+      `at a different file (bellhop set-config proxyConfigPath <path> --apply, or ` +
+      `bellhop set-config proxyConfigPath --unset --apply for the driver's default), or remove the file.`;
+    lines.push(`if [ -f ${p} ] && [ "$(head -n 1 ${p})" != ${singleQuote(file.ownedHeader)} ]; then`);
+    lines.push(`  printf '%s\\n' ${singleQuote(message)} >&2`);
+    lines.push('  exit 1');
+    lines.push('fi');
+  });
 
   // 1. Back up each file, or record that it did not exist.
   files.forEach((file, i) => {
@@ -153,8 +178,8 @@ function buildSnapshotCommand(paths: string[]): string {
 }
 
 // Builds a ReverseProxyDriver for a proxy that's configured entirely by
-// files delivered to the proxy host (Caddy today; nginx/HAProxy are
-// candidate future drivers -- research.md R1/R8). Owns the full
+// files delivered to the proxy host (Caddy and nginx today, issue #30;
+// HAProxy is a candidate future driver). Owns the full
 // render -> back up -> write -> validate -> restore-or-reload cycle so a
 // new file-configured driver only has to supply `render`, its validate
 // command, and its reload command.
@@ -172,6 +197,10 @@ export function fileDriver(def: {
   // defaulted, so a new driver has to decide whether it serves one instead
   // of quietly opting out by omission.
   statusPage: { suggestedPath: string } | null;
+  // See ReverseProxyDriver in ./driver.ts -- both optional, absent = false/
+  // no note.
+  usesSharedCertificate?: boolean;
+  configPathNote?: string;
   render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
   validateCommand(configPath: string): string;
   reloadCommand: string;
@@ -190,6 +219,8 @@ export function fileDriver(def: {
     capabilities: def.capabilities,
     defaultConfigPath: def.defaultConfigPath,
     statusPage: def.statusPage,
+    ...(def.usesSharedCertificate !== undefined ? { usesSharedCertificate: def.usesSharedCertificate } : {}),
+    ...(def.configPathNote !== undefined ? { configPathNote: def.configPathNote } : {}),
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
       const files = def

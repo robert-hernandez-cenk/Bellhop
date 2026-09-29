@@ -47,6 +47,18 @@ export interface ReverseProxyDriver {
   // render-status-page checks managesProxy() first, then this, then
   // statusPagePath.
   statusPage: { suggestedPath: string } | null;
+  // true = every site this driver renders is served with the one shared
+  // certificate/key pair the proxyTlsCertificate/proxyTlsKey settings name
+  // (ProxyContext.tls) -- nginx only (issue #30), since it cannot obtain
+  // certificates itself. The Settings page shows those two fields only for
+  // a driver that sets this. Absent = false (Caddy gets its own certificates
+  // via DNS-01; 'none' writes nothing), so a driver that never reads those
+  // settings needs no declaration.
+  usesSharedCertificate?: boolean;
+  // One sentence the Settings page appends to the Proxy config path help
+  // for this driver -- how it treats that file (the whole file vs. a
+  // managed section of it). Absent = nothing appended.
+  configPathNote?: string;
   plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan>;
   apply(plan: ProxyPlan, deps: DriverDeps): Promise<void>; // throws on failure
   snapshot(deps: DriverDeps): Promise<string>; // throws on failure

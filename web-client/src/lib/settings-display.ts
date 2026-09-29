@@ -37,7 +37,7 @@ export function proxyDriverOptions(
 // choice (`drafts.proxyDriver || data.defaultProxyDriver`, so it tracks the
 // unsaved selection per FR-006/FR-007's acceptance scenario 5), not looked
 // up against a separate default here. A driver that manages no proxy (only
-// "No proxy" today) hides both fields. A managed driver always shows the
+// "No proxy" today) hides all of them. A managed driver always shows the
 // config path field -- with its default as the placeholder, or, if it has
 // none, help text saying a path is required -- and shows the status page
 // field only when it suggests a status page path. An id with no matching
@@ -52,21 +52,27 @@ export interface ProxyFieldView {
   configPathHelp?: string;
   showStatusPagePath: boolean;
   statusPagePlaceholder?: string;
+  // Proxy TLS certificate/key (issue #30): shown only for a managed driver
+  // whose metadata says it serves the shared certificate those settings
+  // name (usesSharedCertificate) -- never an id comparison here.
+  showTlsFields: boolean;
 }
 
 export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): ProxyFieldView {
   const driver = drivers.find((d) => d.id === selectedId);
   if (!driver || !driver.managesProxy) {
-    return { showConfigPath: false, showStatusPagePath: false };
+    return { showConfigPath: false, showStatusPagePath: false, showTlsFields: false };
   }
+  const baseHelp =
+    driver.defaultConfigPath === null
+      ? `Config path for the ${driver.label} driver. Required: this driver has no default.`
+      : `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`;
   return {
     showConfigPath: true,
     configPathPlaceholder: driver.defaultConfigPath ?? '',
-    configPathHelp:
-      driver.defaultConfigPath === null
-        ? `Config path for the ${driver.label} driver. Required: this driver has no default.`
-        : `Overrides the ${driver.label} driver's default config path (${driver.defaultConfigPath}). Unset: that default.`,
+    configPathHelp: driver.configPathNote ? `${baseHelp} ${driver.configPathNote}` : baseHelp,
     showStatusPagePath: driver.suggestedStatusPagePath !== null,
     statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
+    showTlsFields: driver.usesSharedCertificate,
   };
 }

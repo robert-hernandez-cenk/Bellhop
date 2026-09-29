@@ -18,7 +18,7 @@ function route(name: string, auth: ProxyRoute['auth']): ProxyRoute {
 
 // A minimal fake driver satisfying ReverseProxyDriver -- plan/apply/snapshot
 // are never called by checkCapabilities, so they're stubs. `id` is cast
-// through ProxyDriverId since PROXY_DRIVER_IDS only lists 'caddy'/'none'
+// through ProxyDriverId since PROXY_DRIVER_IDS only lists the shipped ids
 // (src/lib/proxy/ids.ts) and these tests need drivers with other,
 // test-only ids to exercise both capability-mismatch directions. `label`/
 // `statusPage` are unused by checkCapabilities but required by

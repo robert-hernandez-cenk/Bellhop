@@ -2,10 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../../src/lib/inventory.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../../src/lib/proxy/driver.ts';
-import { NO_PROXY_SYNC_MESSAGE, NO_PROXY_STATUS_PAGE_ERROR } from '../../../src/lib/proxy/driver.ts';
+import { NO_PROXY_SYNC_MESSAGE, NO_PROXY_STATUS_PAGE_ERROR, managesProxy } from '../../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../../src/lib/proxy/ids.ts';
 import { PROXY_DRIVER_IDS, getDriver, driverDeps, registerDriverForTests, DEFAULT_PROXY_DRIVER_ID, listDrivers } from '../../../src/lib/proxy/index.ts';
 import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
 import { fileDriver } from '../../../src/lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../src/lib/proxy/routes.ts';
@@ -24,7 +25,7 @@ function baseInventory(overrides: Partial<Inventory> = {}): Inventory {
 
 // A minimal fake driver, same shape/convention as test/lib/proxy/driver.test.ts's
 // own fakeDriver -- id is cast through ProxyDriverId since PROXY_DRIVER_IDS
-// only lists 'caddy'/'none' (src/lib/proxy/ids.ts), and this test needs
+// only lists the shipped ids (src/lib/proxy/ids.ts), and this test needs
 // a second, test-only id to exercise the registry without touching the real
 // driver list. `label`/`statusPage` are required by ReverseProxyDriver but
 // unused by these tests.
@@ -62,11 +63,16 @@ test('getDriver throws a named error for an id no registered driver has, with th
   // own zod enum would otherwise reject this value on load. Bypassed here
   // by casting past the ProxyDriverId type, the same way the contract
   // describes this error as only reachable that way.
-  const inv = baseInventory({ proxyDriver: 'nginx' as Inventory['proxyDriver'] });
+  const inv = baseInventory({ proxyDriver: 'unknown-provider' as Inventory['proxyDriver'] });
   assert.throws(
     () => getDriver(inv),
-    /^Error: Unknown proxyDriver 'nginx' -- run: bellhop set-config proxyDriver caddy --apply$/
+    /^Error: Unknown proxyDriver 'unknown-provider' -- run: bellhop set-config proxyDriver caddy --apply$/
   );
+});
+
+test('getDriver returns nginxDriver when proxyDriver is "nginx" (issue #30)', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx' });
+  assert.equal(getDriver(inv), nginxDriver);
 });
 
 test('getDriver returns noneDriver when proxyDriver is "none"', () => {
@@ -76,22 +82,36 @@ test('getDriver returns noneDriver when proxyDriver is "none"', () => {
 
 // --- driver ids / registry metadata (issue #33) ----------------------------
 
-test('PROXY_DRIVER_IDS equals [caddy, none]', () => {
-  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'none']);
+test('PROXY_DRIVER_IDS equals [caddy, nginx, none]', () => {
+  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'none']);
 });
 
 test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
   assert.equal(DEFAULT_PROXY_DRIVER_ID, 'caddy');
 });
 
-test('listDrivers returns Caddy then None, in registration order', () => {
-  assert.deepEqual(listDrivers(), [caddyDriver, noneDriver]);
+test('listDrivers returns Caddy, nginx, then None, in registration order', () => {
+  assert.deepEqual(listDrivers(), [caddyDriver, nginxDriver, noneDriver]);
 });
 
 test('Caddy driver metadata: label, defaultConfigPath, statusPage', () => {
   assert.equal(caddyDriver.label, 'Caddy');
   assert.equal(caddyDriver.defaultConfigPath, '/etc/caddy/Caddyfile');
   assert.deepEqual(caddyDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });
+});
+
+// issue #30 x #33: nginx is a managed, file-configured driver with its own
+// label and suggested status page, and the only one serving the shared
+// proxyTlsCertificate/proxyTlsKey certificate.
+test('nginx driver metadata: label, defaultConfigPath, statusPage, usesSharedCertificate, managesProxy', () => {
+  assert.equal(nginxDriver.label, 'nginx');
+  assert.equal(nginxDriver.defaultConfigPath, '/etc/nginx/conf.d/bellhop.conf');
+  assert.deepEqual(nginxDriver.statusPage, { suggestedPath: '/var/www/html/index.html' });
+  assert.equal(nginxDriver.usesSharedCertificate, true);
+  assert.equal(managesProxy(nginxDriver), true);
+  assert.match(nginxDriver.configPathNote ?? '', /replaces this whole file/);
+  assert.equal(caddyDriver.usesSharedCertificate ?? false, false);
+  assert.equal(noneDriver.usesSharedCertificate ?? false, false);
 });
 
 test('None driver metadata: label, defaultConfigPath, statusPage, capabilities', () => {
@@ -105,7 +125,7 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
 test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = { ssh, inventory: baseInventory(), proxyHost: 'pve1', configPath: '/etc/caddy/Caddyfile' };
-  const plan = await noneDriver.plan([], { externalPort: 443 }, deps);
+  const plan = await noneDriver.plan([], { externalPort: 443, tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' } }, deps);
   assert.equal(plan.preview, NO_PROXY_SYNC_MESSAGE);
 
   await noneDriver.apply(plan, deps);
@@ -149,6 +169,13 @@ test("driverDeps throws \"No inventory entry has 'proxy: true'\" when no entry h
   });
   const ssh = new FakeSSHClient(defaultResponder);
   assert.throws(() => driverDeps(inv, ssh, caddyDriver), /^Error: No inventory entry has 'proxy: true'$/);
+});
+
+test('driverDeps resolves configPath to the nginx driver default when proxyConfigPath is unset (issue #30)', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx' });
+  const ssh = new FakeSSHClient(defaultResponder);
+  const deps = driverDeps(inv, ssh, nginxDriver);
+  assert.equal(deps.configPath, '/etc/nginx/conf.d/bellhop.conf');
 });
 
 // --- registerDriverForTests (test-only hook) -------------------------------
@@ -217,7 +244,7 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
       statusPagePath: '/var/www/status.html',
       hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
       guests: [{ name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.168.1.50', port: 8080, subdomains: ['media'] }],
-      // Cast, commented: PROXY_DRIVER_IDS only lists 'caddy'
+      // Cast, commented: PROXY_DRIVER_IDS only lists the shipped ids
       // (src/lib/proxy/ids.ts); registerDriverForTests above is what makes
       // this test-only id resolvable at all -- same convention as
       // test/web/proxy-sync.test.ts's fakeDriverWithoutAcme.

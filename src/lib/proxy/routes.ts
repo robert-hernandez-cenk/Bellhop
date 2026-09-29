@@ -24,6 +24,14 @@ export interface ProxyRoute {
 export interface ProxyContext {
   outpost?: { ip: string; port: number };
   externalPort: number;
+  // The certificate/key pair a file-configured driver that cannot obtain
+  // its own per-site certificate (nginx, issue #30) writes into every
+  // server block. Always present -- buildProxyContext can always derive it,
+  // since domain is mandatory -- so a driver never has to handle "no
+  // certificate". The Caddy driver ignores this field entirely: it obtains
+  // its own per-site certificate via DNS-01 (see TLS_BLOCK in
+  // src/lib/proxy/drivers/caddy.ts).
+  tls: { certificatePath: string; keyPath: string };
 }
 
 // A stored unauthenticatedPaths string -> its parsed form (data-model.md
@@ -171,11 +179,19 @@ export function buildRouteForEntry(inventory: Inventory, owner: ProxyRoute['owne
 // The driver-agnostic context every route rendering needs alongside the
 // routes themselves: where the Authentik embedded outpost lives (absent
 // when there's no authentik:true entry with an ip -- a forward-gated route
-// would already have thrown in buildRoutes before this matters) and the
-// fixed external port every site is reached on.
+// would already have thrown in buildRoutes before this matters), the fixed
+// external port every site is reached on, and the shared TLS certificate/key
+// pair (issue #30) -- proxyTlsCertificate/proxyTlsKey when set, else the
+// domain-derived default path each falls back to independently.
 export function buildProxyContext(inventory: Inventory): ProxyContext {
   const authentikEntry = findAuthentikEntry(inventory);
-  const ctx: ProxyContext = { externalPort: EXTERNAL_PORT };
+  const ctx: ProxyContext = {
+    externalPort: EXTERNAL_PORT,
+    tls: {
+      certificatePath: inventory.proxyTlsCertificate ?? `/etc/letsencrypt/live/${inventory.domain}/fullchain.pem`,
+      keyPath: inventory.proxyTlsKey ?? `/etc/letsencrypt/live/${inventory.domain}/privkey.pem`,
+    },
+  };
   if (authentikEntry?.ip) {
     ctx.outpost = { ip: authentikEntry.ip, port: authentikConfig().outpostPort };
   }

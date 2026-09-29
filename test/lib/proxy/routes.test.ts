@@ -256,10 +256,15 @@ test('buildRoutes: rawExemptPaths is a copy, not the inventory\'s own array', ()
   assert.deepEqual(apiGuest.unauthenticatedPaths, ['/health', '/api/*']);
 });
 
+const DEFAULT_TLS = {
+  certificatePath: '/etc/letsencrypt/live/example.com/fullchain.pem',
+  keyPath: '/etc/letsencrypt/live/example.com/privkey.pem',
+};
+
 test('buildProxyContext: returns the outpost address and port when an authentik entry with an ip exists', () => {
   withPinnedOutpostPort(() => {
     const ctx = buildProxyContext(fixtureInventory());
-    assert.deepEqual(ctx, { outpost: { ip: '192.0.2.9', port: 9000 }, externalPort: 443 });
+    assert.deepEqual(ctx, { outpost: { ip: '192.0.2.9', port: 9000 }, externalPort: 443, tls: DEFAULT_TLS });
   });
 });
 
@@ -270,8 +275,55 @@ test('buildProxyContext: omits outpost when no authentik entry has an ip', () =>
     guests: [],
   };
   const ctx = buildProxyContext(inv);
-  assert.deepEqual(ctx, { externalPort: 443 });
+  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS });
   assert.ok(!('outpost' in ctx));
+});
+
+test('buildProxyContext: tls defaults to /etc/letsencrypt/live/<domain>/{fullchain,privkey}.pem when neither setting is set', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  assert.deepEqual(buildProxyContext(inv).tls, DEFAULT_TLS);
+});
+
+test('buildProxyContext: tls uses the configured proxyTlsCertificate/proxyTlsKey when both are set', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+    proxyTlsCertificate: '/opt/certs/example.crt',
+    proxyTlsKey: '/opt/certs/example.key',
+  };
+  assert.deepEqual(buildProxyContext(inv).tls, {
+    certificatePath: '/opt/certs/example.crt',
+    keyPath: '/opt/certs/example.key',
+  });
+});
+
+test('buildProxyContext: proxyTlsCertificate and proxyTlsKey default independently when only one is set', () => {
+  const withCertOnly: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+    proxyTlsCertificate: '/opt/certs/example.crt',
+  };
+  assert.deepEqual(buildProxyContext(withCertOnly).tls, {
+    certificatePath: '/opt/certs/example.crt',
+    keyPath: DEFAULT_TLS.keyPath,
+  });
+
+  const withKeyOnly: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+    proxyTlsKey: '/opt/certs/example.key',
+  };
+  assert.deepEqual(buildProxyContext(withKeyOnly).tls, {
+    certificatePath: DEFAULT_TLS.certificatePath,
+    keyPath: '/opt/certs/example.key',
+  });
 });
 
 // Sanity check that the exported ProxyRoute type shape lines up with what

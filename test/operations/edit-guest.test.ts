@@ -35,7 +35,7 @@ function deps(ssh = new FakeSSHClient(defaultResponder)): OperationDeps {
 //
 // A driver that declares no forward-auth support -- exercises FR-012's
 // edit-time refusal path. `id` is cast through ProxyDriverId since
-// PROXY_DRIVER_IDS only lists 'caddy' (src/lib/proxy/ids.ts);
+// PROXY_DRIVER_IDS only lists the shipped ids (src/lib/proxy/ids.ts);
 // same convention as test/lib/proxy/{driver,index}.test.ts's own fakeDriver.
 function oidcOnlyDriver(): ReverseProxyDriver {
   return {
@@ -83,7 +83,7 @@ const capabilityInventory: Inventory = {
 // through loadInventory (which succeeds here -- proxyDriver is unset on
 // disk, so it defaults to 'caddy', a schema-valid id -- FR-013), then points
 // the in-memory object at the fake driver's id. That id is never persisted:
-// PROXY_DRIVER_IDS only lists 'caddy', so the schema would reject
+// PROXY_DRIVER_IDS only lists the shipped ids, so the schema would reject
 // any other value on a real load -- this mutation happens strictly after
 // loadInventory already returned successfully, which is exactly the
 // distinction the brief draws between "a capability mismatch on a valid,

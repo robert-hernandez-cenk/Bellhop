@@ -270,11 +270,21 @@ export const SettingsSchema = z.object({
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // Which reverse-proxy driver src/lib/proxy/index.ts's getDriver() hands
-  // back -- unset means the 'caddy' default (issue #10).
+  // back -- unset means the 'caddy' default (issue #10, issue #30).
   proxyDriver: z.enum(PROXY_DRIVER_IDS).optional(),
   // Overrides the active driver's own defaultConfigPath (issue #10) -- unset
   // means driverDeps() falls back to that default.
   proxyConfigPath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // The certificate/key pair every nginx driver server block shares (issue
+  // #30, research R1/R2) -- nginx cannot obtain its own certificates the
+  // way Caddy does, so one shared pair keeps a new subdomain's sync from
+  // failing until the operator issues it a certificate by hand. Each
+  // defaults independently -- unset means
+  // /etc/letsencrypt/live/<domain>/fullchain.pem and .../privkey.pem
+  // respectively (buildProxyContext, src/lib/proxy/routes.ts). Inert for
+  // the Caddy driver, which never reads ProxyContext.tls.
+  proxyTlsCertificate: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  proxyTlsKey: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
   // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
   // the repo name (research R7).
@@ -663,21 +673,40 @@ export function parseAuthGroup(raw: unknown): string | undefined {
   return name === '' ? undefined : name;
 }
 
+// Exactly `/outpost.goauthentik.io`, or anything under
+// `/outpost.goauthentik.io/` (which covers the `/outpost.goauthentik.io/*`
+// prefix form too). Every forward-gated route sends this namespace to the
+// Authentik outpost regardless of any exemption (Caddy's
+// `handle /outpost.goauthentik.io/*`; nginx skips such a pattern at render
+// time, since its own exempt location would outrank the outpost's).
+function isOutpostNamespacePath(pattern: string): boolean {
+  return pattern === '/outpost.goauthentik.io' || pattern.startsWith('/outpost.goauthentik.io/');
+}
+
 // Semicolon-delimited free text (the web UI's Unauthenticated Paths field)
 // -> a deduplicated list of proxy path-matcher globs, or undefined when
 // empty so an entry with none doesn't grow a pointless
 // `unauthenticatedPaths: []`. Throws on a non-empty pattern that isn't one
-// of the two accepted forms (isValidUnauthenticatedPath -- same rule
-// UnauthenticatedPathSchema enforces, so a guest edit and a schema load can
-// never disagree), unlike parseSubdomains's silent-drop behavior -- a
-// pattern that silently never matches as intended is a worse experience
-// than a rejected save.
+// of the two accepted forms (isValidUnauthenticatedPath -- the same rule
+// UnauthenticatedPathSchema enforces), unlike parseSubdomains's silent-drop
+// behavior -- a pattern that silently never matches as intended is a worse
+// experience than a rejected save. The edit rule is deliberately stricter
+// than the schema in one respect: a path in the Authentik outpost's own
+// namespace (isOutpostNamespacePath) is rejected here but still loads from
+// a saved inventory, so an entry saved before this rule existed never makes
+// the inventory unloadable (the drivers already ignore such an exemption).
 export function parseUnauthenticatedPaths(raw: unknown): string[] | undefined {
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const list = Array.from(new Set(raw.split(';').map((s) => s.trim()).filter(Boolean)));
   for (const pattern of list) {
     if (!isValidUnauthenticatedPath(pattern)) {
       throw new Error(`Invalid unauthenticated path '${pattern}' (${UNAUTHENTICATED_PATH_MESSAGE})`);
+    }
+    if (isOutpostNamespacePath(pattern)) {
+      throw new Error(
+        `Invalid unauthenticated path '${pattern}': paths under /outpost.goauthentik.io belong to the Authentik outpost ` +
+          `and are always routed to it, so they can't be exempted -- remove this entry`
+      );
     }
   }
   return list.length > 0 ? list : undefined;

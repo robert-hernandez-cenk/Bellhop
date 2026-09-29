@@ -11,6 +11,8 @@ import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
 import { FakeSSHClient } from '../../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
+import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 
 function baseInventory(): Inventory {
   return {
@@ -159,7 +161,7 @@ test('PATCH /api/settings writes proxyDriver and proxyConfigPath', async () => {
 
 test('PATCH /api/settings rejects an unknown proxyDriver', async () => {
   const { app, inventoryPath } = testApp();
-  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'nginx' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'unknown-provider' });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /^proxyDriver: /);
   assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
@@ -179,13 +181,66 @@ test('PATCH /api/settings clears proxyConfigPath sent as null', async () => {
   assert.equal(loadInventory(inventoryPath).proxyConfigPath, undefined);
 });
 
+test('PATCH /api/settings writes proxyTlsCertificate and proxyTlsKey', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyTlsCertificate, '/etc/letsencrypt/live/example.com/fullchain.pem');
+  assert.equal(res.body.settings.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyTlsCertificate, '/etc/letsencrypt/live/example.com/fullchain.pem');
+  assert.equal(onDisk.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+});
+
+test('PATCH /api/settings clears proxyTlsCertificate/proxyTlsKey sent as null', async () => {
+  const { app, inventoryPath } = testApp({
+    ...baseInventory(),
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyTlsCertificate: null,
+    proxyTlsKey: null,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyTlsCertificate, undefined);
+  assert.equal(res.body.settings.proxyTlsKey, undefined);
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyTlsCertificate, undefined);
+  assert.equal(onDisk.proxyTlsKey, undefined);
+});
+
+test('PATCH /api/settings rejects a relative proxyTlsCertificate, with the same message set-config produces', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyTlsCertificate: 'etc/letsencrypt/live/example.com/fullchain.pem',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /proxyTlsCertificate: must be an absolute path/);
+});
+
+test('PATCH /api/settings accepts proxyDriver nginx', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'nginx' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'nginx');
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'nginx');
+});
+
+const CADDY_CONFIG_PATH_NOTE = caddyDriver.configPathNote;
+const NGINX_CONFIG_PATH_NOTE = nginxDriver.configPathNote;
+
 test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
   const { app } = testApp();
   const res = await asAdmin(request(app).get('/api/settings'));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });
@@ -195,8 +250,9 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
   const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });

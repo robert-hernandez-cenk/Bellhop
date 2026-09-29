@@ -368,6 +368,38 @@ test('parseUnauthenticatedPaths throws on a pattern missing a leading slash, nam
   assert.throws(() => parseUnauthenticatedPaths('/api/*; system'), /Invalid unauthenticated path 'system'/);
 });
 
+// issue #30 review: the Authentik outpost's own namespace is always routed
+// to the outpost (Caddy's `handle /outpost.goauthentik.io/*`, nginx's
+// outpost location), so an exemption there could never take effect --
+// rejected at edit time rather than silently dropped by a driver.
+test('parseUnauthenticatedPaths rejects every form of a path in the outpost namespace, naming why', () => {
+  for (const bad of [
+    '/outpost.goauthentik.io',
+    '/outpost.goauthentik.io/',
+    '/outpost.goauthentik.io/*',
+    '/outpost.goauthentik.io/auth/nginx',
+    '/outpost.goauthentik.io/start/*',
+  ]) {
+    assert.throws(
+      () => parseUnauthenticatedPaths(`/health; ${bad}`),
+      (err: Error) =>
+        err.message.includes(`'${bad}'`) && /belong.* to the Authentik outpost/.test(err.message) && /can't be exempted/.test(err.message),
+      bad
+    );
+  }
+});
+
+test('parseUnauthenticatedPaths still accepts a path that merely starts with the outpost name', () => {
+  assert.deepEqual(parseUnauthenticatedPaths('/outpost.goauthentik.iox; /outpost.goauthentik.io-docs/*'), [
+    '/outpost.goauthentik.iox',
+    '/outpost.goauthentik.io-docs/*',
+  ]);
+});
+
+test('UnauthenticatedPathSchema still loads a saved outpost-namespace path (only the edit rule is stricter)', () => {
+  assert.equal(UnauthenticatedPathSchema.safeParse('/outpost.goauthentik.io/*').success, true);
+});
+
 // issue #10, US4/T038: a path exemption is restricted to the two forms
 // every reverse proxy can express -- an exact path, or a prefix ending in
 // /*. Anything else (a '*' anywhere but as a trailing "/*") is rejected,
@@ -1075,7 +1107,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the eight settings keys', () => {
+test('SETTINGS_KEYS lists exactly the ten settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'backupStorage',
     'customScriptsBranch',
@@ -1084,6 +1116,8 @@ test('SETTINGS_KEYS lists exactly the eight settings keys', () => {
     'nfsServer',
     'proxyConfigPath',
     'proxyDriver',
+    'proxyTlsCertificate',
+    'proxyTlsKey',
     'statusPagePath',
   ]);
 });
@@ -1116,17 +1150,17 @@ test('SettingsSchema accepts proxyDriver caddy and an absolute proxyConfigPath',
 });
 
 test('SettingsSchema rejects an unknown proxyDriver and a relative proxyConfigPath', () => {
-  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'nginx' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'unknown-provider' }).success, false);
   assert.equal(SettingsSchema.safeParse({ proxyConfigPath: 'etc/caddy/Caddyfile' }).success, false);
 });
 
 // issue #33: 'none' is a real registered driver id, so PROXY_DRIVER_IDS
 // (and therefore this schema's proxyDriver enum) accepts it the same way it
-// accepts 'caddy' -- 'nginx' stays rejected since no driver is registered
-// under that id.
-test('SettingsSchema accepts proxyDriver "none" and still rejects an unknown id like "nginx"', () => {
+// accepts 'caddy' and 'nginx' -- an id no driver is registered under stays
+// rejected.
+test('SettingsSchema accepts proxyDriver "none" and still rejects an unknown id', () => {
   assert.equal(SettingsSchema.safeParse({ proxyDriver: 'none' }).success, true);
-  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'nginx' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'unknown-provider' }).success, false);
 });
 
 test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {
@@ -1136,6 +1170,42 @@ test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', 
   const loaded = loadInventory(dest);
   assert.equal(loaded.proxyDriver, 'caddy');
   assert.equal(loaded.proxyConfigPath, '/etc/caddy/Caddyfile');
+});
+
+test('SettingsSchema accepts proxyDriver nginx and absolute proxyTlsCertificate/proxyTlsKey', () => {
+  const result = SettingsSchema.safeParse({
+    proxyDriver: 'nginx',
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  assert.equal(result.success, true);
+});
+
+test('SettingsSchema rejects a relative proxyTlsCertificate or proxyTlsKey', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyTlsCertificate: 'etc/ssl/fullchain.pem' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyTlsKey: 'etc/ssl/privkey.pem' }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips proxyTlsCertificate and proxyTlsKey, and clearing one removes it from meta', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, {
+    ...FIXTURE_INVENTORY,
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.proxyTlsCertificate, '/etc/letsencrypt/live/example.com/fullchain.pem');
+  assert.equal(loaded.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+
+  saveInventory(dest, { ...loaded, proxyTlsCertificate: undefined });
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.proxyTlsCertificate, undefined);
+  assert.equal(reloaded.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+  const db = new Database(dest, { readonly: true });
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyTlsCertificate'").get();
+  db.close();
+  assert.equal(row, undefined);
 });
 
 test('loadInventory migrates a legacy requires_auth column to authGroup at the ladder top rung', () => {

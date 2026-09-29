@@ -67,6 +67,7 @@ export const caddyDriver = fileDriver({
   // caddy.example.com block already serves via file_server (see CLAUDE.md's
   // render-status-page bullet), and the placeholder the Settings page shows.
   statusPage: { suggestedPath: '/usr/share/caddy/index.html' },
+  configPathNote: 'Only the bellhop-managed section of this file is replaced; everything outside it is left alone.',
   render,
   validateCommand: (configPath) => `caddy validate --adapter caddyfile --config ${singleQuote(configPath)}`,
   reloadCommand: 'systemctl reload caddy',
