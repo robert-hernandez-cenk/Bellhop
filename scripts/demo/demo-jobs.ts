@@ -140,11 +140,10 @@ const JOB_DEFS: SeededJobDef[] = [
   {
     command: 'install-app',
     category: 'provisioning',
-    // Named after the guest it created, for a readable Job History row --
-    // the real install-app operation targets the Proxmox host instead
-    // (src/operations/provisioning.ts), since the guest doesn't exist until
-    // apply finishes.
-    target: 'jellyfin',
+    // The Proxmox host, exactly as the real install-app operation records it
+    // (src/operations/provisioning.ts: `target: (i) => i.host`) -- the guest
+    // doesn't exist until apply finishes.
+    target: 'pve1',
     argsJson: JSON.stringify({
       app: 'jellyfin',
       host: 'pve1',

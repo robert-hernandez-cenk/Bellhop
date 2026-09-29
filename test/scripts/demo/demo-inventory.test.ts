@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadInventory, saveInventory, effectiveAuth } from '../../../src/lib/inventory.ts';
 import { buildDemoInventory } from '../../../scripts/demo/demo-inventory.ts';
+import { DEMO_JOB_LOGS } from '../../../scripts/demo/demo-jobs.ts';
+import { DemoSSHClient, DEMO_AUTHORIZED_KEY, DEMO_PACKAGE_MANAGER, demoSimulatedOutput } from '../../../scripts/demo/demo-ssh.ts';
+import { demoFetch, DEMO_CATALOG_SLUGS } from '../../../scripts/demo/demo-fetch.ts';
 
 function tempDbPath(): string {
   return path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-demo-inventory-')), 'bellhop.db');
@@ -134,4 +137,118 @@ test('buildDemoInventory hosts use pve1/pve2, root ssh_user, and 192.0.2.0/24 ss
     assert.equal(host.ssh_user, 'root');
     assert.match(host.ssh_target, /^192\.0\.2\.\d{1,3}$/, `host '${host.name}' ssh_target not in 192.0.2.0/24`);
   }
+});
+
+// --- Example-data guard (FR-019, research R8) -------------------------------
+// Everything the demo can ever show -- the inventory, every seeded job log,
+// every canned DemoSSHClient output, and the demo catalog -- must use only
+// documentation address ranges and example domains (Constitution I).
+
+const EXAMPLE_IPV4_PREFIXES = ['192.0.2.', '198.51.100.', '203.0.113.'];
+const EXAMPLE_DOMAINS = new Set(['example.com', 'example.net', 'example.org']);
+const EXAMPLE_DOMAIN_SUFFIXES = ['.example', '.test', '.invalid'];
+// A dotted token ending in one of these is a file name, not a domain
+// (`inventory/bellhop.db`, `ct/jellyfin.sh`, `jellyfin.service`, ...).
+const FILE_EXTENSIONS = new Set(['sh', 'db', 'service', 'sqlite3', 'json', 'ts', 'js', 'log', 'conf', 'txt', 'yaml', 'yml']);
+
+const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
+// A three-octet prefix ending in a dot, like a midScheme's ipPrefix.
+const IPV4_PREFIX_RE = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.(?!\d)/g;
+const DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z](?:[a-z0-9-]*[a-z0-9])?\b/gi;
+
+function isExampleIpv4(token: string): boolean {
+  return EXAMPLE_IPV4_PREFIXES.some((prefix) => token.startsWith(prefix));
+}
+
+function isExampleDomain(token: string): boolean {
+  const lower = token.toLowerCase();
+  for (const domain of EXAMPLE_DOMAINS) {
+    if (lower === domain || lower.endsWith(`.${domain}`)) return true;
+  }
+  return EXAMPLE_DOMAIN_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
+function findNonExampleValues(text: string): string[] {
+  const bad: string[] = [];
+  for (const ip of text.match(IPV4_RE) ?? []) {
+    if (!isExampleIpv4(ip)) bad.push(`IPv4 ${ip}`);
+  }
+  for (const prefix of text.match(IPV4_PREFIX_RE) ?? []) {
+    if (!isExampleIpv4(prefix)) bad.push(`IPv4 prefix ${prefix}`);
+  }
+  for (const domain of text.match(DOMAIN_RE) ?? []) {
+    const lastLabel = domain.slice(domain.lastIndexOf('.') + 1).toLowerCase();
+    if (FILE_EXTENSIONS.has(lastLabel)) continue;
+    if (!isExampleDomain(domain)) bad.push(`domain ${domain}`);
+  }
+  return bad;
+}
+
+// Drives a DemoSSHClient through every command shape it has a canned answer
+// for, against every demo host and guest, and returns everything it printed.
+async function allDemoSshOutputs(): Promise<string[]> {
+  const inv = buildDemoInventory();
+  const ssh = new DemoSSHClient(inv);
+  const outputs: string[] = [DEMO_AUTHORIZED_KEY, DEMO_PACKAGE_MANAGER, demoSimulatedOutput('some unknown command')];
+  const commands: string[] = [
+    'pvesh get /nodes/$(hostname)/lxc --output-format json',
+    'pvesh get /nodes/$(hostname)/qemu --output-format json',
+    'pvesh get /nodes/$(hostname)/network --output-format json',
+    'pvesh get /nodes/$(hostname)/storage --output-format json',
+    'pct status 1003',
+    'cat ~/.ssh/authorized_keys',
+    'if command -v apt-get >/dev/null 2>&1; then echo apt; fi',
+  ];
+  for (const guest of inv.guests) {
+    const pveType = guest.type === 'vm' ? 'qemu' : 'lxc';
+    commands.push(`pvesh get /nodes/$(hostname)/${pveType}/${guest.vmid}/config --output-format json`);
+  }
+  for (const host of inv.hosts) {
+    const target = { host: host.ssh_target, user: host.ssh_user };
+    for (const command of commands) {
+      const result = await ssh.exec(target, command);
+      outputs.push(result.stdout, result.stderr);
+    }
+  }
+  return outputs;
+}
+
+async function allDemoCatalogText(): Promise<string[]> {
+  const slugs = [...DEMO_CATALOG_SLUGS.stable, ...DEMO_CATALOG_SLUGS.dev];
+  const texts: string[] = [JSON.stringify(DEMO_CATALOG_SLUGS)];
+  for (const slug of DEMO_CATALOG_SLUGS.stable) {
+    texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/${slug}.sh`)).text());
+  }
+  for (const slug of DEMO_CATALOG_SLUGS.dev) {
+    texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/${slug}.sh`)).text());
+  }
+  assert.ok(slugs.length > 0);
+  return texts;
+}
+
+test('example-data guard: the scanner flags a non-example IPv4 address and domain', () => {
+  const bad = findNonExampleValues('reach 10.0.0.5 at nas.home.lan, prefix 172.16.0., also 192.0.2.7 and app.example.com');
+  assert.ok(bad.includes('IPv4 10.0.0.5'), `expected 10.0.0.5 to be flagged, got ${bad.join('; ')}`);
+  assert.ok(bad.includes('domain nas.home.lan'), `expected nas.home.lan to be flagged, got ${bad.join('; ')}`);
+  assert.ok(bad.includes('IPv4 prefix 172.16.0.'), `expected 172.16.0. to be flagged, got ${bad.join('; ')}`);
+  assert.equal(bad.length, 3, `expected only the three non-example values, got ${bad.join('; ')}`);
+});
+
+test('example-data guard: every demo value uses documentation IPs and example domains only', async () => {
+  const sources: Array<[string, string]> = [
+    ['demo inventory', JSON.stringify(buildDemoInventory())],
+    ...Object.entries(DEMO_JOB_LOGS).map(([name, log]): [string, string] => [`job log ${name}`, log]),
+    ...(await allDemoSshOutputs()).map((out, i): [string, string] => [`DemoSSHClient output #${i}`, out]),
+    ...(await allDemoCatalogText()).map((text, i): [string, string] => [`demo catalog #${i}`, text]),
+  ];
+  // Not a vacuous scan: the per-guest config answers really carry addresses.
+  assert.ok(
+    sources.some(([name, text]) => name.startsWith('DemoSSHClient') && text.includes('198.51.100.3/24')),
+    'expected a DemoSSHClient config output carrying a guest IP'
+  );
+  const problems: string[] = [];
+  for (const [name, text] of sources) {
+    for (const bad of findNonExampleValues(text)) problems.push(`${name}: ${bad}`);
+  }
+  assert.deepEqual(problems, []);
 });

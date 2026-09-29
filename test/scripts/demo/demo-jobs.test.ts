@@ -32,6 +32,9 @@ test('seedDemoJobs creates the four expected jobs with the expected statuses', (
     assert.equal(byCommand.get('sync-inventory')!.status, 'success');
     assert.equal(byCommand.get('update-app')!.status, 'failed');
 
+    // install-app targets its Proxmox host, like the real operation.
+    assert.equal(byCommand.get('install-app')!.target, 'pve1');
+
     for (const job of jobs) {
       assert.equal(job.triggeredByUsername, 'admin', `job ${job.command} triggeredByUsername`);
       assert.equal(job.owner, 'web');
