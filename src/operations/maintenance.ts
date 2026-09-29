@@ -64,7 +64,11 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
       return [text, result.preview].filter(Boolean).join('\n');
     },
     apply: async (_i, deps) => {
-      await runSyncProxy({ apply: true }, deps);
+      const result = await runSyncProxy({ apply: true }, deps);
+      // Under proxyDriver: 'none' there is nothing to write, and apply
+      // otherwise logs nothing at all -- so this is the one place the
+      // caller (job log) learns that (issue #33, US2).
+      if (result.proxyHost === null) console.log(result.preview);
     },
   },
   'update-app': {

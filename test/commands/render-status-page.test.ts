@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../src/lib/inventory.ts';
-import { runRenderStatusPage, buildStatusPageHtml } from '../../src/commands/networking/render-status-page.ts';
+import { runRenderStatusPage, statusPageSkipReason, statusPageUnsupportedError, buildStatusPageHtml } from '../../src/commands/networking/render-status-page.ts';
+import { fileDriver } from '../../src/lib/proxy/file-driver.ts';
+import { registerDriverForTests, type ProxyDriverId } from '../../src/lib/proxy/index.ts';
+import { NO_PROXY_STATUS_PAGE_ERROR } from '../../src/lib/proxy/driver.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
 const inventory: Inventory = {
@@ -128,6 +131,112 @@ test('runRenderStatusPage reads the deployed configuration from the proxyConfigP
     'domain: example.com\n'
   );
   assert.ok(ssh.history.some((h) => h.command === "cat '/opt/caddy/Caddyfile'"));
+});
+
+// Issue #33 US2: proxyDriver: 'none' has statusPage: null -- no managed
+// proxy exists to serve a page from, so runRenderStatusPage must reject
+// before ever calling ssh, whether or not statusPagePath happens to be set.
+test('runRenderStatusPage rejects with NO_PROXY_STATUS_PAGE_ERROR under proxyDriver none, with statusPagePath set, and makes no SSH calls', async () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(() => runRenderStatusPage({}, { ssh, inventory: noneInventory }, 'domain: example.com'), (err: Error) => {
+    assert.equal(err.message, NO_PROXY_STATUS_PAGE_ERROR);
+    return true;
+  });
+  assert.equal(ssh.history.length, 0);
+});
+
+test('runRenderStatusPage rejects with NO_PROXY_STATUS_PAGE_ERROR under proxyDriver none, with statusPagePath unset, and makes no SSH calls', async () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none', statusPagePath: undefined };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(() => runRenderStatusPage({}, { ssh, inventory: noneInventory }, 'domain: example.com'), (err: Error) => {
+    assert.equal(err.message, NO_PROXY_STATUS_PAGE_ERROR);
+    return true;
+  });
+  assert.equal(ssh.history.length, 0);
+});
+
+test("statusPageSkipReason returns the driver skip message (info) under proxyDriver none, taking priority over the unset-path message", () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none' };
+  assert.deepEqual(statusPageSkipReason(noneInventory), {
+    message: "proxyDriver is 'none' -- skipping the status page render",
+    level: 'info',
+  });
+
+  const noneNoPath: Inventory = { ...inventory, proxyDriver: 'none', statusPagePath: undefined };
+  assert.deepEqual(statusPageSkipReason(noneNoPath), {
+    message: "proxyDriver is 'none' -- skipping the status page render",
+    level: 'info',
+  });
+});
+
+test('statusPageSkipReason returns the unset-path message (info) when statusPagePath is unset (caddy driver)', () => {
+  const noPath: Inventory = { ...inventory, statusPagePath: undefined };
+  const reason = statusPageSkipReason(noPath);
+  assert.equal(reason?.level, 'info');
+  assert.match(
+    reason?.message ?? '',
+    /statusPagePath is not set -- skipping the status page render -- run: bellhop set-config statusPagePath <\/absolute\/path> --apply/
+  );
+});
+
+test('statusPageSkipReason returns null when the driver serves a status page and statusPagePath is set (caddy driver)', () => {
+  assert.equal(statusPageSkipReason(inventory), null);
+});
+
+// A driver that does manage a proxy but serves no status page -- none ships
+// today, so this registers a test-only one. It is a different case from
+// 'none' (Bellhop manages no proxy at all), so it gets its own message.
+function managedDriverWithoutStatusPage(id: string) {
+  return fileDriver({
+    id: id as ProxyDriverId,
+    label: 'Managed, no status page',
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    defaultConfigPath: '/etc/test-only/test.conf',
+    statusPage: null,
+    render: () => [],
+    validateCommand: () => 'true',
+    reloadCommand: 'true',
+  });
+}
+
+test('statusPageSkipReason names a managed driver that serves no status page, as a warning when statusPagePath is set (it is being ignored)', () => {
+  const driver = managedDriverWithoutStatusPage('managed-no-status-page-a');
+  const unregister = registerDriverForTests(driver);
+  try {
+    const inv: Inventory = { ...inventory, proxyDriver: driver.id as Inventory['proxyDriver'] };
+    assert.deepEqual(statusPageSkipReason(inv), {
+      message: "The 'managed-no-status-page-a' proxy driver does not serve a status page -- skipping the status page render",
+      level: 'warn',
+    });
+    const noPath: Inventory = { ...inv, statusPagePath: undefined };
+    assert.deepEqual(statusPageSkipReason(noPath), {
+      message: "The 'managed-no-status-page-a' proxy driver does not serve a status page -- skipping the status page render",
+      level: 'info',
+    });
+  } finally {
+    unregister();
+  }
+});
+
+test('runRenderStatusPage rejects with statusPageUnsupportedError for a managed driver that serves no status page, and makes no SSH calls', async () => {
+  const driver = managedDriverWithoutStatusPage('managed-no-status-page-b');
+  const unregister = registerDriverForTests(driver);
+  try {
+    const inv: Inventory = { ...inventory, proxyDriver: driver.id as Inventory['proxyDriver'] };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    await assert.rejects(() => runRenderStatusPage({}, { ssh, inventory: inv }, 'domain: example.com'), (err: Error) => {
+      assert.equal(err.message, statusPageUnsupportedError('managed-no-status-page-b'));
+      assert.equal(
+        err.message,
+        "The 'managed-no-status-page-b' proxy driver does not serve a status page -- clear statusPagePath (bellhop set-config statusPagePath --unset --apply, or on the web UI's Settings page) or choose a proxyDriver that serves one"
+      );
+      return true;
+    });
+    assert.equal(ssh.history.length, 0);
+  } finally {
+    unregister();
+  }
 });
 
 test('runRenderStatusPage single-quotes a proxyConfigPath containing a space', async () => {

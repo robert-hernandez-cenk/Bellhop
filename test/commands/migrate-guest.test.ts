@@ -7,6 +7,7 @@ import type { Inventory } from '../../src/lib/inventory.ts';
 import { loadInventory, saveInventory } from '../../src/lib/inventory.ts';
 import { runMigrateGuest, archiveLogPath } from '../../src/commands/provisioning/migrate-guest.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
+import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
 
 test('archiveLogPath replaces the tar/vma + compression extension with .log', () => {
   assert.equal(
@@ -896,6 +897,48 @@ test('runMigrateGuest apply warns but does not throw when destroying the origina
     assert.ok(warnings.some((w) => w.includes('clean it up by hand')));
   } finally {
     console.error = originalWarn;
+  }
+});
+
+// Issue #33 US2: under proxyDriver: 'none' (no 'proxy: true' entry at all --
+// the base fixture's 'pve-main' host has none by default, unlike the
+// 'proxy: true' tests above that add one), migrating a guest with
+// subdomains must still complete cleanly: sync-proxy's own early return
+// means no proxy-host SSH call is ever attempted, and the status-page skip
+// line -- not a "proxy sync failed" warning -- is what gets logged.
+test("runMigrateGuest apply completes cleanly under proxyDriver 'none', with no proxy-host SSH calls and no 'proxy sync failed' warning", async () => {
+  const warnings: string[] = [];
+  const infos: string[] = [];
+  const originalWarn = console.error;
+  const originalLog = console.log;
+  console.error = (msg: string) => warnings.push(String(msg));
+  console.log = (msg: string) => infos.push(String(msg));
+  try {
+    const respondStatus = orderedStatusResponder(4012, 5012);
+    const ssh = new FakeSSHClient((_t, _u, cmd) => {
+      if (cmd.includes('BEGIN bellhop-managed') || cmd.includes('Caddyfile') || cmd.includes('caddy') || cmd.startsWith('cat ') || cmd.includes('STATUS_PAGE_EOF')) {
+        throw new Error(`unexpected proxy-host command under proxyDriver 'none': ${cmd}`);
+      }
+      return respondStatus(_t, _u, cmd) as { stdout: string; stderr: string; code: number };
+    });
+    const inv: Inventory = { ...isolatedInventory(), proxyDriver: 'none' };
+    const invPath = tempSavedInventoryPath(inv);
+    const result = await runMigrateGuest(
+      { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+      { ssh, inventory: inv, inventoryPath: invPath }
+    );
+    assert.equal(result.applied, true);
+    assert.equal(loadInventory(invPath).guests.find((g) => g.name === 'media')?.host, 'pve-secondary');
+    assert.ok(
+      infos.some((l) => l.includes("proxyDriver is 'none' -- skipping the status page render")),
+      'the status-page skip line must be logged'
+    );
+    assert.ok(infos.some((l) => l.includes(NO_PROXY_SYNC_MESSAGE)), "sync-proxy's no-op message must be logged, not dropped");
+    assert.ok(!infos.some((l) => l.includes('live via the proxy')), 'no "Pushing the new IP ... live via the proxy" line when there is no proxy');
+    assert.ok(!warnings.some((w) => w.includes('proxy sync failed')), 'no proxy sync failed warning under a driver with nothing to sync');
+  } finally {
+    console.error = originalWarn;
+    console.log = originalLog;
   }
 });
 

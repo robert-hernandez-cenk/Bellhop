@@ -40,8 +40,10 @@ function deps(ssh = new FakeSSHClient(defaultResponder)): OperationDeps {
 function oidcOnlyDriver(): ReverseProxyDriver {
   return {
     id: 'fake-oidc-only' as ProxyDriverId,
+    label: 'Fake',
     capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: false },
     defaultConfigPath: '/etc/fake/fake.conf',
+    statusPage: null,
     async plan(): Promise<ProxyPlan> {
       return { preview: '', payload: undefined };
     },

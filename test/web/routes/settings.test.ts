@@ -178,3 +178,49 @@ test('PATCH /api/settings clears proxyConfigPath sent as null', async () => {
   assert.equal(res.status, 200);
   assert.equal(loadInventory(inventoryPath).proxyConfigPath, undefined);
 });
+
+test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.proxyDrivers, [
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false },
+  ]);
+  assert.equal(res.body.defaultProxyDriver, 'caddy');
+});
+
+test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDriver', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.proxyDrivers, [
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false },
+  ]);
+  assert.equal(res.body.defaultProxyDriver, 'caddy');
+});
+
+test('PATCH /api/settings writes proxyDriver "none" and persists it', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'none' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'none');
+  assert.equal(loadInventory(inventoryPath).proxyDriver, 'none');
+});
+
+test('PATCH /api/settings clears proxyDriver sent as null', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), proxyDriver: 'none' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: null });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, undefined);
+  assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
+});
+
+test('A stored proxyConfigPath is still returned while proxyDriver is none', async () => {
+  const { app } = testApp({ ...baseInventory(), proxyDriver: 'none', proxyConfigPath: '/opt/proxy/Caddyfile' });
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyDriver, 'none');
+  assert.equal(res.body.settings.proxyConfigPath, '/opt/proxy/Caddyfile');
+});
