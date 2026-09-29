@@ -255,3 +255,86 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
     </div>
   );
 }
+
+// The "mobile app redirect urls" row -- modelled on EditableOidcRedirectUris
+// above (same edit/save/error/admin/Authentik-banner handling), but PATCHes
+// the separate, additive oidcMobileRedirectUris list (issue #22). Never
+// itself triggers the OIDC-client deletion confirmation, same as the
+// callback-urls row.
+export function EditableOidcMobileRedirectUris({ guest, onSaved }: Props) {
+  const { whoami } = useWhoAmI();
+  const [value, setValue] = useState((guest.oidcMobileRedirectUris ?? []).join('; '));
+  const [status, setStatus] = useState<SaveStatus>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  const [discoveryFailures, setDiscoveryFailures] = useState<OidcDiscoveryFailure[]>([]);
+  const [conflictAdoptable, setConflictAdoptable] = useState(false);
+  const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
+
+  useEffect(() => {
+    setValue((guest.oidcMobileRedirectUris ?? []).join('; '));
+  }, [guest.oidcMobileRedirectUris]);
+
+  const isAdmin = !!whoami?.isAdmin;
+
+  const save = async () => {
+    if (sameList(parseLocal(value), guest.oidcMobileRedirectUris ?? [])) return;
+    setStatus('saving');
+    setError(null);
+    setConflicts([]);
+    setConflictAdoptable(false);
+    setDiscoveryFailures([]);
+    setSkipped([]);
+    try {
+      const res = await patchGuest(guest.name, { oidcMobileRedirectUris: value });
+      setConflicts(res.authentikConflicts ?? []);
+      setConflictAdoptable(res.authentikConflictAdoptable === true);
+      setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
+      setSkipped(res.oidcSkipped ?? []);
+      if (res.proxySynced) {
+        setStatus('saved');
+      } else {
+        setStatus('proxy-error');
+        setError(`Saved, but proxy sync failed: ${res.proxyError}`);
+      }
+      onSaved();
+    } catch (err) {
+      setStatus('error');
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div>
+      <input
+        className="inline-input"
+        type="text"
+        value={value}
+        placeholder="com.example.app:/auth/callback"
+        disabled={!isAdmin || status === 'saving'}
+        title={isAdmin ? undefined : 'Only an admin may change mobile app redirect URLs'}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setStatus('idle');
+        }}
+        onBlur={save}
+      />
+      {!isOidcEffective(guest) && <div className="field-note">Only used in OIDC mode.</div>}
+      <div className="field-note">
+        For a native app&apos;s sign-in callback (custom scheme or its mobile-redirect page). Adds one consent click
+        to mobile sign-ins only.
+      </div>
+      {status === 'saving' && <span className="save-status">Saving…</span>}
+      {status === 'saved' && <span className="save-status">Saved, proxy synced</span>}
+      {status === 'proxy-error' && <span className="save-status">Saved, proxy sync failed</span>}
+      {error && <div className="warning-banner">{error}</div>}
+      <AuthentikConflictBanner conflicts={conflicts} adoptable={conflictAdoptable} guest={guest} isAdmin={isAdmin} />
+      <AuthentikSkipBanner skipped={skipped} />
+      {discoveryFailures.length > 0 && (
+        <div className="warning-banner">
+          OIDC discovery check failed: {discoveryFailures.map((f) => `${f.slug} (${f.issuer}): ${f.error}`).join('; ')}
+        </div>
+      )}
+    </div>
+  );
+}

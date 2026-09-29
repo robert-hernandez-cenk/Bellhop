@@ -28,3 +28,24 @@ export function isOidcEffective(entry: OidcEntryLike): boolean {
 export function needsOidcDeletionConfirmation(message: string): boolean {
   return message.includes('confirmOidcClientDeletion');
 }
+
+// The Advanced guest modal's Access tab (issue #22, US3) shows only the
+// fields relevant to a guest's current auth mode, rather than every
+// access-related row unconditionally. Forward (or unset, the same default
+// effectiveAuth() treats as forward) shows the forward-auth fields; 'oidc'
+// swaps in the OIDC ones. The oidc client row's own extra isOidcEffective()
+// condition is applied by the caller (AdvancedGuestModal), not here.
+export type AccessField =
+  | 'authGroup'
+  | 'authMode'
+  | 'unauthenticatedPaths'
+  | 'callbackUrls'
+  | 'mobileRedirectUrls'
+  | 'oidcClient';
+
+export function accessFieldsFor(authMode?: 'forward' | 'oidc'): AccessField[] {
+  if (authMode === 'oidc') {
+    return ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient'];
+  }
+  return ['authGroup', 'authMode', 'unauthenticatedPaths'];
+}
