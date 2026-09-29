@@ -152,6 +152,15 @@ export async function syncProxyLive(deps: {
     for (const failure of discoveryFailures) {
       logWarn(`sync-authentik: ${failure.slug} — OIDC discovery failed for ${failure.issuer}: ${failure.error}`);
     }
+    // The mobile consent step (issue #22, research.md R10): instance-wide,
+    // like missingRungs above, so it's only ever logged here -- there is no
+    // per-guest Dashboard action to offer, and SyncProxyLiveResult gains
+    // nothing for it.
+    const mobileConsent = authentikResult.mobileConsent;
+    for (const conflict of mobileConsent?.conflicts ?? []) {
+      logWarn(`sync-authentik: mobile consent — ${conflict}`);
+    }
+    if (mobileConsent?.error) logWarn(`sync-authentik: mobile consent — ${mobileConsent.error}`);
     result = {
       authentikConflicts: authentikResult.conflicts,
       authentikAdoptableConflicts: authentikResult.adoptableConflicts ?? [],

@@ -1708,6 +1708,25 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
     lines.push(`OIDC entries skipped: ${oidcSkipped.length}`);
     for (const skip of oidcSkipped) lines.push(`  ! ${skip.slug} — ${skip.reason}`);
   }
+  // Mobile consent-step sections (issue #22, contracts/interfaces.md §2):
+  // printed only when non-empty, so a result with no mobile URIs and
+  // nothing to remove -- absent or empty `mobileConsent` alike -- formats
+  // byte-identically to before this feature (FR-016). Placed after every
+  // other reconcile section but before discovery, which stays last.
+  const mobileConsent = result.mobileConsent;
+  if (mobileConsent) {
+    if (mobileConsent.changes.length > 0) {
+      lines.push(
+        `Mobile consent step: ${mobileConsent.changes.length} change(s) for ${mobileConsent.uris.length} mobile redirect URI(s)`
+      );
+      for (const change of mobileConsent.changes) lines.push(formatMobileConsentChange(change));
+    }
+    if (mobileConsent.conflicts.length > 0) {
+      lines.push(`Mobile consent conflicts: ${mobileConsent.conflicts.length}`);
+      for (const conflict of mobileConsent.conflicts) lines.push(`  ! ${conflict}`);
+    }
+    if (mobileConsent.error) lines.push(`Mobile consent step failed: ${mobileConsent.error}`);
+  }
   const discovery = result.discovery ?? [];
   if (discovery.length > 0) {
     lines.push(`OIDC discovery: ${discovery.length}`);
@@ -1716,4 +1735,28 @@ export function formatSyncAuthentik(result: SyncAuthentikResult): string {
     }
   }
   return lines.join('\n');
+}
+
+// The human-readable name for a mobile consent-step object (contracts/
+// interfaces.md §2): the stage/policy names Bellhop owns are fixed
+// constants, the binding names the configured authorization flow it's
+// attached to, and the policy-binding has no name of its own to add.
+function mobileConsentObjectLabel(object: MobileConsentChange['object']): string {
+  switch (object) {
+    case 'stage':
+      return `stage ${MOBILE_CONSENT_STAGE_NAME}`;
+    case 'policy':
+      return `policy ${MOBILE_CONSENT_POLICY_NAME}`;
+    case 'binding':
+      return `binding on ${authentikConfig().authorizationFlowSlug}`;
+    case 'policy-binding':
+      return 'policy-binding';
+  }
+}
+
+function formatMobileConsentChange(change: MobileConsentChange): string {
+  const label = mobileConsentObjectLabel(change.object);
+  if (change.action === 'create') return `  + ${label}`;
+  if (change.action === 'delete') return `  - ${label}`;
+  return `  ~ ${label}: ${change.detail ?? ''}`;
 }

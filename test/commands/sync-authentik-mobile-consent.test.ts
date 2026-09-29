@@ -9,6 +9,7 @@ import {
   MOBILE_CONSENT_POLICY_NAME,
   runSyncAuthentik,
   syncAuthentikFailed,
+  formatSyncAuthentik,
 } from '../../src/commands/networking/sync-authentik.ts';
 import type { Inventory } from '../../src/lib/inventory.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
@@ -689,5 +690,163 @@ describe('mobile consent reconcile', () => {
       const result = await run(authentik, mobileInventory([MOBILE_A], media), false);
       assert.deepEqual(result.mobileConsent, { uris: [], changes: [], conflicts: [] });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T015: formatSyncAuthentik's mobile consent sections (contracts/interfaces.md §2)
+// ---------------------------------------------------------------------------
+
+describe('formatSyncAuthentik mobile consent sections', () => {
+  const FLOW_SLUG = authentikConfig().authorizationFlowSlug;
+  const base = {
+    toCreate: [],
+    toRemove: [],
+    conflicts: [],
+    missingRungs: [],
+    offLadder: [],
+    bindingChanges: [],
+    applied: true,
+  };
+
+  test('an absent mobileConsent and an empty one format byte-identically, with no mobile consent text at all', () => {
+    const absent = formatSyncAuthentik(base);
+    const empty = formatSyncAuthentik({ ...base, mobileConsent: { uris: [], changes: [], conflicts: [] } });
+    assert.equal(absent, empty);
+    assert.doesNotMatch(absent, /Mobile consent/);
+  });
+
+  test('creates: header names the change/URI counts, one "+ <object>" line per change, in order', () => {
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: {
+        uris: [MOBILE_A, MOBILE_B],
+        changes: [
+          { object: 'stage', action: 'create' },
+          { object: 'policy', action: 'create', detail: '2 mobile redirect URI(s)' },
+          { object: 'binding', action: 'create' },
+          { object: 'policy-binding', action: 'create' },
+        ],
+        conflicts: [],
+      },
+    });
+    assert.equal(
+      text,
+      [
+        'Applications to create: 0',
+        'Applications to remove: 0',
+        `Mobile consent step: 4 change(s) for 2 mobile redirect URI(s)`,
+        `  + stage ${MOBILE_CONSENT_STAGE_NAME}`,
+        `  + policy ${MOBILE_CONSENT_POLICY_NAME}`,
+        `  + binding on ${FLOW_SLUG}`,
+        `  + policy-binding`,
+      ].join('\n')
+    );
+  });
+
+  test('updates: "~ <object>: <detail>" for a drifted stage, policy and binding', () => {
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: {
+        uris: [MOBILE_A, MOBILE_B],
+        changes: [
+          { object: 'stage', action: 'update', detail: 'mode' },
+          { object: 'policy', action: 'update', detail: 'expression (2 mobile redirect URI(s))' },
+          { object: 'binding', action: 'update', detail: 'evaluate_on_plan, re_evaluate_policies' },
+        ],
+        conflicts: [],
+      },
+    });
+    assert.equal(
+      text,
+      [
+        'Applications to create: 0',
+        'Applications to remove: 0',
+        `Mobile consent step: 3 change(s) for 2 mobile redirect URI(s)`,
+        `  ~ stage ${MOBILE_CONSENT_STAGE_NAME}: mode`,
+        `  ~ policy ${MOBILE_CONSENT_POLICY_NAME}: expression (2 mobile redirect URI(s))`,
+        `  ~ binding on ${FLOW_SLUG}: evaluate_on_plan, re_evaluate_policies`,
+      ].join('\n')
+    );
+  });
+
+  test('deletes: "- <object>" with no detail suffix, in policy-binding -> binding -> policy -> stage order', () => {
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: {
+        uris: [],
+        changes: [
+          { object: 'policy-binding', action: 'delete' },
+          { object: 'binding', action: 'delete' },
+          { object: 'policy', action: 'delete' },
+          { object: 'stage', action: 'delete' },
+        ],
+        conflicts: [],
+      },
+    });
+    assert.equal(
+      text,
+      [
+        'Applications to create: 0',
+        'Applications to remove: 0',
+        `Mobile consent step: 4 change(s) for 0 mobile redirect URI(s)`,
+        `  - policy-binding`,
+        `  - binding on ${FLOW_SLUG}`,
+        `  - policy ${MOBILE_CONSENT_POLICY_NAME}`,
+        `  - stage ${MOBILE_CONSENT_STAGE_NAME}`,
+      ].join('\n')
+    );
+  });
+
+  test('conflicts: a "Mobile consent conflicts: <N>" stanza with one "! <text>" line per conflict, independent of changes', () => {
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: {
+        uris: [MOBILE_A],
+        changes: [],
+        conflicts: [
+          `stage '${MOBILE_CONSENT_STAGE_NAME}' exists but is not a consent stage Bellhop created — rename or delete it in Authentik`,
+        ],
+      },
+    });
+    assert.equal(
+      text,
+      [
+        'Applications to create: 0',
+        'Applications to remove: 0',
+        `Mobile consent conflicts: 1`,
+        `  ! stage '${MOBILE_CONSENT_STAGE_NAME}' exists but is not a consent stage Bellhop created — rename or delete it in Authentik`,
+      ].join('\n')
+    );
+  });
+
+  test('error: a single "Mobile consent step failed: <message>" line, with the message printed verbatim', () => {
+    const message = `FakeAuthentikClient: forced failure for createExpressionPolicy${HINT}`;
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: { uris: [MOBILE_A], changes: [{ object: 'stage', action: 'create' }], conflicts: [], error: message },
+    });
+    assert.match(text, /Mobile consent step: 1 change\(s\) for 1 mobile redirect URI\(s\)\n {2}\+ stage /);
+    assert.ok(text.endsWith(`Mobile consent step failed: ${message}`));
+  });
+
+  test('a change with no conflicts/error prints no conflicts or failure stanza', () => {
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: { uris: [MOBILE_A], changes: [{ object: 'stage', action: 'create' }], conflicts: [] },
+    });
+    assert.doesNotMatch(text, /Mobile consent conflicts/);
+    assert.doesNotMatch(text, /Mobile consent step failed/);
+  });
+
+  test('the mobile consent stanzas sit before the discovery section, which stays last', () => {
+    const text = formatSyncAuthentik({
+      ...base,
+      mobileConsent: { uris: [MOBILE_A], changes: [{ object: 'stage', action: 'create' }], conflicts: [] },
+      discovery: [{ slug: 'media', issuer: 'https://auth.example.com/application/o/media/', ok: true }],
+    });
+    const mobileIndex = text.indexOf('Mobile consent step:');
+    const discoveryIndex = text.indexOf('OIDC discovery:');
+    assert.ok(mobileIndex >= 0 && discoveryIndex >= 0 && mobileIndex < discoveryIndex);
   });
 });
