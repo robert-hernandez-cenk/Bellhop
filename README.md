@@ -591,6 +591,17 @@ flow (under different names) from working around this yourself, delete
 them once Bellhop's copy is in place** — otherwise a mobile sign-in shows
 two consent pages back to back.
 
+The consent step is bound only to the flow `AUTHENTIK_AUTHORIZATION_FLOW_SLUG`
+names. An OpenID client that uses a different authorization flow (one
+adopted with `adopt-oidc-client` that was set up with its own flow, say)
+still gets its mobile URLs in its allowed callbacks, but no consent step.
+`adopt-oidc-client` itself writes the client's callbacks (web and mobile)
+but does not reconcile the consent step; the next `sync-authentik` run, or
+any Dashboard guest edit, creates it. When a Dashboard save changes an
+entry's mobile redirect URLs and the consent step then reports a conflict
+or an error, the save still succeeds and the problem is shown as a warning
+under that field (and returned by the MCP `edit_guest` tool).
+
 A Dashboard save pushes the proxy configuration change *before* the Authentik sync runs,
 so switching an entry to OIDC removes its `forward_auth` gate first. If the
 sync then skips the entry (a missing signing key, say) or fails, the app is
@@ -658,7 +669,10 @@ General (type, IP, host, VMID, subdomains, port, read-only proxy, insecure
 backend TLS, VPN, app) and Access (auth group, auth mode, and whichever
 fields apply to the selected auth mode — unauthenticated paths in forward
 mode; callback URLs, mobile app redirect URLs, and OIDC client
-issuer/client ID/secret in OIDC mode). Switching Auth mode back and forth
+issuer/client ID/secret in OIDC mode). A gated forward-mode guest with no
+callback URL yet also shows the callback URLs field, noted "Needed before
+switching auth mode to OIDC.", since that switch is refused until one is
+set. Switching Auth mode back and forth
 never loses a hidden field's saved value — it's simply not shown while the
 other mode is selected.
 

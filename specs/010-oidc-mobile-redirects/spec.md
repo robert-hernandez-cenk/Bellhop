@@ -65,10 +65,12 @@ The guest Advanced dialog gets two tabs: **General** (type, ip, host, vmid, subd
 | auth group | shown | shown |
 | auth mode | shown | shown |
 | unauthenticated paths | shown | hidden |
-| web callback URLs | hidden | shown |
+| web callback URLs | hidden (see exception below) | shown |
 | mobile app redirect URLs | hidden | shown |
 | OIDC client (issuer, client ID, secret location) | hidden | shown |
 | Authentik sync/conflict banners | shown | shown |
+
+Exception: in forward-auth mode, the web callback URLs field is also shown while the guest has an auth group and no web callback URL yet, with the note "Needed before switching auth mode to OIDC." A save that switches a gated guest with subdomains to OIDC is refused until it has one, so without this the Dashboard could not move such a guest from forward-auth to OIDC.
 
 **Why this priority**: It is a presentation improvement. Stories 1 and 2 work without it, but it makes room for the new field and stops showing settings that do nothing in the current mode.
 
@@ -125,12 +127,12 @@ The guest Advanced dialog gets two tabs: **General** (type, ip, host, vmid, subd
 - **FR-015**: After any change to the stage binding or the policy on apply, Bellhop MUST clear Authentik's cached flow plans so the next login uses the new configuration.
 - **FR-016**: The dry run MUST list every consent-step change `--apply` would make: created, updated (with which setting), removed, and conflicts. Apply MUST make exactly those changes.
 - **FR-017**: A consent-step failure (the flow not found, an API error) MUST be reported with what failed and how to fix it. It MUST NOT stop OpenID client, forward-auth, binding or outpost reconciliation in the same run. On `--apply` it MUST make the CLI exit non-zero. A conflict alone MUST NOT.
-- **FR-018**: The Dashboard's push-live sync (run after a guest edit) MUST surface consent-step conflicts and failures as warnings in the job log and service log. It MUST NOT fail the save.
+- **FR-018**: The Dashboard's push-live sync (run after a guest edit) MUST surface consent-step conflicts and failures as warnings in the job log and service log. It MUST NOT fail the save. When the edit changed that guest's mobile redirect URIs, the save response MUST also carry them (`mobileConsentProblems`), and the Dashboard MUST show them as a warning on the mobile redirect URL field; an edit that did not change that list carries none, since they are instance-wide.
 
 **Access tab**
 
 - **FR-019**: The guest Advanced dialog MUST present two tabs, General and Access, holding the fields listed in User Story 3. General is selected when the dialog opens.
-- **FR-020**: The Access tab MUST show the fields for the entry's current auth mode (unset means forward-auth) per the table in User Story 3. A field for the other mode MUST be hidden, not disabled, and its saved value MUST be kept.
+- **FR-020**: The Access tab MUST show the fields for the entry's current auth mode (unset means forward-auth) per the table in User Story 3, including its web-callback-URL exception for a gated forward-auth guest with none yet. A field for the other mode MUST be hidden, not disabled, and its saved value MUST be kept.
 - **FR-021**: The mobile app redirect URLs field MUST show one line of help text: use it for a native app's sign-in callback, and it adds a consent click to mobile sign-ins only.
 - **FR-022**: Both tabs MUST work at desktop width and at 640px or narrower, with no horizontal page scroll.
 

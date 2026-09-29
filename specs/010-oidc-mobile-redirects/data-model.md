@@ -13,7 +13,7 @@
 | `sync-inventory` | Preserved by its `{ ...existing }` guest merge; hosts are rebuilt from existing entries the same way. No code change expected, but covered by a test. |
 | YAML import | Parsed by the same zod schema, so it round-trips with no command change. `inventory/hosts.yaml.example` shows it. |
 | Write-time parse | `parseOidcMobileRedirectUris(raw)`: same input forms as `parseOidcRedirectUris` (`;`-joined string or array), deduplicated in authored order, `undefined` when empty, throws naming the first invalid URI and its rejected scheme. |
-| Write-time cross-field | `oidcConfigErrors(entry)` adds `oidcMobileRedirectUris: '<uri>' is also a web callback URL; list it in only one` for each URI in both lists (research R2). |
+| Write-time cross-field | `oidcConfigErrors(entry)` adds `oidcMobileRedirectUris: '<uri>' is also a web callback URL; list it in only one` for each URI in both lists, only when the edit changed either list (research R2). |
 | Mode dependence | Inert unless `effectiveAuth(entry) === 'oidc'`. Never cleared by a mode change. |
 
 ## Derived values in `sync-authentik`

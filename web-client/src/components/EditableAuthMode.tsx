@@ -3,7 +3,7 @@ import { apiPatch } from '../api/client';
 import type { GuestEntry } from '../api/types';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { AuthentikConflictBanner, AuthentikSkipBanner, type AuthentikSkip } from './AuthentikSyncBanners';
-import { isOidcEffective, needsOidcDeletionConfirmation } from '../lib/oidc';
+import { isOidcEffective, needsOidcDeletionConfirmation, needsCallbackUrlsBeforeOidc } from '../lib/oidc';
 import { useWhoAmI } from '../lib/whoami';
 
 interface OidcDiscoveryFailure {
@@ -20,6 +20,9 @@ interface PatchResponse {
   authentikConflictAdoptable?: true;
   oidcDiscoveryFailures?: OidcDiscoveryFailure[];
   oidcSkipped?: AuthentikSkip[];
+  // Set only when this save changed the mobile redirect list and the
+  // instance-wide mobile consent step reported a conflict or error.
+  mobileConsentProblems?: string[];
 }
 
 interface Props {
@@ -186,8 +189,10 @@ type OidcUrlListFieldName = 'oidcRedirectUris' | 'oidcMobileRedirectUris';
 // Shared state/save logic for one OIDC callback-URL list field. Neither
 // field itself triggers the OIDC-client deletion confirmation (only
 // switching modes or clearing the access tier does, per FR-022a) -- the
-// server still validates each URL is an absolute http(s) address (400
-// otherwise), surfaced the same way any other save error is.
+// server still validates each entry (400 otherwise), surfaced the same way
+// any other save error is: the web list must be absolute http(s) URLs, while
+// the mobile list also allows custom schemes (javascript:/data:/file:/
+// vbscript: are rejected).
 function useOidcUrlListField(guest: GuestEntry, onSaved: () => void, field: OidcUrlListFieldName) {
   const { whoami } = useWhoAmI();
   const storedValue = guest[field];
@@ -198,6 +203,7 @@ function useOidcUrlListField(guest: GuestEntry, onSaved: () => void, field: Oidc
   const [discoveryFailures, setDiscoveryFailures] = useState<OidcDiscoveryFailure[]>([]);
   const [conflictAdoptable, setConflictAdoptable] = useState(false);
   const [skipped, setSkipped] = useState<AuthentikSkip[]>([]);
+  const [mobileConsentProblems, setMobileConsentProblems] = useState<string[]>([]);
 
   useEffect(() => {
     setValue((storedValue ?? []).join('; '));
@@ -218,12 +224,14 @@ function useOidcUrlListField(guest: GuestEntry, onSaved: () => void, field: Oidc
     setConflictAdoptable(false);
     setDiscoveryFailures([]);
     setSkipped([]);
+    setMobileConsentProblems([]);
     try {
       const res = await patchGuest(guest.name, { [field]: value });
       setConflicts(res.authentikConflicts ?? []);
       setConflictAdoptable(res.authentikConflictAdoptable === true);
       setDiscoveryFailures(res.oidcDiscoveryFailures ?? []);
       setSkipped(res.oidcSkipped ?? []);
+      setMobileConsentProblems(res.mobileConsentProblems ?? []);
       if (res.proxySynced) {
         setStatus('saved');
       } else {
@@ -237,23 +245,47 @@ function useOidcUrlListField(guest: GuestEntry, onSaved: () => void, field: Oidc
     }
   };
 
-  return { value, setValue, status, setStatus, error, conflicts, conflictAdoptable, skipped, discoveryFailures, isAdmin, save };
+  return {
+    value,
+    setValue,
+    status,
+    setStatus,
+    error,
+    conflicts,
+    conflictAdoptable,
+    skipped,
+    discoveryFailures,
+    mobileConsentProblems,
+    isAdmin,
+    save,
+  };
 }
 
 interface OidcUrlListFieldProps extends Props {
   field: OidcUrlListFieldName;
   placeholder: string;
   disabledTitle: string;
-  // Extra help text rendered unconditionally below the "Only used in OIDC
-  // mode." note -- only the mobile-redirect field has one today.
+  // Extra help text rendered below the "Only used in OIDC mode." note.
   helpNote?: string;
 }
 
 // Shared render for one OIDC callback-URL list row -- the input, its
 // notes, and the same Authentik banners every Editable* OIDC row shows.
 function OidcUrlListField({ guest, onSaved, field, placeholder, disabledTitle, helpNote }: OidcUrlListFieldProps) {
-  const { value, setValue, status, setStatus, error, conflicts, conflictAdoptable, skipped, discoveryFailures, isAdmin, save } =
-    useOidcUrlListField(guest, onSaved, field);
+  const {
+    value,
+    setValue,
+    status,
+    setStatus,
+    error,
+    conflicts,
+    conflictAdoptable,
+    skipped,
+    discoveryFailures,
+    mobileConsentProblems,
+    isAdmin,
+    save,
+  } = useOidcUrlListField(guest, onSaved, field);
 
   return (
     <div>
@@ -283,13 +315,18 @@ function OidcUrlListField({ guest, onSaved, field, placeholder, disabledTitle, h
           OIDC discovery check failed: {discoveryFailures.map((f) => `${f.slug} (${f.issuer}): ${f.error}`).join('; ')}
         </div>
       )}
+      {field === 'oidcMobileRedirectUris' && mobileConsentProblems.length > 0 && (
+        <div className="warning-banner">
+          Saved, but the mobile consent step was not updated: {mobileConsentProblems.join('; ')}
+        </div>
+      )}
     </div>
   );
 }
 
 // The "callback urls" row -- the web browser's own OIDC callback address.
-// Rendered/behaved identically to before this was factored out: same
-// placeholder, same disabled title, no extra help note.
+// Shown in forward mode too while a gated guest has none (issue #22 final
+// review F1), since the server refuses the switch to OIDC until one is set.
 export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
   return (
     <OidcUrlListField
@@ -298,6 +335,7 @@ export function EditableOidcRedirectUris({ guest, onSaved }: Props) {
       field="oidcRedirectUris"
       placeholder="https://media.example.com/auth/callback"
       disabledTitle="Only an admin may change callback URLs"
+      helpNote={needsCallbackUrlsBeforeOidc(guest) ? 'Needed before switching auth mode to OIDC.' : undefined}
     />
   );
 }

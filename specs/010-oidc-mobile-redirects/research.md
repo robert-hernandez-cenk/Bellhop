@@ -10,7 +10,7 @@ All API shapes below were read (GET only) from a live Authentik 2026.8.2 instanc
 
 ## R2. Where the cross-list duplicate rule lives
 
-- **Decision**: In `oidcConfigErrors(entry)` (`src/lib/inventory.ts`), called only from `commitGuestEdit`. The message names each duplicated URI. It's not in `validateInventory()` and not in the zod schema.
+- **Decision**: In `oidcConfigErrors(entry)` (`src/lib/inventory.ts`), called only from `commitGuestEdit`, and only for an edit that changed either list (`checkCrossListDuplicates`), so a duplicate already saved never blocks an unrelated edit. The message names each duplicated URI. It's not in `validateInventory()` and not in the zod schema.
 - **Rationale**: The existing research R7 of spec 002 and CLAUDE.md's rule: write-time OIDC checks never run on load, so a hand-edited row can't make the inventory refuse to load. A duplicate is harmless to the sync anyway: the client set is deduplicated (R3), and a URI in both lists simply gets the consent click.
 - **Alternatives considered**: A zod `superRefine` on each entry schema — rejected, it would run on every load.
 
@@ -91,11 +91,12 @@ Given `wanted = uris.length > 0`:
 
 ## R10. Surfacing in the Dashboard push-live step
 
-- **Decision**: `syncProxyLive` logs `mobileConsent.conflicts` and `mobileConsent.error` with `logWarn`, the same as other instance-wide conditions (`missingRungs`). `SyncProxyLiveResult` gains nothing (FR-018): it's instance-wide, not about the edited guest, and there's no Dashboard action to offer.
+- **Decision**: `syncProxyLive` logs `mobileConsent.conflicts` and `mobileConsent.error` with `logWarn`, the same as other instance-wide conditions (`missingRungs`), and also returns them as `SyncProxyLiveResult.authentikMobileConsentProblems` (conflicts first, then the error). `commitGuestEdit` echoes that list as `mobileConsentProblems` only when the edit changed the guest's `oidcMobileRedirectUris` (FR-018), and the Dashboard renders it as a warning banner under the mobile redirect URL field. The MCP `edit_guest` tool returns the same result.
+- **Rationale**: The Dashboard's guest PATCH runs `syncProxyLive` outside any job, so a `logWarn` alone reaches only the service's stderr; the admin who just saved a mobile URI would never learn the consent step didn't follow. Scoping the echo to edits of that list keeps an instance-wide problem from showing on every unrelated save.
 
 ## R11. Access tab
 
-- **Decision**: `AdvancedGuestModal` gets a two-button tab strip (`role="tablist"`, `aria-selected`) and renders one panel at a time; General is the default. Which Access fields show is decided by a framework-free helper, `accessFieldsFor(authMode)` in `web-client/src/lib/oidc.ts` (tested with plain `node --test`, like `admin-nav.ts`). It reads the entry's *saved* `authMode ?? 'forward'`, since each field saves independently. Hidden fields are simply not rendered, so their values are untouched. The new `EditableOidcMobileRedirectUris` lives beside `EditableOidcRedirectUris` in `EditableAuthMode.tsx` and reuses its save and admin handling, with the one help line under it. The existing `OidcCredentials` row keeps its `isOidcEffective` condition inside the OIDC set.
+- **Decision**: `AdvancedGuestModal` gets a two-button tab strip (`role="tablist"`, `aria-selected`) and renders one panel at a time; General is the default. Which Access fields show is decided by a framework-free helper, `accessFieldsFor(guest)` in `web-client/src/lib/oidc.ts` (tested with plain `node --test`, like `admin-nav.ts`). It reads the entry's *saved* `authMode ?? 'forward'`, since each field saves independently. One exception: a gated forward-mode guest with no web callback URL also gets the callback URL field, noted "Needed before switching auth mode to OIDC.", since the switch is refused until one exists (`accessFieldsFor(guest)` takes the guest for this). Hidden fields are simply not rendered, so their values are untouched. The new `EditableOidcMobileRedirectUris` lives beside `EditableOidcRedirectUris` in `EditableAuthMode.tsx` and reuses its save and admin handling, with the one help line under it. The existing `OidcCredentials` row keeps its `isOidcEffective` condition inside the OIDC set.
 - **Rationale**: Showing by saved mode matches how every field in this dialog works: each saves on its own, and the mode dropdown's save triggers `onSaved`, which refreshes the guest.
 - **Alternatives considered**: A separate Access modal — rejected by the issue.
 

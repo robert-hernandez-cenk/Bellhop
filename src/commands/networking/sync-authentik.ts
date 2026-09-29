@@ -1045,8 +1045,12 @@ async function planMobileConsent(uris: string[], authentik: AuthentikClient): Pr
   let stage: AuthentikStageRef | undefined;
   let policy: AuthentikPolicyRef | undefined;
   try {
-    stage = await authentik.findStageByName(MOBILE_CONSENT_STAGE_NAME);
-    policy = await authentik.findPolicyByName(MOBILE_CONSENT_POLICY_NAME);
+    // Independent reads, so fetched together; either failing is handled
+    // the same way below.
+    [stage, policy] = await Promise.all([
+      authentik.findStageByName(MOBILE_CONSENT_STAGE_NAME),
+      authentik.findPolicyByName(MOBILE_CONSENT_POLICY_NAME),
+    ]);
   } catch (err) {
     if (wanted) throw err;
     return empty;

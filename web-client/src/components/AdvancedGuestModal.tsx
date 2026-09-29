@@ -14,6 +14,7 @@ import type { GuestEntry, HostEntry, CustomScripts } from '../api/types';
 import { ADVANCED_FIELD_HELP, type AdvancedFieldLabel } from '../lib/advanced-field-help';
 import { communityScriptsUrl, communityScriptsLinkLabel } from '../lib/guest-display';
 import { isOidcEffective, accessFieldsFor, type AccessField } from '../lib/oidc';
+import { liveHelp, renderedAdvancedFields, type AdvancedTab, type HelpState } from '../lib/advanced-modal';
 
 interface Props {
   guest: GuestEntry;
@@ -24,36 +25,27 @@ interface Props {
   onSaved: () => void;
 }
 
-type Tab = 'general' | 'access';
-
 // At most one field's explanation is open at a time (FR-006), tracked here
 // rather than inside FieldHelp itself so a hover/click on one field can
-// close another. `pinned` distinguishes a hover-opened explanation (closes
-// on hover-out) from a click/tap/keyboard-opened one (stays open until
-// explicitly closed) -- see specs/011-advanced-field-help/data-model.md for
-// the exact transition table `helpFor` below implements.
-interface HelpState {
-  field: AdvancedFieldLabel;
-  pinned: boolean;
-}
+// close another -- see specs/011-advanced-field-help/data-model.md for the
+// exact transition table `helpFor` below implements, and
+// lib/advanced-modal.ts for HelpState and liveHelp.
 
 export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClose, onSaved }: Props) {
-  const [tab, setTab] = useState<Tab>('general');
+  const [tab, setTab] = useState<AdvancedTab>('general');
   const appUrl = communityScriptsUrl(guest, customScripts);
   const appLinkLabel = communityScriptsLinkLabel(guest, customScripts);
-  const accessFields = new Set<AccessField>(accessFieldsFor(guest.authMode));
+  const accessFields = new Set<AccessField>(accessFieldsFor(guest));
   const [help, setHelp] = useState<HelpState | null>(null);
   const showOidcClient = isOidcEffective(guest);
 
-  // A help state for a row that is no longer rendered (the oidc client row
-  // disappears once a save takes the guest out of OIDC mode, and the whole
-  // Access tab's rows disappear while the General tab is showing) counts as
-  // closed, so a pinned explanation left behind there can't block hover on
-  // every other field.
+  // A help state for a row that is not rendered right now (the other tab's
+  // rows, an Access row the guest's auth mode hides, or the oidc client row
+  // outside effective OIDC) counts as closed, so a pinned explanation left
+  // behind there can't block hover on every visible field.
+  const rendered = renderedAdvancedFields(tab, guest);
   function live(state: HelpState | null): HelpState | null {
-    if (state === null) return null;
-    if (state.field === 'oidc client' && !showOidcClient) return null;
-    return state;
+    return liveHelp(state, rendered);
   }
   const current = live(help);
 

@@ -319,6 +319,7 @@ test('syncProxyLive still resolves, with a warning, when the Cloudflare prune th
     authentikOidcSkipped: [],
     authentikForwardSkipped: [],
     authentikOidcDiscoveryFailures: [],
+    authentikMobileConsentProblems: [],
   });
   assert.ok(logs.warn.some((l) => l.includes('prune-acme-challenges: skipped — Cloudflare API 403: Authentication error')));
 });
@@ -482,9 +483,10 @@ test('syncProxyLive warns and returns each forward-auth skip', async () => {
 
 // T016 (issue #22, research.md R10): syncProxyLive logWarns a mobile
 // consent-step conflict or error the same way it already does for other
-// instance-wide sync-authentik conditions (missingRungs, above) --
-// SyncProxyLiveResult gains nothing for either, since there is no
-// Dashboard action to offer and neither is about the edited guest.
+// instance-wide sync-authentik conditions (missingRungs, above), and (final
+// review F3) also returns them as authentikMobileConsentProblems, since the
+// Dashboard's guest PATCH runs outside any job and a logWarn alone never
+// reaches the admin who saved a mobile redirect URI.
 test('syncProxyLive logWarns a mobile consent conflict, prefixed for the mobile consent step', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const authentik = new FakeAuthentikClient({
@@ -508,6 +510,9 @@ test('syncProxyLive logWarns a mobile consent conflict, prefixed for the mobile 
     )
   );
   assert.ok(result, 'the call still resolves successfully despite the conflict');
+  assert.deepEqual(result!.authentikMobileConsentProblems, [
+    `stage '${MOBILE_CONSENT_STAGE_NAME}' exists but is not a consent stage Bellhop created — rename or delete it in Authentik`,
+  ]);
 });
 
 test('syncProxyLive logWarns a mobile consent step error, and the call still resolves successfully', async () => {
@@ -527,6 +532,18 @@ test('syncProxyLive logWarns a mobile consent step error, and the call still res
     )
   );
   assert.ok(result, 'the call still resolves successfully despite the mobile consent step failing');
+  assert.equal(result!.authentikMobileConsentProblems.length, 1);
+  assert.match(result!.authentikMobileConsentProblems[0], /forced failure for createExpressionPolicy/);
+});
+
+test('syncProxyLive returns no mobile consent problems when the consent step succeeds', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  const result = await syncProxyLive({
+    ssh,
+    inventory: oidcGated({ oidcMobileRedirectUris: ['app.example:///oauth-callback'] }),
+    authentik: new FakeAuthentikClient(),
+  });
+  assert.deepEqual(result.authentikMobileConsentProblems, []);
 });
 
 // Final-review fix 3 (FR-011): an adoptable conflict points at

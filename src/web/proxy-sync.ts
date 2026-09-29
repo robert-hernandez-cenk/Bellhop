@@ -43,6 +43,13 @@ export interface SyncProxyLiveResult {
   // of authentikOidcSkipped, returned for the same reason.
   authentikForwardSkipped: ForwardSkip[];
   authentikOidcDiscoveryFailures: { slug: string; issuer: string; error: string }[];
+  // The mobile consent step's conflicts, then its error if any (issue #22,
+  // research.md R10). Instance-wide, but returned for the same
+  // outside-any-job reason as the fields above: an admin saving a mobile
+  // redirect URI from the Dashboard otherwise never learns the consent step
+  // did not follow. commitGuestEdit echoes it only for an edit that changed
+  // that guest's mobile list.
+  authentikMobileConsentProblems: string[];
 }
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
@@ -121,6 +128,7 @@ export async function syncProxyLive(deps: {
     authentikOidcSkipped: [],
     authentikForwardSkipped: [],
     authentikOidcDiscoveryFailures: [],
+    authentikMobileConsentProblems: [],
   };
   // Skipped rather than attempted when there is no Authentik API to talk to.
   // Before issue #123 this ran unconditionally, and runSyncAuthentik calls
@@ -153,14 +161,14 @@ export async function syncProxyLive(deps: {
       logWarn(`sync-authentik: ${failure.slug} — OIDC discovery failed for ${failure.issuer}: ${failure.error}`);
     }
     // The mobile consent step (issue #22, research.md R10): instance-wide,
-    // like missingRungs above, so it's only ever logged here -- there is no
-    // per-guest Dashboard action to offer, and SyncProxyLiveResult gains
-    // nothing for it.
+    // like missingRungs above. Logged for job-triggered callers and returned
+    // for the Dashboard's guest PATCH, which runs outside any job.
     const mobileConsent = authentikResult.mobileConsent;
-    for (const conflict of mobileConsent?.conflicts ?? []) {
-      logWarn(`sync-authentik: mobile consent — ${conflict}`);
-    }
-    if (mobileConsent?.error) logWarn(`sync-authentik: mobile consent — ${mobileConsent.error}`);
+    const mobileConsentProblems = [
+      ...(mobileConsent?.conflicts ?? []),
+      ...(mobileConsent?.error ? [mobileConsent.error] : []),
+    ];
+    for (const problem of mobileConsentProblems) logWarn(`sync-authentik: mobile consent — ${problem}`);
     result = {
       authentikConflicts: authentikResult.conflicts,
       authentikAdoptableConflicts: authentikResult.adoptableConflicts ?? [],
@@ -169,6 +177,7 @@ export async function syncProxyLive(deps: {
       authentikOidcSkipped: oidcSkipped,
       authentikForwardSkipped: forwardSkipped,
       authentikOidcDiscoveryFailures: discoveryFailures,
+      authentikMobileConsentProblems: mobileConsentProblems,
     };
   }
   await pruneAcmeChallengesLive(deps.cloudflare ?? new UnconfiguredCloudflareClient(), deps.inventory);

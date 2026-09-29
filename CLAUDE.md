@@ -144,7 +144,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `oidcRedirectUris`, an OIDC entry with subdomains but no mobile list is
   still complete. A URI must not appear in both lists of the same entry;
   `oidcConfigErrors` enforces this the same write-time-only way it enforces
-  the required-callback rule above -- on `commitGuestEdit` alone, never on
+  the required-callback rule above (and, via its
+  `checkCrossListDuplicates` option, only for an edit that changed either
+  list, so a duplicate already saved never blocks an unrelated edit) -- on `commitGuestEdit` alone, never on
   `validateInventory()`, so a saved inventory always loads regardless of
   what an `AUTHENTIK_AUTHORIZATION_FLOW_SLUG` change or a hand-edited row
   does to it. `sync-authentik`'s exported `clientRedirectUris(entry)`
@@ -1281,9 +1283,24 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   wouldn't be cleaned up, accepted because that combination can't have
   created them in the first place. `syncProxyLive` (the Dashboard push-live
   step) logs `mobileConsent.conflicts`/`mobileConsent.error` via `logWarn`
-  the same as `missingRungs` -- instance-wide, so `SyncProxyLiveResult`
-  itself carries nothing new for it (there's no per-guest Dashboard action
-  to offer).
+  the same as `missingRungs`, and also returns them (conflicts, then the
+  error) as `SyncProxyLiveResult.authentikMobileConsentProblems`, since the
+  guest PATCH runs outside any job and the admin who saved a mobile URI
+  would otherwise never see them. They're instance-wide, so
+  `commitGuestEdit` echoes them as `mobileConsentProblems` only when the
+  edit changed that guest's `oidcMobileRedirectUris` (order-sensitive
+  compare, so resending the same list isn't a change); the Dashboard shows
+  them as a warning banner under the mobile redirect URL field, and MCP
+  `edit_guest` returns the same result.
+
+  Two limits of the consent step's scope: it is bound only to the
+  `AUTHENTIK_AUTHORIZATION_FLOW_SLUG` flow, so an OpenID client using a
+  different authorization flow (e.g. one adopted with `adopt-oidc-client`
+  that was set up with its own) gets the mobile URIs in its
+  `redirect_uris` but no consent step; and `adopt-oidc-client` writes the
+  client's `redirect_uris` (web + mobile) but does not reconcile the
+  consent step itself -- the next `sync-authentik` run (or any Dashboard
+  guest edit, via `syncProxyLive`) creates it.
 
   The web UI's Dashboard auth-group dropdown
   (`EditableAuthGroup.tsx`, replacing the old "requires auth" checkbox,
@@ -1302,10 +1319,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   vmid/subdomains/port/proxy/VPN/app fields and Access holding auth
   group/mode plus whichever of unauthenticated paths (forward mode) or
   callback URLs/mobile redirect URLs/OIDC client info (OIDC mode) apply to
-  the entry's current mode -- `accessFieldsFor(authMode)`
+  the entry's current mode -- `accessFieldsFor(guest)`
   (`web-client/src/lib/oidc.ts`) decides which, reading the entry's saved
   mode rather than any in-progress dropdown edit, so a field hidden by a
-  mode switch keeps its saved value rather than losing it) is
+  mode switch keeps its saved value rather than losing it; one exception,
+  `needsCallbackUrlsBeforeOidc`: a gated forward-mode guest with no web
+  callback URL also gets the callback URLs field, since `oidcConfigErrors`
+  refuses its switch to OIDC until one exists. Which rows are rendered for
+  the current tab, and so which field-help state is still live, comes from
+  `renderedAdvancedFields`/`liveHelp` in `web-client/src/lib/
+  advanced-modal.ts`) is
   admin-only in
   both directions with no raise/lower exception (FR-018, unlike
   `authGroup`'s own asymmetry) -- switching *to* OIDC removes the

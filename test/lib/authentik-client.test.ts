@@ -623,7 +623,7 @@ test('RealAuthentikClient.listFlowStageBindings maps a target-filtered flow-stag
       ]);
       assert.equal(
         requests[0]?.url,
-        'https://auth.example.com/api/v3/flows/bindings/?target=00000000-0000-4000-8000-000000000001'
+        'https://auth.example.com/api/v3/flows/bindings/?target=00000000-0000-4000-8000-000000000001&page_size=500'
       );
     }
   );
@@ -713,7 +713,7 @@ test('RealAuthentikClient.listPolicyBindingsForTarget maps the flow-stage bindin
       ]);
       assert.equal(
         requests[0]?.url,
-        'https://auth.example.com/api/v3/policies/bindings/?target=00000000-0000-4000-8000-000000000008'
+        'https://auth.example.com/api/v3/policies/bindings/?target=00000000-0000-4000-8000-000000000008&page_size=500'
       );
     }
   );

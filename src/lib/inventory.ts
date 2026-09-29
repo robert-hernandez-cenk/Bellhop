@@ -788,40 +788,12 @@ export function parseAuthMode(raw: unknown): 'forward' | 'oidc' | undefined {
   return raw;
 }
 
-// The web UI's Callback URLs field (semicolon-joined free text, matching
-// parseSubdomains/parseUnauthenticatedPaths) or a typed array (CLI/MCP
-// JSON) -> a deduplicated list of absolute http(s) URLs in authored order,
-// or undefined when empty so an entry with none doesn't grow a pointless
-// `oidcRedirectUris: []`. Throws on a non-http(s) entry, naming the bad
-// URL -- same "reject rather than silently drop" precedent as
-// parseUnauthenticatedPaths, since an OIDC client Authentik won't accept
-// is worse than a rejected save.
-export function parseOidcRedirectUris(raw: unknown): string[] | undefined {
-  let list: string[];
-  if (Array.isArray(raw)) {
-    list = raw.map((v) => String(v).trim()).filter(Boolean);
-  } else if (typeof raw === 'string') {
-    if (!raw.trim()) return undefined;
-    list = raw.split(';').map((s) => s.trim()).filter(Boolean);
-  } else {
-    return undefined;
-  }
-  const deduped = Array.from(new Set(list));
-  for (const url of deduped) {
-    if (!isAbsoluteHttpUrl(url)) {
-      throw new Error(`Invalid redirect URI '${url}' (must be an absolute http:// or https:// URL)`);
-    }
-  }
-  return deduped.length > 0 ? deduped : undefined;
-}
-
-// The web UI's mobile-redirect-URI field (semicolon-joined free text) or a
-// typed array (CLI/MCP JSON) -> a deduplicated list of valid mobile hand-off
-// URIs in authored order, or undefined when empty -- same input handling and
-// same "reject rather than silently drop" precedent as parseOidcRedirectUris
-// above, just against isValidMobileRedirectUri's broader (custom-scheme-
-// friendly) rule instead of isAbsoluteHttpUrl's http(s)-only one.
-export function parseOidcMobileRedirectUris(raw: unknown): string[] | undefined {
+// Shared by parseOidcRedirectUris and parseOidcMobileRedirectUris, which
+// differ only in their validator and error message: a ';'-joined string
+// (the web UI's free-text field) or a typed array (CLI/MCP JSON) -> a
+// deduplicated list in authored order, or undefined when empty. Throws on the
+// first invalid entry rather than silently dropping it.
+function parseUriList(raw: unknown, isValid: (uri: string) => boolean, invalidMessage: (uri: string) => string): string[] | undefined {
   let list: string[];
   if (Array.isArray(raw)) {
     list = raw.map((v) => String(v).trim()).filter(Boolean);
@@ -833,13 +805,36 @@ export function parseOidcMobileRedirectUris(raw: unknown): string[] | undefined 
   }
   const deduped = Array.from(new Set(list));
   for (const uri of deduped) {
-    if (!isValidMobileRedirectUri(uri)) {
-      throw new Error(
-        `Invalid mobile redirect URI '${uri}' (must be a valid URI with no whitespace/control characters and not a javascript:/data:/file:/vbscript: scheme)`
-      );
-    }
+    if (!isValid(uri)) throw new Error(invalidMessage(uri));
   }
   return deduped.length > 0 ? deduped : undefined;
+}
+
+// The web UI's Callback URLs field (semicolon-joined free text, matching
+// parseSubdomains/parseUnauthenticatedPaths) or a typed array (CLI/MCP
+// JSON) -> a deduplicated list of absolute http(s) URLs in authored order,
+// or undefined when empty so an entry with none doesn't grow a pointless
+// `oidcRedirectUris: []`. Throws on a non-http(s) entry, naming the bad
+// URL -- same "reject rather than silently drop" precedent as
+// parseUnauthenticatedPaths, since an OIDC client Authentik won't accept
+// is worse than a rejected save.
+export function parseOidcRedirectUris(raw: unknown): string[] | undefined {
+  return parseUriList(raw, isAbsoluteHttpUrl, (url) => `Invalid redirect URI '${url}' (must be an absolute http:// or https:// URL)`);
+}
+
+// The web UI's mobile-redirect-URI field (semicolon-joined free text) or a
+// typed array (CLI/MCP JSON) -> a deduplicated list of valid mobile hand-off
+// URIs in authored order, or undefined when empty -- same input handling and
+// same "reject rather than silently drop" precedent as parseOidcRedirectUris
+// above, just against isValidMobileRedirectUri's broader (custom-scheme-
+// friendly) rule instead of isAbsoluteHttpUrl's http(s)-only one.
+export function parseOidcMobileRedirectUris(raw: unknown): string[] | undefined {
+  return parseUriList(
+    raw,
+    isValidMobileRedirectUri,
+    (uri) =>
+      `Invalid mobile redirect URI '${uri}' (must be a valid URI with no whitespace/control characters and not a javascript:/data:/file:/vbscript: scheme)`
+  );
 }
 
 // Write-level validation for an OIDC-gated entry (research R7): deliberately
@@ -848,13 +843,19 @@ export function parseOidcMobileRedirectUris(raw: unknown): string[] | undefined 
 // hand edit to the database can never make the inventory refuse to load.
 // Called from the write path (commitGuestEdit) instead; the sync's own skip
 // report catches anything that reached the database another way.
-export function oidcConfigErrors(entry: {
-  authGroup?: string;
-  authMode?: 'forward' | 'oidc';
-  subdomains?: string[];
-  oidcRedirectUris?: string[];
-  oidcMobileRedirectUris?: string[];
-}): string[] {
+// `checkCrossListDuplicates` is false when the edit changed neither URI list,
+// so a duplicate already saved (a hand edit, or an older build) never blocks
+// an unrelated later edit such as a port change.
+export function oidcConfigErrors(
+  entry: {
+    authGroup?: string;
+    authMode?: 'forward' | 'oidc';
+    subdomains?: string[];
+    oidcRedirectUris?: string[];
+    oidcMobileRedirectUris?: string[];
+  },
+  { checkCrossListDuplicates = true }: { checkCrossListDuplicates?: boolean } = {}
+): string[] {
   const errors: string[] = [];
   if (
     effectiveAuth(entry) === 'oidc' &&
@@ -867,6 +868,7 @@ export function oidcConfigErrors(entry: {
   // callback set is deduplicated regardless, see sync-authentik's
   // clientRedirectUris), but almost certainly an authoring mistake, so it's
   // rejected at write time the same way an invalid URI itself is.
+  if (!checkCrossListDuplicates) return errors;
   const webUris = new Set(entry.oidcRedirectUris ?? []);
   for (const uri of entry.oidcMobileRedirectUris ?? []) {
     if (webUris.has(uri)) {

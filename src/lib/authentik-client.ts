@@ -903,7 +903,7 @@ export class RealAuthentikClient implements AuthentikClient {
   async listFlowStageBindings(flowId: string): Promise<AuthentikFlowStageBinding[]> {
     const res = await this.request<{ results: RawFlowStageBinding[] }>(
       'GET',
-      `/api/v3/flows/bindings/?target=${encodeURIComponent(flowId)}`
+      `/api/v3/flows/bindings/?target=${encodeURIComponent(flowId)}&page_size=500`
     );
     return res.results.map((r) => this.toFlowStageBinding(r));
   }
@@ -947,7 +947,7 @@ export class RealAuthentikClient implements AuthentikClient {
   async listPolicyBindingsForTarget(targetId: string): Promise<AuthentikPolicyBindingDetail[]> {
     const res = await this.request<{ results: RawPolicyBindingDetail[] }>(
       'GET',
-      `/api/v3/policies/bindings/?target=${encodeURIComponent(targetId)}`
+      `/api/v3/policies/bindings/?target=${encodeURIComponent(targetId)}&page_size=500`
     );
     return res.results.map((r) => ({
       id: String(r.pk),

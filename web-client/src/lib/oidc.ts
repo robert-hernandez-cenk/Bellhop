@@ -43,9 +43,23 @@ export type AccessField =
   | 'mobileRedirectUrls'
   | 'oidcClient';
 
-export function accessFieldsFor(authMode?: 'forward' | 'oidc'): AccessField[] {
-  if (authMode === 'oidc') {
+export interface AccessFieldsInput extends OidcEntryLike {
+  oidcRedirectUris?: string[];
+}
+
+// The server refuses to switch a gated guest with subdomains to OIDC until
+// it has a web callback URL (oidcConfigErrors), so a gated guest outside
+// OIDC mode with none yet still needs the callback urls field -- otherwise
+// the Dashboard could never move it from forward-auth to OIDC.
+export function needsCallbackUrlsBeforeOidc(guest: AccessFieldsInput): boolean {
+  return !!guest.authGroup && guest.authMode !== 'oidc' && (guest.oidcRedirectUris?.length ?? 0) === 0;
+}
+
+export function accessFieldsFor(guest: AccessFieldsInput): AccessField[] {
+  if (guest.authMode === 'oidc') {
     return ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient'];
   }
-  return ['authGroup', 'authMode', 'unauthenticatedPaths'];
+  const fields: AccessField[] = ['authGroup', 'authMode', 'unauthenticatedPaths'];
+  if (needsCallbackUrlsBeforeOidc(guest)) fields.push('callbackUrls');
+  return fields;
 }

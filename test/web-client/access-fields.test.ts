@@ -1,21 +1,46 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { accessFieldsFor } from '../../web-client/src/lib/oidc.ts';
+import { accessFieldsFor, needsCallbackUrlsBeforeOidc } from '../../web-client/src/lib/oidc.ts';
 
-test('accessFieldsFor(undefined) returns the forward-auth field set', () => {
-  assert.deepEqual(accessFieldsFor(undefined), ['authGroup', 'authMode', 'unauthenticatedPaths']);
+const FORWARD = ['authGroup', 'authMode', 'unauthenticatedPaths'];
+const OIDC = ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient'];
+
+test('accessFieldsFor on an ungated guest with no authMode returns the forward-auth field set', () => {
+  assert.deepEqual(accessFieldsFor({}), FORWARD);
 });
 
-test("accessFieldsFor('forward') returns the forward-auth field set", () => {
-  assert.deepEqual(accessFieldsFor('forward'), ['authGroup', 'authMode', 'unauthenticatedPaths']);
+test("accessFieldsFor on an ungated 'forward' guest returns the forward-auth field set", () => {
+  assert.deepEqual(accessFieldsFor({ authMode: 'forward' }), FORWARD);
 });
 
-test("accessFieldsFor('oidc') returns the OIDC field set", () => {
-  assert.deepEqual(accessFieldsFor('oidc'), [
-    'authGroup',
-    'authMode',
-    'callbackUrls',
-    'mobileRedirectUrls',
-    'oidcClient',
-  ]);
+test("accessFieldsFor on an 'oidc' guest returns the OIDC field set", () => {
+  assert.deepEqual(accessFieldsFor({ authMode: 'oidc', authGroup: 'bellhop-users' }), OIDC);
+  assert.deepEqual(accessFieldsFor({ authMode: 'oidc' }), OIDC);
+});
+
+// F1 (#22 final review): switching a gated guest to OIDC is refused until it
+// has a web callback URL, so forward mode must still offer that field then.
+test('accessFieldsFor on a gated forward guest with no callback URL adds callback urls', () => {
+  const expected = ['authGroup', 'authMode', 'unauthenticatedPaths', 'callbackUrls'];
+  assert.deepEqual(accessFieldsFor({ authGroup: 'bellhop-users' }), expected);
+  assert.deepEqual(accessFieldsFor({ authGroup: 'bellhop-users', authMode: 'forward', oidcRedirectUris: [] }), expected);
+});
+
+test('accessFieldsFor on a gated forward guest that already has a callback URL hides it again', () => {
+  assert.deepEqual(
+    accessFieldsFor({ authGroup: 'bellhop-users', authMode: 'forward', oidcRedirectUris: ['https://app.example.com/cb'] }),
+    FORWARD
+  );
+});
+
+test('needsCallbackUrlsBeforeOidc is true only for a gated, non-OIDC guest with no callback URL', () => {
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users' }), true);
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', authMode: 'forward' }), true);
+  assert.equal(needsCallbackUrlsBeforeOidc({}), false);
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: null }), false);
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', authMode: 'oidc' }), false);
+  assert.equal(
+    needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', oidcRedirectUris: ['https://app.example.com/cb'] }),
+    false
+  );
 });
