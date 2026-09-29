@@ -16,21 +16,40 @@ npm run web:start                 # production: one Express server serving both 
 `index.html`. Only `web:dev` runs a separate frontend process (Vite's dev
 server, for hot-reload), proxying API calls to the same backend.
 
-The Dashboard shows inventory (hosts, guests, bridges, storages), lets you
-run provisioning actions (create-lxc/create-vm/install-app/
-deploy-vpn-gateway/delete-guest/migrate-guest/attach-nfs-mount/
-migrate-nfs-mount) and maintenance actions (sync-inventory) from forms
-instead of flags, and streams every action's live log via WebSocket on a Job
-page — every job also lands in Job History afterward. Each guest row also
-has its own Start/Shutdown icon buttons (`guest-power` under the hood) for
-one-off actions without opening a form. A guest row's Advanced link opens a
-modal with its less-common fields (auth group, unauthenticated paths, vpn,
-and the rest); each one has an ⓘ next to its label with a one-to-two-sentence
-explanation, reachable by hover, tap or keyboard.
+The Dashboard shows inventory (hosts, guests, bridges, storages). Each guest
+row has its own Start/Shutdown icon buttons (`guest-power` under the hood)
+for one-off actions without opening a form. A guest row's Advanced link
+opens a modal with its less-common fields (auth group, unauthenticated
+paths, vpn, and the rest); each one has an ⓘ next to its label with a
+one-to-two-sentence explanation, reachable by hover, tap or keyboard.
+
+On a phone-width screen (640px or narrower) the sidebar folds into a menu
+button and every table becomes a stack of cards, one per row, each value
+labelled with its column name:
+
+![The Bellhop Dashboard on a phone: a menu button and page title at the top, then each host shown as a card listing its name, MID scheme and SSH target](images/dashboard-phone.png)
+
+Provisioning actions (create-lxc/create-vm/install-app/deploy-vpn-gateway/
+delete-guest/migrate-guest/attach-nfs-mount/migrate-nfs-mount) and
+maintenance actions (sync-inventory) run from forms instead of flags. The
+Install App form's App field suggests community-scripts apps as you type,
+grouped by repository:
+
+![The Install App form with "ar" typed into the App field and a suggestion list open below it, showing matching apps under "ProxmoxVE (stable)" and "ProxmoxVED (development)"](images/install-app-catalog.png)
+
+Every action streams its live log via WebSocket on a Job page, and every job
+also lands in Job History afterward:
+
+![A finished install-app job's page in the dark theme, with a SUCCESS badge and the full log of creating and installing the jellyfin container](images/job-log.png)
+
 Updating apt packages and community-script apps has its own dedicated
 `/update` page instead, showing a card per host/guest with an apt-update
 icon and, for guests with an app installed, a second community-script-update
-icon. Changes that touch
+icon:
+
+![The Update page: a card per Proxmox host with an OS-package update button, and a card per guest with the installed app's name and buttons for an OS-package update and a community-script update](images/update-page.png)
+
+Changes that touch
 subdomains (a new guest's Subdomains field, editing an existing guest's
 subdomains, deleting a guest that had any) automatically re-run
 `sync-proxy` and `render-status-page` in the same job, so the live

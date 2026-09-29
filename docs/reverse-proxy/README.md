@@ -17,6 +17,8 @@ UI's Settings page presents this choice as a dropdown of every driver
 Bellhop supports, rather than a free-text field — see [Inventory-wide
 settings](../configuration.md#inventory-wide-settings).
 
+![The Settings page's Proxy driver dropdown set to "Caddy (default)", followed by the Proxy config path field showing the Caddy driver's default path](../images/settings-proxy-driver.png)
+
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
 both `forward` and `oidc`) and whether it issues TLS certificates itself
 through Cloudflare DNS-01 (`acmeDns01ViaCloudflare`, which gates whether

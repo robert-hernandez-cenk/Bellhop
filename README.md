@@ -13,6 +13,8 @@ Bellhop is an independent project, not affiliated with or endorsed by
 Proxmox Server Solutions GmbH. Proxmox is a registered trademark of
 Proxmox Server Solutions GmbH.
 
+![The Bellhop web UI Dashboard: a sidebar of provisioning and maintenance actions, two Proxmox hosts with their MID schemes and SSH targets, and a table of guests with their IP addresses, subdomains and Start, Shutdown and Delete buttons](docs/images/dashboard.png)
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 24

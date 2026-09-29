@@ -62,6 +62,8 @@ external site is DB/CLI-only, the same as `authGroup` itself. Then run
 the same sync as part of its push-live step) to create the OpenID client
 in Authentik.
 
+![The guest Advanced modal's Access tab for vaultwarden, in OIDC mode: an auth group dropdown, the auth mode set to OIDC, a callback URL, an empty mobile app redirect URL field, and a Show client credentials button](images/guest-access-oidc.png)
+
 **Mobile app redirect URLs.** An OIDC-mode entry also accepts an optional
 `oidcMobileRedirectUris` list, alongside `oidcRedirectUris`, for a native
 mobile app's own sign-in callback — either a custom-scheme URI (e.g.
