@@ -13,7 +13,7 @@ import { parseOperationInput, previewAndEnqueue, scrubSecretValues } from '../op
 import { runEditGuest, EDIT_GUEST_SHAPE } from '../operations/edit-guest.ts';
 import { runOidcClientInfo } from '../commands/networking/oidc-credentials.ts';
 import { checkAppUrl } from '../operations/app-check.ts';
-import { gatewayStatus, gatewayServers, gatewayCities, gatewayGroups, type GatewayResult } from '../operations/vpn-gateway.ts';
+import { gatewayStatus, gatewayServers, gatewayCities, gatewayGroups, connectGateway, type GatewayResult } from '../operations/vpn-gateway.ts';
 import { MAX_LOG_CHUNK, json, pageLog, summarizeJob, text } from './job-helpers.ts';
 import { requestJobControl } from '../web/jobs/job-control.ts';
 import { PromptTracker } from './elicitation.ts';
@@ -195,6 +195,26 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     async (args: { name: string }) => {
       refresh();
       return gatewayResult(await gatewayGroups(deps.inventory, args.name, deps.fetchImpl ?? fetch));
+    }
+  );
+
+  server.registerTool(
+    'connect_vpn_gateway',
+    {
+      description:
+        "Switch a VPN gateway to a different server right now -- no dry run, no job, this is not a preview/apply operation like the tools above. Briefly interrupts traffic for every guest currently routed through this gateway while it reconnects. Valid country/city/group values come from list_vpn_gateway_servers, list_vpn_gateway_cities, and list_vpn_gateway_groups. Returns the gateway's new status.",
+      inputSchema: {
+        name: z.string().describe('VPN gateway guest name (a guest with vpnGateway set)'),
+        country: z.string().default('').describe('Country to connect to, as reported by list_vpn_gateway_servers'),
+        city: z.string().default('').describe('City to connect to, as reported by list_vpn_gateway_cities (optional)'),
+        group: z.string().default('').describe('Server group to connect to, as reported by list_vpn_gateway_groups (optional, NordVPN-only)'),
+      },
+    },
+    async (args: { name: string; country: string; city: string; group: string }) => {
+      refresh();
+      return gatewayResult(
+        await connectGateway(deps.inventory, args.name, { country: args.country, city: args.city, group: args.group }, deps.fetchImpl ?? fetch)
+      );
     }
   );
 

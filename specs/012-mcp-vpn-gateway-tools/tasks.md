@@ -72,8 +72,8 @@ None. No new dependencies or configuration.
 
 **Independent Test**: the fake gateway receives exactly `{country, city, group}`, and its response is returned.
 
-- [ ] T008 [US3] In `test/mcp/build-server.test.ts`, add tests: `connect_vpn_gateway` with `{ name, country: 'Germany', city: 'Berlin', group: 'P2P' }` sends POST `/connect` with that JSON and returns the fake connect body; with only `country` it sends empty `city`/`group`; no job is created (`jobStore.list()` is empty after the call); a 502 `{ error: 'no servers matched' }` gives `isError` with that text.
-- [ ] T009 [US3] In `src/mcp/build-server.ts`, register `connect_vpn_gateway` with `{ name, country, city, group }` (the last three `z.string().default('')`). It calls `connectGateway` through `refresh()` plus `gatewayResult`. Per FR-010, the description says it switches the gateway's VPN server immediately (no dry run, no job), briefly interrupts traffic for every guest routed through that gateway, returns the new status, and that valid values come from the list tools.
+- [x] T008 [US3] In `test/mcp/build-server.test.ts`, add tests: `connect_vpn_gateway` with `{ name, country: 'Germany', city: 'Berlin', group: 'P2P' }` sends POST `/connect` with that JSON and returns the fake connect body; with only `country` it sends empty `city`/`group`; no job is created (`jobStore.list()` is empty after the call); a 502 `{ error: 'no servers matched' }` gives `isError` with that text.
+- [x] T009 [US3] In `src/mcp/build-server.ts`, register `connect_vpn_gateway` with `{ name, country, city, group }` (the last three `z.string().default('')`). It calls `connectGateway` through `refresh()` plus `gatewayResult`. Per FR-010, the description says it switches the gateway's VPN server immediately (no dry run, no job), briefly interrupts traffic for every guest routed through that gateway, returns the new status, and that valid values come from the list tools.
 
 **Checkpoint**: all stories pass.
 
