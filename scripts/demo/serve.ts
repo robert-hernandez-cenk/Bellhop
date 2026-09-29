@@ -24,7 +24,7 @@ async function main(): Promise<number> {
     demo = await startDemoServer({ port });
   } catch (err) {
     if (hasErrorCode(err, 'EADDRINUSE')) {
-      console.error(`Port ${port} is already in use. Set PORT to another port, e.g. PORT=3200 npm run demo`);
+      console.error(`Port ${port} is already in use. Set PORT to another port (PORT=3200 npm run demo in a POSIX shell, $env:PORT=3200; npm run demo in PowerShell)`);
       return 1;
     }
     throw err;

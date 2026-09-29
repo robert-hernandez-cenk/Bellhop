@@ -4,7 +4,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDemoServer } from '../../../scripts/demo/demo-server.ts';
-import { DEMO_CATALOG_SLUGS } from '../../../scripts/demo/demo-fetch.ts';
+import { loadInventory, saveInventory } from '../../../src/lib/inventory.ts';
 
 // startDemoServer mutates process.env (WEB_UI_AUTH_MODE, INVENTORY_FILE,
 // WEB_DATA_DIR, and deletes WEB_UI_DEV_USER -- which `npm test` itself sets --
@@ -69,13 +69,16 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     assert.deepEqual(status.failures, []);
 
     const provisioning = await get('/api/provisioning');
-    assert.ok(Object.keys(provisioning).length > 0 || provisioning.length > 0);
+    assert.ok(
+      provisioning.some((c: { id: string }) => c.id === 'install-app'),
+      'expected the install-app provisioning command'
+    );
 
     const apps = await get('/api/provisioning/install-app/apps');
     assert.ok(apps.stable.length > 0, 'expected a non-empty stable catalog group');
     assert.ok(apps.stable.includes('jellyfin'));
 
-    const check = await get(`/api/provisioning/install-app/check-app?value=${DEMO_CATALOG_SLUGS.stable[2]}`);
+    const check = await get(`/api/provisioning/install-app/check-app?value=jellyfin`);
     assert.equal(check.exists, true, `check-app: ${JSON.stringify(check)}`);
 
     const jobs = await get('/api/jobs');
@@ -93,6 +96,8 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     assert.ok(jobDetail.log.includes('install-app completed successfully.'));
 
     await get('/api/maintenance');
+    const authGroups = await get('/api/auth-groups');
+    assert.ok(Array.isArray(authGroups.rungs) && authGroups.rungs.length > 0, 'expected an auth-group ladder');
     const settings = await get('/api/settings');
     assert.equal(settings.settings.dnsServer, '198.51.100.53');
     assert.ok(settings.proxyDrivers.length > 0);
@@ -103,5 +108,59 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     assert.equal(existsSync(dir), false, 'the temp dir must be removed after close()');
   } finally {
     if (!closed) await demo.close();
+  }
+});
+
+test('demo server never reaches the network through global fetch, even with a custom script repo set or a VPN gateway in inventory', async () => {
+  // Every request not addressed to the demo itself is recorded and refused,
+  // so a code path that falls back to global fetch (instead of the demo's
+  // demoFetch) shows up here rather than as a real outbound call. Installed
+  // before startDemoServer, so a default-parameter `= fetch` captures it too.
+  const realFetch = globalThis.fetch;
+  const outbound: string[] = [];
+  let demoUrl = '';
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (demoUrl && url.startsWith(demoUrl)) return realFetch(input, init);
+    outbound.push(url);
+    throw new Error(`test: outbound request refused: ${url}`);
+  }) as typeof fetch;
+
+  const demo = await startDemoServer({ port: 0, serveClient: false });
+  demoUrl = demo.url;
+  try {
+    const send = (p: string, method: string, body?: unknown) =>
+      fetch(`${demo.url}${p}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+
+    const saved = await send('/api/settings', 'PATCH', { customScriptsRepo: 'example/ProxmoxVED', customScriptsBranch: 'demo' });
+    assert.equal(saved.status, 200, await saved.clone().text());
+
+    const preview = await send('/api/maintenance/update-app/preview', 'POST', { guest: 'jellyfin', app: 'jellyfin' });
+    const previewBody = await preview.json();
+    assert.equal(preview.status, 400, JSON.stringify(previewBody));
+    // demoFetch answers GitHub with a 404, so resolution fails naming the
+    // configured repository -- not with the test stub's "refused" error.
+    assert.match(previewBody.error, /example\/ProxmoxVED/);
+    assert.doesNotMatch(previewBody.error, /outbound request refused/);
+
+    // Networking routes proxy to http://<gateway-ip>:8080; mark one demo
+    // guest as a gateway (inventory reloads from disk on every /api request).
+    const inv = loadInventory(demo.inventoryPath);
+    const gateway = inv.guests.find((g) => g.name === 'pihole');
+    assert.ok(gateway);
+    gateway.vpnGateway = 'nordvpn';
+    saveInventory(demo.inventoryPath, inv);
+    const status = await send('/api/networking/gateways/pihole/status', 'GET');
+    const statusBody = await status.json();
+    assert.doesNotMatch(statusBody.error ?? '', /outbound request refused/, JSON.stringify(statusBody));
+
+    assert.deepEqual(outbound, [], `the demo reached the network through global fetch: ${outbound.join(', ')}`);
+  } finally {
+    await demo.close();
+    globalThis.fetch = realFetch;
   }
 });

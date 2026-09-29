@@ -20,7 +20,7 @@ server, for hot-reload), proxying API calls to the same backend.
 
 ```bash
 npm run web:build
-npm run demo         # PORT=3200 npm run demo to use a different port
+npm run demo
 ```
 
 Prints `Bellhop demo running at http://127.0.0.1:3100 -- example data only,
@@ -32,7 +32,9 @@ key required. Every write (a guest edit, an install-app run, a settings
 change) lands only in a temporary directory that `Ctrl+C` removes along with
 the server; the repository's own inventory and `data/` are never read or
 written. Stopping and starting it again always comes back to the same
-starting data. Set `PORT` to run it on a port other than `3100`.
+starting data. To run it on a port other than `3100`, set `PORT` to another
+port: `PORT=3200 npm run demo` in a POSIX shell, or `$env:PORT=3200; npm run demo`
+in PowerShell.
 
 The Dashboard shows inventory (hosts, guests, bridges, storages). Each guest
 row has its own Start/Shutdown icon buttons (`guest-power` under the hood)

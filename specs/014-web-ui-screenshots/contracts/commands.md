@@ -14,7 +14,7 @@ Behavior:
    `The web UI has not been built yet. Run: npm run web:build` and exit 1.
 2. Otherwise start the demo instance (research R1), bound to 127.0.0.1 only, then print
    `Bellhop demo running at http://127.0.0.1:<port> -- example data only, nothing reaches a real host. Press Ctrl+C to stop.`
-3. On `EADDRINUSE`: print `Port <port> is already in use. Set PORT to another port, e.g. PORT=3200 npm run demo` and exit 1.
+3. On `EADDRINUSE`: print `Port <port> is already in use. Set PORT to another port (PORT=3200 npm run demo in a POSIX shell, $env:PORT=3200; npm run demo in PowerShell)` and exit 1.
 4. On SIGINT/SIGTERM: stop the server, remove the temp directory, exit 0.
 
 Guarantees: reads nothing under `data/` or `inventory/bellhop.db`; writes only to its temp

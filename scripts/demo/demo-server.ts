@@ -55,8 +55,9 @@ const DEMO_HOST = '127.0.0.1';
 // The identity a reverse proxy's Authentik forward-auth would add for a
 // signed-in admin (research R4). With these present, the Sidebar shows a
 // normal signed-in admin instead of the "no authentication configured"
-// warning a real header-less deployment deserves.
-const DEMO_IDENTITY_HEADERS = {
+// warning a real header-less deployment deserves. Exported so the
+// example-data guard can check the username, email, and group it carries.
+export const DEMO_IDENTITY_HEADERS = {
   'x-authentik-username': 'admin',
   'x-authentik-email': 'admin@example.com',
   'x-authentik-groups': 'bellhop-admins',

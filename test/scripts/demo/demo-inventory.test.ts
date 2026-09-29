@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadInventory, saveInventory, effectiveAuth } from '../../../src/lib/inventory.ts';
 import { buildDemoInventory } from '../../../scripts/demo/demo-inventory.ts';
-import { DEMO_JOB_LOGS } from '../../../scripts/demo/demo-jobs.ts';
+import { DEMO_JOB_DEFS, DEMO_JOB_LOGS } from '../../../scripts/demo/demo-jobs.ts';
+import { DEMO_IDENTITY_HEADERS } from '../../../scripts/demo/demo-server.ts';
 import { DemoSSHClient, DEMO_AUTHORIZED_KEY, DEMO_PACKAGE_MANAGER, demoSimulatedOutput } from '../../../scripts/demo/demo-ssh.ts';
 import { demoFetch, DEMO_CATALOG_SLUGS } from '../../../scripts/demo/demo-fetch.ts';
 
@@ -140,9 +141,16 @@ test('buildDemoInventory hosts use pve1/pve2, root ssh_user, and 192.0.2.0/24 ss
 });
 
 // --- Example-data guard (FR-019, research R8) -------------------------------
-// Everything the demo can ever show -- the inventory, every seeded job log,
-// every canned DemoSSHClient output, and the demo catalog -- must use only
-// documentation address ranges and example domains (Constitution I).
+// Everything the demo can ever show -- the inventory, every seeded job (its
+// log, argsJson, and triggering user), the identity headers the demo server
+// injects, every canned DemoSSHClient output, and the demo catalog -- must use
+// only documentation address ranges, example domains, and Constitution I's
+// example users (admin, test-user) and @example.com email addresses.
+
+const EXAMPLE_USERNAMES = new Set(['admin', 'test-user']);
+// An email needs an alphabetic TLD, so an ssh target like root@198.51.100.3
+// (in a seeded job log) is not mistaken for one.
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b/g;
 
 const EXAMPLE_IPV4_PREFIXES = ['192.0.2.', '198.51.100.', '203.0.113.'];
 const EXAMPLE_DOMAINS = new Set(['example.com', 'example.net', 'example.org']);
@@ -238,6 +246,8 @@ test('example-data guard: every demo value uses documentation IPs and example do
   const sources: Array<[string, string]> = [
     ['demo inventory', JSON.stringify(buildDemoInventory())],
     ...Object.entries(DEMO_JOB_LOGS).map(([name, log]): [string, string] => [`job log ${name}`, log]),
+    ...DEMO_JOB_DEFS.map((job): [string, string] => [`seeded job ${job.command}`, JSON.stringify(job)]),
+    ['demo identity headers', JSON.stringify(DEMO_IDENTITY_HEADERS)],
     ...(await allDemoSshOutputs()).map((out, i): [string, string] => [`DemoSSHClient output #${i}`, out]),
     ...(await allDemoCatalogText()).map((text, i): [string, string] => [`demo catalog #${i}`, text]),
   ];
@@ -251,4 +261,27 @@ test('example-data guard: every demo value uses documentation IPs and example do
     for (const bad of findNonExampleValues(text)) problems.push(`${name}: ${bad}`);
   }
   assert.deepEqual(problems, []);
+});
+
+test('example-data guard: every demo username and email is an example one', async () => {
+  const usernames: Array<[string, string]> = [
+    ...DEMO_JOB_DEFS.map((job): [string, string] => [`seeded job ${job.command} triggeredByUsername`, job.triggeredByUsername]),
+    ['demo identity x-authentik-username', DEMO_IDENTITY_HEADERS['x-authentik-username']],
+  ];
+  const badUsers = usernames.filter(([, user]) => !EXAMPLE_USERNAMES.has(user)).map(([where, user]) => `${where}: ${user}`);
+  assert.deepEqual(badUsers, []);
+
+  const texts = [
+    JSON.stringify(buildDemoInventory()),
+    JSON.stringify(DEMO_JOB_DEFS),
+    JSON.stringify(DEMO_IDENTITY_HEADERS),
+    ...(await allDemoSshOutputs()),
+  ];
+  const emails = texts.flatMap((text) => text.match(EMAIL_RE) ?? []);
+  // The matcher itself: an ssh target is not an email, a real-looking one is.
+  assert.deepEqual('ssh root@198.51.100.3 or me@home.lan'.match(EMAIL_RE), ['me@home.lan']);
+  // Not vacuous: the identity headers carry the signed-in admin's email.
+  assert.ok(emails.includes(DEMO_IDENTITY_HEADERS['x-authentik-email']));
+  const badEmails = emails.filter((email) => !email.toLowerCase().endsWith('@example.com'));
+  assert.deepEqual(badEmails, []);
 });

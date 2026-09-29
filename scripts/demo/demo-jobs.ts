@@ -118,6 +118,9 @@ interface SeededJobDef {
   category: 'provisioning' | 'maintenance';
   target?: string;
   argsJson: string;
+  // Who the Job History 'Triggered by' column shows. Constitution I's
+  // example-user set only (admin, test-user) -- the example-data guard checks.
+  triggeredByUsername: string;
   status: 'success' | 'failed';
   exitCode: number;
   errorMessage?: string;
@@ -126,10 +129,13 @@ interface SeededJobDef {
   finishedAt: string;
 }
 
-const JOB_DEFS: SeededJobDef[] = [
+// Exported so the example-data guard can scan every field the demo shows
+// for a job (argsJson, triggeredByUsername, the log), not just the logs.
+export const DEMO_JOB_DEFS: readonly SeededJobDef[] = [
   {
     command: 'sync-inventory',
     category: 'maintenance',
+    triggeredByUsername: 'admin',
     argsJson: '{}',
     status: 'success',
     exitCode: 0,
@@ -140,6 +146,7 @@ const JOB_DEFS: SeededJobDef[] = [
   {
     command: 'install-app',
     category: 'provisioning',
+    triggeredByUsername: 'admin',
     // The Proxmox host, exactly as the real install-app operation records it
     // (src/operations/provisioning.ts: `target: (i) => i.host`) -- the guest
     // doesn't exist until apply finishes.
@@ -161,6 +168,7 @@ const JOB_DEFS: SeededJobDef[] = [
   {
     command: 'update-all',
     category: 'maintenance',
+    triggeredByUsername: 'admin',
     argsJson: JSON.stringify({ all: true }),
     status: 'success',
     exitCode: 0,
@@ -171,6 +179,7 @@ const JOB_DEFS: SeededJobDef[] = [
   {
     command: 'update-app',
     category: 'maintenance',
+    triggeredByUsername: 'admin',
     target: 'nextcloud',
     argsJson: JSON.stringify({ guest: 'nextcloud', app: 'nextcloud' }),
     status: 'failed',
@@ -196,13 +205,13 @@ export function seedDemoJobs(store: JobStore, jobLog: JobLog, jobsDbPath: string
   const db = new Database(jobsDbPath);
   try {
     const setTimestamps = db.prepare(`UPDATE jobs SET started_at = ?, finished_at = ? WHERE id = ?`);
-    for (const def of JOB_DEFS) {
+    for (const def of DEMO_JOB_DEFS) {
       const id = store.createJob({
         command: def.command,
         category: def.category,
         target: def.target,
         argsJson: def.argsJson,
-        triggeredByUsername: 'admin',
+        triggeredByUsername: def.triggeredByUsername,
         owner,
       });
       const row = store.get(id);

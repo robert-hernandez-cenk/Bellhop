@@ -24,7 +24,7 @@ demo instance that runs the real web UI against invented, example-only data.
 ### User Story 1 - A visitor sees the web UI while reading the docs (Priority: P1)
 
 Someone evaluating Bellhop opens the README on GitHub. Right after the introduction they see
-the Dashboard: hosts, guests with their subdomains, access tiers, and power controls. As they
+the Dashboard: hosts, guests with their type, IP address and subdomains, and power controls. As they
 follow links into the documentation, each page that describes a screen shows that screen next
 to the text: installing an app from the catalog, a job's live log, the Update page, the phone
 layout, the guest access settings, and the proxy driver setting.

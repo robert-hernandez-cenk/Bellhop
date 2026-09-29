@@ -29,7 +29,11 @@ async function launchBrowser(): Promise<Browser | undefined> {
   const failures: string[] = [];
   for (const { name, channel } of BROWSER_CHANNELS) {
     try {
-      return await chromium.launch(channel ? { channel } : {});
+      // Playwright's own SIGINT/SIGTERM handlers close the browser and call
+      // process.exit(130) straight away, which would cut main()'s cleanup
+      // short and leave the temp directories behind; main() closes the
+      // browser itself on those signals instead.
+      return await chromium.launch({ ...(channel ? { channel } : {}), handleSIGINT: false, handleSIGTERM: false });
     } catch (err) {
       failures.push(`  ${name}: ${firstLine(err)}`);
     }
@@ -90,25 +94,52 @@ async function main(): Promise<number> {
   const browser = await launchBrowser();
   if (!browser) return 1;
 
-  let demo: DemoServer | undefined;
   const tempDir = mkdtempSync(path.join(tmpdir(), 'bellhop-screenshots-'));
+  // Kept as a promise so cleanup can close a demo that is still starting
+  // when Ctrl+C arrives, and so its own temp dir is removed too.
+  const demoStarting = startDemoServer({ port: 0 });
+
+  // One idempotent cleanup for both the normal path (finally below) and a
+  // SIGINT/SIGTERM, mirroring scripts/demo/serve.ts's shuttingDown pattern:
+  // without it, Ctrl+C mid-capture left the demo's and this script's temp
+  // directories behind. Each step is guarded so one failure (e.g. a browser
+  // the same Ctrl+C already killed) never skips the rest.
+  let cleaning: Promise<void> | undefined;
+  const cleanup = () => {
+    cleaning ??= (async () => {
+      await browser.close().catch(() => {});
+      await demoStarting.then((demo) => demo.close()).catch(() => {});
+      rmSync(tempDir, { recursive: true, force: true });
+    })();
+    return cleaning;
+  };
+  let shuttingDown = false;
+  const onSignal = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error('Interrupted -- cleaning up.');
+    void cleanup().finally(() => process.exit(1));
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+
   try {
-    demo = await startDemoServer({ port: 0 });
+    const demo = await demoStarting;
     mkdirSync(IMAGES_DIR, { recursive: true });
     for (const shot of SCREENSHOTS) {
       try {
         await capture(browser, demo, shot, tempDir);
       } catch (err) {
-        console.error(`Screenshot ${shot.file} failed: ${firstLine(err)}`);
+        // An interrupt closes the browser under an in-flight capture; that
+        // failure is the interrupt itself, already reported by onSignal.
+        if (!shuttingDown) console.error(`Screenshot ${shot.file} failed: ${firstLine(err)}`);
         return 1;
       }
       console.log(`  wrote docs/images/${shot.file}`);
     }
     return 0;
   } finally {
-    await browser.close();
-    await demo?.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    await cleanup();
   }
 }
 
