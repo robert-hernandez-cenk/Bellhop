@@ -66,8 +66,8 @@ description: "Task list for the Nginx Proxy Manager proxy driver"
 
 **Independent Test**: fake NPM with an unmarked host on a route hostname and another on an unrelated hostname; neither is written; the conflict is previewed and apply throws after applying the rest.
 
-- [ ] T014 [US2] Add tests to `test/lib/proxy/drivers/nginx-proxy-manager.test.ts`: (a) an unmarked host for an unrelated hostname is never updated or deleted; (b) an unmarked host claiming a route's non-canonical hostname -> `! conflict` preview line naming hostname and `#id`; apply creates the other routes, never writes that host, then throws the contract's conflict message; (c) an owned host whose marker line was removed is treated as unmarked; (d) matching is case-insensitive on hostnames
-- [ ] T015 [US2] Implement the conflict path in `src/lib/proxy/drivers/nginx-proxy-manager.ts` (matching rule 3; conflict routes skipped in apply; final throw) until T014 passes
+- [x] T014 [US2] Add tests to `test/lib/proxy/drivers/nginx-proxy-manager.test.ts`: (a) an unmarked host for an unrelated hostname is never updated or deleted; (b) an unmarked host claiming a route's non-canonical hostname -> `! conflict` preview line naming hostname and `#id`; apply creates the other routes, never writes that host, then throws the contract's conflict message; (c) an owned host whose marker line was removed is treated as unmarked; (d) matching is case-insensitive on hostnames
+- [x] T015 [US2] Implement the conflict path in `src/lib/proxy/drivers/nginx-proxy-manager.ts` (matching rule 3; conflict routes skipped in apply; final throw) until T014 passes
 
 **Checkpoint**: US1 + US2 green.
 
@@ -79,8 +79,8 @@ description: "Task list for the Nginx Proxy Manager proxy driver"
 
 **Independent Test**: sync a forward-gated route with `/api/*` and `/health` exempt; `advanced_config` holds `auth_request /outpost.goauthentik.io/auth/nginx;`, `location ^~ "/api/"`, `location = "/health"`, `location /outpost.goauthentik.io`, `location @goauthentik_proxy_signin`, all using `$http_host`; an OIDC route has none of these; removing the gate is previewed as an `advanced_config` update.
 
-- [ ] T016 [US3] Add those assertions to `test/lib/proxy/drivers/nginx-proxy-manager.test.ts`, plus: the outpost `proxy_pass` targets `ctx.outpost` ip:port; a `/*` exemption leaves no `auth_request` line; an exempt path under `/outpost.goauthentik.io/` is skipped
-- [ ] T017 [US3] Make T016 pass (expected to need no driver changes beyond T006/T011; fix `src/lib/proxy/nginx-locations.ts` or the driver if not)
+- [x] T016 [US3] Add those assertions to `test/lib/proxy/drivers/nginx-proxy-manager.test.ts`, plus: the outpost `proxy_pass` targets `ctx.outpost` ip:port; a `/*` exemption leaves no `auth_request` line; an exempt path under `/outpost.goauthentik.io/` is skipped
+- [x] T017 [US3] Make T016 pass (expected to need no driver changes beyond T006/T011; fix `src/lib/proxy/nginx-locations.ts` or the driver if not)
 
 ---
 
@@ -90,8 +90,8 @@ description: "Task list for the Nginx Proxy Manager proxy driver"
 
 **Independent Test**: wildcard present -> both hosts use it and no request; no covering certificate -> preview says request, apply calls `requestCertificate(hostnames)` before creating, and the host uses the new id.
 
-- [ ] T018 [US4] Add tests to `test/lib/proxy/drivers/nginx-proxy-manager.test.ts` for `certificateCovers`/selection (research R8): exact match and one-level wildcard (`*.example.com` covers `app.example.com`, not `a.b.example.com` nor `example.com`); case-insensitive; a certificate covering only some of a route's hostnames is not used; an expired (`expires_on` in the past, UTC) or unparseable one is not used; the current certificate is kept while it still qualifies; otherwise latest `expires_on` then lowest id; no candidate -> `{ kind: 'request' }`, preview `[certificate: request Let's Encrypt for ...]`, apply calls `requestCertificate` right before that route's create/update and uses the returned id; a failed request throws with the route named and no host created for that route
-- [ ] T019 [US4] Implement certificate coverage/selection/request in `src/lib/proxy/drivers/nginx-proxy-manager.ts` (take "now" as an injectable parameter of `planNpmSync` for deterministic tests) until T018 passes
+- [x] T018 [US4] Add tests to `test/lib/proxy/drivers/nginx-proxy-manager.test.ts` for `certificateCovers`/selection (research R8): exact match and one-level wildcard (`*.example.com` covers `app.example.com`, not `a.b.example.com` nor `example.com`); case-insensitive; a certificate covering only some of a route's hostnames is not used; an expired (`expires_on` in the past, UTC) or unparseable one is not used; the current certificate is kept while it still qualifies; otherwise latest `expires_on` then lowest id; no candidate -> `{ kind: 'request' }`, preview `[certificate: request Let's Encrypt for ...]`, apply calls `requestCertificate` right before that route's create/update and uses the returned id; a failed request throws with the route named and no host created for that route
+- [x] T019 [US4] Implement certificate coverage/selection/request in `src/lib/proxy/drivers/nginx-proxy-manager.ts` (take "now" as an injectable parameter of `planNpmSync` for deterministic tests) until T018 passes
 
 ---
 

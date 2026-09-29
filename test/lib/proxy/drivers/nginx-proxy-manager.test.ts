@@ -11,11 +11,14 @@ import { buildRoutes, buildProxyContext } from '../../../../src/lib/proxy/routes
 import type { DriverDeps } from '../../../../src/lib/proxy/driver.ts';
 import {
   NPM_OWNERSHIP_MARKER,
+  certificateCovers,
+  chooseCertificate,
   createNpmDriver,
   isOwned,
   nginxProxyManagerDriver,
   planNpmSync,
 } from '../../../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
+import { render as renderNginx } from '../../../../src/lib/proxy/drivers/nginx.ts';
 import { FakeNpmClient, npmHost } from '../../../support/fake-npm-client.ts';
 import { FakeSSHClient, defaultResponder } from '../../../support/fake-ssh-client.ts';
 
@@ -336,4 +339,510 @@ test('planNpmSync: a mixed-case route hostname against an owned host holding the
   const fresh = planNpmSync([mixed], buildProxyContext(inventory), [], [WILDCARD]);
   const create = fresh.routes[0];
   assert.deepEqual(create.action === 'create' && create.desired.domain_names, ['app.example.com', 'www.example.com']);
+});
+
+// =============================================================================
+// User Story 2 (T014): never touch a proxy host Bellhop did not create
+// =============================================================================
+
+const CONFLICT_HINT =
+  '(not created by Bellhop) -- delete or change it in Nginx Proxy Manager, or mark the entry proxyManual';
+
+test('US2: an unmarked host for an unrelated hostname is never updated or deleted, across a create, a drift update and a delete', async () => {
+  const handmade = npmHost({ id: 9, domain_names: ['handmade.example.com'], forward_port: 1234, advanced_config: '# my own config' });
+  const client = new FakeNpmClient({ certificates: [WILDCARD], hosts: [handmade] });
+
+  // Create both routes, then drift one and drop the other.
+  await setup(inv(TWO_ROUTES), client).sync();
+  const result = await setup(inv([{ ...TWO_ROUTES[0], port: 8081 }]), client).sync();
+
+  assert.match(result.preview, /^ {2}~ update {2}app\.example\.com/m);
+  assert.match(result.preview, /^ {2}- delete {2}wiki\.example\.com/m);
+  assert.doesNotMatch(result.preview, /handmade|#9/);
+  assert.ok(client.writes().every((w) => w.id !== 9), 'no write ever names host #9');
+  assert.deepEqual(client.hosts.get(9), handmade);
+});
+
+test("US2: an unmarked host claiming a route's non-canonical hostname -> \"! conflict\" naming it and #id; apply creates the other route, never writes that host, then throws", async () => {
+  const handmade = npmHost({ id: 9, domain_names: ['www.example.com'], advanced_config: '# my own config' });
+  const client = new FakeNpmClient({ certificates: [WILDCARD], hosts: [handmade] });
+  const { plan, driver, deps } = setup(inv(TWO_ROUTES), client);
+
+  const result = await plan();
+  assert.equal(
+    result.preview,
+    [
+      'Nginx Proxy Manager at http://192.0.2.30:81',
+      `  ! conflict www.example.com: already claimed by proxy host #9 ${CONFLICT_HINT}`,
+      '  + create  wiki.example.com -> http://192.0.2.11:3000  [certificate: #3 Wildcard example.com]',
+      '1 change(s), 1 conflict(s)',
+    ].join('\n')
+  );
+
+  await assert.rejects(
+    () => driver.apply(result, deps),
+    new Error(
+      '1 route(s) skipped because a proxy host not created by Bellhop already claims their hostnames: app.example.com (#9) -- delete or change those proxy hosts in Nginx Proxy Manager, or mark the entries proxyManual'
+    )
+  );
+  // The non-conflicting route was still applied, before the throw.
+  assert.deepEqual(client.writes().map((w) => w.method), ['createProxyHost']);
+  assert.deepEqual(client.writes()[0].body!.domain_names, ['wiki.example.com']);
+  assert.deepEqual(client.hosts.get(9), handmade);
+});
+
+test('US2: several conflicts are all named in the final error, with every claiming host id', async () => {
+  const client = new FakeNpmClient({
+    certificates: [WILDCARD],
+    hosts: [
+      npmHost({ id: 9, domain_names: ['app.example.com'] }),
+      npmHost({ id: 10, domain_names: ['www.example.com'] }),
+      npmHost({ id: 11, domain_names: ['wiki.example.com'] }),
+    ],
+  });
+  const { plan, driver, deps } = setup(inv(TWO_ROUTES), client);
+  const result = await plan();
+  assert.match(result.preview, /^ {2}! conflict app\.example\.com, www\.example\.com: already claimed by proxy host #9, #10 /m);
+  assert.match(result.preview, /^0 change\(s\), 2 conflict\(s\)$/m);
+  await assert.rejects(
+    () => driver.apply(result, deps),
+    /^Error: 2 route\(s\) skipped because a proxy host not created by Bellhop already claims their hostnames: app\.example\.com \(#9, #10\), wiki\.example\.com \(#11\) -- /
+  );
+  assert.deepEqual(client.writes(), []);
+});
+
+test('US2: an owned host whose marker line was removed is treated as unmarked -- a conflict for its route, and never deleted', async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  await setup(inv([TWO_ROUTES[1]]), client).sync();
+  // The operator deletes the marker line: the host is theirs now.
+  const host = client.hosts.get(1)!;
+  host.advanced_config = host.advanced_config.split('\n').slice(1).join('\n');
+  assert.equal(isOwned(host), false);
+  const released = structuredClone(host);
+  client.clearCalls();
+
+  // Its route still exists -> conflict, not an update.
+  const same = setup(inv([TWO_ROUTES[1]]), client);
+  const result = await same.plan();
+  assert.match(result.preview, /^ {2}! conflict wiki\.example\.com: already claimed by proxy host #1 /m);
+  await assert.rejects(() => same.driver.apply(result, same.deps), /1 route\(s\) skipped/);
+
+  // No route for it at all -> left alone, not a delete.
+  const none = await setup(inv([]), client).sync();
+  assert.equal(none.preview, ['Nginx Proxy Manager at http://192.0.2.30:81', 'No changes'].join('\n'));
+  assert.deepEqual(client.writes(), []);
+  assert.deepEqual(client.hosts.get(1), released);
+});
+
+test('US2: the marker only counts as the first line of advanced_config', () => {
+  const later = npmHost({ id: 1, domain_names: ['app.example.com'], advanced_config: `# mine\n${NPM_OWNERSHIP_MARKER}` });
+  const indented = npmHost({ id: 2, domain_names: ['app.example.com'], advanced_config: ` ${NPM_OWNERSHIP_MARKER}` });
+  const first = npmHost({ id: 3, domain_names: ['app.example.com'], advanced_config: `${NPM_OWNERSHIP_MARKER}\r\n    client_max_body_size 0;` });
+  assert.equal(isOwned(later), false);
+  assert.equal(isOwned(indented), false);
+  assert.equal(isOwned(first), true);
+});
+
+test("US2: matching is case-insensitive -- an unmarked \"WWW.Example.COM\" conflicts, and an owned \"APP.EXAMPLE.COM\" host is the route's own", async () => {
+  const conflicted = new FakeNpmClient({ certificates: [WILDCARD], hosts: [npmHost({ id: 9, domain_names: ['WWW.Example.COM'] })] });
+  const conflict = await setup(inv([TWO_ROUTES[0]]), conflicted).plan();
+  assert.match(conflict.preview, /^ {2}! conflict www\.example\.com: already claimed by proxy host #9 /m);
+
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  await setup(inv([TWO_ROUTES[0]]), client).sync();
+  client.hosts.get(1)!.domain_names = ['APP.EXAMPLE.COM', 'WWW.EXAMPLE.COM'];
+  const result = await setup(inv([TWO_ROUTES[0]]), client).plan();
+  assert.equal(result.preview, ['Nginx Proxy Manager at http://192.0.2.30:81', '  = ok      app.example.com (#1)', 'No changes'].join('\n'));
+});
+
+// =============================================================================
+// Carried-over fix M1: update order when an alias moves between two owned hosts
+// =============================================================================
+
+test('M1: an alias moving from owned host A to owned host B -> the update releasing it runs (and is previewed) before the one claiming it', async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  await setup(
+    inv([
+      { name: 'a', ip: '192.0.2.10', port: 80, subdomains: ['a', 'b'] },
+      { name: 'c', ip: '192.0.2.11', port: 80, subdomains: ['c'] },
+    ]),
+    client
+  ).sync();
+  assert.deepEqual(client.hosts.get(1)!.domain_names, ['a.example.com', 'b.example.com']);
+  assert.deepEqual(client.hosts.get(2)!.domain_names, ['c.example.com']);
+  client.clearCalls();
+
+  // Route order puts the claimant (c, now [c, b]) first.
+  const { plan, driver, deps } = setup(
+    inv([
+      { name: 'c', ip: '192.0.2.11', port: 80, subdomains: ['c', 'b'] },
+      { name: 'a', ip: '192.0.2.10', port: 80, subdomains: ['a'] },
+    ]),
+    client
+  );
+  const result = await plan();
+  assert.equal(
+    result.preview,
+    [
+      'Nginx Proxy Manager at http://192.0.2.30:81',
+      '  ~ update  a.example.com (#1): domain_names',
+      '  ~ update  c.example.com (#2): domain_names',
+      '2 change(s), 0 conflict(s)',
+    ].join('\n')
+  );
+  await driver.apply(result, deps);
+  assert.deepEqual(
+    client.writes().map((w) => [w.method, w.id]),
+    [
+      ['updateProxyHost', 1],
+      ['updateProxyHost', 2],
+    ]
+  );
+  assert.deepEqual(client.hosts.get(1)!.domain_names, ['a.example.com']);
+  assert.deepEqual(client.hosts.get(2)!.domain_names, ['c.example.com', 'b.example.com']);
+});
+
+test('M1: updates with no name moving between them keep route order', () => {
+  const inventory = inv(TWO_ROUTES);
+  const routes = buildRoutes(inventory);
+  const ctx = buildProxyContext(inventory);
+  const empty = planNpmSync(routes, ctx, [], [WILDCARD]);
+  // Both hosts exist with a drifted port, ids in reverse of route order.
+  const hosts = empty.routes.map((r, i) => {
+    assert.equal(r.action, 'create');
+    if (r.action !== 'create') throw new Error('unreachable');
+    const { certificate: _certificate, ...body } = r.desired;
+    return npmHost({ ...body, id: 20 - i, certificate_id: 3, forward_port: 1 });
+  });
+  const plan = planNpmSync(routes, ctx, hosts, [WILDCARD]);
+  assert.deepEqual(
+    plan.routes.map((r) => (r.action === 'update' ? r.hostId : r.action)),
+    [20, 19]
+  );
+});
+
+test("M1: a genuine cycle (two hosts swapping aliases) keeps route order in both preview and apply, and fails loudly on NPM's rejection", async () => {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  await setup(
+    inv([
+      { name: 'a', ip: '192.0.2.10', port: 80, subdomains: ['a', 'b'] },
+      { name: 'c', ip: '192.0.2.11', port: 80, subdomains: ['c', 'd'] },
+    ]),
+    client
+  ).sync();
+  client.clearCalls();
+
+  const { plan, driver, deps } = setup(
+    inv([
+      { name: 'a', ip: '192.0.2.10', port: 80, subdomains: ['a', 'd'] },
+      { name: 'c', ip: '192.0.2.11', port: 80, subdomains: ['c', 'b'] },
+    ]),
+    client
+  );
+  const result = await plan();
+  assert.match(result.preview, /~ update {2}a\.example\.com \(#1\)[^\n]*\n {2}~ update {2}c\.example\.com \(#2\)/);
+  await assert.rejects(() => driver.apply(result, deps), /d\.example\.com is already in use/);
+  assert.deepEqual(client.writes().map((w) => w.id), [1]);
+});
+
+// =============================================================================
+// User Story 3 (T016): Authentik forward-auth in advanced_config
+// =============================================================================
+
+const ORIGINAL_OUTPOST_PORT = process.env.AUTHENTIK_OUTPOST_PORT;
+
+// buildProxyContext reads the outpost port from AUTHENTIK_OUTPOST_PORT;
+// pinned (and restored) so the developer's own shell can't change the output.
+async function withPinnedOutpostPort(fn: () => Promise<void>): Promise<void> {
+  process.env.AUTHENTIK_OUTPOST_PORT = '9000';
+  try {
+    await fn();
+  } finally {
+    if (ORIGINAL_OUTPOST_PORT === undefined) delete process.env.AUTHENTIK_OUTPOST_PORT;
+    else process.env.AUTHENTIK_OUTPOST_PORT = ORIGINAL_OUTPOST_PORT;
+  }
+}
+
+// An authentik:true entry at 192.0.2.20 (so ctx.outpost is 192.0.2.20:9000)
+// plus one forward-gated guest 'app' at 192.0.2.30:8080.
+function gatedInv(appOverrides: Record<string, unknown> = {}): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
+    guests: [
+      { name: 'auth-lxc', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.0.2.20', authentik: true },
+      {
+        name: 'app-lxc',
+        type: 'lxc',
+        vmid: 120,
+        host: 'pve1',
+        ip: '192.0.2.30',
+        port: 8080,
+        subdomains: ['app'],
+        authGroup: 'bellhop-users',
+        ...appOverrides,
+      },
+    ],
+  };
+}
+
+async function advancedConfigFor(inventory: Inventory): Promise<string> {
+  const client = new FakeNpmClient({ certificates: [WILDCARD] });
+  await setup(inventory, client).sync();
+  const [create] = client.calls.filter((c) => c.method === 'createProxyHost');
+  return create.body!.advanced_config;
+}
+
+// The body of the location opened by `head`, up to its closing `    }`.
+function locationBody(config: string, head: string): string {
+  const lines = config.split('\n');
+  const start = lines.indexOf(`    ${head} {`);
+  assert.ok(start >= 0, `no "${head}" location`);
+  const end = lines.indexOf('    }', start);
+  return lines.slice(start + 1, end).join('\n');
+}
+
+test('US3: a forward-gated route with /api/* and /health exempt carries the whole Authentik recipe, all on $http_host', async () => {
+  await withPinnedOutpostPort(async () => {
+    const config = await advancedConfigFor(gatedInv({ unauthenticatedPaths: ['/api/*', '/health'] }));
+    assert.equal(config.split('\n')[0], NPM_OWNERSHIP_MARKER);
+
+    const root = locationBody(config, 'location /');
+    assert.match(root, /^ {8}auth_request \/outpost\.goauthentik\.io\/auth\/nginx;$/m);
+    assert.match(root, /^ {8}error_page 401 = @goauthentik_proxy_signin;$/m);
+    for (const header of ['username', 'groups', 'email', 'name', 'uid']) {
+      assert.match(root, new RegExp(`^ {8}proxy_set_header X-authentik-${header} \\$bellhop_authentik_${header};$`, 'm'));
+    }
+
+    // One unchecked location per exempt path.
+    for (const head of ['location ^~ "/api/"', 'location = "/health"']) {
+      const body = locationBody(config, head);
+      assert.match(body, /proxy_pass http:\/\/192\.0\.2\.30:8080;/);
+      assert.doesNotMatch(body, /auth_request/);
+    }
+
+    // The outpost passthrough targets ctx.outpost, and the sign-in redirect.
+    const outpost = locationBody(config, 'location /outpost.goauthentik.io');
+    assert.match(outpost, /^ {8}proxy_pass http:\/\/192\.0\.2\.20:9000\/outpost\.goauthentik\.io;$/m);
+    assert.match(outpost, /proxy_set_header X-Original-URL \$scheme:\/\/\$http_host\$request_uri;/);
+    const signin = locationBody(config, 'location @goauthentik_proxy_signin');
+    assert.match(signin, /return 302 \/outpost\.goauthentik\.io\/start\?rd=\$scheme:\/\/\$http_host\$request_uri;/);
+
+    assert.match(config, /proxy_set_header Host \$http_host;/);
+    assert.doesNotMatch(config, /\$bellhop_http_host|\$bellhop_connection_upgrade|\$host\b/);
+  });
+});
+
+test("US3: advanced_config is the nginx driver's own server body with only the two variables swapped (one renderer, FR-016)", async () => {
+  await withPinnedOutpostPort(async () => {
+    const inventory = gatedInv({ unauthenticatedPaths: ['/api/*', '/health'] });
+    const nginxFile = renderNginx(buildRoutes(inventory), buildProxyContext(inventory), '/etc/nginx/conf.d/bellhop.conf')[0].content;
+    const lines = nginxFile.split('\n');
+    // The nginx driver separates its TLS lines from the body with one blank line.
+    const tlsEnd = lines.findIndex((l) => l.startsWith('    ssl_certificate_key '));
+    assert.equal(lines[tlsEnd + 1], '');
+    const start = tlsEnd + 2;
+    const end = lines.lastIndexOf('}');
+    const nginxBody = lines
+      .slice(start, end)
+      .join('\n')
+      .replaceAll('$bellhop_http_host', '$http_host')
+      .replaceAll('$bellhop_connection_upgrade', '$http_connection');
+
+    const config = await advancedConfigFor(inventory);
+    assert.equal(config, `${NPM_OWNERSHIP_MARKER}\n${nginxBody}`);
+  });
+});
+
+test('US3: a /* exemption leaves no auth_request line at all, but keeps the outpost and sign-in locations', async () => {
+  await withPinnedOutpostPort(async () => {
+    const config = await advancedConfigFor(gatedInv({ unauthenticatedPaths: ['/*'] }));
+    assert.doesNotMatch(config, /^\s*auth_request\s/m);
+    assert.doesNotMatch(config, /location \^~ "\/"/);
+    assert.match(config, /^ {4}location \/outpost\.goauthentik\.io \{$/m);
+    assert.match(config, /^ {4}location @goauthentik_proxy_signin \{$/m);
+  });
+});
+
+test('US3: an exempt path inside /outpost.goauthentik.io/ is skipped, and location / keeps its check', async () => {
+  await withPinnedOutpostPort(async () => {
+    const config = await advancedConfigFor(
+      gatedInv({ unauthenticatedPaths: ['/outpost.goauthentik.io/*', '/outpost.goauthentik.io/start', '/health'] })
+    );
+    assert.doesNotMatch(config, /location (=|\^~) "\/outpost/);
+    assert.match(config, /^ {4}location = "\/health" \{$/m);
+    assert.match(locationBody(config, 'location /'), /auth_request \/outpost\.goauthentik\.io\/auth\/nginx;/);
+  });
+});
+
+test('US3: an OIDC-mode route and an ungated route carry no forward-auth configuration', async () => {
+  await withPinnedOutpostPort(async () => {
+    for (const overrides of [{ authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] }, { authGroup: undefined }]) {
+      const config = await advancedConfigFor(gatedInv(overrides));
+      assert.doesNotMatch(config, /auth_request|goauthentik|X-authentik-|proxy_buffers/);
+      assert.match(config, /^ {4}location \/ \{$/m);
+    }
+  });
+});
+
+test('US3: removing the gate is previewed and applied as an advanced_config update on the same host', async () => {
+  await withPinnedOutpostPort(async () => {
+    const client = new FakeNpmClient({ certificates: [WILDCARD] });
+    await setup(gatedInv({ unauthenticatedPaths: ['/api/*'] }), client).sync();
+    client.clearCalls();
+
+    const { plan, driver, deps } = setup(gatedInv({ authGroup: undefined, unauthenticatedPaths: ['/api/*'] }), client);
+    const result = await plan();
+    assert.equal(
+      result.preview,
+      ['Nginx Proxy Manager at http://192.0.2.30:81', '  ~ update  app.example.com (#1): advanced_config', '1 change(s), 0 conflict(s)'].join('\n')
+    );
+    await driver.apply(result, deps);
+    assert.doesNotMatch(client.hosts.get(1)!.advanced_config, /auth_request|goauthentik/);
+  });
+});
+
+// =============================================================================
+// User Story 4 (T018): certificates (research R8)
+// =============================================================================
+
+const NOW = new Date('2026-09-29T00:00:00Z');
+
+function cert(id: number, domainNames: string[], expiresOn = '2099-01-01 00:00:00'): NpmCertificate {
+  return { id, provider: 'letsencrypt', nice_name: `cert ${id}`, domain_names: domainNames, expires_on: expiresOn };
+}
+
+function chosenId(choice: ReturnType<typeof chooseCertificate>): number | 'request' {
+  return choice.kind === 'existing' ? choice.id : 'request';
+}
+
+test('certificateCovers: an exact name, or a wildcard covering exactly one label', () => {
+  assert.equal(certificateCovers(cert(1, ['app.example.com']), 'app.example.com'), true);
+  assert.equal(certificateCovers(cert(1, ['app.example.com']), 'www.example.com'), false);
+  const wildcard = cert(2, ['*.example.com']);
+  assert.equal(certificateCovers(wildcard, 'app.example.com'), true);
+  assert.equal(certificateCovers(wildcard, 'a.b.example.com'), false);
+  assert.equal(certificateCovers(wildcard, 'example.com'), false);
+  assert.equal(certificateCovers(wildcard, 'app.example.org'), false);
+  assert.equal(certificateCovers(wildcard, 'appexample.com'), false);
+});
+
+test('certificateCovers: case-insensitive on both sides', () => {
+  assert.equal(certificateCovers(cert(1, ['*.Example.COM']), 'APP.example.com'), true);
+  assert.equal(certificateCovers(cert(1, ['App.Example.com']), 'app.EXAMPLE.com'), true);
+});
+
+test("chooseCertificate: a certificate covering only some of the route's hostnames is not used", () => {
+  const names = ['app.example.com', 'www.example.com'];
+  assert.deepEqual(chooseCertificate(names, [cert(1, ['app.example.com'])], undefined, NOW), { kind: 'request', domainNames: names });
+  assert.deepEqual(chooseCertificate(names, [cert(1, ['app.example.com']), cert(2, ['app.example.com', '*.example.com'])], undefined, NOW), {
+    kind: 'existing',
+    id: 2,
+    name: 'cert 2',
+  });
+});
+
+test('chooseCertificate: an expired (UTC) or unparseable expires_on is never used', () => {
+  const names = ['app.example.com'];
+  const request = { kind: 'request', domainNames: names };
+  assert.deepEqual(chooseCertificate(names, [cert(1, names, '2026-09-28 23:59:59')], undefined, NOW), request);
+  assert.deepEqual(chooseCertificate(names, [cert(1, names, '2026-09-29 00:00:00')], undefined, NOW), request, 'expiring right now is expired');
+  for (const bad of ['2099-01-01T00:00:00Z', '2099-01-01', '', 'never']) {
+    assert.deepEqual(chooseCertificate(names, [cert(1, names, bad)], undefined, NOW), request, `expires_on ${JSON.stringify(bad)}`);
+  }
+  // Read as UTC: one second after NOW is still valid wherever this test runs.
+  assert.equal(chosenId(chooseCertificate(names, [cert(1, names, '2026-09-29 00:00:01')], undefined, NOW)), 1);
+});
+
+test('chooseCertificate: the current certificate is kept while it qualifies; otherwise latest expires_on, then lowest id', () => {
+  const names = ['app.example.com'];
+  const certs = [cert(3, ['*.example.com'], '2099-01-01 00:00:00'), cert(8, names, '2100-01-01 00:00:00'), cert(5, names, '2100-01-01 00:00:00')];
+  assert.equal(chosenId(chooseCertificate(names, certs, 3, NOW)), 3, 'current kept');
+  assert.equal(chosenId(chooseCertificate(names, certs, undefined, NOW)), 5, 'latest expiry, lowest id');
+  assert.equal(chosenId(chooseCertificate(names, certs, 0, NOW)), 5, 'no certificate yet');
+
+  const currentExpired = [cert(3, names, '2020-01-01 00:00:00'), cert(4, names, '2099-01-01 00:00:00')];
+  assert.equal(chosenId(chooseCertificate(names, currentExpired, 3, NOW)), 4, 'expired current replaced');
+  const currentNarrow = [cert(3, ['app.example.com']), cert(4, ['*.example.com'])];
+  assert.equal(chosenId(chooseCertificate(['app.example.com', 'www.example.com'], currentNarrow, 3, NOW)), 4, 'no-longer-covering current replaced');
+});
+
+test('planNpmSync takes "now": the same certificate list plans differently before and after its expiry', () => {
+  const inventory = inv([TWO_ROUTES[1]]);
+  const routes = buildRoutes(inventory);
+  const ctx = buildProxyContext(inventory);
+  const short = cert(6, ['wiki.example.com'], '2027-01-01 00:00:00');
+  const before = planNpmSync(routes, ctx, [], [short], new Date('2026-12-31T23:59:59Z')).routes[0];
+  const after = planNpmSync(routes, ctx, [], [short], new Date('2027-01-01T00:00:01Z')).routes[0];
+  assert.deepEqual(before.action === 'create' && before.desired.certificate, { kind: 'existing', id: 6, name: 'cert 6' });
+  assert.deepEqual(after.action === 'create' && after.desired.certificate, { kind: 'request', domainNames: ['wiki.example.com'] });
+});
+
+test('US4: each route needing a certificate requests one right before its own create, and uses the returned id', async () => {
+  const client = new FakeNpmClient();
+  const { sync } = setup(inv(TWO_ROUTES), client);
+  const result = await sync();
+  assert.match(result.preview, /\+ create {2}wiki\.example\.com -> http:\/\/192\.0\.2\.11:3000 {2}\[certificate: request Let's Encrypt for wiki\.example\.com\]$/m);
+  const writes = client.writes();
+  assert.deepEqual(writes.map((w) => w.method), ['requestCertificate', 'createProxyHost', 'requestCertificate', 'createProxyHost']);
+  assert.deepEqual(writes[0].domainNames, ['app.example.com', 'www.example.com']);
+  assert.equal(writes[1].body!.certificate_id, 1);
+  assert.deepEqual(writes[2].domainNames, ['wiki.example.com']);
+  assert.equal(writes[3].body!.certificate_id, 2);
+});
+
+test('US4: an owned host whose certificate expired -> "~ update ... certificate_id  [certificate: request ...]", requested right before the update', async () => {
+  const client = new FakeNpmClient({ certificates: [{ ...WILDCARD }] });
+  await setup(inv([TWO_ROUTES[0]]), client).sync();
+  client.certificates[0].expires_on = '2020-01-01 00:00:00';
+  client.clearCalls();
+
+  const { plan, driver, deps } = setup(inv([TWO_ROUTES[0]]), client);
+  const result = await plan();
+  assert.equal(
+    result.preview,
+    [
+      'Nginx Proxy Manager at http://192.0.2.30:81',
+      "  ~ update  app.example.com (#1): certificate_id  [certificate: request Let's Encrypt for app.example.com, www.example.com]",
+      '1 change(s), 0 conflict(s)',
+    ].join('\n')
+  );
+  await driver.apply(result, deps);
+  const writes = client.writes();
+  assert.deepEqual(
+    writes.map((w) => [w.method, w.id]),
+    [
+      ['requestCertificate', undefined],
+      ['updateProxyHost', 1],
+    ]
+  );
+  assert.equal(writes[1].body!.certificate_id, 4);
+  assert.equal(client.hosts.get(1)!.certificate_id, 4);
+});
+
+test("US4: a failed certificate request throws naming the route with NPM's own error, and leaves no proxy host for it", async () => {
+  const client = new FakeNpmClient();
+  client.certificateFailure = 'Some challenges have failed.';
+  const { sync } = setup(inv([TWO_ROUTES[0]]), client);
+  await assert.rejects(
+    sync,
+    new Error(
+      "Could not get a Let's Encrypt certificate for app.example.com: Nginx Proxy Manager API 500 POST /api/nginx/certificates: Internal Error -- Some challenges have failed."
+    )
+  );
+  assert.equal(client.calls.filter((c) => c.method === 'createProxyHost').length, 0);
+  assert.equal(client.hosts.size, 0);
+});
+
+test('US4: a failed certificate request for an update leaves the existing host exactly as it was', async () => {
+  const client = new FakeNpmClient({ certificates: [{ ...WILDCARD }] });
+  await setup(inv([TWO_ROUTES[0]]), client).sync();
+  const before = structuredClone(client.hosts.get(1));
+  client.certificates[0].expires_on = '2020-01-01 00:00:00';
+  client.certificateFailure = 'Some challenges have failed.';
+  client.clearCalls();
+
+  await assert.rejects(setup(inv([TWO_ROUTES[0]]), client).sync(), /^Error: Could not get a Let's Encrypt certificate for app\.example\.com: /);
+  assert.equal(client.calls.filter((c) => c.method === 'updateProxyHost').length, 0);
+  assert.deepEqual(client.hosts.get(1), before);
 });

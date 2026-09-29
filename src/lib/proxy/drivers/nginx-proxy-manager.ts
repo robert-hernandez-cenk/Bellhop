@@ -153,7 +153,9 @@ type Owner = ProxyRoute['owner'];
 
 export type NpmRoutePlan =
   | { action: 'create'; owner: Owner; desired: DesiredProxyHost }
-  | { action: 'update'; owner: Owner; hostId: number; desired: DesiredProxyHost; changed: string[] }
+  // currentDomainNames: the host's names in NPM now (lower-cased), which
+  // orderUpdates needs to run a name's release before its claim.
+  | { action: 'update'; owner: Owner; hostId: number; desired: DesiredProxyHost; changed: string[]; currentDomainNames: string[] }
   | { action: 'unchanged'; owner: Owner; hostId: number; hostnames: string[] }
   | { action: 'conflict'; owner: Owner; canonical: string; hostnames: string[]; hostIds: number[] };
 
@@ -209,7 +211,14 @@ export function planNpmSync(
     planned.push(
       changed.length === 0
         ? { action: 'unchanged', owner: route.owner, hostId: host.id, hostnames: names }
-        : { action: 'update', owner: route.owner, hostId: host.id, desired, changed }
+        : {
+            action: 'update',
+            owner: route.owner,
+            hostId: host.id,
+            desired,
+            changed,
+            currentDomainNames: host.domain_names.map((d) => d.toLowerCase()),
+          }
     );
   }
 
@@ -219,7 +228,38 @@ export function planNpmSync(
     .sort((a, b) => a.id - b.id)
     .map((h) => ({ hostId: h.id, domainNames: [...h.domain_names] }));
 
-  return { routes: planned, deletes };
+  return { routes: orderUpdates(planned), deletes };
+}
+
+type UpdatePlan = Extract<NpmRoutePlan, { action: 'update' }>;
+
+// NPM rejects a write naming a hostname another proxy host still holds, so
+// when an alias moves between two Bellhop hosts that are both being updated,
+// the update releasing it must run before the update claiming it. Deletes
+// already run first (research R10) and creates last; this orders the updates
+// among themselves: update X must precede update Y when X currently holds a
+// name Y wants. A stable topological sort -- among updates that are free to
+// run, the earliest in route order goes next -- so unrelated updates keep
+// route order. A genuine cycle (two hosts swapping aliases) cannot be
+// ordered; its remaining updates keep route order and NPM's own "already in
+// use" rejection fails the apply. The sorted updates go back into the slots
+// updates held, so the preview (which lists plan.routes in order) shows them
+// in exactly the order apply() runs them.
+function orderUpdates(planned: NpmRoutePlan[]): NpmRoutePlan[] {
+  const updates = planned.filter((r): r is UpdatePlan => r.action === 'update');
+  const mustPrecede = (x: UpdatePlan, y: UpdatePlan): boolean =>
+    x !== y && x.currentDomainNames.some((name) => y.desired.domain_names.includes(name));
+
+  const remaining = [...updates];
+  const ordered: UpdatePlan[] = [];
+  while (remaining.length > 0) {
+    const free = remaining.findIndex((y) => !remaining.some((x) => mustPrecede(x, y)));
+    const next = remaining.splice(free === -1 ? 0 : free, 1)[0];
+    ordered.push(next);
+  }
+
+  let i = 0;
+  return planned.map((r) => (r.action === 'update' ? ordered[i++] : r));
 }
 
 // -- Preview ---------------------------------------------------------------------
@@ -325,7 +365,9 @@ async function assertOnline(client: NpmClient, id: number, canonical: string): P
 
 async function applyNpmPlan(client: NpmClient, plan: NpmSyncPlan): Promise<void> {
   // Deletes first, so a hostname moving between two Bellhop hosts is free
-  // before the update/create that claims it (research R10).
+  // before the update/create that claims it (research R10). Updates run in
+  // plan order, which orderUpdates already arranged so an update releasing
+  // a name precedes the update claiming it.
   for (const d of plan.deletes) {
     await client.deleteProxyHost(d.hostId);
   }

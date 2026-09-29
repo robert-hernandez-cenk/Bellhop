@@ -3,7 +3,8 @@
 // (increasing integers), records every call in order, and can be told to
 // mark the next writes offline (meta.nginx_online: false, as NPM does when
 // nginx rejects a host's advanced_config -- research R6) or to fail a
-// certificate request (research R8's certbot failure).
+// certificate request (research R8's certbot failure). Like NPM, it rejects a
+// create/update naming a hostname another proxy host already holds.
 import type { NpmCertificate, NpmClient, NpmProxyHost, NpmProxyHostBody } from '../../src/lib/npm-client.ts';
 
 export interface FakeNpmCall {
@@ -75,6 +76,19 @@ export class FakeNpmClient implements NpmClient {
     this.calls.length = 0;
   }
 
+  // NPM refuses a create/update naming a hostname another proxy host already
+  // holds (fixture proxy-host-create-duplicate-domain.json), so a write
+  // order that claims a name before its old holder released it fails here
+  // the way it does live.
+  private assertNamesFree(method: string, path: string, body: NpmProxyHostBody, selfId?: number): void {
+    for (const name of body.domain_names) {
+      const holder = [...this.hosts.values()].find(
+        (h) => h.id !== selfId && h.domain_names.some((d) => d.toLowerCase() === name.toLowerCase())
+      );
+      if (holder) throw new Error(`Nginx Proxy Manager API 400 ${method} ${path}: ${name} is already in use`);
+    }
+  }
+
   private stored(id: number, body: NpmProxyHostBody): NpmProxyHost {
     return {
       id,
@@ -97,6 +111,7 @@ export class FakeNpmClient implements NpmClient {
 
   async createProxyHost(body: NpmProxyHostBody): Promise<{ id: number }> {
     this.calls.push({ method: 'createProxyHost', body: structuredClone(body) });
+    this.assertNamesFree('POST', '/api/nginx/proxy-hosts', body);
     const id = this.nextHostId++;
     this.hosts.set(id, this.stored(id, body));
     return { id };
@@ -105,6 +120,7 @@ export class FakeNpmClient implements NpmClient {
   async updateProxyHost(id: number, body: NpmProxyHostBody): Promise<void> {
     this.calls.push({ method: 'updateProxyHost', id, body: structuredClone(body) });
     if (!this.hosts.has(id)) throw new Error(`Nginx Proxy Manager API 404 PUT /api/nginx/proxy-hosts/${id}: Not Found - ${id}`);
+    this.assertNamesFree('PUT', `/api/nginx/proxy-hosts/${id}`, body, id);
     this.hosts.set(id, this.stored(id, body));
   }
 
