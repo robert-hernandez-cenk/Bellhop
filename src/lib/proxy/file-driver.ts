@@ -2,7 +2,6 @@ import { runRemote } from '../targets.ts';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
 import type { DriverCapabilities, DriverDeps, ProxyPlan, ReverseProxyDriver } from './driver.ts';
 import type { ProxyDriverId } from './ids.ts';
-import { settingFix } from '../settings-hint.ts';
 
 export interface FileSpec {
   path: string;
@@ -178,13 +177,19 @@ function buildSnapshotCommand(paths: string[]): string {
   return paths.map((p) => `echo ${singleQuote(`==> ${p} <==`)}; cat ${singleQuote(p)}`).join('; ');
 }
 
-// DriverDeps.configPath is null only for a driver with usesConfigFile: false
-// (issue #26), which a fileDriver never is -- driverDeps() always resolves a
-// path for one. Throwing the same message driverDeps() uses for a missing
-// default keeps a wiring mistake from surfacing as a remote `cat 'null'`.
-function requireConfigPath(id: ProxyDriverId, deps: DriverDeps): string {
+// Resolves a file-configured driver's own config path out of DriverDeps,
+// which types configPath as string | null (issue #31, research.md R11: null
+// means the active driver's own defaultConfigPath is null -- a driver with
+// no config file at all, e.g. a REST-managed driver like Nginx Proxy
+// Manager). Every driver fileDriver builds declares a real
+// defaultConfigPath (def.defaultConfigPath below is typed string, never
+// null), so driverDeps() never actually returns null for one of these --
+// seeing null here would mean a driver was built with fileDriver but
+// somehow still resolved to a null configPath, a programming error rather
+// than a state reachable through normal use.
+function requireConfigPath(deps: DriverDeps, id: ProxyDriverId): string {
   if (deps.configPath === null) {
-    throw new Error(`The '${id}' proxy driver has no default config path -- ${settingFix('proxyConfigPath', '</absolute/path>')}`);
+    throw new Error(`${id} driver requires a config path`);
   }
   return deps.configPath;
 }
@@ -235,15 +240,17 @@ export function fileDriver(def: {
     ...(def.configPathNote !== undefined ? { configPathNote: def.configPathNote } : {}),
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
+      const configPath = requireConfigPath(deps, def.id);
       const files = def
-        .render(routes, ctx, requireConfigPath(def.id, deps))
+        .render(routes, ctx, configPath)
         .map((f) => (f.mode === 'managed-section' ? { ...f, content: wrapManagedSection(f.content) } : f));
       return { preview: files.map((f) => f.content).join('\n'), payload: files };
     },
 
     async apply(plan: ProxyPlan, deps: DriverDeps): Promise<void> {
+      const configPath = requireConfigPath(deps, def.id);
       const files = plan.payload as FileSpec[];
-      const validateCommand = def.validateCommand(requireConfigPath(def.id, deps));
+      const validateCommand = def.validateCommand(configPath);
       const script = buildFileDriverScript(files, validateCommand, def.reloadCommand);
       const result = await runRemote(deps.ssh, deps.inventory, deps.proxyHost, script);
       if (result.code !== 0) {
@@ -252,7 +259,8 @@ export function fileDriver(def: {
     },
 
     async snapshot(deps: DriverDeps): Promise<string> {
-      const paths = (def.configFiles ?? ((configPath: string) => [configPath]))(requireConfigPath(def.id, deps));
+      const configPath = requireConfigPath(deps, def.id);
+      const paths = (def.configFiles ?? ((configPath: string) => [configPath]))(configPath);
       const command = buildSnapshotCommand(paths);
       const result = await runRemote(deps.ssh, deps.inventory, deps.proxyHost, command);
       if (result.code !== 0) {

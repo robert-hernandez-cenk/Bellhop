@@ -27,6 +27,11 @@ dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 // src/web/server.ts and src/cli.ts load. A missing file leaves the prune
 // skipped, never failing the operation.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
+// NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for the
+// nginx-proxy-manager proxy driver (issue #31) -- same file src/web/server.ts
+// and src/cli.ts load. A missing file leaves buildNpmClient() to throw its
+// own named error only once a sync actually tries to reach NPM.
+dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
 
 // Deliberately this checkout's own inventory and data dir (paths.ts), like
 // the web service: whichever checkout runs the server is the one it manages.

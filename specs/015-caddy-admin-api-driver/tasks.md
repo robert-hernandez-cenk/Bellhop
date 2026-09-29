@@ -12,9 +12,9 @@ are written first and must fail before its implementation.
 ## Phase 2: Foundational (driver seam)
 
 - [x] T002 Add `'caddy-api'` to `PROXY_DRIVER_IDS` in `src/lib/proxy/ids.ts`
-- [x] T003 Add optional `usesConfigFile?: boolean` ("absent = true") to `ReverseProxyDriver`, and make `DriverDeps.configPath` `string | null`, in `src/lib/proxy/driver.ts`
-- [x] T004 `driverDeps()` resolves `configPath: null` for a driver with `usesConfigFile === false` instead of throwing, in `src/lib/proxy/index.ts`; `fileDriver` throws the existing "no default config path" message on a `null` path in `src/lib/proxy/file-driver.ts`
-- [x] T005 Tests for T003/T004 in `test/lib/proxy/index.test.ts` and `test/lib/proxy/file-driver.test.ts`
+- [x] T003 Make `DriverDeps.configPath` `string | null` in `src/lib/proxy/driver.ts` (superseded in the merge by issue #31's identical change; research R8)
+- [x] T004 `driverDeps()` resolves `configPath: null` for a driver with no config file, in `src/lib/proxy/index.ts`; `fileDriver` rejects a `null` path (both now from issue #31)
+- [x] T005 Test that `driverDeps` gives `caddy-api` `configPath: null` in `test/lib/proxy/index.test.ts`
 
 **Checkpoint**: typecheck and the full suite pass; the Caddy characterization test is unchanged.
 
@@ -29,7 +29,7 @@ are written first and must fail before its implementation.
 - [x] T009 [US1] Implement `planCaddyConfig(current, routes, ctx)`: find the single port-443 server (or create `srv0` on an empty config; error on 0 or >1 per the contract), strip `bellhop-` objects, prepend desired routes and policy, drop the policy when empty, detect add/replace/remove, compare structurally ignoring key order, and `formatCaddyPreview`, in `src/lib/proxy/caddy-json.ts` (R5, R6)
 - [x] T010 [US1] Implement `buildReadCommand({ checkService })`, `buildWriteCommand(config, etag)`, `parseAdminResponse`, `readCaddyConfig(deps, opts)`, and `writeCaddyConfig(deps, config, etag)` (zod-validated config) in `src/lib/proxy/caddy-admin.ts` (R2, R3)
 - [x] T011 [US1] Driver tests in `test/lib/proxy/drivers/caddy-api.test.ts`: dry run makes one read and no write; apply sends exactly the planned config with `If-Match`; a second run is "No changes" and sends no write; a replaced and a removed route
-- [x] T012 [US1] Implement `caddyApiDriver` (`label 'Caddy (admin API)'`, capabilities `forward`/`oidc` + `acmeDns01ViaCloudflare: true`, `defaultConfigPath: null`, `usesConfigFile: false`, status page `/usr/share/caddy/index.html`) in `src/lib/proxy/drivers/caddy-api.ts`, registered right after `caddyDriver` in `src/lib/proxy/index.ts`
+- [x] T012 [US1] Implement `caddyApiDriver` (`label 'Caddy (admin API)'`, capabilities `forward`/`oidc` + `acmeDns01ViaCloudflare: true`, `defaultConfigPath: null`, status page `/usr/share/caddy/index.html`) in `src/lib/proxy/drivers/caddy-api.ts`, registered right after `caddyDriver` in `src/lib/proxy/index.ts`
 - [x] T013 [US1] `runSyncProxy` test with `proxyDriver: 'caddy-api'` in `test/commands/sync-proxy.test.ts`, and a `syncProxyLive` push-live test in `test/web/proxy-sync.test.ts` (FR-012)
 
 ## Phase 4: User Story 2 — Never touch operator objects (P1)
@@ -65,8 +65,8 @@ are written first and must fail before its implementation.
 
 ## Phase 9: Settings page (FR-014)
 
-- [x] T026 [P] Add `usesConfigFile` to `ProxyDriverInfo` in `src/web/routes/settings.ts` and `web-client/src/api/types.ts`; tests in the existing settings route tests
-- [x] T027 [P] `proxyFieldView` hides the config path when `usesConfigFile` is false, in `web-client/src/lib/settings-display.ts`, with tests in its existing test file
+- [x] T026 [P] List `caddy-api` in the settings route tests (`test/web/routes/settings.test.ts`)
+- [x] T027 [P] `proxyFieldView` test: `caddy-api` hides the config path and keeps the status page (`test/web-client/settings-display.test.ts`); the hiding itself comes from issue #31's `defaultConfigPath: null` rule
 - [x] T028 Verify the Settings page in a browser at desktop and ≤640px with `caddy-api` selected (constitution IV)
 
 ## Phase 10: Polish & cross-cutting

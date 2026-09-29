@@ -1,0 +1,23 @@
+{
+  "status": 500,
+  "body": {
+    "error": {
+      "code": 500,
+      "message": "Internal Error"
+    },
+    "debug": {
+      "stack": [
+        "Error: Saving debug log to /data/logs/letsencrypt.log",
+        "Unable to register an account with ACME server. The ACME server believes admin@example.com is an invalid email address. Please ensure it is a valid email and attempt registration again.",
+        "Ask for help or search for solutions at https://community.letsencrypt.org. See the logfile /data/logs/letsencrypt.log or re-run Certbot with -v for more details.",
+        ""
+      ],
+      "previous": {
+        "code": 1,
+        "killed": false,
+        "signal": null,
+        "cmd": "certbot certonly -n --config /etc/letsencrypt.ini --work-dir /tmp/letsencrypt-lib --logs-dir /data/logs --cert-name npm-3 --agree-tos --authenticator webroot -m admin@example.com --preferred-challenges http --domains le2.example.test"
+      }
+    }
+  }
+}

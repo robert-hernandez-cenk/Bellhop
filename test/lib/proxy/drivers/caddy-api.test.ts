@@ -48,7 +48,6 @@ async function plan(ssh: FakeSSHClient, inv: Inventory = inventory) {
 test('declares what the Settings page and capability checks read', () => {
   assert.equal(caddyApiDriver.id, 'caddy-api');
   assert.equal(caddyApiDriver.label, 'Caddy (admin API)');
-  assert.equal(caddyApiDriver.usesConfigFile, false);
   assert.equal(caddyApiDriver.defaultConfigPath, null);
   assert.deepEqual(caddyApiDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true });
   assert.deepEqual(caddyApiDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });

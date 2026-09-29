@@ -12,8 +12,8 @@ interface CaddyApiPayload {
 }
 
 // Caddy configured through its admin API instead of a Caddyfile (issue
-// #26). The first driver not built on fileDriver: it writes no file at all
-// (usesConfigFile: false), and reconciles Bellhop-tagged routes and one
+// #26). Like Nginx Proxy Manager (issue #31) it writes no file at all
+// (defaultConfigPath: null), and reconciles Bellhop-tagged routes and one
 // TLS policy against Caddy's live JSON configuration, leaving every
 // untagged object alone (src/lib/proxy/caddy-json.ts). Served behavior
 // matches the file-based 'caddy' driver route for route -- the parity test
@@ -25,8 +25,9 @@ export const caddyApiDriver: ReverseProxyDriver = {
   // issues its own certificates through Cloudflare DNS-01, so stale
   // _acme-challenge records keep being pruned after Dashboard edits.
   capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+  // No config file: driverDeps() resolves configPath to null, and the
+  // Settings page hides Proxy config path for it.
   defaultConfigPath: null,
-  usesConfigFile: false,
   // The same document root the file-based driver suggests -- the status
   // page site itself stays hand-authored and untagged.
   statusPage: { suggestedPath: '/usr/share/caddy/index.html' },

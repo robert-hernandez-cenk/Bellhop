@@ -6,31 +6,19 @@ shapes around Caddy's JSON configuration.
 
 ## ProxyDriverId (extended)
 
-`'caddy' | 'nginx' | 'none' | 'caddy-api'` in `src/lib/proxy/ids.ts`.
+`'caddy' | 'nginx' | 'nginx-proxy-manager' | 'none' | 'caddy-api'` in `src/lib/proxy/ids.ts`.
 Registration order, which is also the Settings dropdown order, becomes
-Caddy, Caddy (admin API), nginx, No proxy.
+Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, No proxy.
 
-## ReverseProxyDriver (extended)
+## Driver seam (from issue #31, unchanged here)
 
-| Field | Change |
-| --- | --- |
-| `usesConfigFile?: boolean` | New. Absent means `true`. `false` means the driver writes no file: `driverDeps()` resolves `configPath` to `null`, and the Settings page hides Proxy config path. |
+`DriverDeps.configPath` is `string | null`, and `driverDeps()` returns `null`
+for a driver whose `defaultConfigPath` is `null`. The Settings page hides
+Proxy config path for such a driver (research R8).
 
 `caddyApiDriver`: `id 'caddy-api'`, `label 'Caddy (admin API)'`,
 `capabilities { authModes: ['forward','oidc'], acmeDns01ViaCloudflare: true }`,
-`defaultConfigPath: null`, `usesConfigFile: false`,
-`statusPage { suggestedPath: '/usr/share/caddy/index.html' }`.
-
-## DriverDeps (changed)
-
-`configPath: string | null`. It is `null` only for a driver with
-`usesConfigFile: false`. `fileDriver` throws the existing "no default config
-path" error if it ever receives `null`.
-
-## ProxyDriverInfo (Settings API view, extended)
-
-Adds `usesConfigFile: boolean`. `proxyFieldView` returns
-`showConfigPath: false` when it is `false`.
+`defaultConfigPath: null`, `statusPage { suggestedPath: '/usr/share/caddy/index.html' }`.
 
 ## CaddyConfig
 

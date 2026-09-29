@@ -93,8 +93,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive reverse-proxy
   generation through whichever driver is active (issue #10 — see the
   "Reverse-proxy driver interface" bullet below; Caddy, nginx (issue
-  #30), and Caddy through its admin API (issue #26) are the drivers that
-  ship today) — `subdomains` is a list (a host or guest can
+  #30), Nginx Proxy Manager (issue #31), and Caddy through its admin API
+  (issue #26) are the four drivers that manage a proxy today) — `subdomains` is a list (a host or guest can
   front more than one subdomain; `sync-proxy` emits one route per entry in
   the list, all pointing at the same `ip`/`port`);
   `insecureBackendTls` — see the driver-interface bullet below;
@@ -601,13 +601,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
   driver rather than untangling Caddy-specific code throughout the toolkit.
-  Caddy, nginx (issue #30), and an admin-API Caddy driver (`caddy-api`,
-  issue #26 -- see its own bullet below) are the drivers that ship and
-  actually manage a proxy -- drivers for Nginx Proxy Manager/HAProxy are
-  follow-up issues (its shape was checked against all four on paper first;
-  see `specs/006-reverse-proxy-driver/research.md`).
-  A third registered driver, `none`, ships alongside them as of issue #33
-  -- see "A driver that manages no reverse proxy at all" below.
+  Caddy, nginx (issue #30), Nginx Proxy Manager (issue #31), and an
+  admin-API Caddy driver (`caddy-api`, issue #26 -- see its own bullet
+  below) are the four drivers that ship and actually manage a proxy -- an
+  HAProxy Data Plane API driver is the remaining follow-up issue (its shape
+  was checked against all four candidates on paper first; see
+  `specs/006-reverse-proxy-driver/research.md`). A fifth registered driver,
+  `none`, ships alongside them as of issue #33 -- see "A driver that
+  manages no reverse proxy at all" below.
   Single-operator-assumption
   update: this toolkit is no longer hard-wired to Caddy -- exactly one
   driver is active per deployment (`proxyDriver`, a per-deployment choice,
@@ -660,9 +661,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   "render this file", with `fileDriver` supplying everything a
   file-configured driver needs on top of that); `index.ts`'s
   `getDriver(inventory)` resolves the `proxyDriver` setting (unset means
-  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'caddy-api'`, issue #26,
-  `'nginx'`, issue #30, and `'none'`, issue #33, are the other registered
-  ids;
+  `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'caddy-api'` (issue #26),
+  `'nginx'` (issue #30), `'nginx-proxy-manager'` (issue #31), and `'none'`
+  (issue #33) are the other registered ids;
   an id no registered driver has -- only reachable by hand-editing
   `bellhop.db`, since the schema's own zod enum already rejects any other
   value at load time -- throws `"Unknown proxyDriver '<id>' -- run: bellhop
@@ -670,12 +671,23 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `driverDeps(inventory, ssh, driver)` resolves the rest of what
   `plan()`/`apply()`/`snapshot()` need (`proxyHost` from the entry flagged
   `proxy: true`, throwing `"No inventory entry has 'proxy: true'"` if none
-  is; `configPath` from the `proxyConfigPath` setting, else the driver's
-  own `defaultConfigPath`, throwing if that resolves to `null` -- only
-  reachable for a driver that manages no proxy, which every real caller
-  short-circuits around before `driverDeps` ever runs). `index.ts` also
+  is; `configPath: string | null` from the `proxyConfigPath` setting, else
+  the driver's own `defaultConfigPath` -- or `null`, ignoring any
+  `proxyConfigPath`, when that `defaultConfigPath` is itself `null` (issue
+  #31, research.md R11): a driver with no configuration file at all (the
+  Nginx Proxy Manager and Caddy admin-API drivers, which reconcile over
+  REST instead) has
+  nowhere for `proxyConfigPath` to point, so that setting is silently
+  ignored rather than used as a fallback file path -- `driverDeps` no
+  longer throws over this the way it once did for a driver that manages no
+  proxy at all (`'none'`, which every real caller short-circuits around
+  before `driverDeps` ever runs, so this case never actually reaches it
+  either). A file-configured driver (`fileDriver`) never has a null
+  `defaultConfigPath` in practice, so this resolution never reaches it; it
+  resolves `configPath` through its own helper, which still throws a
+  programming-error message if it's ever handed `null`. `index.ts` also
   exports `listDrivers()` (every registered driver, Caddy, Caddy (admin
-  API), nginx, then None, in
+  API), nginx, Nginx Proxy Manager, then None, in
   registration order -- the Settings page's dropdown source), and
   `driver.ts` exports `managesProxy(driver)` (`driver.id !==
   NO_PROXY_DRIVER_ID`, the constant in `ids.ts` -- `false` only for the
@@ -689,8 +701,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
   update: not every deployment has a Bellhop-managed reverse proxy in
   front of it, whether that's a hand-configured proxy or none at all) is
-  the third registered driver, selected the same way as Caddy/nginx via
-  `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
+  the fourth registered driver, selected the same way as the other three
+  via `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
   `defaultConfigPath` and `statusPage` are both `null`, and its
   `capabilities` accept both `forward` and `oidc` auth modes (so
   `checkCapabilities` never rejects a gated entry under it -- the
@@ -736,8 +748,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   about to become live configuration or a specific entry is being saved --
   never from `validateInventory()` itself (FR-013), so changing
   `proxyDriver` can never make an already-saved inventory fail to load;
-  Caddy and nginx both support both modes, so this never actually triggers
-  today, but it
+  Caddy, nginx, and Nginx Proxy Manager all support both modes, so this
+  never actually triggers today, but it
   is the guarantee every future driver inherits.
 
   **`fileDriver(def)`** owns the full render -> back up -> write ->
@@ -840,7 +852,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false }` --
   nginx cannot obtain its own certificate the way Caddy's DNS-01 does, so
   it never leaves a stale `_acme-challenge` record behind for
-  `prune-acme-challenges` to find (see that bullet below).
+  `prune-acme-challenges` to find (see that bullet below). As of issue #31,
+  everything this bullet describes from the two `map` blocks through the
+  last `location` -- the whole body of one `server {}` block -- is
+  rendered by one shared function, `renderServerBody`
+  (`src/lib/proxy/nginx-locations.ts`), extracted out of this file so the
+  Nginx Proxy Manager driver's `advanced_config` can never drift from what
+  this driver renders (FR-016, see that driver's own bullet below); the
+  output is unchanged byte-for-byte from before the extraction, so
+  everything below still describes exactly what this driver's own file
+  contains.
   `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`,
   `statusPage: { suggestedPath: '/var/www/html/index.html' }` (the
   Debian/Ubuntu nginx package's default document root -- serving it is the
@@ -948,17 +969,141 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   DNS-01 does, one operator-managed certificate (in practice a wildcard
   for the domain, issued and renewed by something like `certbot`) covers
   every site this driver generates instead.
+- **Nginx Proxy Manager driver** (`src/lib/proxy/drivers/nginx-proxy-manager.ts`,
+  `src/lib/npm-client.ts`, issue #31) is the third driver that ships, and
+  the first *managed* driver with no configuration file of its own
+  (research.md R11): `defaultConfigPath: null`, so `driverDeps` resolves
+  its `configPath` to `null` rather than throwing (see the driver-interface
+  bullet above -- `DriverDeps.configPath` is `string | null` precisely for
+  this driver), and the Settings page hides Proxy config path/Status page
+  path/the TLS fields for it the same way it already hides them for
+  `none`. `capabilities: { authModes: ['forward', 'oidc'],
+  acmeDns01ViaCloudflare: false }`; `statusPage: null` too, since it has no
+  document root of its own to serve one from.
+
+  `NpmClient` (`src/lib/npm-client.ts`) wraps Nginx Proxy Manager's (NPM's)
+  REST API the same injection pattern as `AuthentikClient`/
+  `CloudflareClient`: a plain interface, a `zod`-validated `RealNpmClient`,
+  and `buildNpmClient(inventory)`, which reads `NPM_API_EMAIL`/
+  `NPM_API_PASSWORD` (and optional `NPM_API_URL`, else derived from the
+  `proxy: true` entry's `ip` at port 81) from `data/nginx-proxy-manager.env`
+  -- dotenv-loaded by the same three entry points (`src/cli.ts`,
+  `src/web/server.ts`, `src/mcp/server.ts`) that load
+  `data/cloudflare-api.env` -- throwing a named error before any request
+  when either credential is missing, or when no URL can be derived either
+  way. It logs into `/api/tokens` lazily, once per `plan()`/`apply()`/
+  `snapshot()` call (each builds its own client via `clientFor`), and never
+  refreshes -- a sync takes seconds against NPM's one-day token (research
+  R1). Every request carries `AbortSignal.timeout(NPM_REQUEST_TIMEOUT_MS)`
+  (10s), except `requestCertificate`, which gets
+  `NPM_CERTIFICATE_TIMEOUT_MS` (180s) since NPM runs certbot synchronously
+  inside that one request (research R3). `NpmCertificateSchema` carries no
+  `meta` field at all, so a certificate's PEM body/private key (NPM's own
+  `meta` on a custom certificate) is dropped at the parse boundary and can
+  never reach a preview, a log, `snapshot()`, or an error message,
+  whichever caller reads a certificate (research R8's "Security note").
+  Every other proxy-host field but `id`/`domain_names`/the `forward_*`
+  target/`enabled` is optional with a default (`false` for the flags,
+  `0` for `certificate_id`/`access_list_id`, `''` for
+  `advanced_config`), so a row from an older NPM release or one missing a
+  newer field still parses (an owned one then just shows as drift), and a
+  certificate's `expires_on` may be `null`, which counts as expired.
+  The driver is tested against NPM 2.16; an older release may reject the
+  fields Bellhop sends.
+
+  **Ownership** (research R4): the first line of every Bellhop-owned proxy
+  host's `advanced_config` is `NPM_OWNERSHIP_MARKER`, a `# Managed by
+  Bellhop sync-proxy...` comment visible in NPM's own UI -- `isOwned(host)`
+  is the one predicate every other function in the file uses, and deleting
+  that line by hand is a deliberate "hand this host back to me" (mirrors
+  the nginx driver's `ownedHeader`). `planNpmSync` (the pure planning
+  function `plan()` calls) matches each route to the *owned* host keyed by
+  its canonical (`hostnames[0]`) name; an *unowned* host claiming any of a
+  route's names -- canonical or alias -- makes that route a `conflict`
+  instead of a create/update. "Unowned" includes every redirection host and
+  404 host (`listRedirectionHosts`/`listDeadHosts`, research R13 --
+  verified live that NPM refuses a proxy host naming a hostname either kind
+  holds): those are never owned, written, or deleted, and the conflict
+  line names the kind holding the name (`proxy host #N` /
+  `redirection host #N` / `404 host #N`, since NPM ids are per kind). The route's own already-owned host, if it
+  has one, is marked matched *before* the conflict check runs, so a
+  conflicting route's own live host is never swept up by "every owned host
+  no route matched -> delete" the way an unrelated stale host would be.
+  Matching is fully case-insensitive on both sides (NPM itself is) -- every
+  stored/compared hostname is lower-cased first, so a route and a host
+  differing only in case are never a false conflict or a spurious drift.
+
+  **Update ordering**: NPM rejects a write naming a hostname another proxy
+  host still holds (`"<name> is already in use"`), so when an alias moves
+  from one Bellhop host to another in the same apply, the update releasing
+  it must run before the update claiming it. `orderUpdates` is a stable
+  topological sort over the planned updates (`x` must precede `y` when
+  `x`'s *current* domain names include one `y`'s *desired* names include);
+  ties keep route order, and a genuine cycle (two hosts swapping aliases)
+  can't be ordered at all -- it keeps route order and fails loudly on
+  NPM's own rejection rather than silently reordering into something
+  wrong. Deletes always run first and creates always run last (research
+  R10), so a name is freed before anything could reclaim it.
+
+  **Certificates** (research R8): `chooseCertificate` keeps a host's
+  current certificate while it still covers every route hostname and
+  isn't expired; otherwise it picks the qualifying certificate with the
+  latest `expires_on` (lowest id on a tie); with none qualifying,
+  `apply()` has NPM request one over its default HTTP-01 challenge right
+  before that route's own create/update (`requestCertificate`, using the
+  login email as certbot's contact -- the 2.16 schema has no separate
+  `letsencrypt_email` field). A failed request throws naming the route and
+  NPM's own error and leaves the existing host (an update) or no host at
+  all (a create) untouched.
+
+  **Read-back** (research R6): NPM accepts a host nginx later rejects, so
+  after every create/update the driver re-`GET`s that host and throws if
+  `meta.nginx_online === false`, quoting `meta.nginx_err` -- the failure
+  names the id, the canonical hostname, and that the site is offline until
+  the next successful sync. That next sync is what brings it back:
+  `planNpmSync` treats an owned host whose `meta.nginx_online` is
+  `false` as drift even when every field matches (the pseudo-field
+  `nginx_online` in its changed list), so it is rewritten in full and
+  read back again rather than left offline as `= ok` forever. The first NPM error of any kind stops
+  `apply()` outright; a non-empty `conflicts` list only throws *after*
+  every other create/update/delete has run, naming every conflicting
+  route together.
+
+  `desiredProxyHost` calls the same shared `renderServerBody`
+  (`src/lib/proxy/nginx-locations.ts`) the nginx driver's own bullet above
+  describes, extracted out of that file for exactly this (FR-016): the
+  nginx driver passes its own `$bellhop_http_host`/
+  `$bellhop_connection_upgrade` `map` variables, this driver passes NPM's
+  own template built-ins (`$http_host`/`$http_connection`, since
+  `advanced_config` sits inside NPM's own `server {}` and a `map` is only
+  valid at `http {}` level -- research R5), so the two drivers' rendered
+  bodies can never drift apart. Every Bellhop host also gets the same
+  fixed R9 settings sent in full on every create/update
+  (`ssl_forced`/`http2_support`/`allow_websocket_upgrade`: on;
+  `block_exploits`/`caching_enabled`/`hsts_*`/`trust_forwarded_proto`: off;
+  `access_list_id: 0`; `locations: []`), so a hand-edit to any of them in
+  NPM's UI is drift the next sync silently reverts rather than a setting
+  read back from NPM first.
+
+  `test/support/fake-npm-client.ts`'s `FakeNpmClient` is the in-memory
+  `NpmClient` every driver test uses (assigns ids the way NPM does,
+  replicates NPM's duplicate-hostname rejection, can be told to mark
+  writes offline or fail a certificate request) -- no network, same
+  precedent as `FakeSSHClient`/`FakeAuthentikClient`/`FakeCloudflareClient`.
+  `test/lib/npm-client.test.ts` instead pins `RealNpmClient` itself against
+  **captured, redacted fixtures** in `test/fixtures/nginx-proxy-manager/`
+  (real Nginx Proxy Manager 2.16.0 responses, tokens/PEM bodies/loopback
+  addresses replaced, shape unchanged -- constitution Principle I), the
+  same convention `authentik-client.test.ts` established.
 - **Caddy admin-API driver** (`src/lib/proxy/drivers/caddy-api.ts`, issue
   #26, `proxyDriver: 'caddy-api'`, label "Caddy (admin API)") serves exactly
   what the file-based Caddy driver serves but reconciles Caddy's *live JSON
   configuration* through its admin API instead of writing a Caddyfile
-  section -- the first registered driver not built on `fileDriver`. It
-  declares `usesConfigFile: false` (new optional `ReverseProxyDriver`
-  field, absent = `true`): `driverDeps()` resolves `configPath: null` for
-  it instead of requiring one (`DriverDeps.configPath` is `string | null`;
-  `fileDriver`'s `requireConfigPath` throws the usual "no default config
-  path" error if a file driver is ever handed `null`), and the Settings
-  page hides Proxy config path for it. Capabilities match Caddy's (`forward`
+  section. Like the Nginx Proxy Manager driver it isn't built on
+  `fileDriver` and has `defaultConfigPath: null`, so `driverDeps()`
+  resolves `configPath: null` for it and the Settings page hides Proxy
+  config path (while still showing Status page path, since it suggests
+  one). Capabilities match Caddy's (`forward`
   + `oidc`, `acmeDns01ViaCloudflare: true`); status page suggestion
   `/usr/share/caddy/index.html`. Three files split it:
   `src/lib/proxy/caddy-json.ts` is pure -- `renderRoute`/`renderTlsPolicy`
@@ -1408,7 +1553,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   reaches this the same way subdomain edits
   reach `sync-proxy`: via `syncProxyLive`, which now runs `sync-proxy`,
   `render-status-page`, and `sync-authentik` back to back, then
-  `prune-acme-challenges` (below), as one combined push-live step.
+  `prune-acme-challenges` (below), as one combined push-live step. When
+  `sync-proxy` itself throws (a failed write/validate, or a route the
+  Nginx Proxy Manager driver reports as a conflict on every sync), the
+  step warns, skips `render-status-page` and `prune-acme-challenges`,
+  still runs `sync-authentik` exactly as it otherwise would, and then
+  rethrows the original `sync-proxy` error (FR-023 in
+  `specs/014-nginx-proxy-manager-driver/spec.md`, an operator decision) --
+  so one lasting proxy-side conflict elsewhere can never stop a Dashboard
+  save from reconciling Authentik, while every caller still reports the
+  proxy failure as before (`proxySynced: false`/`proxyError` from
+  `commitGuestEdit`, a failed provisioning job). A `sync-authentik`
+  error on that path is only warned, so it never masks the proxy error.
+  Applies to every driver; the CLI's own `sync-proxy` is unchanged.
 
   Changing `authMode`/`oidcRedirectUris`/`oidcMobileRedirectUris` through
   the Dashboard's guest PATCH
@@ -1467,8 +1624,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   guest's own entries from both as one `oidcSkipped` list (rendered by
   `AuthentikSkipBanner`). That matters because the push-live step writes
   the proxy configuration *before* it syncs Authentik: switching to OIDC drops the
-  `forward_auth` gate first, so a skipped or failed sync leaves the app
-  ungated at the edge until the next successful one.
+  `forward_auth` gate first, so a skipped or failed *Authentik* sync leaves
+  the app ungated at the edge until the next successful one. A failed
+  *proxy* sync no longer does (FR-023, above): `sync-authentik` still runs
+  after it, so the OpenID client is still created even when some other
+  route's proxy configuration could not be written.
 - **OIDC credentials and adoption**
   (`src/commands/networking/oidc-credentials.ts`, `adopt-oidc-client.ts`,
   `src/web/routes/oidc.ts`, issue #1) are `sync-authentik`'s companion
@@ -2458,7 +2618,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   proxy was a deliberate choice over an app-embedded OIDC client: Authentik
   and the proxy own the session, and this app holds no session state of
   its own. Which proxy fronts the web UI is whatever runs on the
-  `proxy: true` entry -- Caddy or nginx, per `proxyDriver` -- and the
+  `proxy: true` entry -- Caddy, nginx, or Nginx Proxy Manager, per
+  `proxyDriver` -- and the
   firewall scope follows that entry, not the driver choice.
 - **Web UI user/group management** (`src/web/routes/users.ts`,
   `src/web/routes/groups.ts`): full CRUD on Authentik users/groups from
@@ -2661,8 +2822,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   settings.ts`, shared by GET and PATCH so the two can never disagree)
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
-  managesProxy, usesSharedCertificate, configPathNote, usesConfigFile }`,
-  Caddy, Caddy (admin API), nginx, then None) and `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
+  managesProxy, usesSharedCertificate, configPathNote }`, Caddy, Caddy
+  (admin API), nginx, Nginx Proxy Manager, then None) and
+  `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
   tested with plain `node --test`, same convention as `admin-nav.ts`)
@@ -2676,17 +2838,24 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   path, and Proxy TLS certificate/key fields apply at all: a driver whose
   `managesProxy` is `false` (only `none` today) hides all of them
   entirely rather than showing them disabled or empty; a managed driver
-  always shows Proxy config path (placeholder its `defaultConfigPath`, or
-  empty with "Required: this driver has no default." help text when that
-  is `null`, with the driver's own `configPathNote` appended when it has
-  one -- nginx's says it replaces the whole file and refuses one it didn't
-  generate, Caddy's that only the managed section is replaced), shows
-  Status page path only when its `suggestedStatusPagePath` is non-null,
-  and shows the two TLS fields only when `usesSharedCertificate` is true
-  (`showTlsFields`; nginx only, issue #30 -- driver metadata, never an id
-  comparison in the page); a driver whose `usesConfigFile` is `false`
-  (`caddy-api`, issue #26) hides Proxy config path but keeps Status page
-  path; an unrecognized id (never reachable through the
+  with a `defaultConfigPath` shows Proxy config path with that path as its
+  placeholder (the driver's own `configPathNote` appended to the help text
+  when it has one -- nginx's says it replaces the whole file and refuses
+  one it didn't generate, Caddy's that only the managed section is
+  replaced); a managed driver with no config file at all
+  (`defaultConfigPath: null` -- issue #31, the Nginx Proxy Manager driver,
+  which reconciles over REST instead) hides the config path field the same
+  way a driver that manages no proxy does, since there is no file for the
+  field to name or override -- research.md R11 notes the old "Required:
+  this driver has no default" empty-with-help-text state this replaced was
+  never actually reachable before a real driver had `defaultConfigPath:
+  null` to trigger it. Every managed driver shows Status page path only
+  when its `suggestedStatusPagePath` is non-null (`null` for Nginx Proxy
+  Manager too, since it has no document root to serve one from; the Caddy
+  admin-API driver, issue #26, has no file but does suggest one, so it
+  shows Status page path alone), and shows the two TLS fields only when
+  `usesSharedCertificate` is true (`showTlsFields`; nginx only, issue #30
+  -- driver metadata, never an id comparison in the page); an unrecognized id (never reachable through the
   dropdown itself, but defensive) hides all of them. The TLS fields also
   stay hidden until the driver list has loaded, since unlike the other two
   they mean nothing for the default driver. Until the driver list has
@@ -2819,7 +2988,8 @@ the same rigor as any other correctness bug.
   otherwise-tracked `inventory/` directory (see "Inventory" above). Copy
   `inventory/bellhop.db` (plus its `-wal`/`-shm` sidecar files, for a
   consistent snapshot), `data/authentik.env` and, when present,
-  `data/cloudflare-api.env` across from the operator's deployment checkout
+  `data/cloudflare-api.env` and `data/nginx-proxy-manager.env` across from
+  the operator's deployment checkout
   (the one the web service actually runs from), `mkdir -p`-ing the
   worktree's `data/` first. Never seed from the main checkout: main holds
   no real data at all — no `inventory/bellhop.db`, no `data/` — so running
@@ -2891,6 +3061,17 @@ the same rigor as any other correctness bug.
   test`) enforces the README line budget and fails on any relative link or
   heading anchor in `README.md`/`docs/` that doesn't resolve, so renaming a
   heading means updating the links to it in the same change (issue #41).
+- **The demo instance (`scripts/demo/`) regenerates screenshots.** `npm
+  run demo` is a throwaway 127.0.0.1:3100 instance with example inventory,
+  simulated Proxmox via `DemoSSHClient`, fixed app catalog, seeded jobs,
+  and signed-in admin — never touching real `inventory/bellhop.db` or
+  `data/`. `npm run docs:screenshots` regenerates `docs/images/` through
+  installed Chrome/Edge (`playwright-core`, no bundled browser; not in CI).
+  A UI change that alters a screenshotted screen regenerates the images
+  and verifies them by eye for example-only values (constitution Principle I
+  applies to screenshots). `test/scripts/demo/demo-inventory.test.ts`
+  enforces the example-data invariant. See `specs/014-web-ui-screenshots/`
+  for design details.
 - **GitHub operations go through the `gh` CLI, not the GitHub MCP tools.**
   The GitHub MCP server's token is not reliably scoped to this repository
   (`mcp__github__*` calls come back 404/422 "resource does not exist or

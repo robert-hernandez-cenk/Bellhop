@@ -9,6 +9,7 @@ import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
 import { caddyApiDriver } from '../../../src/lib/proxy/drivers/caddy-api.ts';
 import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
+import { nginxProxyManagerDriver } from '../../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
 import { fileDriver } from '../../../src/lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../src/lib/proxy/routes.ts';
 import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
@@ -83,32 +84,35 @@ test('getDriver returns noneDriver when proxyDriver is "none"', () => {
 
 // --- driver ids / registry metadata (issue #33) ----------------------------
 
-test('PROXY_DRIVER_IDS equals [caddy, nginx, none, caddy-api]', () => {
-  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'none', 'caddy-api']);
+test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, none, caddy-api]', () => {
+  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'none', 'caddy-api']);
 });
 
 test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
   assert.equal(DEFAULT_PROXY_DRIVER_ID, 'caddy');
 });
 
-test('listDrivers returns Caddy, Caddy (admin API), nginx, then None, in registration order', () => {
-  assert.deepEqual(listDrivers(), [caddyDriver, caddyApiDriver, nginxDriver, noneDriver]);
+test('listDrivers returns Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, then None, in registration order', () => {
+  assert.deepEqual(listDrivers(), [caddyDriver, caddyApiDriver, nginxDriver, nginxProxyManagerDriver, noneDriver]);
 });
 
-// issue #26: the admin-API driver writes no file, so driverDeps resolves no
-// config path for it -- even with proxyConfigPath set -- rather than
-// throwing the "no default config path" error.
-test('driverDeps resolves configPath null for a driver that uses no config file', () => {
-  const inv: Inventory = {
-    domain: 'example.com',
-    proxyDriver: 'caddy-api',
-    proxyConfigPath: '/etc/caddy/Caddyfile',
-    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
-    guests: [],
-  };
-  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+test('getDriver returns nginxProxyManagerDriver when proxyDriver is "nginx-proxy-manager" (issue #31)', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx-proxy-manager' });
+  assert.equal(getDriver(inv), nginxProxyManagerDriver);
+  assert.equal(managesProxy(nginxProxyManagerDriver), true);
+});
+
+test('driverDeps returns configPath: null for the Nginx Proxy Manager driver, even when proxyConfigPath is set', () => {
+  const inv = baseInventory({ proxyDriver: 'nginx-proxy-manager', proxyConfigPath: '/etc/nginx/conf.d/bellhop.conf' });
+  const deps = driverDeps(inv, new FakeSSHClient(defaultResponder), nginxProxyManagerDriver);
+  assert.equal(deps.configPath, null);
+});
+
+// issue #26: the admin-API driver writes no file either.
+test('driverDeps returns configPath: null for the Caddy admin-API driver, even when proxyConfigPath is set', () => {
+  const inv = baseInventory({ proxyDriver: 'caddy-api', proxyConfigPath: '/etc/caddy/Caddyfile' });
   assert.equal(getDriver(inv), caddyApiDriver);
-  assert.deepEqual(driverDeps(inv, ssh, caddyApiDriver), { ssh, inventory: inv, proxyHost: 'pve1', configPath: null });
+  assert.equal(driverDeps(inv, new FakeSSHClient(defaultResponder), caddyApiDriver).configPath, null);
 });
 
 test('Caddy driver metadata: label, defaultConfigPath, statusPage', () => {
@@ -193,6 +197,20 @@ test('driverDeps resolves configPath to the nginx driver default when proxyConfi
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = driverDeps(inv, ssh, nginxDriver);
   assert.equal(deps.configPath, '/etc/nginx/conf.d/bellhop.conf');
+});
+
+// issue #31 (T003): a driver with no config file at all (defaultConfigPath:
+// null, e.g. the upcoming Nginx Proxy Manager driver) gets configPath: null
+// from driverDeps -- even when proxyConfigPath is set, since a driver with
+// no file has nowhere for that setting to point.
+test('driverDeps returns configPath: null for a driver with defaultConfigPath: null, even when proxyConfigPath is set', () => {
+  const noFileDriver = fakeDriver('fake-no-config-file-driver');
+  noFileDriver.defaultConfigPath = null;
+  const inv = baseInventory({ proxyConfigPath: '/etc/caddy/Caddyfile' });
+  const ssh = new FakeSSHClient(defaultResponder);
+  const deps = driverDeps(inv, ssh, noFileDriver);
+  assert.equal(deps.configPath, null);
+  assert.equal(deps.proxyHost, 'pve1');
 });
 
 // --- registerDriverForTests (test-only hook) -------------------------------

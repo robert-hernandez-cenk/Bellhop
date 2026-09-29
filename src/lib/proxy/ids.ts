@@ -2,11 +2,12 @@
 // index.ts's driver registry, and src/lib/inventory.ts's proxyDriver enum
 // all need these ids, and none should have to import another to get them.
 // 'caddy' and 'nginx' are the file-configured drivers that ship today
-// (nginx: issue #30); 'caddy-api' (issue #26) configures Caddy through its
-// admin API instead of a file; 'none' (issue #33) is a real registered
-// driver too -- it means Bellhop manages no reverse proxy, not that no proxy
-// exists in front of the deployment. A future driver adds its id here.
-export const PROXY_DRIVER_IDS = ['caddy', 'nginx', 'none', 'caddy-api'] as const;
+// (nginx: issue #30); 'nginx-proxy-manager' (issue #31) and 'caddy-api'
+// (issue #26) are REST-managed drivers with no config file of their own;
+// 'none' (issue #33) is a real registered driver too -- it
+// means Bellhop manages no reverse proxy, not that no proxy exists in front
+// of the deployment. A future driver adds its id here.
+export const PROXY_DRIVER_IDS = ['caddy', 'nginx', 'nginx-proxy-manager', 'none', 'caddy-api'] as const;
 export type ProxyDriverId = (typeof PROXY_DRIVER_IDS)[number];
 
 // The id of the driver that means "Bellhop manages no reverse proxy" --

@@ -16,6 +16,8 @@ import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/proxy-sync.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
+import { createNpmDriver, nginxProxyManagerDriver } from '../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
+import { FakeNpmClient } from '../support/fake-npm-client.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -293,6 +295,41 @@ test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME p
   assert.match(ssh.history[0].command, /nginx -t/);
   assert.deepEqual(cloudflare.history, [], "nginx's capabilities has acmeDns01ViaCloudflare: false, so the prune never calls Cloudflare");
   assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx')));
+});
+
+// Issue #31 (US5, T022): the Nginx Proxy Manager driver also has
+// acmeDns01ViaCloudflare: false (it never touches DNS -- it either reuses an
+// NPM certificate or has NPM request one over HTTP-01), so this is the same
+// generic mechanism the fake-driver and real-nginx-driver tests above already
+// exercise, just proven against the real registered 'nginx-proxy-manager'
+// driver id. Its plan()/apply() talk to NPM's REST API, not SSH, so a fake
+// NpmClient is registered over the real driver (createNpmDriver, the same
+// factory the shipped driver is built from) to let sync-proxy's own step
+// succeed without a network call -- and the real, buildNpmClient-backed
+// driver is put back afterward, since registerDriverForTests's own unregister
+// would otherwise delete the production registration for 'nginx-proxy-manager'
+// entirely rather than restore it.
+test('syncProxyLive (real Nginx Proxy Manager driver, fake client) pushes NPM config over REST, makes no SSH calls, and skips the ACME prune', async () => {
+  const npmClient = new FakeNpmClient();
+  const fakeClientDriver = createNpmDriver({ clientFor: () => npmClient });
+  registerDriverForTests(fakeClientDriver);
+  try {
+    const npmInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'nginx-proxy-manager' };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+    const logs = await captureLogs(() =>
+      syncProxyLive({ ssh, inventory: npmInventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+    );
+    assert.equal(ssh.history.length, 0, 'the NPM driver reconciles over REST, never SSH');
+    assert.ok(npmClient.writes().length > 0, 'sanity: the fake NPM client actually applied the plex-lxc route');
+    assert.deepEqual(cloudflare.history, [], "the NPM driver's capabilities has acmeDns01ViaCloudflare: false, so the prune never calls Cloudflare");
+    assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx-proxy-manager')));
+  } finally {
+    // Restore the real, buildNpmClient-backed driver under the same id --
+    // registerDriverForTests's unregister() only deletes, it does not know
+    // there was already a production entry to put back.
+    registerDriverForTests(nginxProxyManagerDriver);
+  }
 });
 
 // issue #26: the admin-API Caddy driver goes through the same push-live
@@ -583,4 +620,65 @@ test('syncProxyLive returns adoptable conflicts and logs them with the adopt-oid
   assert.deepEqual(result!.authentikAdoptableConflicts, ['plex']);
   assert.ok(logs.warn.some((l) => l.includes(`sync-authentik: plex — ${OAUTH2_CONFLICT_EXPLANATION}`)));
   assert.ok(!logs.warn.some((l) => l.includes(CONFLICT_EXPLANATION)), 'never the resolve-by-hand wording');
+});
+
+// Final review F3 (operator decision, FR-023): when sync-proxy fails -- e.g.
+// a lasting Nginx Proxy Manager conflict on an unrelated route -- the push-live
+// step still reconciles Authentik, so a guest just switched to OIDC still
+// gets its OpenID client; it skips the status page and the ACME prune, then
+// rethrows the original sync-proxy error so every caller keeps reporting the
+// proxy failure as before.
+test('syncProxyLive: a failing sync-proxy still runs sync-authentik, skips the status page and prune, and rethrows the same error', async () => {
+  const failure = new Error('fake proxy apply failed: already in use');
+  const snapshots: string[] = [];
+  const failing: ReverseProxyDriver = {
+    id: 'fake-driver-apply-throws-f3' as ReverseProxyDriver['id'],
+    label: 'Fake',
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/fake/fake.conf',
+    statusPage: { suggestedPath: '/var/www/html/index.html' },
+    async plan(): Promise<ProxyPlan> {
+      return { preview: 'fake plan', payload: null };
+    },
+    async apply(): Promise<void> {
+      throw failure;
+    },
+    async snapshot(): Promise<string> {
+      snapshots.push('snapshot');
+      return '';
+    },
+  };
+  const unregister = registerDriverForTests(failing);
+  try {
+    const gated: Inventory = {
+      domain: 'example.com',
+      statusPagePath: '/var/www/html/index.html',
+      proxyDriver: failing.id as Inventory['proxyDriver'],
+      hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+      guests: [
+        { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      ],
+    };
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    const authentik = new FakeAuthentikClient();
+    const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+    let caught: unknown;
+    const logs = await captureLogs(async () => {
+      try {
+        await syncProxyLive({ ssh, inventory: gated, authentik, cloudflare });
+      } catch (err) {
+        caught = err;
+      }
+    });
+
+    assert.equal(caught, failure, 'rejects with the very same sync-proxy error');
+    assert.ok(authentik.calls.includes('createApplication sonarr'), 'sync-authentik still ran');
+    assert.deepEqual(snapshots, [], 'render-status-page never read the proxy configuration');
+    assert.equal(ssh.history.length, 0, 'nor wrote a status page');
+    assert.deepEqual(cloudflare.history, [], 'prune-acme-challenges never ran');
+    assert.ok(logs.warn.some((l) => l.includes('fake proxy apply failed: already in use')), 'the failure is warned');
+  } finally {
+    unregister();
+  }
 });

@@ -196,19 +196,18 @@ sync).
 
 ## R8. Driver without a configuration file
 
-**Decision**: `ReverseProxyDriver` gains optional `usesConfigFile` (absent
-means `true`). `DriverDeps.configPath` becomes `string | null`, and
-`driverDeps()` returns `null` for a driver with `usesConfigFile: false`
-instead of throwing. `fileDriver` rejects a `null` path with the existing
-"no default config path" message. The Settings API exposes
-`usesConfigFile`, and `proxyFieldView` hides the Proxy config path field
-when it is `false`. The status page field stays: the driver serves the
-status page from `/usr/share/caddy/index.html`, like the file-based Caddy
-driver.
+**Decision** (revised after merging `main`): follow issue #31's convention
+instead of adding a flag. The Nginx Proxy Manager driver, merged while this
+branch was open, already made `DriverDeps.configPath` `string | null`.
+`driverDeps()` returns `null` whenever the driver's own `defaultConfigPath`
+is `null`, and `proxyFieldView` hides Proxy config path for such a driver.
+`caddyApiDriver` declares `defaultConfigPath: null` and gets all of that
+unchanged. Unlike NPM, it suggests a status page path, so the Status page
+path field stays visible.
 
-**Rationale**: FR-014. `defaultConfigPath: null` already means "Required:
-this driver has no default" on the Settings page, which is wrong here, so a
-separate flag is needed rather than overloading `null`.
+**Superseded**: this branch first added an optional `usesConfigFile` flag
+for the same purpose. It was dropped in the merge, since two signals for
+one fact would be redundant.
 
 ## R9. Status-page snapshot
 

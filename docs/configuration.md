@@ -57,7 +57,8 @@ free-text field, and Proxy config path/Status page path are shown or
 hidden and given a matching placeholder based on whichever driver is
 currently selected in that dropdown (unsaved changes included); the Proxy
 TLS certificate/key fields appear only while nginx is selected, and Proxy
-config path is hidden while Caddy (admin API) is selected. Hiding a
+config path is hidden for a driver with no config file (Caddy (admin API),
+Nginx Proxy Manager). Hiding a
 field never clears its stored value — see
 [Reverse proxy drivers](reverse-proxy/README.md).
 
@@ -67,10 +68,10 @@ field never clears its stored value — see
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
-| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`caddy-api`/`nginx`/`none` |
-| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx; `caddy-api` and `none` have no config file at all, and ignore it) |
-| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
-| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`caddy-api`/`nginx`/`nginx-proxy-manager`/`none` |
+| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx; `caddy-api`, `nginx-proxy-manager`, and `none` have no config file at all, and hide this field on the Settings page) |
+| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by both Caddy drivers, `nginx-proxy-manager`, and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by both Caddy drivers, `nginx-proxy-manager`, and `none`, and shown on the Settings page only while nginx is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 

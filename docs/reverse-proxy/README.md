@@ -7,17 +7,21 @@ own page:
 - [Caddy (admin API)](caddy-api.md) — Caddy configured through its admin
   API instead of a Caddyfile.
 - [nginx](nginx.md).
+- [Nginx Proxy Manager](nginx-proxy-manager.md).
 - "No proxy" (`proxyDriver: none`) — described below.
 
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see [Inventory-wide
-settings](../configuration.md#inventory-wide-settings); unset means `caddy`, the default; `caddy-api`, `nginx`
-and `none` are the other drivers that ship). Exactly one driver is active per
+settings](../configuration.md#inventory-wide-settings); unset means
+`caddy`, the default; `caddy-api`, `nginx`, `nginx-proxy-manager`, and
+`none` are the other drivers that ship). Exactly one driver is active per
 deployment: it's a per-deployment choice, not a per-entry one, so every
 gated/reverse-proxied inventory entry is served by the same proxy. The web
 UI's Settings page presents this choice as a dropdown of every driver
 Bellhop supports, rather than a free-text field — see [Inventory-wide
 settings](../configuration.md#inventory-wide-settings).
+
+![The Settings page's Proxy driver dropdown set to "Caddy (default)", followed by the Proxy config path field showing the Caddy driver's default path](../images/settings-proxy-driver.png)
 
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
 both `forward` and `oidc`) and whether it issues TLS certificates itself
@@ -35,6 +39,13 @@ whose auth mode the active driver can't enforce (e.g. a driver with no
 guest-edit time, naming the entry, the driver, and the fix — never
 silently dropped, which would leave that entry reachable with no gate in
 front of it.
+
+When the web UI's push-live step (a Dashboard guest edit, or a
+provisioning job with subdomains) finds `sync-proxy` failing under any
+driver, it still reconciles Authentik, skips the status page render and
+the stale ACME-challenge cleanup, and then reports the proxy failure as
+before — so one route the proxy keeps refusing never stops Authentik from
+being synced for everything else. The CLI's `sync-proxy` still just fails.
 
 **"No proxy" (`proxyDriver: none`) is for an operator whose reverse proxy
 is managed by hand, or who has none at all.** It's a real, selectable
@@ -54,21 +65,29 @@ page render with one log line and continue, the same opt-in
 skip they already give an unset `statusPagePath`. The stale ACME-challenge
 cleanup is skipped too, through the same driver-capability check that
 skips it for any driver that doesn't issue certificates via Cloudflare
-DNS-01 (nginx included).
+DNS-01 (nginx and Nginx Proxy Manager included).
 
 A driver that's configured through a file (Caddy and nginx both are; the
-[Caddy admin-API driver](caddy-api.md) is not, and reconciles tagged objects
-in Caddy's live configuration instead) is built with a shared `fileDriver` helper: it backs up the
-target file(s), writes the new content in place (either replacing a
-managed section while leaving everything else on the file untouched, or
-replacing a file Bellhop owns outright), runs the proxy's own validation
-command against the real path, restores every backup and fails if
-validation fails, and reloads the proxy otherwise. Each such driver must
-state its Settings-dropdown label and whether it serves a status page;
-neither has a default. A driver that manages a proxy but serves no status
-page makes `render-status-page` fail with a message saying to clear
-`statusPagePath` or pick another driver, and the push-live step logs a
-warning, not an info line, when `statusPagePath` is set but ignored.
+REST-managed Caddy admin-API and Nginx Proxy Manager drivers are not) is
+built with a shared `fileDriver` helper: it backs up the target file(s),
+writes the new content in place (either replacing a managed section while
+leaving everything else on the file untouched, or replacing a file
+Bellhop owns outright), runs the proxy's own validation command against
+the real path, restores every backup and fails if validation fails, and
+reloads the proxy otherwise. Nginx Proxy Manager is the first driver
+that manages a real proxy with *no* configuration file at all — it
+reconciles proxy hosts over NPM's own REST API instead (see [Nginx Proxy
+Manager](nginx-proxy-manager.md)), and the [Caddy admin-API
+driver](caddy-api.md) likewise reconciles tagged objects in Caddy's live
+configuration, so a driver's config path is now
+`string | null`: `null` means "this driver has no file," and the Settings
+page hides the Proxy config path field entirely for it rather than
+showing it empty. Each managed driver must still state its
+Settings-dropdown label and whether it serves a status page; neither has
+a default. A driver that manages a proxy but serves no status page makes
+`render-status-page` fail with a message saying to clear `statusPagePath`
+or pick another driver, and the push-live step logs a warning, not an
+info line, when `statusPagePath` is set but ignored.
 
 On both file-configured drivers (Caddy and nginx), a request to a forward-gated entry's exempt
 (`unauthenticatedPaths`) location skips the Authentik check entirely — any
@@ -79,7 +98,12 @@ path the way it can trust them everywhere else on a gated site.
 **Certificates are the operator's job for a driver that doesn't issue them
 itself.** Caddy issues its own via Cloudflare DNS-01 with no extra setup;
 nginx cannot obtain its own certificate, so every site the nginx driver
-generates shares one certificate/key pair instead — see [nginx driver](nginx.md). A future HAProxy driver would need the same kind of
+generates shares one certificate/key pair instead — see [nginx
+driver](nginx.md). Nginx Proxy Manager sits in between: it reuses a
+covering certificate already in NPM (typically a wildcard you created
+there yourself), and otherwise has NPM request one over its own HTTP-01
+challenge — see [Nginx Proxy Manager](nginx-proxy-manager.md) for what
+that requires. A future HAProxy driver would need the same kind of
 operator-managed certificate tool (`certbot`, `acme.sh`) running alongside
 it — Bellhop itself never issues or renews a certificate.
 ## Upgrading from the Caddy-only version

@@ -52,8 +52,8 @@ the starting configuration using Caddy's own adapter (R7).
 | Workflow | PASS with note | The session's assigned branch stands in for a worktree (cloud session). Single-operator assumptions recorded in `CLAUDE.md`: the fixed admin address, systemd with the packaged `caddy.service` name, and the Cloudflare DNS-01 issuance shared with the Caddy driver. |
 
 Post-design re-check: PASS. No new dependency, persisted secret, or
-transport. The one interface change (`usesConfigFile`, nullable
-`configPath`) is additive for existing drivers.
+transport. No interface change remains: the nullable `configPath` for a
+driver without a file arrived from issue #31 first (research R8).
 
 ## Project Structure
 
@@ -75,18 +75,14 @@ specs/015-caddy-admin-api-driver/
 ```text
 src/lib/proxy/
 ├── ids.ts                 # PROXY_DRIVER_IDS += 'caddy-api'
-├── driver.ts              # usesConfigFile?; DriverDeps.configPath: string | null
-├── index.ts               # register caddyApiDriver (after caddy); driverDeps null path
-├── file-driver.ts         # reject a null configPath
+├── index.ts               # register caddyApiDriver (after caddy)
 ├── caddy-json.ts          # NEW pure: renderRoute/renderTlsPolicy, planCaddyConfig, formatPreview
 ├── caddy-admin.ts         # NEW remote: readCaddyConfig, writeCaddyConfig, command builders, response parsing
 └── drivers/caddy-api.ts   # NEW caddyApiDriver (plan/apply/snapshot)
 
 src/commands/networking/convert-caddyfile.ts   # NEW runConvertCaddyfile, formatConvertCaddyfile
 src/cli.ts                                      # convert-caddyfile command
-src/web/routes/settings.ts                      # ProxyDriverInfo.usesConfigFile
-web-client/src/api/types.ts                     # ProxyDriverInfo.usesConfigFile
-web-client/src/lib/settings-display.ts          # hide config path when !usesConfigFile
+src/lib/proxy/drivers/caddy.ts                  # export shared literals (output unchanged)
 
 test/fixtures/caddy/                            # NEW captured Caddy v2.10.2 output
 ├── characterization-adapted.json               # caddy adapt of caddy.test.ts EXPECTED_LINES

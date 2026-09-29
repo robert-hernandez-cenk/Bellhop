@@ -3,8 +3,9 @@
 A self-hosted app store for your Proxmox VE homelab. Bellhop installs
 appliances from [community-scripts](https://github.com/community-scripts/ProxmoxVE)
 into new LXC containers, then handles what comes after: inventory,
-reverse-proxy routes (Caddy or nginx, through a pluggable driver — see
-[Reverse proxy drivers](docs/reverse-proxy/README.md)), Authentik login
+reverse-proxy routes (Caddy, nginx, or Nginx Proxy Manager, through a
+pluggable driver — see [Reverse proxy
+drivers](docs/reverse-proxy/README.md)), Authentik login
 gating, updates, and migrations between hosts. It ships as a web UI, a
 CLI, and an MCP server, and reaches your Proxmox hosts over SSH from your
 local machine.
@@ -12,6 +13,8 @@ local machine.
 Bellhop is an independent project, not affiliated with or endorsed by
 Proxmox Server Solutions GmbH. Proxmox is a registered trademark of
 Proxmox Server Solutions GmbH.
+
+![The Bellhop web UI Dashboard: a sidebar of provisioning and maintenance actions, two Proxmox hosts with their MID schemes and SSH targets, and a table of guests with their IP addresses, subdomains and Start, Shutdown and Delete buttons](docs/images/dashboard.png)
 
 ## Prerequisites
 
@@ -83,7 +86,8 @@ npm run web:start
 ```
 
 See [Web UI](docs/web-ui.md) for the development server, authentication,
-and what each page does.
+and what each page does. To see the web UI without any of the above, run
+`npm run demo` instead — a throwaway instance with built-in example data.
 
 ## Commands
 
@@ -125,8 +129,9 @@ behaves.
   through OpenID Connect (OIDC mode).
 - [Reverse proxy drivers](docs/reverse-proxy/README.md) — how `sync-proxy`
   manages a proxy, with a page per driver: [Caddy](docs/reverse-proxy/caddy.md),
-  [Caddy (admin API)](docs/reverse-proxy/caddy-api.md), and
-  [nginx](docs/reverse-proxy/nginx.md).
+  [Caddy (admin API)](docs/reverse-proxy/caddy-api.md),
+  [nginx](docs/reverse-proxy/nginx.md), and [Nginx Proxy
+  Manager](docs/reverse-proxy/nginx-proxy-manager.md).
 - [Troubleshooting](docs/troubleshooting.md) — running the checks, and known
   hardware issues.
 - `CLAUDE.md` — architecture reference (inventory schema, `resolveTarget`/

@@ -16,8 +16,8 @@ test('LAN_GATEWAYS_EMPTY_TEXT explains the empty state', () => {
 
 test('proxyDriverOptions suffixes only the default driver label with " (default)"', () => {
   const drivers = [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ];
   assert.deepEqual(proxyDriverOptions(drivers, 'caddy'), [
     { value: 'caddy', label: 'Caddy (default)' },
@@ -27,8 +27,8 @@ test('proxyDriverOptions suffixes only the default driver label with " (default)
 
 test('proxyDriverOptions preserves driver order and suffixes whichever id is the default', () => {
   const drivers = [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ];
   assert.deepEqual(proxyDriverOptions(drivers, 'none'), [
     { value: 'caddy', label: 'Caddy' },
@@ -37,8 +37,8 @@ test('proxyDriverOptions preserves driver order and suffixes whichever id is the
 });
 
 const DRIVERS = [
-  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
-  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true },
+  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
+  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
 ];
 
 test('proxyFieldView shows both fields with Caddy-specific placeholders/help when Caddy is selected', () => {
@@ -73,7 +73,6 @@ const NGINX = {
   managesProxy: true,
   usesSharedCertificate: true,
   configPathNote: "nginx replaces this whole file on every apply, and refuses to replace a file it didn't generate.",
-  usesConfigFile: true,
 };
 
 test('proxyFieldView for nginx shows the config path (nginx default, whole-file note), the status page, and the TLS fields', () => {
@@ -101,28 +100,33 @@ test('proxyFieldView appends a driver-supplied configPathNote to the config path
   );
 });
 
-// managesProxy, not defaultConfigPath, decides whether the config path field
-// applies at all: a managed driver with no default still needs a path, and
-// one that manages no proxy never does.
-test('proxyFieldView shows the config path field for a managed driver with no default, saying it is required', () => {
-  const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true }];
+// issue #31 (T005): a managed driver with no config file at all (e.g. Nginx
+// Proxy Manager, which is REST-managed) hides the config path field
+// entirely rather than showing it as "required" -- there is no default
+// config-path state left to show for a managed driver with
+// defaultConfigPath: null; only a driver that manages no proxy used to hide
+// it. Paired with no suggested status page path and no shared certificate,
+// all three fields are hidden.
+test('proxyFieldView hides all three fields for a managed driver with no config file, no status page, and no shared certificate', () => {
+  const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null }];
   const view = proxyFieldView('nodefault', drivers);
-  assert.equal(view.showConfigPath, true);
-  assert.equal(view.configPathPlaceholder, '');
-  assert.equal(view.configPathHelp, 'Config path for the No Default driver. Required: this driver has no default.');
-  assert.equal(view.showStatusPagePath, false, 'a managed driver with no suggested status page path hides that field');
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.configPathHelp, undefined, 'no "required" help text is shown once the field itself is hidden');
+  assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showTlsFields, false);
 });
 
 test('proxyFieldView hides the config path field for a driver that manages no proxy, even if it reports a default path', () => {
-  const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, configPathNote: null, usesConfigFile: true }];
+  const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, configPathNote: null }];
   const view = proxyFieldView('odd', drivers);
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
 });
 
 // issue #26: the admin-API Caddy driver writes no file, so the config path
-// field doesn't apply; the status page still does.
-test('proxyFieldView hides the config path for a driver that uses no config file, and keeps the status page', () => {
+// field doesn't apply; unlike Nginx Proxy Manager it still suggests a status
+// page path, so that field stays.
+test('proxyFieldView for the Caddy admin-API driver hides the config path and keeps the status page', () => {
   const CADDY_API = {
     id: 'caddy-api',
     label: 'Caddy (admin API)',
@@ -131,9 +135,8 @@ test('proxyFieldView hides the config path for a driver that uses no config file
     managesProxy: true,
     usesSharedCertificate: false,
     configPathNote: null,
-    usesConfigFile: false,
   };
-  const view = proxyFieldView('caddy-api', [...DRIVERS, CADDY_API]);
+  const view = proxyFieldView('caddy-api', [CADDY_API]);
   assert.equal(view.showConfigPath, false);
   assert.equal(view.configPathHelp, undefined);
   assert.equal(view.showStatusPagePath, true);

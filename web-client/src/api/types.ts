@@ -295,9 +295,6 @@ export interface ProxyDriverInfo {
   // Driver-supplied sentence appended to the Proxy config path help, e.g.
   // nginx's "replaces this whole file" warning. null = none.
   configPathNote: string | null;
-  // false only for a driver that writes no configuration file (the Caddy
-  // admin-API driver, issue #26) -- the page hides Proxy config path then.
-  usesConfigFile: boolean;
 }
 
 export interface SettingsResponse {

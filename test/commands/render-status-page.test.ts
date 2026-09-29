@@ -239,6 +239,42 @@ test('runRenderStatusPage rejects with statusPageUnsupportedError for a managed 
   }
 });
 
+// Issue #31 (US5, T021): the real registered 'nginx-proxy-manager' driver is
+// itself exactly this "managed, but no status page" case -- it manages a
+// real proxy over NPM's REST API but has no document root of its own to
+// write an index.html to (statusPage: null in the contract). Unlike the
+// synthetic driver above, it's already registered under its real id, so no
+// registerDriverForTests fake is needed -- and since both checks below
+// reject before runRenderStatusPage/statusPageSkipReason ever call
+// driverDeps()/driver.snapshot(), no NPM_API_EMAIL/NPM_API_PASSWORD env vars
+// or fetch stub are needed either; buildNpmClient is never reached.
+test("statusPageSkipReason names 'nginx-proxy-manager' as a managed driver with no status page -- warn when statusPagePath is set (it's being ignored), info when unset", () => {
+  const npmInventory: Inventory = { ...inventory, proxyDriver: 'nginx-proxy-manager' };
+  assert.deepEqual(statusPageSkipReason(npmInventory), {
+    message: "The 'nginx-proxy-manager' proxy driver does not serve a status page -- skipping the status page render",
+    level: 'warn',
+  });
+  const noPath: Inventory = { ...npmInventory, statusPagePath: undefined };
+  assert.deepEqual(statusPageSkipReason(noPath), {
+    message: "The 'nginx-proxy-manager' proxy driver does not serve a status page -- skipping the status page render",
+    level: 'info',
+  });
+});
+
+test("runRenderStatusPage rejects with statusPageUnsupportedError('nginx-proxy-manager'), and makes no SSH calls", async () => {
+  const npmInventory: Inventory = { ...inventory, proxyDriver: 'nginx-proxy-manager' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(() => runRenderStatusPage({}, { ssh, inventory: npmInventory }, 'domain: example.com'), (err: Error) => {
+    assert.equal(err.message, statusPageUnsupportedError('nginx-proxy-manager'));
+    assert.equal(
+      err.message,
+      "The 'nginx-proxy-manager' proxy driver does not serve a status page -- clear statusPagePath (bellhop set-config statusPagePath --unset --apply, or on the web UI's Settings page) or choose a proxyDriver that serves one"
+    );
+    return true;
+  });
+  assert.equal(ssh.history.length, 0);
+});
+
 test('runRenderStatusPage single-quotes a proxyConfigPath containing a space', async () => {
   const inventory: Inventory = {
     domain: 'example.com',

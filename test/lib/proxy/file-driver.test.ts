@@ -224,6 +224,42 @@ test('fileDriver.plan: several files join their content with a newline', async (
   assert.deepEqual(plan.payload, files);
 });
 
+// issue #31 (T004): DriverDeps.configPath is string | null (research.md
+// R11) -- null only for a driver with no config file at all (e.g. a
+// REST-managed driver like Nginx Proxy Manager), never reachable for a
+// fileDriver-built driver in practice, since every one of those declares a
+// real defaultConfigPath. plan()/apply()/snapshot() each resolve configPath
+// through the same programming-error guard, so a driver that somehow does
+// see null here fails loudly and by name rather than passing null through
+// to render()/validateCommand()/a `cat` command.
+test('fileDriver.plan/apply/snapshot throw a named programming-error message when deps.configPath is null', async () => {
+  const driver = fileDriver({
+    id: 'nginx',
+    label: 'Test driver',
+    statusPage: null,
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf',
+    render: () => [ownedFile('/etc/nginx/conf.d/bellhop.conf', 'server {}')],
+    validateCommand: () => 'nginx -t',
+    reloadCommand: 'systemctl reload nginx',
+  });
+  const deps = {
+    ssh: new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })),
+    inventory: { domain: 'example.com', hosts: [], guests: [] } as Inventory,
+    proxyHost: 'pve1',
+    configPath: null,
+  };
+  await assert.rejects(
+    () => driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps),
+    /^Error: nginx driver requires a config path$/
+  );
+  await assert.rejects(
+    () => driver.apply({ preview: '', payload: [] }, deps),
+    /^Error: nginx driver requires a config path$/
+  );
+  await assert.rejects(() => driver.snapshot(deps), /^Error: nginx driver requires a config path$/);
+});
+
 // --- (c) fileDriver(...).apply() ------------------------------------------
 
 test('fileDriver.apply: sends exactly one runRemote call, whose command equals buildFileDriverScript(files, validateCommand(configPath), reloadCommand)', async () => {
@@ -603,24 +639,3 @@ test('buildFileDriverScript, executed: a write-phase failure (before validate ev
   assert.ok(!existsSync(systemctlLogPath), 'systemctl must not have been called -- validate was never reached');
 });
 
-// issue #26: DriverDeps.configPath is null only for a driver with
-// usesConfigFile: false. A fileDriver handed one anyway must fail with the
-// named settings error rather than `cat 'null'` on the proxy host.
-test('fileDriver rejects a null configPath with the no-default-config-path error', async () => {
-  const driver = fileDriver({
-    id: 'caddy',
-    label: 'Test',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
-    defaultConfigPath: '/etc/test.conf',
-    statusPage: null,
-    render: (_routes, _ctx, configPath) => [{ path: configPath, content: '', mode: 'owned' }],
-    validateCommand: () => 'true',
-    reloadCommand: 'true',
-  });
-  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-  const inv = { domain: 'example.com', hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }], guests: [] };
-  const deps = { ssh, inventory: inv, proxyHost: 'pve1', configPath: null };
-  await assert.rejects(driver.snapshot(deps), /^Error: The 'caddy' proxy driver has no default config path -- /);
-  await assert.rejects(driver.plan([], { externalPort: 443, tls: { certificatePath: 'c', keyPath: 'k' } }, deps), /no default config path/);
-  assert.equal(ssh.history.length, 0);
-});
