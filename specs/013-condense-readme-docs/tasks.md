@@ -16,7 +16,7 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
 
 ## Phase 1: Setup
 
-- [ ] T001 Save the old README for reference: `git show origin/main:README.md > <scratch>/old-readme.md`, outside the repository. Every later task copies from it.
+- [x] T001 Save the old README for reference: `git show origin/main:README.md > <scratch>/old-readme.md`, outside the repository. Every later task copies from it.
 
 ## Phase 2: Foundational (test first)
 
@@ -36,10 +36,10 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
 **Goal**: every old README section exists on its docs/ page (content map).
 **Independent test**: quickstart.md step 3 (word diff) shows only seam removals.
 
-- [ ] T003 [P] [US2] Create `docs/commands.md`: title `# Commands`, one intro sentence, then old README lines 86-312 (Usage body with its Maintenance/Provisioning/Networking parts), headings adjusted per research R7. Seams: "Inventory-wide settings below" → `configuration.md#inventory-wide-settings`; "web UI (see below)" → `web-ui.md`; "OIDC mode below" → `authentik.md#oidc-mode`; "see the cluster note in `CLAUDE.md`" stays as text.
-- [ ] T004 [P] [US2] Create `docs/reverse-proxy/README.md`: title `# Reverse proxy drivers`, lines 316-389 (overview, No proxy, fileDriver, exempt paths, certificates), then lines 480-503 under `## Upgrading from the Caddy-only version`. Also add a short "Drivers" list linking `caddy.md` and `nginx.md`. Seams: "Inventory-wide settings" → `../configuration.md#inventory-wide-settings`; "nginx driver below" → `nginx.md`.
-- [ ] T005 [P] [US2] Create `docs/reverse-proxy/nginx.md`: title `# nginx driver`, lines 393-478. Seams: "Inventory-wide settings below" → `../configuration.md#inventory-wide-settings`.
-- [ ] T006 [P] [US2] Create `docs/reverse-proxy/caddy.md` per research R8: title `# Caddy driver`, then only existing statements, gathered from the old README:
+- [x] T003 [P] [US2] Create `docs/commands.md`: title `# Commands`, one intro sentence, then old README lines 86-312 (Usage body with its Maintenance/Provisioning/Networking parts), headings adjusted per research R7. Seams: "Inventory-wide settings below" → `configuration.md#inventory-wide-settings`; "web UI (see below)" → `web-ui.md`; "OIDC mode below" → `authentik.md#oidc-mode`; "see the cluster note in `CLAUDE.md`" stays as text.
+- [x] T004 [P] [US2] Create `docs/reverse-proxy/README.md`: title `# Reverse proxy drivers`, lines 316-389 (overview, No proxy, fileDriver, exempt paths, certificates), then lines 480-503 under `## Upgrading from the Caddy-only version`. Also add a short "Drivers" list linking `caddy.md` and `nginx.md`. Seams: "Inventory-wide settings" → `../configuration.md#inventory-wide-settings`; "nginx driver below" → `nginx.md`.
+- [x] T005 [P] [US2] Create `docs/reverse-proxy/nginx.md`: title `# nginx driver`, lines 393-478. Seams: "Inventory-wide settings below" → `../configuration.md#inventory-wide-settings`.
+- [x] T006 [P] [US2] Create `docs/reverse-proxy/caddy.md` per research R8: title `# Caddy driver`, then only existing statements, gathered from the old README:
   - It is the default driver (line 318).
   - Its config path is `/etc/caddy/Caddyfile` (line 831).
   - It replaces only the `bellhop-managed` section (lines 363-370, 471-472).
@@ -48,7 +48,7 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
   - `prune-acme-challenges`/`data/cloudflare-api.env` clean up stale challenge records (lines 1083-1091).
 
   Link back to `README.md` for shared driver behavior.
-- [ ] T007 [P] [US2] Create `docs/configuration.md`: title `# Configuration`, then:
+- [x] T007 [P] [US2] Create `docs/configuration.md`: title `# Configuration`, then:
   - `## Hand-editing the inventory` (lines 49-63).
   - `## Inventory-wide settings (before your first sync)` (lines 67-82).
   - `## Inventory-wide settings` (lines 806-843).
@@ -56,15 +56,15 @@ All paths are relative to the worktree root. "Content map" means `specs/013-cond
   - The derived-values paragraph (lines 946-953).
 
   Seams: "Reverse proxy drivers above" → `reverse-proxy/README.md`; "Inventory-wide settings below" → the in-page anchor; "`--mid` below" → `commands.md`.
-- [ ] T008 [P] [US2] Create `docs/environment-variables.md`: title `# Environment variables`, lines 957-1091. Seams: "`audit-nfs-mounts` above" → `commands.md`; "Inventory-wide settings above" → `configuration.md#inventory-wide-settings`; "Web UI above/below" → `web-ui.md`; "OIDC mode above" → `authentik.md#oidc-mode`; "Running without Authentik below" → `authentik.md#running-without-authentik`.
-- [ ] T009 [P] [US2] Create `docs/web-ui.md`: title `# Web UI`, lines 691-742. Seams: "everything above" → "everything in [Commands](commands.md)"; "Environment variable overrides and Running without Authentik below" → `environment-variables.md` / `authentik.md#running-without-authentik`.
-- [ ] T010 [P] [US2] Create `docs/mcp-server.md`: title `# MCP server`, lines 746-802.
-- [ ] T011 [P] [US2] Create `docs/authentik.md`: title `# Authentik`, one intro sentence, then:
+- [x] T008 [P] [US2] Create `docs/environment-variables.md`: title `# Environment variables`, lines 957-1091. Seams: "`audit-nfs-mounts` above" → `commands.md`; "Inventory-wide settings above" → `configuration.md#inventory-wide-settings`; "Web UI above/below" → `web-ui.md`; "OIDC mode above" → `authentik.md#oidc-mode`; "Running without Authentik below" → `authentik.md#running-without-authentik`.
+- [x] T009 [P] [US2] Create `docs/web-ui.md`: title `# Web UI`, lines 691-742. Seams: "everything above" → "everything in [Commands](commands.md)"; "Environment variable overrides and Running without Authentik below" → `environment-variables.md` / `authentik.md#running-without-authentik`.
+- [x] T010 [P] [US2] Create `docs/mcp-server.md`: title `# MCP server`, lines 746-802.
+- [x] T011 [P] [US2] Create `docs/authentik.md`: title `# Authentik`, one intro sentence, then:
   - `## Running without Authentik` (lines 1095-1114).
   - `## OIDC mode` (lines 507-687), keeping its bold paragraph labels, including **Authentik API token permissions**, exactly.
 
   Seams: "Reverse proxy drivers above" → `reverse-proxy/README.md`; "Access tab below" → the in-page anchor; "Environment variable overrides below" → `environment-variables.md`; "Web UI below" → `web-ui.md`.
-- [ ] T012 [P] [US2] Create `docs/troubleshooting.md`: title `# Troubleshooting`, `## Validation` (lines 1118-1125), `## Known hardware issues` (lines 1129-1144).
+- [x] T012 [P] [US2] Create `docs/troubleshooting.md`: title `# Troubleshooting`, `## Validation` (lines 1118-1125), `## Known hardware issues` (lines 1129-1144).
 
 **Checkpoint**: commit `Move README reference material into docs/ (#41, US2)`.
 
