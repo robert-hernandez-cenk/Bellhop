@@ -1,21 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { promptBannerView } from '../../web-client/src/lib/prompt-banner.ts';
+import { promptBannerView, PROMPT_BANNER_ORIGINS } from '../../web-client/src/lib/prompt-banner.ts';
 import type { PromptOrigin } from '../../web-client/src/api/types.ts';
 
-// Phase 2 (issue #4): these tests pin today's banner behavior verbatim, so
-// the later story phases can change copy against a known-good baseline
-// rather than changing structure and behavior at once. See
-// specs/010-prompt-banner-copy/contracts/banner-copy.md for what each phase
-// changes.
+// Pins the per-origin banner contract in
+// specs/010-prompt-banner-copy/contracts/banner-copy.md verbatim: the exact
+// hint text, hint emphasis, dismiss label and quiet controls for each
+// detection origin (`expected`, `heuristic`, `stall`) and the unrecorded
+// (`null`/`'none'`) case.
 
-const TODAY_DISMISS_LABEL = 'Not stuck — keep waiting';
+const OLD_DISMISS_LABEL = 'Not stuck — keep waiting';
 
 test("promptBannerView('expected', 0, 4) numbers the question and quiets the dismiss control", () => {
   const view = promptBannerView('expected', 0, 4);
   assert.equal(view.hint, "Question 1 of up to 4 — matches a known prompt in this app's install script.");
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, 'Skip this question');
+  assert.equal(view.dismissLabel, 'Ignore — keep waiting');
   assert.equal(view.quiet, 'dismiss');
 });
 
@@ -23,7 +23,7 @@ test("promptBannerView('expected', null, 4) falls back to the un-numbered hint",
   const view = promptBannerView('expected', null, 4);
   assert.equal(view.hint, "Matches a known prompt in this app's install script.");
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, 'Skip this question');
+  assert.equal(view.dismissLabel, 'Ignore — keep waiting');
   assert.equal(view.quiet, 'dismiss');
 });
 
@@ -31,7 +31,7 @@ test("promptBannerView('expected', 0, 0) falls back to the un-numbered hint", ()
   const view = promptBannerView('expected', 0, 0);
   assert.equal(view.hint, "Matches a known prompt in this app's install script.");
   assert.equal(view.hintStrong, false);
-  assert.equal(view.dismissLabel, 'Skip this question');
+  assert.equal(view.dismissLabel, 'Ignore — keep waiting');
   assert.equal(view.quiet, 'dismiss');
 });
 
@@ -78,14 +78,16 @@ test('promptBannerView(null, ...) shows no hint, with the same dismiss label as 
 });
 
 test('no dismissLabel is the old "Not stuck" label, and any control named in quotes in a hint names that view\'s own dismissLabel (SC-002, SC-003)', () => {
-  const origins: Array<PromptOrigin | null> = ['expected', 'heuristic', 'stall', null];
-  for (const origin of origins) {
-    const view = promptBannerView(origin, 0, 4);
-    assert.notEqual(view.dismissLabel, TODAY_DISMISS_LABEL);
-    if (view.hint !== null) {
-      const quotedNames = view.hint.match(/"[^"]*"/g) ?? [];
-      for (const quoted of quotedNames) {
-        assert.equal(quoted, `"${view.dismissLabel}"`);
+  for (const key of PROMPT_BANNER_ORIGINS) {
+    const origin: PromptOrigin | null = key === 'none' ? null : key;
+    for (const expectedCount of [0, 4]) {
+      const view = promptBannerView(origin, 0, expectedCount);
+      assert.notEqual(view.dismissLabel, OLD_DISMISS_LABEL);
+      if (view.hint !== null) {
+        const quotedNames = view.hint.match(/"[^"]*"/g) ?? [];
+        for (const quoted of quotedNames) {
+          assert.equal(quoted, `"${view.dismissLabel}"`);
+        }
       }
     }
   }

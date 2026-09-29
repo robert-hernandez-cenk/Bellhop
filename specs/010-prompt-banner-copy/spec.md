@@ -47,8 +47,10 @@ actually does is unchanged.
 
 An operator installs an app from the web UI. The installer asks a question
 that was found in the app's install script ahead of time. The banner
-presents answering as the obvious action, and the control that skips the
-question says plainly that it skips the question and is visually secondary.
+presents answering as the obvious action, and the control that dismisses the
+pause says plainly that it means ignoring the question and continuing to
+wait, rather than implying the installer will move on, and is visually
+secondary.
 
 **Why this priority**: This is the defect that actively misleads — the
 current label invites the operator to ignore a real question and leave the
@@ -56,7 +58,7 @@ job hanging. It is also the most common pause origin for apps whose prompts
 were found in advance.
 
 **Independent Test**: Open a job paused with origin `expected` and confirm
-the dismiss control reads "Skip this question", is styled as a secondary
+the dismiss control reads "Ignore — keep waiting", is styled as a secondary
 control, and the answer controls keep their normal, primary styling.
 
 **Acceptance Scenarios**:
@@ -64,14 +66,14 @@ control, and the answer controls keep their normal, primary styling.
 1. **Given** a job paused on an `expected` prompt that is question 1 of up to
    4 known prompts, **When** the operator opens the job page, **Then** the
    banner shows "Question 1 of up to 4 — matches a known prompt in this app's
-   install script." and a dismiss control labelled "Skip this question".
+   install script." and a dismiss control labelled "Ignore — keep waiting".
 2. **Given** the same banner, **When** the operator looks at the controls,
-   **Then** Yes, No, and Submit look like primary actions and "Skip this
-   question" looks visually quieter than them.
+   **Then** Yes, No, and Submit look like primary actions and "Ignore — keep
+   waiting" looks visually quieter than them.
 3. **Given** an `expected` pause whose position among the known prompts is
    not known, **When** the page renders, **Then** the explanation reads
    "Matches a known prompt in this app's install script." and the dismiss
-   control is still "Skip this question".
+   control is still "Ignore — keep waiting".
 
 ---
 
@@ -163,8 +165,8 @@ exactly that label is shown.
   ("Question N of up to M — matches a known prompt in this app's install
   script.", or "Matches a known prompt in this app's install script." when
   the position is unknown).
-- **FR-003**: For `expected`, the dismiss control MUST read "Skip this
-  question" and MUST be visually de-emphasised relative to the answer
+- **FR-003**: For `expected`, the dismiss control MUST read "Ignore — keep
+  waiting" and MUST be visually de-emphasised relative to the answer
   controls; the answer controls MUST keep their normal styling.
 - **FR-004**: For `heuristic`, the banner MUST show an explanation that the
   line looks like a question but did not match a known prompt. It MUST use

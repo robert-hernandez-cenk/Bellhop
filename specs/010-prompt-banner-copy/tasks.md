@@ -39,12 +39,14 @@ None. No new dependencies or project structure.
 
 ## Phase 3: User Story 1 - Answer a confirmed question without being steered away from it (Priority: P1) MVP
 
-**Goal**: A confirmed (`expected`) prompt's dismiss control reads "Skip this question" and is visually quiet.
+**Goal**: A confirmed (`expected`) prompt's dismiss control reads "Ignore — keep waiting" and is visually quiet.
 
-**Independent Test**: `promptBannerView('expected', …)` returns `dismissLabel: 'Skip this question'`, `quiet: 'dismiss'`; the browser shows an outline-styled "Skip this question" beside normal Yes/No/Submit.
+**Independent Test**: `promptBannerView('expected', …)` returns `dismissLabel: 'Ignore — keep waiting'`, `quiet: 'dismiss'`; the browser shows an outline-styled "Ignore — keep waiting" beside normal Yes/No/Submit.
 
-- [x] T005 [US1] In `test/web-client/prompt-banner.test.ts`, change the `expected` tests to also assert `dismissLabel === 'Skip this question'` and `quiet === 'dismiss'` (both hint variants unchanged, FR-002). Confirm they fail.
-- [x] T006 [US1] In `web-client/src/lib/prompt-banner.ts`, set the `expected` entry's `dismissLabel` to `Skip this question` and `quiet` to `'dismiss'`. Run `npm test`; T005 passes.
+- [x] T005 [US1] In `test/web-client/prompt-banner.test.ts`, change the `expected` tests to also assert `dismissLabel === 'Ignore — keep waiting'` and `quiet === 'dismiss'` (both hint variants unchanged, FR-002). Confirm they fail.
+- [x] T006 [US1] In `web-client/src/lib/prompt-banner.ts`, set the `expected` entry's `dismissLabel` to `Ignore — keep waiting` and `quiet` to `'dismiss'`. Run `npm test`; T005 passes.
+
+  **Post-review update**: the label above was originally "Skip this question". Code review found dismiss sends nothing to the installer (`JobSSHClient.resume()` only clears the pause and re-arms the watch timer), so "Skip" implied the installer moves on when it actually keeps waiting on its question. The operator chose "Ignore — keep waiting" instead, matching R2/R3 in research.md.
 
 **Checkpoint**: US1 complete and testable alone.
 

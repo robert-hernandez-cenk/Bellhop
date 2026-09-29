@@ -5,10 +5,12 @@
 // which controls get the quiet/outline treatment (issue #4) -- a
 // `Record<PromptOrigin | 'none', …>` table so a new PromptOrigin added to
 // api/types.ts without a matching entry here fails to compile, rather than
-// silently rendering no hint. Phase 2 (this file's first version)
-// reproduces today's JobView.tsx behavior exactly; later phases (see
-// specs/010-prompt-banner-copy/contracts/banner-copy.md) change individual
-// table entries, not this structure.
+// silently rendering no hint. `'none'` covers the page before the pause's
+// origin has arrived at all -- the server itself reports a pause with no
+// stored origin as `heuristic` (every pause was a heuristic guess before
+// origins existed), so `'none'` is never what a live pause resolves to.
+// See specs/010-prompt-banner-copy/contracts/banner-copy.md for the exact
+// per-origin strings and emphasis this table pins.
 
 import type { PromptOrigin } from '../api/types.ts';
 
@@ -33,7 +35,7 @@ const BANNER_VIEWS: Record<PromptOrigin | 'none', BannerEntry> = {
         ? `Question ${matchedIndex + 1} of up to ${expectedCount} — matches a known prompt in this app's install script.`
         : "Matches a known prompt in this app's install script.",
     hintStrong: false,
-    dismissLabel: 'Skip this question',
+    dismissLabel: 'Ignore — keep waiting',
     quiet: 'dismiss',
   }),
   heuristic: (_matchedIndex, expectedCount) => ({
@@ -67,3 +69,7 @@ export function promptBannerView(
 ): PromptBannerView {
   return BANNER_VIEWS[origin ?? 'none'](matchedIndex, expectedCount);
 }
+
+// Derived from the table itself, so a key added to BANNER_VIEWS is picked
+// up here automatically rather than needing a second, hand-kept list.
+export const PROMPT_BANNER_ORIGINS = Object.keys(BANNER_VIEWS) as Array<PromptOrigin | 'none'>;

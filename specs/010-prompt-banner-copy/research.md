@@ -11,8 +11,8 @@ decisions below record the choices made while designing.
 
 ## R2 — Treatment of dismiss on a confirmed (`expected`) prompt
 
-- **Decision**: Label "Skip this question", styled as a quiet outline button; answer controls keep normal styling.
-- **Rationale**: Chosen by the operator during design, over rename-only and hiding. Hiding would remove the only in-banner escape from a mis-numbered or already-answered prompt short of stopping the job; a label alone would still give skipping the same visual weight as answering.
+- **Decision**: Label "Ignore — keep waiting" (em dash, matching R3's label below), styled as a quiet outline button; answer controls keep normal styling.
+- **Rationale**: Chosen by the operator during design, over rename-only and hiding. Hiding would remove the only in-banner escape from a mis-numbered or already-answered prompt short of stopping the job; a label alone would still give skipping the same visual weight as answering. First chosen as "Skip this question"; code review of the finished feature pointed out that dismiss sends nothing to the installer (`JobSSHClient.resume()` only clears the pause and re-arms the watch timer) — the installer never actually skips the question, it keeps waiting on it exactly as before. "Skip" implied otherwise, so the operator changed the label to "Ignore — keep waiting", which describes what dismissing actually does.
 
 ## R3 — Dismiss label for `heuristic`, `stall`, and unrecorded pauses
 
