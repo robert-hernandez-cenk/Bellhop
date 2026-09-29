@@ -46,19 +46,19 @@ None. The existing `web-client/` app and test layout are used as they are.
 
 **Independent Test**: open Advanced on a guest at desktop width. Hover and click each ⓘ.
 
-- [ ] T003 [US1] In `test/web-client/advanced-field-help.test.ts`, add a test that reads `web-client/src/components/AdvancedGuestModal.tsx` as text (like `test/web-client/mobile-overflow-css.test.ts` reads CSS).
+- [x] T003 [US1] In `test/web-client/advanced-field-help.test.ts`, add a test that reads `web-client/src/components/AdvancedGuestModal.tsx` as text (like `test/web-client/mobile-overflow-css.test.ts` reads CSS).
   - It collects every `field="…"` attribute passed to `<FieldHelp`, and also every remaining `<div className="form-row-label">…</div>` whose text is not wrapped by FieldHelp.
   - It asserts: the set of `field=` values equals `Object.keys(ADVANCED_FIELD_HELP)`; the collected list has no duplicates; there are zero bare labels (SC-005).
 
   Confirm the test fails.
-- [ ] T004 [US1] Create `web-client/src/components/FieldHelp.tsx`.
+- [x] T004 [US1] Create `web-client/src/components/FieldHelp.tsx`.
   - Props: `{ field: string; text: string; open: boolean; pinned: boolean; onHover(open: boolean): void; onToggle(): void; onClose(): void }`.
   - Render the label text `field`, then a `<button type="button" className="field-help-button" aria-label={`About ${field}`} aria-expanded={open} aria-controls={id}>ⓘ</button>`, where `id` comes from `useId()`.
   - When open, render `<div id={id} className="field-help-popover">{text}</div>`.
   - Hover: `onPointerEnter`/`onPointerLeave` call `onHover(true/false)` only when `e.pointerType === 'mouse'` (research R1).
   - Activation: `onClick` calls `onToggle()`.
   - Keep it generic, with no Advanced-modal-specific imports, so other pages can reuse it.
-- [ ] T005 [US1] In `web-client/src/components/AdvancedGuestModal.tsx`:
+- [x] T005 [US1] In `web-client/src/components/AdvancedGuestModal.tsx`:
   - Add `const [help, setHelp] = useState<{ field: string; pinned: boolean } | null>(null)`.
   - Add a helper `helpFor(field)` returning FieldHelp props per the transitions in `specs/011-advanced-field-help/data-model.md`:
     - hover-in opens unpinned only when nothing is pinned;
@@ -67,7 +67,7 @@ None. The existing `web-client/` app and test layout are used as they are.
     - close → `null`.
   - Replace the text of every `<div className="form-row-label">` (all 15, including `oidc client`) with `<FieldHelp field="<label>" text={ADVANCED_FIELD_HELP['<label>']} {...helpFor('<label>')} />`.
   - Leave every `Editable*` component untouched (FR-010). Run `npm test`; T003 passes.
-- [ ] T006 [US1] In `web-client/src/index.css`, next to the existing `.form-row` rules:
+- [x] T006 [US1] In `web-client/src/index.css`, next to the existing `.form-row` rules:
   - Give `.form-row` `position: relative`.
   - Make `.form-row-label` `display: flex; align-items: center; gap: 4px`.
   - Add `.field-help-button` as a borderless, transparent, `color: var(--text-secondary)`, `font: inherit`, `line-height: 1` inline button, with `min-width: 24px; min-height: 24px`, `cursor: pointer`, `padding: 0` and `border-radius: 50%`. Add a `:hover`/`:focus-visible` state using `color: var(--accent)` and a visible focus outline.

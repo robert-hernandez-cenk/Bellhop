@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { ADVANCED_FIELD_HELP } from '../../web-client/src/lib/advanced-field-help.ts';
 
 // Pins the 15 label -> explanation entries in
@@ -66,4 +67,40 @@ test('FR-003 facts appear in the relevant explanations', () => {
   const callbackUrls = ADVANCED_FIELD_HELP['callback urls'];
   assert.match(callbackUrls, /No effect unless/);
   assert.match(callbackUrls, /OIDC mode/);
+});
+
+// US1: every label rendered by AdvancedGuestModal.tsx must go through
+// FieldHelp with a `field=` matching a key in ADVANCED_FIELD_HELP, and no
+// bare (unwrapped) form-row-label may remain (SC-005).
+
+const modalPath = new URL('../../web-client/src/components/AdvancedGuestModal.tsx', import.meta.url);
+const modalSource = readFileSync(modalPath, 'utf8');
+
+function collectFieldHelpFields(source: string): string[] {
+  const fields: string[] = [];
+  const re = /<FieldHelp\b[^>]*?\bfield="([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    fields.push(match[1]);
+  }
+  return fields;
+}
+
+function collectBareLabels(source: string): string[] {
+  const bare: string[] = [];
+  const re = /<div className="form-row-label">([^<]*)<\/div>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    bare.push(match[1]);
+  }
+  return bare;
+}
+
+test('every form-row-label in AdvancedGuestModal.tsx is wrapped by FieldHelp, one per ADVANCED_FIELD_HELP key, no bare labels (SC-005)', () => {
+  const fields = collectFieldHelpFields(modalSource);
+  const bareLabels = collectBareLabels(modalSource);
+
+  assert.deepEqual(new Set(fields), new Set(Object.keys(ADVANCED_FIELD_HELP)));
+  assert.equal(fields.length, new Set(fields).size, 'duplicate field= values found');
+  assert.deepEqual(bareLabels, [], 'bare form-row-label divs found, not wrapped by FieldHelp');
 });
