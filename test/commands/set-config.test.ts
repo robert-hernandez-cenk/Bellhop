@@ -118,7 +118,7 @@ test('runSetConfig round-trips proxyDriver through --apply and --unset', () => {
 
 test('runSetConfig rejects an unknown proxyDriver', () => {
   const inventoryPath = tempInventoryPath();
-  assert.throws(() => runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath }), /proxyDriver/);
+  assert.throws(() => runSetConfig({ key: 'proxyDriver', value: 'unknown-provider', apply: true }, { inventoryPath }), /proxyDriver/);
   assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
 });
 

@@ -270,11 +270,21 @@ export const SettingsSchema = z.object({
   dnsServer: z.string().min(1).optional(),
   statusPagePath: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // Which reverse-proxy driver src/lib/proxy/index.ts's getDriver() hands
-  // back -- unset means the 'caddy' default (issue #10).
+  // back -- unset means the 'caddy' default (issue #10, issue #30).
   proxyDriver: z.enum(PROXY_DRIVER_IDS).optional(),
   // Overrides the active driver's own defaultConfigPath (issue #10) -- unset
   // means driverDeps() falls back to that default.
   proxyConfigPath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // The certificate/key pair every nginx driver server block shares (issue
+  // #30, research R1/R2) -- nginx cannot obtain its own certificates the
+  // way Caddy does, so one shared pair keeps a new subdomain's sync from
+  // failing until the operator issues it a certificate by hand. Each
+  // defaults independently -- unset means
+  // /etc/letsencrypt/live/<domain>/fullchain.pem and .../privkey.pem
+  // respectively (buildProxyContext, src/lib/proxy/routes.ts). Inert for
+  // the Caddy driver, which never reads ProxyContext.tls.
+  proxyTlsCertificate: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  proxyTlsKey: z.string().regex(/^\//, 'must be an absolute path').optional(),
   // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
   // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
   // the repo name (research R7).

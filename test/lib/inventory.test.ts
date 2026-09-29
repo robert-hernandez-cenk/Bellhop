@@ -1075,7 +1075,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the eight settings keys', () => {
+test('SETTINGS_KEYS lists exactly the ten settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'backupStorage',
     'customScriptsBranch',
@@ -1084,6 +1084,8 @@ test('SETTINGS_KEYS lists exactly the eight settings keys', () => {
     'nfsServer',
     'proxyConfigPath',
     'proxyDriver',
+    'proxyTlsCertificate',
+    'proxyTlsKey',
     'statusPagePath',
   ]);
 });
@@ -1116,7 +1118,7 @@ test('SettingsSchema accepts proxyDriver caddy and an absolute proxyConfigPath',
 });
 
 test('SettingsSchema rejects an unknown proxyDriver and a relative proxyConfigPath', () => {
-  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'nginx' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'unknown-provider' }).success, false);
   assert.equal(SettingsSchema.safeParse({ proxyConfigPath: 'etc/caddy/Caddyfile' }).success, false);
 });
 
@@ -1127,6 +1129,42 @@ test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', 
   const loaded = loadInventory(dest);
   assert.equal(loaded.proxyDriver, 'caddy');
   assert.equal(loaded.proxyConfigPath, '/etc/caddy/Caddyfile');
+});
+
+test('SettingsSchema accepts proxyDriver nginx and absolute proxyTlsCertificate/proxyTlsKey', () => {
+  const result = SettingsSchema.safeParse({
+    proxyDriver: 'nginx',
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  assert.equal(result.success, true);
+});
+
+test('SettingsSchema rejects a relative proxyTlsCertificate or proxyTlsKey', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyTlsCertificate: 'etc/ssl/fullchain.pem' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyTlsKey: 'etc/ssl/privkey.pem' }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips proxyTlsCertificate and proxyTlsKey, and clearing one removes it from meta', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, {
+    ...FIXTURE_INVENTORY,
+    proxyTlsCertificate: '/etc/letsencrypt/live/example.com/fullchain.pem',
+    proxyTlsKey: '/etc/letsencrypt/live/example.com/privkey.pem',
+  });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.proxyTlsCertificate, '/etc/letsencrypt/live/example.com/fullchain.pem');
+  assert.equal(loaded.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+
+  saveInventory(dest, { ...loaded, proxyTlsCertificate: undefined });
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.proxyTlsCertificate, undefined);
+  assert.equal(reloaded.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
+  const db = new Database(dest, { readonly: true });
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyTlsCertificate'").get();
+  db.close();
+  assert.equal(row, undefined);
 });
 
 test('loadInventory migrates a legacy requires_auth column to authGroup at the ladder top rung', () => {

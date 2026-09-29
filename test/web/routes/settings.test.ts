@@ -159,7 +159,7 @@ test('PATCH /api/settings writes proxyDriver and proxyConfigPath', async () => {
 
 test('PATCH /api/settings rejects an unknown proxyDriver', async () => {
   const { app, inventoryPath } = testApp();
-  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'nginx' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyDriver: 'unknown-provider' });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /^proxyDriver: /);
   assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);

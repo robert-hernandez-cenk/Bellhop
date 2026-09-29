@@ -57,10 +57,10 @@ test('getDriver throws a named error for an id no registered driver has, with th
   // own zod enum would otherwise reject this value on load. Bypassed here
   // by casting past the ProxyDriverId type, the same way the contract
   // describes this error as only reachable that way.
-  const inv = baseInventory({ proxyDriver: 'nginx' as Inventory['proxyDriver'] });
+  const inv = baseInventory({ proxyDriver: 'unknown-provider' as Inventory['proxyDriver'] });
   assert.throws(
     () => getDriver(inv),
-    /^Error: Unknown proxyDriver 'nginx' -- run: bellhop set-config proxyDriver caddy --apply$/
+    /^Error: Unknown proxyDriver 'unknown-provider' -- run: bellhop set-config proxyDriver caddy --apply$/
   );
 });
 
