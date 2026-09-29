@@ -187,4 +187,4 @@ tested via `FakeSSHClient`.
 **Decision**: four existing tests (`test/lib/inventory.test.ts`,
 `test/lib/proxy/index.test.ts`, `test/commands/set-config.test.ts`,
 `test/web/routes/settings.test.ts`) use `'nginx'` as their example of an
-id no driver has. They switch to `'traefik'`, which remains unregistered.
+id no driver has. They switch to `'unknown-provider'`, a name no real driver will ever take -- `'traefik'` was avoided because Traefik is a plausible future driver.

@@ -84,10 +84,10 @@ README.md, CLAUDE.md
 
 test/lib/proxy/drivers/nginx.test.ts        # NEW
 test/lib/proxy/routes.test.ts               # buildProxyContext tls default/override
-test/lib/proxy/index.test.ts                # getDriver returns nginx; unknown id -> 'traefik'
-test/lib/inventory.test.ts                  # schema: nginx accepted, new keys, unknown -> 'traefik'
-test/commands/set-config.test.ts            # new keys; unknown id -> 'traefik'
-test/web/routes/settings.test.ts            # new keys; unknown id -> 'traefik'
+test/lib/proxy/index.test.ts                # getDriver returns nginx; unknown id -> 'unknown-provider'
+test/lib/inventory.test.ts                  # schema: nginx accepted, new keys, unknown -> 'unknown-provider'
+test/commands/set-config.test.ts            # new keys; unknown id -> 'unknown-provider'
+test/web/routes/settings.test.ts            # new keys; unknown id -> 'unknown-provider'
 test/lib/proxy/file-driver.test.ts          # ProxyContext literals gain tls
 test/web/proxy-sync.test.ts, test/commands/sync-proxy.test.ts  # nginx driver end to end (prune skipped; preview)
 ```
@@ -100,7 +100,7 @@ already exists for exactly this driver shape.
 
 1. **Context and settings**: `ProxyContext.tls` + `buildProxyContext`
    default; `SettingsSchema` keys; switch the four "unknown driver" tests to
-   `'traefik'`. Caddy characterization must stay green.
+   `'unknown-provider'`. Caddy characterization must stay green.
 2. **nginx render, ungated/OIDC** (US1): skeleton, server block, proxy
    lines, HTTPS upstream rules; register the driver; `sync-proxy`/
    `syncProxyLive` tests with `proxyDriver: 'nginx'`; executed-script test.
