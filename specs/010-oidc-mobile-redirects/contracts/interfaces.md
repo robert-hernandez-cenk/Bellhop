@@ -91,13 +91,13 @@ Update lines use `~ <object>: <detail>`; delete lines use `- <object>`.
 
 | Surface | Field | Rules |
 |---|---|---|
-| `PATCH /api/inventory/guests/:name` (Dashboard) | `oidcMobileRedirectUris`: `;`-joined string or array | Parsed by `parseOidcMobileRedirectUris` (400 on an invalid URI). Admin-only in both directions (403 otherwise, `oidcEditChangeError`). Cross-list duplicates give 400 via `oidcConfigErrors`. |
+| `PATCH /api/inventory/guests/:name` (Dashboard) | `oidcMobileRedirectUris`: `;`-joined string or array | Parsed by `parseOidcMobileRedirectUris` (400 on an invalid URI). Admin-only in both directions (403 otherwise, `oidcEditChangeError`). Cross-list duplicates give 400 via `oidcConfigErrors`, checked only when the edit changes either list (a stored duplicate never blocks an unrelated edit). When the edit changes the mobile list, the response echoes any consent-step problems as `mobileConsentProblems`. |
 | MCP `edit_guest` (`EDIT_GUEST_SHAPE`) | `oidcMobileRedirectUris: string \| string[]` optional | Same parse and cross-list rules via `applyGuestEdits` and `commitGuestEdit`. No admin check. The tool description lists the field. |
 | `import-yaml-inventory` | `oidcMobileRedirectUris: [..]` on hosts, guests, external sites | Zod item validation only (no cross-list check, consistent with load). |
 | `GuestEntry` in `web-client/src/api/types.ts` | `oidcMobileRedirectUris?: string[]` | — |
 
 ## 4. Web client
 
-- `web-client/src/lib/oidc.ts`: `accessFieldsFor(authMode?: 'forward' | 'oidc'): AccessField[]`, where `AccessField` is `'authGroup' | 'authMode' | 'unauthenticatedPaths' | 'callbackUrls' | 'mobileRedirectUrls' | 'oidcClient'`. Forward mode returns the first three; OIDC mode returns everything except `unauthenticatedPaths`.
+- `web-client/src/lib/oidc.ts`: `accessFieldsFor(guest): AccessField[]`, where `AccessField` is `'authGroup' | 'authMode' | 'unauthenticatedPaths' | 'callbackUrls' | 'mobileRedirectUrls' | 'oidcClient'`. Forward (or unset) mode returns the first three, plus `callbackUrls` when `needsCallbackUrlsBeforeOidc(guest)` (gated, no web callback URL yet — the server requires one before an OIDC switch). OIDC mode returns everything except `unauthenticatedPaths`.
 - `EditableOidcMobileRedirectUris` (in `EditableAuthMode.tsx`): props `{ guest, onSaved }`. Saves `{ oidcMobileRedirectUris }`, with the same admin handling and error display as `EditableOidcRedirectUris`. Help text: "For a native app's sign-in callback (custom scheme or its mobile-redirect page). Adds one consent click to mobile sign-ins only."
 - `AdvancedGuestModal`: tab strip with `General` and `Access` (`role="tablist"`, buttons with `role="tab"` and `aria-selected`); General is the default.
