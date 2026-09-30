@@ -20,8 +20,8 @@ traefikDriver = fileDriver({
 ```
 
 `'traefik'` joins `PROXY_DRIVER_IDS`, and it's registered after
-Nginx Proxy Manager and before None, so the dropdown order is Caddy, nginx,
-Nginx Proxy Manager, Traefik, No proxy.
+HAProxy and before None, so the dropdown order is Caddy, nginx,
+Nginx Proxy Manager, HAProxy, Traefik, No proxy.
 
 ## Rendered file: example
 
