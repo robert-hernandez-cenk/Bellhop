@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
 import { parse, stringify, Scalar } from 'yaml';
-import type { ProxyContext, ProxyRoute } from '../routes.ts';
+import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver } from '../file-driver.ts';
+// Shared with the nginx driver (issue #31/#35): the same root-prefix/dedupe/
+// outpost-namespace rules a forward-gated route's exempt patterns must obey
+// no matter which driver renders them -- see nginx-locations.ts's own
+// comments on each for the reasoning; reused here rather than duplicated.
+import { dedupeExemptPatterns, isOutpostPrefixed, isRootPrefix } from '../nginx-locations.ts';
 
 // The whole file is generated and replaced wholesale on every apply ('owned'
 // mode), the same convention as the nginx/HAProxy drivers -- Traefik's file
@@ -103,10 +108,46 @@ function backendUrl(backend: ProxyRoute['backend']): string {
   return `${scheme}://${backend.ip}:${backend.port}`;
 }
 
-// One route's main router + service (contract "Rendered file: example", the
-// *wiki* entry's shape) -- forward-auth/outpost/exempt objects are User
-// Story 2 and are not produced here at all yet; every route, gated or not,
-// gets exactly this router+service pair for now.
+// A route's `Host(...) || Host(...)` expression alone, canonical first --
+// used bare for the main router's rule, and wrapped in parens as the left
+// side of the outpost/exempt routers' `&&` rules below (research.md R6).
+function hostsRule(route: ProxyRoute): string {
+  return route.hostnames.map((hostname) => `Host(${ruleValue(hostname)})`).join(' || ');
+}
+
+// One exempt pattern's own rule term -- Path() for an exact match,
+// PathPrefix() for a prefix (research.md R6). pattern.path already ends in
+// '/' for a prefix (parsePathPattern strips only the trailing '*'), so
+// PathPrefix(`/api/`) is exactly what's wanted for a stored "/api/*".
+function patternRule(pattern: PathPattern): string {
+  return pattern.kind === 'exact' ? `Path(${ruleValue(pattern.path)})` : `PathPrefix(${ruleValue(pattern.path)})`;
+}
+
+const OUTPOST_PATH_PREFIX = '/outpost.goauthentik.io/';
+
+// The route's own forward-auth-only object names (research.md R7): the
+// canonical (deduped, outpost-namespace-dropped, research.md R6) exempt
+// pattern list, whether a bare '/*' is among them (which drops
+// bellhop-authentik from the main router and suppresses the exempt router
+// entirely, research.md R9), and the exempt-router-worthy subset (the same
+// list minus that root pattern, since a root exemption isn't itself
+// rendered as a Path()/PathPrefix() term -- there being nothing left to gate
+// on for a route with only a root exemption).
+function exemptPlan(route: ProxyRoute): { rootExempted: boolean; exemptTerms: PathPattern[] } {
+  if (route.auth.mode !== 'forward') return { rootExempted: false, exemptTerms: [] };
+  const patterns = dedupeExemptPatterns(route.auth.exemptPaths).filter((pattern) => !isOutpostPrefixed(pattern));
+  const rootExempted = patterns.some(isRootPrefix);
+  return { rootExempted, exemptTerms: patterns.filter((pattern) => !isRootPrefix(pattern)) };
+}
+
+// One route's own objects: the main router + service (contract "Rendered
+// file: example", every entry's shape), plus, for a 'forward' route, its
+// outpost router and (when any exempt pattern remains after dropping the
+// outpost namespace and the root '/*') its exempt router (User Story 2,
+// research.md R9). Router insertion order per route is route, outpost,
+// exempt (per-route grouping in the contract example). The shared
+// bellhop-authentik middleware and bellhop-authentik-outpost service this
+// route's objects reference are emitted once by render() itself, not here.
 function renderRouteObjects(
   route: ProxyRoute,
   ctx: ProxyContext,
@@ -115,12 +156,19 @@ function renderRouteObjects(
 ): { usesInsecureTls: boolean } {
   const canonical = route.hostnames[0];
   const name = routeName(canonical);
+  const hosts = hostsRule(route);
+  const { rootExempted, exemptTerms } = exemptPlan(route);
+
+  const middlewares = ['bellhop-forwarded-port'];
+  if (route.auth.mode === 'forward' && !rootExempted) {
+    middlewares.push('bellhop-authentik');
+  }
 
   routers[name] = {
-    rule: route.hostnames.map((hostname) => `Host(${ruleValue(hostname)})`).join(' || '),
+    rule: hosts,
     entryPoints: ['websecure'],
     service: name,
-    middlewares: ['bellhop-forwarded-port'],
+    middlewares,
     tls: { certResolver: ctx.certResolver },
   };
 
@@ -130,7 +178,52 @@ function renderRouteObjects(
   }
   services[name] = { loadBalancer };
 
+  if (route.auth.mode === 'forward') {
+    // The outpost router is kept even when a bare '/*' removed
+    // bellhop-authentik from the main router above -- the sign-in
+    // redirect/callback it serves is still reachable regardless of what the
+    // rest of the route exempts (research.md R9).
+    routers[outpostName(canonical)] = {
+      rule: `(${hosts}) && PathPrefix(${ruleValue(OUTPOST_PATH_PREFIX)})`,
+      entryPoints: ['websecure'],
+      service: 'bellhop-authentik-outpost',
+      middlewares: ['bellhop-forwarded-port'],
+      tls: { certResolver: ctx.certResolver },
+    };
+
+    if (exemptTerms.length > 0) {
+      routers[exemptName(canonical)] = {
+        rule: `(${hosts}) && (${exemptTerms.map(patternRule).join(' || ')})`,
+        entryPoints: ['websecure'],
+        service: name,
+        middlewares: ['bellhop-forwarded-port'],
+        tls: { certResolver: ctx.certResolver },
+      };
+    }
+  }
+
   return { usesInsecureTls: route.backend.insecureTls };
+}
+
+// The forward-auth middleware and outpost service every forward-gated
+// route's objects reference, emitted once (research.md R9) rather than
+// per-route -- ctx.outpost is guaranteed set here: buildRoutes already
+// throws the missing-authentik error before producing a 'forward' route
+// when no authentik:true entry has an ip (same non-null convention the
+// Caddy/nginx drivers already follow for their own outpost access).
+function authentikMiddleware(ctx: ProxyContext): unknown {
+  const outpostAddr = `${ctx.outpost!.ip}:${ctx.outpost!.port}`;
+  return {
+    forwardAuth: {
+      address: `http://${outpostAddr}${OUTPOST_PATH_PREFIX}auth/traefik`,
+      trustForwardHeader: true,
+      authResponseHeaders: ['X-authentik-username', 'X-authentik-groups', 'X-authentik-email', 'X-authentik-name', 'X-authentik-uid'],
+    },
+  };
+}
+
+function authentikOutpostService(ctx: ProxyContext): unknown {
+  return { loadBalancer: { servers: [{ url: `http://${ctx.outpost!.ip}:${ctx.outpost!.port}` }] } };
 }
 
 // Renders every route into the one file this driver owns whole (contract
@@ -158,6 +251,17 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
   for (const route of routes) {
     const { usesInsecureTls } = renderRouteObjects(route, ctx, routers, services);
     anyInsecureTls = anyInsecureTls || usesInsecureTls;
+  }
+
+  // bellhop-authentik and bellhop-authentik-outpost are shared across every
+  // forward-gated route's own objects -- emitted once, after every route's
+  // own router/service, only when at least one 'forward' route exists
+  // (research.md R7/R9). bellhop-authentik is inserted right after
+  // bellhop-forwarded-port in http.middlewares, ahead of the generation
+  // marker buildHttp appends last.
+  if (routes.some((route) => route.auth.mode === 'forward')) {
+    middlewares['bellhop-authentik'] = authentikMiddleware(ctx);
+    services['bellhop-authentik-outpost'] = authentikOutpostService(ctx);
   }
 
   const serversTransports: Record<string, unknown> = anyInsecureTls

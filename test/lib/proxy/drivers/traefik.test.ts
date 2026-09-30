@@ -6,8 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { parse } from 'yaml';
-import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../../src/lib/proxy/routes.ts';
+import { parse, stringify } from 'yaml';
+import { buildRoutes, buildProxyContext, parsePathPattern, type ProxyContext, type ProxyRoute } from '../../../../src/lib/proxy/routes.ts';
 import { encodeHostname, generationMarkerName, render, routeName, routerNames, ruleValue } from '../../../../src/lib/proxy/drivers/traefik.ts';
 import type { Inventory } from '../../../../src/lib/inventory.ts';
 
@@ -269,4 +269,254 @@ test('render via buildRoutes/buildProxyContext: an unset proxyCertResolver falls
   const content = render(buildRoutes(inventory), buildProxyContext(inventory), CONFIG_PATH)[0].content;
   const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> } };
   assert.equal(doc.http.routers['bellhop-route-app-example-com'].tls.certResolver, 'cloudflare');
+});
+
+// --- render: forward-auth objects (User Story 2, contract "Rendered file:
+// example" -- the *media* entry, and research.md R6/R7/R9) -----------------
+
+// The outpost every forward-gated route below addresses -- distinct from
+// ctx()'s own default (no outpost), since most US1 tests never needed one.
+function gatedCtx(overrides: Partial<ProxyContext> = {}): ProxyContext {
+  return ctx({ outpost: { ip: '192.0.2.5', port: 9000 }, ...overrides });
+}
+
+const BELLHOP_AUTHENTIK_MIDDLEWARE = {
+  forwardAuth: {
+    address: 'http://192.0.2.5:9000/outpost.goauthentik.io/auth/traefik',
+    trustForwardHeader: true,
+    authResponseHeaders: ['X-authentik-username', 'X-authentik-groups', 'X-authentik-email', 'X-authentik-name', 'X-authentik-uid'],
+  },
+};
+const BELLHOP_AUTHENTIK_OUTPOST_SERVICE = { loadBalancer: { servers: [{ url: 'http://192.0.2.5:9000' }] } };
+
+function mediaRoute(overrides: Partial<ProxyRoute> = {}): ProxyRoute {
+  return route({
+    owner: { type: 'guest', name: 'media' },
+    hostnames: ['media.example.com'],
+    backend: { ip: '192.0.2.21', port: 443, insecureTls: true },
+    auth: {
+      mode: 'forward',
+      exemptPaths: [parsePathPattern('/health'), parsePathPattern('/api/*')],
+      rawExemptPaths: ['/health', '/api/*'],
+    },
+    ...overrides,
+  });
+}
+
+test('render: the contract example\'s media entry -- main router middlewares/outpost router/exempt router/services/shared middleware', () => {
+  const content = renderOne(mediaRoute(), gatedCtx());
+  const doc = parse(content) as {
+    http: {
+      routers: Record<string, { rule: string; entryPoints: string[]; service: string; middlewares: string[]; tls: { certResolver: string } }>;
+      services: Record<string, unknown>;
+      middlewares: Record<string, unknown>;
+      serversTransports: Record<string, unknown>;
+    };
+  };
+
+  const mainRouter = doc.http.routers['bellhop-route-media-example-com'];
+  assert.deepEqual(mainRouter, {
+    rule: 'Host(`media.example.com`)',
+    entryPoints: ['websecure'],
+    service: 'bellhop-route-media-example-com',
+    middlewares: ['bellhop-forwarded-port', 'bellhop-authentik'],
+    tls: { certResolver: 'cloudflare' },
+  });
+
+  const outpostRouter = doc.http.routers['bellhop-outpost-media-example-com'];
+  assert.deepEqual(outpostRouter, {
+    rule: '(Host(`media.example.com`)) && PathPrefix(`/outpost.goauthentik.io/`)',
+    entryPoints: ['websecure'],
+    service: 'bellhop-authentik-outpost',
+    middlewares: ['bellhop-forwarded-port'],
+    tls: { certResolver: 'cloudflare' },
+  });
+
+  const exemptRouter = doc.http.routers['bellhop-exempt-media-example-com'];
+  assert.deepEqual(exemptRouter, {
+    rule: '(Host(`media.example.com`)) && (Path(`/health`) || PathPrefix(`/api/`))',
+    entryPoints: ['websecure'],
+    service: 'bellhop-route-media-example-com',
+    middlewares: ['bellhop-forwarded-port'],
+    tls: { certResolver: 'cloudflare' },
+  });
+
+  assert.equal(Object.keys(doc.http.routers).length, 3);
+
+  assert.deepEqual(doc.http.services['bellhop-route-media-example-com'], {
+    loadBalancer: { servers: [{ url: 'https://192.0.2.21:443' }], serversTransport: 'bellhop-insecure-backend-tls' },
+  });
+  assert.deepEqual(doc.http.services['bellhop-authentik-outpost'], BELLHOP_AUTHENTIK_OUTPOST_SERVICE);
+
+  assert.deepEqual(doc.http.middlewares['bellhop-authentik'], BELLHOP_AUTHENTIK_MIDDLEWARE);
+  assert.deepEqual(doc.http.serversTransports['bellhop-insecure-backend-tls'], { insecureSkipVerify: true });
+});
+
+test('render: bellhop-authentik middleware is the second key in http.middlewares, after bellhop-forwarded-port and before the generation marker', () => {
+  const content = renderOne(mediaRoute(), gatedCtx());
+  const doc = parse(content) as { http: { middlewares: Record<string, unknown> } };
+  const names = Object.keys(doc.http.middlewares);
+  assert.deepEqual(names.slice(0, 2), ['bellhop-forwarded-port', 'bellhop-authentik']);
+  assert.ok(names[2].startsWith('bellhop-generation-'));
+  assert.equal(names.length, 3);
+});
+
+test('render: a bare /* exemption removes bellhop-authentik from the main router and renders no exempt router, but keeps the outpost router', () => {
+  const content = renderOne(
+    mediaRoute({
+      auth: { mode: 'forward', exemptPaths: [parsePathPattern('/*')], rawExemptPaths: ['/*'] },
+    }),
+    gatedCtx()
+  );
+  const doc = parse(content) as { http: { routers: Record<string, { middlewares: string[] }> } };
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, ['bellhop-forwarded-port']);
+  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'], undefined);
+  assert.ok(doc.http.routers['bellhop-outpost-media-example-com'], 'outpost router must still be rendered');
+});
+
+test('render: an outpost-namespace exempt pattern is skipped, so with only that pattern no exempt router is rendered (but bellhop-authentik stays on the main router)', () => {
+  const content = renderOne(
+    mediaRoute({
+      auth: {
+        mode: 'forward',
+        exemptPaths: [parsePathPattern('/outpost.goauthentik.io/*')],
+        rawExemptPaths: ['/outpost.goauthentik.io/*'],
+      },
+    }),
+    gatedCtx()
+  );
+  const doc = parse(content) as { http: { routers: Record<string, { middlewares: string[] }> } };
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, ['bellhop-forwarded-port', 'bellhop-authentik']);
+  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'], undefined);
+  assert.ok(doc.http.routers['bellhop-outpost-media-example-com'], 'outpost router must still be rendered');
+});
+
+test('render: an exact outpost-namespace path (no trailing /*) is also skipped', () => {
+  const content = renderOne(
+    mediaRoute({
+      auth: {
+        mode: 'forward',
+        exemptPaths: [parsePathPattern('/outpost.goauthentik.io')],
+        rawExemptPaths: ['/outpost.goauthentik.io'],
+      },
+    }),
+    gatedCtx()
+  );
+  const doc = parse(content) as { http: { routers: Record<string, unknown> } };
+  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'], undefined);
+});
+
+test('render: duplicate exempt patterns (same kind+path) are deduplicated into one Path()/PathPrefix() term', () => {
+  const content = renderOne(
+    mediaRoute({
+      auth: {
+        mode: 'forward',
+        exemptPaths: [parsePathPattern('/health'), parsePathPattern('/health')],
+        rawExemptPaths: ['/health', '/health'],
+      },
+    }),
+    gatedCtx()
+  );
+  const doc = parse(content) as { http: { routers: Record<string, { rule: string }> } };
+  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'].rule, '(Host(`media.example.com`)) && (Path(`/health`))');
+});
+
+test('render: an OIDC route gets no forward-auth objects at all -- no outpost/exempt router, no bellhop-authentik middleware or outpost service', () => {
+  const content = renderOne(mediaRoute({ auth: { mode: 'oidc' } }), gatedCtx());
+  const doc = parse(content) as {
+    http: { routers: Record<string, { middlewares: string[] }>; services: Record<string, unknown>; middlewares: Record<string, unknown> };
+  };
+  assert.deepEqual(Object.keys(doc.http.routers), ['bellhop-route-media-example-com']);
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, ['bellhop-forwarded-port']);
+  assert.equal(doc.http.services['bellhop-authentik-outpost'], undefined);
+  assert.equal(doc.http.middlewares['bellhop-authentik'], undefined);
+});
+
+// --- render: the whole contract example (wiki + media together) ------------
+
+test('render: the whole contract example (wiki ungated + media forward-gated) renders to the documented structure', () => {
+  const wiki = route({
+    owner: { type: 'guest', name: 'wiki' },
+    hostnames: ['wiki.example.com', 'docs.example.com'],
+    backend: { ip: '192.0.2.20', port: 8080, insecureTls: false },
+  });
+  const media = mediaRoute();
+  const contractCtx = gatedCtx();
+
+  const expectedRouters = {
+    'bellhop-route-wiki-example-com': {
+      rule: 'Host(`wiki.example.com`) || Host(`docs.example.com`)',
+      entryPoints: ['websecure'],
+      service: 'bellhop-route-wiki-example-com',
+      middlewares: ['bellhop-forwarded-port'],
+      tls: { certResolver: 'cloudflare' },
+    },
+    'bellhop-route-media-example-com': {
+      rule: 'Host(`media.example.com`)',
+      entryPoints: ['websecure'],
+      service: 'bellhop-route-media-example-com',
+      middlewares: ['bellhop-forwarded-port', 'bellhop-authentik'],
+      tls: { certResolver: 'cloudflare' },
+    },
+    'bellhop-outpost-media-example-com': {
+      rule: '(Host(`media.example.com`)) && PathPrefix(`/outpost.goauthentik.io/`)',
+      entryPoints: ['websecure'],
+      service: 'bellhop-authentik-outpost',
+      middlewares: ['bellhop-forwarded-port'],
+      tls: { certResolver: 'cloudflare' },
+    },
+    'bellhop-exempt-media-example-com': {
+      rule: '(Host(`media.example.com`)) && (Path(`/health`) || PathPrefix(`/api/`))',
+      entryPoints: ['websecure'],
+      service: 'bellhop-route-media-example-com',
+      middlewares: ['bellhop-forwarded-port'],
+      tls: { certResolver: 'cloudflare' },
+    },
+  };
+
+  const expectedServices = {
+    'bellhop-route-wiki-example-com': { loadBalancer: { servers: [{ url: 'http://192.0.2.20:8080' }] } },
+    'bellhop-route-media-example-com': {
+      loadBalancer: { servers: [{ url: 'https://192.0.2.21:443' }], serversTransport: 'bellhop-insecure-backend-tls' },
+    },
+    'bellhop-authentik-outpost': BELLHOP_AUTHENTIK_OUTPOST_SERVICE,
+  };
+
+  const expectedMiddlewaresWithoutMarker = {
+    'bellhop-forwarded-port': { headers: { customRequestHeaders: { 'X-Forwarded-Port': '443' } } },
+    'bellhop-authentik': BELLHOP_AUTHENTIK_MIDDLEWARE,
+  };
+
+  const expectedServersTransports = { 'bellhop-insecure-backend-tls': { insecureSkipVerify: true } };
+
+  // The marker hash is computed independently here, via the `yaml` package's
+  // own `stringify` (a third-party function, not render()'s own hashing
+  // logic) over a hand-written object mirroring render()'s two-pass
+  // construction -- same convention as the existing wiki-only test above,
+  // just extended to the full two-route, forward-auth shape.
+  const httpWithoutMarker = {
+    routers: expectedRouters,
+    services: expectedServices,
+    middlewares: expectedMiddlewaresWithoutMarker,
+    serversTransports: expectedServersTransports,
+  };
+  const contentWithoutMarker = `${HEADER}\n${stringify({ http: httpWithoutMarker })}`;
+  const hash = sha256First12(contentWithoutMarker);
+  const markerName = `bellhop-generation-${hash}`;
+
+  const expectedDoc = {
+    http: {
+      routers: expectedRouters,
+      services: expectedServices,
+      middlewares: {
+        ...expectedMiddlewaresWithoutMarker,
+        [markerName]: { headers: { customRequestHeaders: { 'X-Bellhop-Generation': hash } } },
+      },
+      serversTransports: expectedServersTransports,
+    },
+  };
+
+  const content = render([wiki, media], contractCtx, CONFIG_PATH)[0].content;
+  assert.equal(content.split('\n')[0], HEADER);
+  assert.deepEqual(parse(content), expectedDoc);
 });
