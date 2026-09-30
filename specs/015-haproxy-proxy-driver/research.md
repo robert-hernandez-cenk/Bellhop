@@ -16,8 +16,29 @@ use_backend %[req.hdr(host),field(1,:),lower,map(/etc/haproxy/bellhop.map)]
 ```
 
 The backends file is loaded with an extra `-f` (on Debian/Ubuntu,
-`EXTRAOPTS="-f /etc/haproxy/bellhop.cfg"` in `/etc/default/haproxy`, which
-the packaged unit appends to its `haproxy -f $CONFIG` command line).
+`EXTRAOPTS="-S /run/haproxy-master.sock -f /etc/haproxy/bellhop.cfg"` in
+`/etc/default/haproxy`, which the packaged unit appends to its
+`haproxy -Ws -f $CONFIG -p $PIDFILE` command line).
+
+**Addendum (final review, verified in a `debian:bookworm` container)**: the
+packaged `haproxy.service` sets `Environment=... "EXTRAOPTS=-S
+/run/haproxy-master.sock"` and then `EnvironmentFile=-/etc/default/haproxy`,
+so an `EXTRAOPTS` there *replaces* the package default rather than adding
+to it — hence the `-S /run/haproxy-master.sock` repeated in the documented
+value, which keeps the master socket. `ExecStart` is `/usr/sbin/haproxy -Ws
+-f $CONFIG -p $PIDFILE $EXTRAOPTS` and `ExecReload` re-validates with
+`/usr/sbin/haproxy -Ws -f $CONFIG -c -q $EXTRAOPTS` before `kill -USR2
+$MAINPID`; a reload keeps the master's original command line, so a
+`systemctl restart haproxy` is needed after first editing
+`/etc/default/haproxy`.
+
+The driver's own validate command checks `haproxy.cfg` plus `configPath`,
+while the running service loads whatever `EXTRAOPTS` names and the frontend
+reads whatever `map()` path it names. Changing `proxyConfigPath` therefore
+also means updating `EXTRAOPTS` and the frontend's `map()` path (and a
+restart); otherwise an apply succeeds while HAProxy keeps serving the old
+files. Validation is deliberately left as is (a ruling in the final review);
+this is documented on the driver page instead.
 
 **Rationale**: certificates, the listening socket and any hand-written
 frontend rules are inherently operator territory — HAProxy has no
@@ -94,6 +115,7 @@ backend bellhop_guest_web-lxc
     mode http
     timeout server 1d
     timeout tunnel 1d
+    http-request del-header x-authentik- -m beg
     http-request set-header X-Forwarded-For %[src]
     http-request set-header X-Forwarded-Proto https
     http-request set-header X-Forwarded-Host %[req.hdr(host)]
@@ -110,10 +132,19 @@ backend bellhop_guest_web-lxc
 - `X-Forwarded-Port` comes from `ctx.externalPort` (443), like every
   driver (issue #91).
 - `timeout server`/`timeout tunnel 1d` matches the nginx driver's `1d`
-  read/send timeouts, so WebSocket and SSE streams are not cut off by the
-  operator's `defaults` timeouts. HAProxy passes WebSocket upgrades natively
-  in HTTP mode and neither buffers bodies nor limits their size by default,
-  so nothing else is needed for parity.
+  read/send timeouts on the backend side. `timeout tunnel` applies to both
+  sides of an upgraded WebSocket, so a quiet one is not cut off. A
+  server-sent-events stream is never a tunnel, though: its client side stays
+  under the operator frontend's own `timeout client` (50s in Debian's
+  default `haproxy.cfg`), which a backend cannot override. For long-idle SSE
+  the operator raises `timeout client` in their own frontend or `defaults`
+  (documented on the driver page). HAProxy passes WebSocket upgrades natively
+  in HTTP mode and neither buffers bodies nor limits their size by default.
+- `http-request del-header x-authentik- -m beg` is the first rule. No
+  Bellhop HAProxy backend is ever behind forward-auth (R8), so any
+  `X-authentik-*` header reaching one is client-supplied, and a backend that
+  trusts those headers (Bellhop's own web UI does) would otherwise accept a
+  spoofed identity. Checked valid with a real `haproxy -c` on 2.6 and 3.4.6.
 - No health `check` on the server line: a single-server backend gains
   nothing from it, and a failing check would turn a slow backend into a 503.
 
@@ -150,9 +181,24 @@ before previewing, writing or saving. Until now it was exercised only with
 test-registered fake drivers; this feature adds tests against the real
 registered driver.
 
+**Addendum (final review)**: one piece of new code was needed after all.
+`runSyncProxy` calls `buildRoutes()` before `checkCapabilities()`, and
+`buildRoutes` throws "Entry '<name>' has an 'authGroup' set but no inventory
+entry has 'authentik: true' with an ip set" for a forward-gated entry when no
+outpost exists — so under HAProxy, which can never use an outpost, the
+operator was told to add one instead of getting the capability refusal.
+`buildRoutes` now takes `{ requireOutpost = true }`, and `runSyncProxy`
+passes `requireOutpost: driver.capabilities.authModes.includes('forward')`.
+Caddy, nginx and Nginx Proxy Manager all support forward, so their output and
+errors are unchanged; `buildRoutes` has no other caller.
+
 ## R9. Map path derivation
 
 **Decision**: `mapPath(configPath)` is the POSIX directory of `configPath`
 joined with `bellhop.map`. `render()` throws (naming `proxyConfigPath`)
-when `configPath` itself is that map path, since both files would be the
-same file.
+when `configPath` itself is that map path once normalised
+(`posix.normalize`, so `/etc/haproxy//bellhop.map` and
+`/etc/haproxy/./bellhop.map` are caught too), since both files would be the
+same file. It also throws, naming `proxyConfigPath`, for a `configPath`
+ending in `/`: `SettingsSchema` only requires an absolute path, so such a
+value can be set, and `mapPath` would put the map one directory up.

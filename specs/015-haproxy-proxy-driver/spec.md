@@ -90,9 +90,11 @@ commands to show that a failed configuration check restores both files.
    behaves like the other drivers' sites: the original `Host` is passed
    through, the backend is told the client's address (replacing, never
    appending to, any value the client sent), the scheme (`https`), the
-   original host, and that the external port is 443, and long-lived
-   WebSocket and server-sent-event connections are not cut off after
-   HAProxy's usual idle timeout.
+   original host, and that the external port is 443, any
+   `X-authentik-*` header the client sent is removed, and a long-lived
+   WebSocket connection is not cut off after HAProxy's usual idle timeout
+   (a server-sent-event stream's client side stays under the operator's
+   own frontend `timeout client`).
 7. **Given** an existing file at either path whose first line is not
    Bellhop's generated header (for example the operator's own
    configuration, or a file left by another driver), **When** the operator
@@ -216,9 +218,15 @@ HAProxy installation.
   routes.
 - **FR-007**: Each backend MUST set the forwarded headers the other drivers
   set: client address (replacing any client-supplied value), scheme
-  `https`, the original host, and the external port.
-- **FR-008**: Each backend MUST allow long-lived connections (WebSocket,
-  server-sent events) to stay open for at least a day of inactivity.
+  `https`, the original host, and the external port. It MUST also remove
+  every client-supplied `X-authentik-*` header first, since no backend
+  this driver generates is behind forward-auth.
+- **FR-008**: Each backend MUST allow long-lived connections to stay open
+  for at least a day of inactivity on the backend side (`timeout server`/
+  `timeout tunnel`). An upgraded WebSocket is then covered on both sides;
+  a server-sent-events stream's client side is governed by the operator's
+  own frontend `timeout client`, which the documentation tells them to
+  raise for long-idle streams.
 - **FR-009**: Backend TLS MUST follow the other drivers' rule: TLS without
   verification when the route's backend is marked insecure; TLS verified
   against the system CA bundle when the backend port is 443 and it is not
@@ -239,7 +247,8 @@ HAProxy installation.
   does not use the shared TLS certificate settings.
 - **FR-015**: `snapshot()` MUST read back both deployed files.
 - **FR-016**: The dry-run preview MUST show exactly the content apply
-  writes to both files.
+  writes to both files, each under a `==> <path> <==` label so the reader
+  can tell the two apart.
 - **FR-017**: The Settings page MUST show a note for this driver's config
   path explaining that the whole file is replaced and that `bellhop.map` is
   written beside it.

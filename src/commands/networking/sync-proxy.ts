@@ -48,7 +48,13 @@ export async function runSyncProxy(
 
   const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);
 
-  const routes = buildRoutes(deps.inventory);
+  // Only a driver that can forward-auth needs an outpost to address. For one
+  // that can't (HAProxy, issue #32), buildRoutes's missing-authentik error
+  // would pre-empt the capability refusal below and tell the operator to add
+  // an outpost the driver could never use.
+  const routes = buildRoutes(deps.inventory, {
+    requireOutpost: driver.capabilities.authModes.includes('forward'),
+  });
 
   // Capability enforcement (issue #10, FR-011): refuse before previewing or
   // writing anything -- for both a dry run and --apply -- when any route
