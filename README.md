@@ -129,6 +129,7 @@ behaves.
   through OpenID Connect (OIDC mode).
 - [Reverse proxy drivers](docs/reverse-proxy/README.md) — how `sync-proxy`
   manages a proxy, with a page per driver: [Caddy](docs/reverse-proxy/caddy.md),
+  [Caddy (admin API)](docs/reverse-proxy/caddy-api.md),
   [nginx](docs/reverse-proxy/nginx.md), [Nginx Proxy
   Manager](docs/reverse-proxy/nginx-proxy-manager.md),
   [HAProxy](docs/reverse-proxy/haproxy.md), and

@@ -208,6 +208,8 @@ prints a warning with the error; fix the cause and run
 ```bash
 bellhop sync-proxy          # dry run: prints the generated reverse-proxy configuration
 bellhop sync-proxy --apply  # writes it and reloads the proxy
+bellhop convert-caddyfile          # dry run: convert the proxy host's Caddyfile for the caddy-api driver
+bellhop convert-caddyfile --apply  # load the converted configuration into Caddy (once, when switching)
 bellhop render-status-page          # dry run: prints the generated status page HTML
 bellhop render-status-page --apply  # writes it to the proxy host
 bellhop sync-authentik          # dry run: prints Applications/OpenID clients to create/update/remove
@@ -216,6 +218,13 @@ bellhop oidc-credentials media           # print an OIDC-gated entry's issuer, c
 bellhop adopt-oidc-client media          # dry run: preview adopting a hand-made OpenID client
 bellhop adopt-oidc-client media --apply  # adopt it as Bellhop-managed, without rotating its credentials
 ```
+
+`convert-caddyfile` is the one-time step for switching from the Caddy
+driver to the [Caddy admin-API driver](reverse-proxy/caddy-api.md#switching-from-the-caddy-driver):
+it converts the Caddyfile (minus Bellhop's managed section) with `caddy
+adapt`, adds the inventory's routes as Bellhop-tagged ones, and loads the
+result into the running Caddy. It refuses to run once Caddy already holds
+Bellhop objects.
 
 `render-status-page` regenerates a static, LAN-only status page (raw
 `inventory/hosts.yaml` plus the actual deployed proxy configuration, both

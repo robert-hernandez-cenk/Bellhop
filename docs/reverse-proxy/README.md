@@ -4,6 +4,8 @@ How `sync-proxy` manages a reverse proxy through a driver. Each driver has its
 own page:
 
 - [Caddy](caddy.md) — the default.
+- [Caddy (admin API)](caddy-api.md) — Caddy configured through its admin
+  API instead of a Caddyfile.
 - [nginx](nginx.md).
 - [Nginx Proxy Manager](nginx-proxy-manager.md).
 - [HAProxy](haproxy.md).
@@ -13,8 +15,9 @@ own page:
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see [Inventory-wide
 settings](../configuration.md#inventory-wide-settings); unset means
-`caddy`, the default; `nginx`, `nginx-proxy-manager`, `haproxy`, `traefik`,
-and `none` are the other drivers that ship). Exactly one driver is active per
+`caddy`, the default; `caddy-api`, `nginx`, `nginx-proxy-manager`,
+`haproxy`, `traefik`, and `none` are the other drivers that ship). Exactly
+one driver is active per
 deployment: it's a per-deployment choice, not a per-entry one, so every
 gated/reverse-proxied inventory entry is served by the same proxy. The web
 UI's Settings page presents this choice as a dropdown of every driver
@@ -74,8 +77,8 @@ skips it for any driver that doesn't issue certificates via Cloudflare
 DNS-01 (nginx, Nginx Proxy Manager, and HAProxy included).
 
 A driver that's configured through a file (Caddy, nginx, HAProxy, and
-Traefik all are; a future Caddy-admin-API/HAProxy-Data-Plane-API driver
-might not be) is built with a shared `fileDriver` helper: it backs up the
+Traefik all are; the REST-managed Caddy admin-API and Nginx Proxy Manager
+drivers are not) is built with a shared `fileDriver` helper: it backs up the
 target file(s), writes the new content in place (either replacing a
 managed section while leaving everything else on the file untouched, or
 replacing a file Bellhop owns outright), runs the proxy's own validation
@@ -93,7 +96,9 @@ truncate, since Traefik's watcher could otherwise observe a half-written
 file (see [Traefik](traefik.md)). Nginx Proxy Manager is the first driver
 that manages a real proxy with *no* configuration file at all — it
 reconciles proxy hosts over NPM's own REST API instead (see [Nginx Proxy
-Manager](nginx-proxy-manager.md)), so a driver's config path is now
+Manager](nginx-proxy-manager.md)), and the [Caddy admin-API
+driver](caddy-api.md) likewise reconciles tagged objects in Caddy's live
+configuration, so a driver's config path is now
 `string | null`: `null` means "this driver has no file," and the Settings
 page hides the Proxy config path field entirely for it rather than
 showing it empty. Each managed driver must still state its

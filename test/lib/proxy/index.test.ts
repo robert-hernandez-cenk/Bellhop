@@ -6,6 +6,7 @@ import { NO_PROXY_SYNC_MESSAGE, NO_PROXY_STATUS_PAGE_ERROR, managesProxy } from 
 import type { ProxyDriverId } from '../../../src/lib/proxy/ids.ts';
 import { PROXY_DRIVER_IDS, getDriver, driverDeps, registerDriverForTests, DEFAULT_PROXY_DRIVER_ID, listDrivers } from '../../../src/lib/proxy/index.ts';
 import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { caddyApiDriver } from '../../../src/lib/proxy/drivers/caddy-api.ts';
 import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
 import { nginxProxyManagerDriver } from '../../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
@@ -85,16 +86,16 @@ test('getDriver returns noneDriver when proxyDriver is "none"', () => {
 
 // --- driver ids / registry metadata (issue #33) ----------------------------
 
-test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, haproxy, traefik, none]', () => {
-  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'traefik', 'none']);
+test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, haproxy, traefik, none, caddy-api]', () => {
+  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'traefik', 'none', 'caddy-api']);
 });
 
 test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
   assert.equal(DEFAULT_PROXY_DRIVER_ID, 'caddy');
 });
 
-test('listDrivers returns Caddy, nginx, Nginx Proxy Manager, HAProxy, Traefik, then None, in registration order', () => {
-  assert.deepEqual(listDrivers(), [caddyDriver, nginxDriver, nginxProxyManagerDriver, haproxyDriver, traefikDriver, noneDriver]);
+test('listDrivers returns Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, HAProxy, Traefik, then None, in registration order', () => {
+  assert.deepEqual(listDrivers(), [caddyDriver, caddyApiDriver, nginxDriver, nginxProxyManagerDriver, haproxyDriver, traefikDriver, noneDriver]);
 });
 
 test('getDriver returns traefikDriver when proxyDriver is "traefik" (issue #35)', () => {
@@ -142,6 +143,13 @@ test('driverDeps returns configPath: null for the Nginx Proxy Manager driver, ev
   const inv = baseInventory({ proxyDriver: 'nginx-proxy-manager', proxyConfigPath: '/etc/nginx/conf.d/bellhop.conf' });
   const deps = driverDeps(inv, new FakeSSHClient(defaultResponder), nginxProxyManagerDriver);
   assert.equal(deps.configPath, null);
+});
+
+// issue #26: the admin-API driver writes no file either.
+test('driverDeps returns configPath: null for the Caddy admin-API driver, even when proxyConfigPath is set', () => {
+  const inv = baseInventory({ proxyDriver: 'caddy-api', proxyConfigPath: '/etc/caddy/Caddyfile' });
+  assert.equal(getDriver(inv), caddyApiDriver);
+  assert.equal(driverDeps(inv, new FakeSSHClient(defaultResponder), caddyApiDriver).configPath, null);
 });
 
 test('Caddy driver metadata: label, defaultConfigPath, statusPage', () => {

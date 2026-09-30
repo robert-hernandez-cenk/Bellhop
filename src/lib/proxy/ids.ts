@@ -5,11 +5,11 @@
 // #35) are the file-configured drivers that ship today -- haproxy owns two
 // files, a backends file and a hostname-to-backend map; traefik owns one
 // file-provider file Traefik hot-reloads; 'nginx-proxy-manager' (issue #31)
-// is a REST-managed driver with no config file of its own; 'none' (issue
-// #33) is a real registered driver too -- it means Bellhop manages no
-// reverse proxy, not that no proxy exists in front of the deployment. A
-// future driver adds its id here.
-export const PROXY_DRIVER_IDS = ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'traefik', 'none'] as const;
+// and 'caddy-api' (issue #26) are REST-managed drivers with no config file
+// of their own; 'none' (issue #33) is a real registered driver too -- it
+// means Bellhop manages no reverse proxy, not that no proxy exists in front
+// of the deployment. A future driver adds its id here.
+export const PROXY_DRIVER_IDS = ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'traefik', 'none', 'caddy-api'] as const;
 export type ProxyDriverId = (typeof PROXY_DRIVER_IDS)[number];
 
 // The id of the driver that means "Bellhop manages no reverse proxy" --

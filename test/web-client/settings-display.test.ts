@@ -151,6 +151,29 @@ test('proxyFieldView hides the config path field for a driver that manages no pr
   assert.equal(view.showStatusPagePath, false);
 });
 
+// issue #26: the admin-API Caddy driver writes no file, so the config path
+// field doesn't apply; unlike Nginx Proxy Manager it still suggests a status
+// page path, so that field stays.
+test('proxyFieldView for the Caddy admin-API driver hides the config path and keeps the status page', () => {
+  const CADDY_API = {
+    id: 'caddy-api',
+    label: 'Caddy (admin API)',
+    defaultConfigPath: null,
+    suggestedStatusPagePath: '/usr/share/caddy/index.html',
+    managesProxy: true,
+    usesSharedCertificate: false,
+    usesCertResolver: false,
+    usesApiUrl: false,
+    configPathNote: null,
+  };
+  const view = proxyFieldView('caddy-api', [CADDY_API]);
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.configPathHelp, undefined);
+  assert.equal(view.showStatusPagePath, true);
+  assert.equal(view.statusPagePlaceholder, '/usr/share/caddy/index.html');
+  assert.equal(view.showTlsFields, false);
+});
+
 // issue #35 (T018): Traefik's entry exactly as GET /api/settings serves
 // it -- the only driver with usesCertResolver/usesApiUrl set.
 const TRAEFIK = {

@@ -826,3 +826,16 @@ test('sync-proxy emits the configured Authentik outpost port', async () => {
     else process.env.AUTHENTIK_OUTPOST_PORT = original;
   }
 });
+
+// issue #26: runSyncProxy under proxyDriver 'caddy-api' -- the driver has no
+// config file, so orchestration must not require one, and the preview is
+// the admin-API reconcile plan.
+test('sync-proxy (caddy-api driver) previews the admin-API plan without needing a config path', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'HTTP/1.1 200 OK\r\nEtag: "/config/ 1"\r\n\r\nnull', stderr: '', code: 0 }));
+  const result = await runSyncProxy({}, { ssh, inventory: { ...inventory, proxyDriver: 'caddy-api' } });
+  assert.equal(result.driver, 'caddy-api');
+  assert.equal(result.proxyHost, 'pve1');
+  assert.equal(result.applied, false);
+  assert.match(result.preview, /^\+ route media\.example\.com, movies\.example\.com -> 192\.168\.1\.50:8080$/m);
+  assert.equal(ssh.history.length, 1);
+});

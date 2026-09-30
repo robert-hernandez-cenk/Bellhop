@@ -24,6 +24,15 @@ test('prune-acme-challenges --help documents the --apply flag', () => {
   assert.match(output, /_acme-challenge/);
 });
 
+test('convert-caddyfile --help documents --caddyfile and --apply', () => {
+  const output = execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'convert-caddyfile', '--help'], {
+    encoding: 'utf8',
+  });
+  assert.match(output, /convert-caddyfile/);
+  assert.match(output, /--caddyfile <path>/);
+  assert.match(output, /--apply/);
+});
+
 test('set-config --help lists every setting key', async () => {
   const { SETTINGS_KEYS } = await import('../src/lib/inventory.ts');
   const output = execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'set-config', '--help'], {

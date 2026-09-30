@@ -3,6 +3,7 @@ import { findProxyEntry } from '../inventory.ts';
 import type { SSHClient } from '../ssh-client.ts';
 import type { DriverDeps, ReverseProxyDriver } from './driver.ts';
 import { caddyDriver } from './drivers/caddy.ts';
+import { caddyApiDriver } from './drivers/caddy-api.ts';
 import { nginxDriver } from './drivers/nginx.ts';
 import { nginxProxyManagerDriver } from './drivers/nginx-proxy-manager.ts';
 import { haproxyDriver } from './drivers/haproxy.ts';
@@ -25,10 +26,12 @@ export const DEFAULT_PROXY_DRIVER_ID: ProxyDriverId = 'caddy';
 // itself only ever looks up ids that either come from PROXY_DRIVER_IDS-typed
 // inventory data or were added through that same test-only hook. Order
 // matters: this is registration order, and listDrivers() below returns it
-// verbatim (Caddy, nginx, Nginx Proxy Manager, HAProxy, Traefik, then None)
+// verbatim (Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, HAProxy,
+// Traefik, then None)
 // for the Settings dropdown.
 const DRIVERS = new Map<string, ReverseProxyDriver>([
   [caddyDriver.id, caddyDriver],
+  [caddyApiDriver.id, caddyApiDriver],
   [nginxDriver.id, nginxDriver],
   [nginxProxyManagerDriver.id, nginxProxyManagerDriver],
   [haproxyDriver.id, haproxyDriver],
@@ -63,7 +66,8 @@ export function getDriver(inventory: Inventory): ReverseProxyDriver {
 // configPath from the proxyConfigPath setting when set, else the active
 // driver's own defaultConfigPath -- or null when the driver's own
 // defaultConfigPath is null (issue #31, research.md R11): a driver with no
-// config file at all (e.g. a REST-managed driver like Nginx Proxy Manager)
+// config file at all (a REST-managed driver like Nginx Proxy Manager, or
+// Caddy's admin API, issue #26)
 // has nowhere for proxyConfigPath to point, so that setting is ignored
 // rather than used as a fallback file path for a driver that has none. A
 // file-configured driver (fileDriver) never has a null defaultConfigPath in

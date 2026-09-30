@@ -1,0 +1,3 @@
+{"error":"If-Match header did not match current config hash"}
+
+BELLHOP_HTTP_STATUS=412

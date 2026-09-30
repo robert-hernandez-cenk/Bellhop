@@ -37,10 +37,10 @@ function derivedValues(inv: Inventory) {
   };
 }
 
-// Every registered proxy driver, in registration order (Caddy, nginx, then
-// None) -- issue #33: the Settings page's dropdown is populated from this
-// rather than a hardcoded option list, so a future driver needs no client
-// change. Independent of inventory: every driver is always listed, whether
+// Every registered proxy driver, in registration order (Caddy, Caddy (admin
+// API), nginx, Nginx Proxy Manager, then None) -- issue #33: the Settings
+// page's dropdown is populated from this rather than a hardcoded option
+// list, so a future driver needs no client change. Independent of inventory: every driver is always listed, whether
 // or not it's the one currently active.
 function proxyDriversInfo() {
   return listDrivers().map((driver) => ({

@@ -5,8 +5,30 @@ import { fileDriver, singleQuote } from '../file-driver.ts';
 // Every site this driver manages gets its cert the same way: DNS-01 via
 // Cloudflare (the API token is a Caddy-side env var this generator never
 // needs to see) with these two resolvers. Not inventory-configurable --
-// there's one domain, one DNS provider, one operator.
-const TLS_BLOCK = ['    tls {', '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}', '        resolvers 1.1.1.1 8.8.8.8', '    }'];
+// there's one domain, one DNS provider, one operator. Exported, along with
+// the forward-auth literals below, so the admin-API Caddy driver (issue #26,
+// src/lib/proxy/caddy-json.ts) renders the same values as JSON rather than
+// keeping its own copy.
+export const CLOUDFLARE_TOKEN_PLACEHOLDER = '{env.CLOUDFLARE_API_TOKEN}';
+export const ACME_DNS_RESOLVERS = ['1.1.1.1', '8.8.8.8'];
+const TLS_BLOCK = [
+  '    tls {',
+  `        dns cloudflare ${CLOUDFLARE_TOKEN_PLACEHOLDER}`,
+  `        resolvers ${ACME_DNS_RESOLVERS.join(' ')}`,
+  '    }',
+];
+
+// Authentik's Caddy forward-auth endpoint, the outpost's own path prefix,
+// and the identity headers copied from its response onto the request.
+export const OUTPOST_AUTH_URI = '/outpost.goauthentik.io/auth/caddy';
+export const OUTPOST_PATH_PREFIX = '/outpost.goauthentik.io';
+export const AUTHENTIK_COPY_HEADERS = [
+  'X-Authentik-Username',
+  'X-Authentik-Groups',
+  'X-Authentik-Email',
+  'X-Authentik-Name',
+  'X-Authentik-Uid',
+];
 
 // Renders every route into the body of one Caddyfile managed section --
 // fileDriver adds the bellhop-managed markers around it. Reads the
@@ -45,10 +67,10 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
       } else {
         lines.push(`    forward_auth ${outpostAddr} {`);
       }
-      lines.push('        uri /outpost.goauthentik.io/auth/caddy');
-      lines.push('        copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid');
+      lines.push(`        uri ${OUTPOST_AUTH_URI}`);
+      lines.push(`        copy_headers ${AUTHENTIK_COPY_HEADERS.join(' ')}`);
       lines.push('    }');
-      lines.push('    handle /outpost.goauthentik.io/* {');
+      lines.push(`    handle ${OUTPOST_PATH_PREFIX}/* {`);
       lines.push(`        reverse_proxy ${outpostAddr}`);
       lines.push('    }');
     }
@@ -58,11 +80,14 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
   return [{ path: configPath, content: lines.join('\n'), mode: 'managed-section' }];
 }
 
+// Also the Caddyfile convert-caddyfile (issue #26) reads by default.
+export const CADDYFILE_DEFAULT_PATH = '/etc/caddy/Caddyfile';
+
 export const caddyDriver = fileDriver({
   id: 'caddy',
   label: 'Caddy',
   capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
-  defaultConfigPath: '/etc/caddy/Caddyfile',
+  defaultConfigPath: CADDYFILE_DEFAULT_PATH,
   // The Caddy package's default document root -- what render-status-page's
   // caddy.example.com block already serves via file_server (see CLAUDE.md's
   // render-status-page bullet), and the placeholder the Settings page shows.
