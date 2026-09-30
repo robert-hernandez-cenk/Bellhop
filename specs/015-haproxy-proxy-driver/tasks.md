@@ -85,9 +85,9 @@ No setup: no new dependency, directory, or configuration. The worktree is alread
 
 ## Phase 6: Polish & verification
 
-- [ ] T020 Run `npm run typecheck`, `npm test`, `npm run web:build`; paste results.
-- [ ] T021 Quickstart §2 (CLI dry run against a temp inventory with `proxyDriver haproxy`) and §3 (real `haproxy -c` on the rendered output via Docker, both `haproxy:lts` and `haproxy:2.6`).
-- [ ] T022 Review the full diff for real operational data (constitution workflow gate).
+- [x] T020 Run `npm run typecheck`, `npm test`, `npm run web:build`; paste results.
+- [x] T021 Quickstart §2 (CLI dry run against a temp inventory with `proxyDriver haproxy`) and §3 (real `haproxy -c` on the rendered output via Docker, both `haproxy:lts` and `haproxy:2.6`).
+- [x] T022 Review the full diff for real operational data (constitution workflow gate).
 
 ---
 
