@@ -704,7 +704,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
   update: not every deployment has a Bellhop-managed reverse proxy in
   front of it, whether that's a hand-configured proxy or none at all) is
-  the fourth registered driver, selected the same way as the other three
+  the fifth registered driver, selected the same way as the other four
   via `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
   `defaultConfigPath` and `statusPage` are both `null`, and its
   `capabilities` accept both `forward` and `oidc` auth modes (so
