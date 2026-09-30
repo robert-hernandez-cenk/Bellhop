@@ -3,8 +3,8 @@
 A self-hosted app store for your Proxmox VE homelab. Bellhop installs
 appliances from [community-scripts](https://github.com/community-scripts/ProxmoxVE)
 into new LXC containers, then handles what comes after: inventory,
-reverse-proxy routes (Caddy, nginx, or Nginx Proxy Manager, through a
-pluggable driver — see [Reverse proxy
+reverse-proxy routes (Caddy, nginx, Nginx Proxy Manager, or HAProxy,
+through a pluggable driver — see [Reverse proxy
 drivers](docs/reverse-proxy/README.md)), Authentik login
 gating, updates, and migrations between hosts. It ships as a web UI, a
 CLI, and an MCP server, and reaches your Proxmox hosts over SSH from your
@@ -129,8 +129,9 @@ behaves.
   through OpenID Connect (OIDC mode).
 - [Reverse proxy drivers](docs/reverse-proxy/README.md) — how `sync-proxy`
   manages a proxy, with a page per driver: [Caddy](docs/reverse-proxy/caddy.md),
-  [nginx](docs/reverse-proxy/nginx.md), and [Nginx Proxy
-  Manager](docs/reverse-proxy/nginx-proxy-manager.md).
+  [nginx](docs/reverse-proxy/nginx.md), [Nginx Proxy
+  Manager](docs/reverse-proxy/nginx-proxy-manager.md), and
+  [HAProxy](docs/reverse-proxy/haproxy.md).
 - [Troubleshooting](docs/troubleshooting.md) — running the checks, and known
   hardware issues.
 - `CLAUDE.md` — architecture reference (inventory schema, `resolveTarget`/

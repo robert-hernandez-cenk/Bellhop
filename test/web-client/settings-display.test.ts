@@ -87,6 +87,30 @@ test('proxyFieldView for nginx shows the config path (nginx default, whole-file 
   assert.equal(view.showTlsFields, true);
 });
 
+// issue #32: HAProxy's entry exactly as GET /api/settings serves it -- a
+// file driver with no status page and no shared certificate.
+const HAPROXY = {
+  id: 'haproxy',
+  label: 'HAProxy',
+  defaultConfigPath: '/etc/haproxy/bellhop.cfg',
+  suggestedStatusPagePath: null,
+  managesProxy: true,
+  usesSharedCertificate: false,
+  configPathNote:
+    "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate.",
+};
+
+test('proxyFieldView for HAProxy shows the config path (HAProxy default, map-file note) and hides the status page and TLS fields', () => {
+  const view = proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY]);
+  assert.equal(view.showConfigPath, true);
+  assert.equal(view.configPathPlaceholder, '/etc/haproxy/bellhop.cfg');
+  assert.match(view.configPathHelp ?? '', /\/etc\/haproxy\/bellhop\.cfg/);
+  assert.match(view.configPathHelp ?? '', /writes bellhop\.map beside it/);
+  assert.match(view.configPathHelp ?? '', /refuses to replace a file it didn't generate/);
+  assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showTlsFields, false);
+});
+
 test('proxyFieldView hides the TLS fields for Caddy and for no proxy', () => {
   assert.equal(proxyFieldView('caddy', DRIVERS).showTlsFields, false);
   assert.equal(proxyFieldView('none', DRIVERS).showTlsFields, false);
