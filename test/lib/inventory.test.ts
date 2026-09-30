@@ -1108,13 +1108,15 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the ten settings keys', () => {
+test('SETTINGS_KEYS lists exactly the twelve settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'backupStorage',
     'customScriptsBranch',
     'customScriptsRepo',
     'dnsServer',
     'nfsServer',
+    'proxyApiUrl',
+    'proxyCertResolver',
     'proxyConfigPath',
     'proxyDriver',
     'proxyTlsCertificate',
@@ -1215,6 +1217,54 @@ test('saveInventory/loadInventory round-trips proxyTlsCertificate and proxyTlsKe
   assert.equal(reloaded.proxyTlsKey, '/etc/letsencrypt/live/example.com/privkey.pem');
   const db = new Database(dest, { readonly: true });
   const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyTlsCertificate'").get();
+  db.close();
+  assert.equal(row, undefined);
+});
+
+// issue #35: proxyCertResolver/proxyApiUrl are the Traefik driver's two own
+// settings (data-model.md), following the same optional/independent-default
+// pattern as proxyTlsCertificate/proxyTlsKey above.
+
+test('SettingsSchema accepts a proxyCertResolver made of letters, digits, - and _', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyCertResolver: 'cloudflare' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ proxyCertResolver: 'my-resolver_2' }).success, true);
+});
+
+test('SettingsSchema rejects a proxyCertResolver with characters other than letters, digits, - and _', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyCertResolver: 'my resolver' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyCertResolver: 'resolver.name' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyCertResolver: '' }).success, false);
+});
+
+test('SettingsSchema accepts an http:// or https:// proxyApiUrl', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyApiUrl: 'http://192.0.2.5:8080' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ proxyApiUrl: 'https://traefik.example.com' }).success, true);
+});
+
+test('SettingsSchema rejects a proxyApiUrl with a non-http(s) scheme, a malformed URL, or an embedded single quote', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyApiUrl: 'ftp://192.0.2.5' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyApiUrl: 'not a url' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyApiUrl: "http://192.0.2.5/it's" }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips proxyCertResolver and proxyApiUrl, and clearing one removes it from meta', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, {
+    ...FIXTURE_INVENTORY,
+    proxyCertResolver: 'cloudflare',
+    proxyApiUrl: 'http://192.0.2.5:8080',
+  });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.proxyCertResolver, 'cloudflare');
+  assert.equal(loaded.proxyApiUrl, 'http://192.0.2.5:8080');
+
+  saveInventory(dest, { ...loaded, proxyCertResolver: undefined });
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.proxyCertResolver, undefined);
+  assert.equal(reloaded.proxyApiUrl, 'http://192.0.2.5:8080');
+  const db = new Database(dest, { readonly: true });
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyCertResolver'").get();
   db.close();
   assert.equal(row, undefined);
 });

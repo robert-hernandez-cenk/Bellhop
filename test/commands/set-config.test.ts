@@ -178,6 +178,38 @@ test('runSetConfig rejects a relative proxyTlsKey', () => {
   );
 });
 
+test('runSetConfig round-trips proxyCertResolver through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyCertResolver', value: 'cloudflare', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyCertResolver, 'cloudflare');
+  runSetConfig({ key: 'proxyCertResolver', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyCertResolver, undefined);
+});
+
+test('runSetConfig rejects a proxyCertResolver with characters other than letters, digits, - and _', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'proxyCertResolver', value: 'my resolver', apply: true }, { inventoryPath }),
+    /proxyCertResolver: must contain only letters, digits, - and _/
+  );
+});
+
+test('runSetConfig round-trips proxyApiUrl through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyApiUrl', value: 'http://192.0.2.5:8080', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyApiUrl, 'http://192.0.2.5:8080');
+  runSetConfig({ key: 'proxyApiUrl', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyApiUrl, undefined);
+});
+
+test('runSetConfig rejects a proxyApiUrl with a scheme other than http/https', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'proxyApiUrl', value: 'ftp://192.0.2.5', apply: true }, { inventoryPath }),
+    /proxyApiUrl: must be an http:\/\/ or https:\/\/ URL/
+  );
+});
+
 test('runSetConfig round-trips proxyDriver nginx through --apply', () => {
   const inventoryPath = tempInventoryPath();
   runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath });

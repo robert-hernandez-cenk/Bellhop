@@ -50,6 +50,8 @@ function proxyDriversInfo() {
     suggestedStatusPagePath: driver.statusPage?.suggestedPath ?? null,
     managesProxy: managesProxy(driver),
     usesSharedCertificate: driver.usesSharedCertificate ?? false,
+    usesCertResolver: driver.usesCertResolver ?? false,
+    usesApiUrl: driver.usesApiUrl ?? false,
     configPathNote: driver.configPathNote ?? null,
   }));
 }
