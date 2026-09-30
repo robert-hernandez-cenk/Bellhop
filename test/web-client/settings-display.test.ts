@@ -16,8 +16,8 @@ test('LAN_GATEWAYS_EMPTY_TEXT explains the empty state', () => {
 
 test('proxyDriverOptions suffixes only the default driver label with " (default)"', () => {
   const drivers = [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
   ];
   assert.deepEqual(proxyDriverOptions(drivers, 'caddy'), [
     { value: 'caddy', label: 'Caddy (default)' },
@@ -27,8 +27,8 @@ test('proxyDriverOptions suffixes only the default driver label with " (default)
 
 test('proxyDriverOptions preserves driver order and suffixes whichever id is the default', () => {
   const drivers = [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
   ];
   assert.deepEqual(proxyDriverOptions(drivers, 'none'), [
     { value: 'caddy', label: 'Caddy' },
@@ -37,8 +37,8 @@ test('proxyDriverOptions preserves driver order and suffixes whichever id is the
 });
 
 const DRIVERS = [
-  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
 ];
 
 test('proxyFieldView shows both fields with Caddy-specific placeholders/help when Caddy is selected', () => {
@@ -72,6 +72,8 @@ const NGINX = {
   suggestedStatusPagePath: '/var/www/html/index.html',
   managesProxy: true,
   usesSharedCertificate: true,
+  usesCertResolver: false,
+  usesApiUrl: false,
   configPathNote: "nginx replaces this whole file on every apply, and refuses to replace a file it didn't generate.",
 };
 
@@ -96,6 +98,8 @@ const HAPROXY = {
   suggestedStatusPagePath: null,
   managesProxy: true,
   usesSharedCertificate: false,
+  usesCertResolver: false,
+  usesApiUrl: false,
   configPathNote:
     "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate.",
 };
@@ -132,7 +136,7 @@ test('proxyFieldView appends a driver-supplied configPathNote to the config path
 // it. Paired with no suggested status page path and no shared certificate,
 // all three fields are hidden.
 test('proxyFieldView hides all three fields for a managed driver with no config file, no status page, and no shared certificate', () => {
-  const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null }];
+  const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null }];
   const view = proxyFieldView('nodefault', drivers);
   assert.equal(view.showConfigPath, false);
   assert.equal(view.configPathHelp, undefined, 'no "required" help text is shown once the field itself is hidden');
@@ -141,8 +145,53 @@ test('proxyFieldView hides all three fields for a managed driver with no config 
 });
 
 test('proxyFieldView hides the config path field for a driver that manages no proxy, even if it reports a default path', () => {
-  const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, configPathNote: null }];
+  const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null }];
   const view = proxyFieldView('odd', drivers);
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
+});
+
+// issue #35 (T018): Traefik's entry exactly as GET /api/settings serves
+// it -- the only driver with usesCertResolver/usesApiUrl set.
+const TRAEFIK = {
+  id: 'traefik',
+  label: 'Traefik',
+  defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
+  suggestedStatusPagePath: null,
+  managesProxy: true,
+  usesSharedCertificate: false,
+  usesCertResolver: true,
+  usesApiUrl: true,
+  configPathNote:
+    "Traefik's file provider must watch this file's directory. The whole file is replaced on every apply, and a file Bellhop didn't generate is refused.",
+};
+
+test('proxyFieldView for Traefik shows the cert resolver and API URL fields, hides the status page and TLS fields', () => {
+  const view = proxyFieldView('traefik', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]);
+  assert.equal(view.showConfigPath, true);
+  assert.equal(view.configPathPlaceholder, '/etc/traefik/dynamic/bellhop.yml');
+  assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showTlsFields, false);
+  assert.equal(view.showCertResolverField, true);
+  assert.equal(view.showApiUrlField, true);
+});
+
+test('proxyFieldView hides the cert resolver and API URL fields for every non-Traefik driver', () => {
+  assert.equal(proxyFieldView('caddy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
+  assert.equal(proxyFieldView('caddy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
+  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
+  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
+  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
+  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
+  assert.equal(proxyFieldView('none', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
+  assert.equal(proxyFieldView('none', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
+});
+
+test('proxyFieldView hides the cert resolver and API URL fields for an unmanaged or unknown driver', () => {
+  const unmanaged = proxyFieldView('none', DRIVERS);
+  assert.equal(unmanaged.showCertResolverField, false);
+  assert.equal(unmanaged.showApiUrlField, false);
+  const unknown = proxyFieldView('unknown-provider', DRIVERS);
+  assert.equal(unknown.showCertResolverField, false);
+  assert.equal(unknown.showApiUrlField, false);
 });

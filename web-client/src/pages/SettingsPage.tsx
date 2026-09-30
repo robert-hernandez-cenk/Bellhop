@@ -60,6 +60,18 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help
     help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site. Unset: certbot's own path for the inventory domain.",
   },
   {
+    key: 'proxyCertResolver',
+    label: 'Proxy cert resolver',
+    placeholder: 'cloudflare',
+    help: "The Traefik certificate resolver every Bellhop router names, defined in Traefik's own static configuration. Unset: cloudflare.",
+  },
+  {
+    key: 'proxyApiUrl',
+    label: 'Proxy API URL',
+    placeholder: 'http://127.0.0.1:8080',
+    help: "Traefik's API as reachable from the proxy host. When set, every apply waits for Traefik to load the file and checks Bellhop's routers, restoring the previous file on failure. Unset: no check.",
+  },
+  {
     key: 'customScriptsRepo',
     label: 'Custom script repository',
     placeholder: 'owner/repo',
@@ -142,6 +154,10 @@ export function SettingsPage() {
     // fields mean something for nginx alone -- so unlike the two fields
     // above they stay hidden until a view says the selected driver uses them.
     if (field.key === 'proxyTlsCertificate' || field.key === 'proxyTlsKey') return view?.showTlsFields ?? false;
+    // Same "hidden until loaded" rule as the TLS fields above -- these two
+    // mean something for Traefik alone (issue #35).
+    if (field.key === 'proxyCertResolver') return view?.showCertResolverField ?? false;
+    if (field.key === 'proxyApiUrl') return view?.showApiUrlField ?? false;
     return true;
   });
 
@@ -152,8 +168,8 @@ export function SettingsPage() {
         Inventory-wide values a few commands read. Every one of them is optional -- each field
         below says what happens while it is unset. The same values can be set from the CLI with{' '}
         <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>. Proxy config path,
-        Status page path and the Proxy TLS fields only appear when the selected Proxy driver
-        actually uses them.
+        Status page path, the Proxy TLS fields, and the Proxy cert resolver/API URL fields only
+        appear when the selected Proxy driver actually uses them.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
       <div className="settings-fields">
