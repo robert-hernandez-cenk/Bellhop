@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { parse, stringify, Scalar } from 'yaml';
 import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
-import { fileDriver } from '../file-driver.ts';
+import { fileDriver, singleQuote } from '../file-driver.ts';
 // Shared with the nginx driver (issue #31/#35): the same root-prefix/dedupe/
 // outpost-namespace rules a forward-gated route's exempt patterns must obey
 // no matter which driver renders them -- see nginx-locations.ts's own
@@ -312,6 +312,63 @@ export function routerNames(content: string): string[] {
   return Object.keys(doc?.http?.routers ?? {});
 }
 
+// User Story 3 / research.md R2-R4/R12: the opt-in post-write API check sent
+// as the apply script's validate step (contracts/traefik-driver.md "Validate
+// step (proxyApiUrl set)") when proxyApiUrl is configured. POSIX sh only --
+// the proxy host may be an LXC guest (see CLAUDE.md's runRemote note). Runs
+// as one subshell: first polls the file's own generation marker (R3) until
+// it answers 200, proving Traefik has loaded *this* rendered version (and
+// not a stale one, or none at all after a whole-file rejection, R2); then
+// fetches every router this file declares by exact name and requires
+// `"status":"enabled"` in its body, collecting every unhealthy router before
+// failing so a multi-router misconfiguration is reported in full rather than
+// one router at a time across repeated applies (R4). `content` is the
+// rendered file's own text -- the marker/router names are parsed back out of
+// it (generationMarkerName/routerNames) rather than re-derived from
+// ProxyRoute[], so the check always matches exactly what was written, not
+// what a caller thinks it wrote.
+export function buildApiCheck(apiUrl: string, configPath: string, content: string): string {
+  const api = apiUrl.replace(/\/+$/, '');
+  const marker = generationMarkerName(content);
+  const routers = routerNames(content);
+
+  const lines: string[] = [
+    '(',
+    `  bellhop_api=${singleQuote(api)}`,
+    '  bellhop_tries=0',
+    '  while :; do',
+    `    bellhop_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$bellhop_api/api/http/middlewares/${marker}@file")"`,
+    '    [ "$bellhop_code" = "200" ] && break',
+    '    bellhop_tries=$((bellhop_tries + 1))',
+    '    if [ "$bellhop_tries" -ge 30 ]; then',
+    '      if [ "$bellhop_code" = "000" ]; then',
+    '        bellhop_result="unreachable"',
+    '      else',
+    '        bellhop_result="HTTP $bellhop_code"',
+    '      fi',
+    `      printf 'Traefik did not load %s within 30 seconds (%s at %s)\\n' ${singleQuote(configPath)} "$bellhop_result" "$bellhop_api" >&2`,
+    '      exit 1',
+    '    fi',
+    '    sleep 1',
+    '  done',
+    '  bellhop_failed=0',
+  ];
+
+  for (const router of routers) {
+    lines.push(`  bellhop_body="$(curl -s --max-time 5 "$bellhop_api/api/http/routers/${router}@file")"`);
+    lines.push('  case "$bellhop_body" in');
+    lines.push(`    *'"status":"enabled"'*) ;;`);
+    lines.push(
+      `    *) printf 'Traefik router %s is not healthy: %s\\n' ${singleQuote(router)} "$bellhop_body" >&2; bellhop_failed=1 ;;`
+    );
+    lines.push('  esac');
+  }
+
+  lines.push('  exit "$bellhop_failed"');
+  lines.push(')');
+  return lines.join('\n');
+}
+
 export const traefikDriver = fileDriver({
   id: 'traefik',
   label: 'Traefik',
@@ -331,10 +388,15 @@ export const traefikDriver = fileDriver({
   configPathNote:
     "Traefik's file provider must watch this file's directory. The whole file is replaced on every apply, and a file Bellhop didn't generate is refused.",
   render,
-  // User Story 3 wires the real API check (research.md R2/R4); until then
-  // there is nothing to validate, so the apply script writes and lets
-  // Traefik's own watcher pick the file up with no check in between.
-  validateCommand: () => null,
+  // Opt-in (research.md R2): with no proxyApiUrl set there is nothing to
+  // check, so the apply script writes and lets Traefik's own watcher pick
+  // the file up with no validate step at all. files[0].content is the
+  // driver's own single rendered FileSpec (render() above always returns
+  // exactly one) -- buildApiCheck reads the marker/router names back out of
+  // it rather than re-deriving them from routes, so the check always
+  // matches exactly what was written.
+  validateCommand: (path, { files, inventory }) =>
+    inventory.proxyApiUrl ? buildApiCheck(inventory.proxyApiUrl, path, files[0].content) : null,
   validateLabel: 'Traefik API check',
   // Traefik's file-provider watcher reloads on its own once the write
   // lands -- there is no reload command to run.

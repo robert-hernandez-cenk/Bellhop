@@ -785,6 +785,24 @@ test('sync-proxy (traefik driver) --apply sends one script to the proxy host wit
   assert.ok(!script.includes('curl'), 'no proxyApiUrl is set, so the apply script has no validate step (User Story 3)');
 });
 
+// User Story 3 (issue #35, T016): with proxyApiUrl set, a failed API check
+// on the proxy host makes apply() throw -- this only has to prove
+// runSyncProxy surfaces that failure to its caller, not re-pin the check
+// script's own shape (test/lib/proxy/drivers/traefik.test.ts's executed
+// tests already cover that).
+test('sync-proxy (traefik driver, proxyApiUrl set) --apply throws with the check\'s own stderr, including the "Traefik API check failed" line', async () => {
+  const checkStderr =
+    'Traefik router bellhop-route-wiki-example-com is not healthy: {"status":"disabled","error":["the service does not exist"]}\n' +
+    'Traefik API check failed; restored previous configuration\n';
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: checkStderr, code: 1 }));
+  const inventory: Inventory = { ...traefikInventory, proxyApiUrl: 'http://127.0.0.1:8080' };
+  await assert.rejects(() => runSyncProxy({ apply: true }, { ssh, inventory }), (error: Error) => {
+    assert.match(error.message, /Traefik router bellhop-route-wiki-example-com is not healthy/);
+    assert.match(error.message, /Traefik API check failed; restored previous configuration/);
+    return true;
+  });
+});
+
 test('sync-proxy emits the configured Authentik outpost port', async () => {
   const original = process.env.AUTHENTIK_OUTPOST_PORT;
   process.env.AUTHENTIK_OUTPOST_PORT = '9100';
