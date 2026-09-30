@@ -297,6 +297,22 @@ test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME p
   assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx')));
 });
 
+// Issue #32 (US1): the real HAProxy driver also has acmeDns01ViaCloudflare:
+// false -- it never obtains a certificate itself -- so the prune is skipped
+// by name the same way.
+test('syncProxyLive (real haproxy driver) pushes HAProxy config and skips the ACME prune, never touching Cloudflare', async () => {
+  const haproxyInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'haproxy' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+  const logs = await captureLogs(() =>
+    syncProxyLive({ ssh, inventory: haproxyInventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+  );
+  assert.equal(ssh.history.length, 1, 'only sync-proxy runs -- statusPagePath is unset and nothing is authGroup-gated');
+  assert.match(ssh.history[0].command, /haproxy -c -f \/etc\/haproxy\/haproxy\.cfg/);
+  assert.deepEqual(cloudflare.history, []);
+  assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes("'haproxy'")));
+});
+
 // Issue #31 (US5, T022): the Nginx Proxy Manager driver also has
 // acmeDns01ViaCloudflare: false (it never touches DNS -- it either reuses an
 // NPM certificate or has NPM request one over HTTP-01), so this is the same

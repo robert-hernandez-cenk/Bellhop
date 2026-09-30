@@ -1164,6 +1164,16 @@ test('SettingsSchema accepts proxyDriver "none" and still rejects an unknown id'
   assert.equal(SettingsSchema.safeParse({ proxyDriver: 'unknown-provider' }).success, false);
 });
 
+// issue #32: the enum is built from PROXY_DRIVER_IDS, so adding 'haproxy'
+// there is all it takes for a saved inventory naming it to load.
+test('SettingsSchema accepts proxyDriver "haproxy", and an inventory naming it round-trips through save/load', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyDriver: 'haproxy' }).success, true);
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, { ...FIXTURE_INVENTORY, proxyDriver: 'haproxy' });
+  assert.equal(loadInventory(dest).proxyDriver, 'haproxy');
+});
+
 test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
   const dest = path.join(dir, 'bellhop.db');

@@ -177,6 +177,18 @@ function buildSnapshotCommand(paths: string[]): string {
   return paths.map((p) => `echo ${singleQuote(`==> ${p} <==`)}; cat ${singleQuote(p)}`).join('; ');
 }
 
+// A dry run's preview of the files an apply would write. One file is its
+// content alone, byte for byte; more than one gets the same `==> <path> <==`
+// label per file buildSnapshotCommand uses, with a blank line between files,
+// so a reader can tell where each one starts. Only the preview is labelled
+// -- the payload apply() writes carries each file's content unchanged.
+function previewFiles(files: FileSpec[]): string {
+  if (files.length <= 1) {
+    return files.map((f) => f.content).join('\n');
+  }
+  return files.map((f) => `==> ${f.path} <==\n${f.content}`).join('\n\n');
+}
+
 // Resolves a file-configured driver's own config path out of DriverDeps,
 // which types configPath as string | null (issue #31, research.md R11: null
 // means the active driver's own defaultConfigPath is null -- a driver with
@@ -195,8 +207,8 @@ function requireConfigPath(deps: DriverDeps, id: ProxyDriverId): string {
 }
 
 // Builds a ReverseProxyDriver for a proxy that's configured entirely by
-// files delivered to the proxy host (Caddy and nginx today, issue #30;
-// HAProxy is a candidate future driver). Owns the full
+// files delivered to the proxy host (Caddy, nginx -- issue #30 -- and
+// HAProxy, issue #32, which owns two files). Owns the full
 // render -> back up -> write -> validate -> restore-or-reload cycle so a
 // new file-configured driver only has to supply `render`, its validate
 // command, and its reload command.
@@ -244,7 +256,7 @@ export function fileDriver(def: {
       const files = def
         .render(routes, ctx, configPath)
         .map((f) => (f.mode === 'managed-section' ? { ...f, content: wrapManagedSection(f.content) } : f));
-      return { preview: files.map((f) => f.content).join('\n'), payload: files };
+      return { preview: previewFiles(files), payload: files };
     },
 
     async apply(plan: ProxyPlan, deps: DriverDeps): Promise<void> {

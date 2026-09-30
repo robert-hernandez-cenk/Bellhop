@@ -31,7 +31,8 @@ A gated entry (one with `authGroup` set) is enforced one of two ways,
 chosen per entry with `authMode`: `forward` (the default, and the only
 option before this feature existed) puts the active proxy driver's
 forward-auth in front of it (Caddy's `forward_auth`, or the equivalent
-`auth_request` block on the nginx driver), checking every request against
+`auth_request` block on the nginx driver; the HAProxy driver has no
+forward-auth, so only `oidc` works under it), checking every request against
 Authentik and forwarding a shared,
 already-authenticated identity in `X-authentik-*` headers; `oidc` instead
 gives the entry its own Authentik OpenID Connect client and lets the app

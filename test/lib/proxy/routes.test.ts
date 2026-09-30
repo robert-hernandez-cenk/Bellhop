@@ -218,6 +218,22 @@ test('buildRoutes: throws the exact missing-authentik message for a forward-gate
     () => buildRoutes(inv),
     /^Error: Entry 'app-lxc' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set$/
   );
+  // requireOutpost defaults to true: passing it explicitly changes nothing.
+  assert.throws(() => buildRoutes(inv, { requireOutpost: true }), /no inventory entry has 'authentik: true'/);
+});
+
+test('buildRoutes: requireOutpost: false derives the forward-gated route with no authentik ip instead of throwing', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [
+      { name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-users' },
+    ],
+  };
+  const routes = buildRoutes(inv, { requireOutpost: false });
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].owner.name, 'app-lxc');
+  assert.equal(routes[0].auth.mode, 'forward');
 });
 
 test('buildRoutes: throws naming the entry and both accepted forms for an invalid unauthenticatedPaths pattern', () => {

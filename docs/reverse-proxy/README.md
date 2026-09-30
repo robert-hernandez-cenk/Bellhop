@@ -6,13 +6,14 @@ own page:
 - [Caddy](caddy.md) — the default.
 - [nginx](nginx.md).
 - [Nginx Proxy Manager](nginx-proxy-manager.md).
+- [HAProxy](haproxy.md).
 - "No proxy" (`proxyDriver: none`) — described below.
 
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see [Inventory-wide
 settings](../configuration.md#inventory-wide-settings); unset means
-`caddy`, the default; `nginx`, `nginx-proxy-manager`, and `none` are the
-other drivers that ship). Exactly one driver is active per
+`caddy`, the default; `nginx`, `nginx-proxy-manager`, `haproxy`, and
+`none` are the other drivers that ship). Exactly one driver is active per
 deployment: it's a per-deployment choice, not a per-entry one, so every
 gated/reverse-proxied inventory entry is served by the same proxy. The web
 UI's Settings page presents this choice as a dropdown of every driver
@@ -36,7 +37,10 @@ whose auth mode the active driver can't enforce (e.g. a driver with no
 `oidc` support and an OIDC-gated entry) is refused at both `sync-proxy` and
 guest-edit time, naming the entry, the driver, and the fix — never
 silently dropped, which would leave that entry reachable with no gate in
-front of it.
+front of it. HAProxy is the first shipped driver that can't enforce every
+auth mode (it has no forward-auth, so it accepts OIDC-mode and ungated
+entries only), and so the first where this refusal actually happens — see
+[HAProxy](haproxy.md#limits).
 
 When the web UI's push-live step (a Dashboard guest edit, or a
 provisioning job with subdomains) finds `sync-proxy` failing under any
@@ -63,16 +67,19 @@ page render with one log line and continue, the same opt-in
 skip they already give an unset `statusPagePath`. The stale ACME-challenge
 cleanup is skipped too, through the same driver-capability check that
 skips it for any driver that doesn't issue certificates via Cloudflare
-DNS-01 (nginx and Nginx Proxy Manager included).
+DNS-01 (nginx, Nginx Proxy Manager, and HAProxy included).
 
-A driver that's configured through a file (Caddy and nginx both are; a
-future Caddy-admin-API/HAProxy-Data-Plane-API driver might not be) is
-built with a shared `fileDriver` helper: it backs up the target file(s),
+A driver that's configured through a file (Caddy, nginx, and HAProxy
+all are; a future Caddy-admin-API/HAProxy-Data-Plane-API driver might not
+be) is built with a shared `fileDriver` helper: it backs up the target file(s),
 writes the new content in place (either replacing a managed section while
 leaving everything else on the file untouched, or replacing a file
 Bellhop owns outright), runs the proxy's own validation command against
 the real path, restores every backup and fails if validation fails, and
-reloads the proxy otherwise. Nginx Proxy Manager is the first driver
+reloads the proxy otherwise. HAProxy is the first to own two files — its
+backends file and the `bellhop.map` beside it — backed up, written,
+validated, and restored together as one unit; its dry-run preview labels
+each file with a `==> <path> <==` line. Nginx Proxy Manager is the first driver
 that manages a real proxy with *no* configuration file at all — it
 reconciles proxy hosts over NPM's own REST API instead (see [Nginx Proxy
 Manager](nginx-proxy-manager.md)), so a driver's config path is now
@@ -85,7 +92,8 @@ a default. A driver that manages a proxy but serves no status page makes
 or pick another driver, and the push-live step logs a warning, not an
 info line, when `statusPagePath` is set but ignored.
 
-On both file-configured drivers (Caddy and nginx), a request to a forward-gated entry's exempt
+On both drivers that write a file and support forward-auth (Caddy and
+nginx), a request to a forward-gated entry's exempt
 (`unauthenticatedPaths`) location skips the Authentik check entirely — any
 `X-authentik-*` identity headers on that request are whatever the client
 itself sent, unverified, so a backend must not trust them on an exempt
@@ -99,9 +107,11 @@ driver](nginx.md). Nginx Proxy Manager sits in between: it reuses a
 covering certificate already in NPM (typically a wildcard you created
 there yourself), and otherwise has NPM request one over its own HTTP-01
 challenge — see [Nginx Proxy Manager](nginx-proxy-manager.md) for what
-that requires. A future HAProxy driver would need the same kind of
-operator-managed certificate tool (`certbot`, `acme.sh`) running alongside
-it — Bellhop itself never issues or renews a certificate.
+that requires. HAProxy needs the same kind of operator-managed certificate tool
+(`certbot`, `acme.sh`) running alongside it, filling the certificate
+directory your own frontend's `bind … ssl crt` names — see [HAProxy
+driver](haproxy.md#prerequisites). Bellhop itself never issues or renews a
+certificate.
 ## Upgrading from the Caddy-only version
 
 **Upgrading an existing installation needs no manual steps in most

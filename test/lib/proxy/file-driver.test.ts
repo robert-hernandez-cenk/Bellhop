@@ -201,7 +201,7 @@ test('fileDriver.plan: an empty managed-section body is just the two markers', a
   assert.equal(plan.preview, '# BEGIN bellhop-managed\n# END bellhop-managed');
 });
 
-test('fileDriver.plan: several files join their content with a newline', async () => {
+test('fileDriver.plan: several files are each labelled ==> <path> <==, separated by a blank line (the payload stays unlabelled)', async () => {
   const files = [ownedFile('/etc/nginx/conf.d/bellhop-a.conf', 'server { listen 80; }'), ownedFile('/etc/nginx/conf.d/bellhop-b.conf', 'server { listen 81; }')];
   const driver = fileDriver({
     id: 'caddy',
@@ -220,7 +220,10 @@ test('fileDriver.plan: several files join their content with a newline', async (
     configPath: '/etc/nginx/nginx.conf',
   };
   const plan = await driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps);
-  assert.equal(plan.preview, `${files[0].content}\n${files[1].content}`);
+  assert.equal(
+    plan.preview,
+    '==> /etc/nginx/conf.d/bellhop-a.conf <==\nserver { listen 80; }\n\n==> /etc/nginx/conf.d/bellhop-b.conf <==\nserver { listen 81; }'
+  );
   assert.deepEqual(plan.payload, files);
 });
 

@@ -148,12 +148,21 @@ function deriveRoute(type: OwnerType, entry: ProxyCandidate, inventory: Inventor
 // at the first forward-gated entry encountered with no authentik ip to
 // address (contracts/driver-interface.md), before that entry's own
 // exempt paths are parsed.
-export function buildRoutes(inventory: Inventory): ProxyRoute[] {
+//
+// requireOutpost: false skips that missing-authentik check (issue #32). A
+// driver that cannot forward-auth at all (HAProxy) never addresses an
+// outpost, so for it the check would only pre-empt the capability refusal
+// runSyncProxy runs next -- telling the operator to add an outpost the
+// driver could never use. Every other caller keeps the default.
+export function buildRoutes(
+  inventory: Inventory,
+  { requireOutpost = true }: { requireOutpost?: boolean } = {}
+): ProxyRoute[] {
   const authentikEntry = findAuthentikEntry(inventory);
   const routes: ProxyRoute[] = [];
   for (const { type, entry } of candidates(inventory)) {
     if (!hasRoute(entry)) continue;
-    if (effectiveAuth(entry) === 'forward' && !authentikEntry?.ip) {
+    if (requireOutpost && effectiveAuth(entry) === 'forward' && !authentikEntry?.ip) {
       throw new Error(
         `Entry '${entry.name}' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set`
       );
