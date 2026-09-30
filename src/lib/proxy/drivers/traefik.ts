@@ -327,6 +327,22 @@ export function routerNames(content: string): string[] {
 // it (generationMarkerName/routerNames) rather than re-derived from
 // ProxyRoute[], so the check always matches exactly what was written, not
 // what a caller thinks it wrote.
+//
+// Note on `set -e`: real curl exits non-zero on a connection failure/
+// timeout (e.g. 7/28), even though it still writes '000' (via -w) or
+// nothing (the plain router fetch, no -o) to stdout first. A bare
+// `var="$(curl ...)"` is, per POSIX, a "simple command" whose own exit
+// status is that of its last command substitution, which could in
+// principle trip `set -e` -- but `buildFileDriverScript` always sends this
+// whole function's output as the condition of `if ! ${validateCommand};
+// then` (file-driver.ts), and POSIX/every shell tested (bash's sh mode,
+// live curl; real dash, per code review) exempts a command's failure from
+// triggering -e when it's nested anywhere inside a compound command being
+// used as an if/while/until condition -- confirmed live with a real
+// unreachable curl call nested exactly this way (a -e abort would have
+// skipped straight past the retry loop with no diagnostic; it didn't).
+// Verified by the executed tests below with a stub curl that mirrors real
+// curl's own non-zero exit on the unreachable/router-fetch-failure paths.
 export function buildApiCheck(apiUrl: string, configPath: string, content: string): string {
   const api = apiUrl.replace(/\/+$/, '');
   const marker = generationMarkerName(content);

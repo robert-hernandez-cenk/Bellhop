@@ -671,10 +671,22 @@ function posix(p: string): string {
 }
 
 // A stub `curl` that answers a marker-middleware poll with a fixed HTTP
-// status code, and a router-body fetch by `cat`-ing one of two fixture
-// files -- the "bad" one when the URL contains $BELLHOP_TEST_BAD_ROUTER
-// (an env var set per test), the "good" one otherwise.
-function writeCurlStub(stubDir: string, markerCode: string): void {
+// status code (and, for the "000"/unreachable case, real curl's own
+// non-zero exit -- see buildApiCheck's `set -e` comment above: an earlier
+// version of this stub always exited 0 regardless of scenario, which never
+// exercised the script's actual behavior under a real curl failure at all),
+// and a router-body fetch by `cat`-ing one of two fixture files -- the "bad"
+// one when the URL contains $BELLHOP_TEST_BAD_ROUTER (an env var set per
+// test), the "good" one otherwise. `badRouterMode: 'fetch-fails'` makes the
+// bad router's own fetch behave like a real curl connection failure too:
+// nothing on stdout, a non-zero exit -- research.md's "a curl failure on a
+// router fetch (empty body) counts as unhealthy" decision.
+function writeCurlStub(
+  stubDir: string,
+  opts: { markerCode: string; markerExit?: number; badRouterMode?: 'disabled' | 'fetch-fails' }
+): void {
+  const markerExit = opts.markerExit ?? 0;
+  const badRouterMode = opts.badRouterMode ?? 'disabled';
   const curlPath = join(stubDir, 'curl');
   const script = [
     '#!/bin/sh',
@@ -682,12 +694,13 @@ function writeCurlStub(stubDir: string, markerCode: string): void {
     'for a in "$@"; do url="$a"; done',
     'case "$url" in',
     '  */middlewares/*)',
-    `    printf '%s' '${markerCode}'`,
+    `    printf '%s' '${opts.markerCode}'`,
+    `    exit ${markerExit}`,
     '    ;;',
     '  */routers/*)',
     '    case "$url" in',
     '      *"$BELLHOP_TEST_BAD_ROUTER"*)',
-    `        cat '${posix(ROUTER_DISABLED_FIXTURE)}'`,
+    badRouterMode === 'fetch-fails' ? '        exit 7' : `        cat '${posix(ROUTER_DISABLED_FIXTURE)}'`,
     '        ;;',
     '      *)',
     `        cat '${posix(ROUTER_ENABLED_FIXTURE)}'`,
@@ -731,7 +744,7 @@ test('buildApiCheck, executed: marker 200 on the first try and every router enab
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, script);
 
-  writeCurlStub(stubDir, '200');
+  writeCurlStub(stubDir, { markerCode: '200' });
   writeSleepStub(stubDir);
 
   const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}`, BELLHOP_TEST_BAD_ROUTER: NO_BAD_ROUTER };
@@ -756,7 +769,12 @@ test('buildApiCheck, executed: the marker never answers 200 -> exit non-zero, st
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, script);
 
-  writeCurlStub(stubDir, '404');
+  // markerExit defaults to 0 here -- a real HTTP 404 is a completed transfer
+  // (curl only exits non-zero on a connection-level failure, not an
+  // application-level HTTP status), so this is the ordinary "Traefik is
+  // reachable but hasn't loaded this file yet" case, distinct from test (c)
+  // below.
+  writeCurlStub(stubDir, { markerCode: '404' });
   writeSleepStub(stubDir);
 
   const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}`, BELLHOP_TEST_BAD_ROUTER: NO_BAD_ROUTER };
@@ -784,7 +802,20 @@ test('buildApiCheck, executed: curl cannot reach the API (000) -> stderr says "u
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, script);
 
-  writeCurlStub(stubDir, '000');
+  // markerExit: 7 mirrors real curl's own exit code on a connection failure
+  // (e.g. connection refused) -- curl still writes '000' via -w first, but
+  // exits non-zero. A bare `bellhop_code="$(curl ...)"` assignment's own
+  // exit status is, per POSIX, that of its last command substitution, which
+  // could in principle trip `set -e` and abort the whole check at the very
+  // first poll attempt with no diagnostic at all -- but this whole check
+  // always runs as the condition of `if ! ( ... ); then` (buildFileDriverScript),
+  // and that context exempts everything nested inside it from -e, so the
+  // retry loop and the timeout message below are reached regardless (see
+  // buildApiCheck's own `set -e` comment; verified directly with real curl
+  // nested the same way, not just this stub). This test is what proves
+  // that in practice: it fails if a future refactor ever invokes this
+  // check's script outside an if/while/until condition.
+  writeCurlStub(stubDir, { markerCode: '000', markerExit: 7 });
   writeSleepStub(stubDir);
 
   const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}`, BELLHOP_TEST_BAD_ROUTER: NO_BAD_ROUTER };
@@ -812,7 +843,7 @@ test('buildApiCheck, executed: the marker loads but one router is disabled -> st
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, script);
 
-  writeCurlStub(stubDir, '200');
+  writeCurlStub(stubDir, { markerCode: '200' });
   writeSleepStub(stubDir);
 
   const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}`, BELLHOP_TEST_BAD_ROUTER: badRouter };
@@ -842,7 +873,7 @@ test('buildApiCheck, executed: no previous file existed and the check fails -> t
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, script);
 
-  writeCurlStub(stubDir, '404');
+  writeCurlStub(stubDir, { markerCode: '404' });
   writeSleepStub(stubDir);
 
   const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}`, BELLHOP_TEST_BAD_ROUTER: NO_BAD_ROUTER };
@@ -850,4 +881,45 @@ test('buildApiCheck, executed: no previous file existed and the check fails -> t
 
   assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
   assert.ok(!existsSync(configPath), 'the file must not exist -- it never did');
+});
+
+test('buildApiCheck, executed: curl itself fails to fetch a router (empty body, non-zero exit) -> counts as unhealthy, not a bare crash, the previous file is restored', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-traefik-api-check-'));
+  const stubDir = mkdtempSync(join(tmpdir(), 'bellhop-traefik-api-check-stubs-'));
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = `${HEADER}\nhttp:\n  routers: {}\n# the previous version\n`;
+  writeFileSync(configPath, originalContent);
+
+  const { script, content } = buildTraefikApplyScript(routesNamed('zeta', 'alpha'), configPath, 'http://127.0.0.1:8080');
+  const badRouter = routerNames(content)[1];
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, script);
+
+  // The marker succeeds immediately; the bad router's own curl call exits
+  // non-zero with nothing on stdout -- a real connection failure/timeout
+  // fetching that one router. Per the Decisions in the brief: a curl
+  // failure on a router fetch (empty body) counts as unhealthy, not a
+  // script crash. Same -e-exemption reasoning as test (c) above applies
+  // here too (this whole check runs as the condition of `if ! ( ... );
+  // then`), this time covering the per-router curl call rather than the
+  // marker one -- proving it holds for both command substitutions in this
+  // script, not just the first.
+  writeCurlStub(stubDir, { markerCode: '200', badRouterMode: 'fetch-fails' });
+  writeSleepStub(stubDir);
+
+  const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}`, BELLHOP_TEST_BAD_ROUTER: badRouter };
+  const result = spawnSync('sh', [scriptPath], { env });
+
+  assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
+  const stderr = result.stderr.toString();
+  assert.ok(
+    stderr.includes(`Traefik router ${badRouter} is not healthy: `),
+    `expected the router named with an empty body, stderr was:\n${stderr}`
+  );
+  assert.match(stderr, /Traefik API check failed; restored previous configuration/, `stderr was:\n${stderr}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the previous file must be restored byte for byte');
 });
