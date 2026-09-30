@@ -234,6 +234,8 @@ const CADDY_CONFIG_PATH_NOTE = caddyDriver.configPathNote;
 const NGINX_CONFIG_PATH_NOTE = nginxDriver.configPathNote;
 const HAPROXY_CONFIG_PATH_NOTE =
   "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate.";
+const TRAEFIK_CONFIG_PATH_NOTE =
+  "Traefik's file provider must watch this file's directory. The whole file is replaced on every apply, and a file Bellhop didn't generate is refused.";
 
 test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
   const { app } = testApp();
@@ -244,6 +246,7 @@ test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () 
     { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
     { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
     { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
+    { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
     { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
@@ -258,6 +261,7 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
     { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
     { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
     { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
+    { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
     { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
