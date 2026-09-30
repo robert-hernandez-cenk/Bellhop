@@ -41,7 +41,7 @@ go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
 
 ## Inventory-wide settings
 
-Ten values live in the inventory database rather than in code, because
+Twelve values live in the inventory database rather than in code, because
 they are specific to your network. Set them with `set-config`:
 
 ```bash
@@ -56,8 +56,9 @@ where `proxyDriver` is a dropdown of the supported ids rather than a
 free-text field, and Proxy config path/Status page path are shown or
 hidden and given a matching placeholder based on whichever driver is
 currently selected in that dropdown (unsaved changes included); the Proxy
-TLS certificate/key fields appear only while nginx is selected. Hiding a
-field never clears its stored value — see
+TLS certificate/key fields appear only while nginx is selected, and the
+Proxy cert resolver/Proxy API URL fields only while Traefik is selected.
+Hiding a field never clears its stored value — see
 [Reverse proxy drivers](reverse-proxy/README.md).
 
 | Setting | Used by | When unset |
@@ -66,15 +67,19 @@ field never clears its stored value — see
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
-| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`nginx`/`nginx-proxy-manager`/`haproxy`/`none` |
-| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx, `/etc/haproxy/bellhop.cfg` for HAProxy, which also writes `bellhop.map` in the same directory; `nginx-proxy-manager` and `none` have no config file at all, and hide this field on the Settings page) |
-| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy, `nginx-proxy-manager`, `haproxy`, and `none`, and shown on the Settings page only while nginx is selected |
-| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy, `nginx-proxy-manager`, `haproxy`, and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`nginx`/`nginx-proxy-manager`/`haproxy`/`traefik`/`none` |
+| `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx, `/etc/haproxy/bellhop.cfg` for HAProxy, which also writes `bellhop.map` in the same directory, `/etc/traefik/dynamic/bellhop.yml` for Traefik; `nginx-proxy-manager` and `none` have no config file at all, and hide this field on the Settings page) |
+| `proxyTlsCertificate` | the nginx driver | certbot's own default certificate path for the inventory domain; ignored by Caddy, `nginx-proxy-manager`, `haproxy`, `traefik`, and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyTlsKey` | the nginx driver | certbot's own default key path for the inventory domain; ignored by Caddy, `nginx-proxy-manager`, `haproxy`, `traefik`, and `none`, and shown on the Settings page only while nginx is selected |
+| `proxyCertResolver` | the Traefik driver | `cloudflare`, the default ACME certificate resolver name every rendered router's `tls.certResolver` is set to; ignored by every other driver, and shown on the Settings page only while Traefik is selected |
+| `proxyApiUrl` | the Traefik driver | no post-apply check at all — the file is written and trusted to load; set to Traefik's API address as reachable from the proxy host to have every apply confirm it loaded before succeeding; ignored by every other driver, and shown on the Settings page only while Traefik is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 
 See [Reverse proxy drivers](reverse-proxy/README.md) for what `proxyDriver`, `proxyConfigPath`,
-and the nginx driver's `proxyTlsCertificate`/`proxyTlsKey` actually do.
+the nginx driver's `proxyTlsCertificate`/`proxyTlsKey`, and the [Traefik
+driver](reverse-proxy/traefik.md)'s `proxyCertResolver`/`proxyApiUrl`
+actually do.
 
 `statusPagePath` unset is a hard failure only for the standalone
 `render-status-page` command; the web UI's combined push-live step and

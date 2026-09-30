@@ -7,13 +7,14 @@ own page:
 - [nginx](nginx.md).
 - [Nginx Proxy Manager](nginx-proxy-manager.md).
 - [HAProxy](haproxy.md).
+- [Traefik](traefik.md).
 - "No proxy" (`proxyDriver: none`) — described below.
 
 `sync-proxy` doesn't talk to Caddy (or any other proxy) directly — it goes
 through a driver, chosen by the `proxyDriver` setting (see [Inventory-wide
 settings](../configuration.md#inventory-wide-settings); unset means
-`caddy`, the default; `nginx`, `nginx-proxy-manager`, `haproxy`, and
-`none` are the other drivers that ship). Exactly one driver is active per
+`caddy`, the default; `nginx`, `nginx-proxy-manager`, `haproxy`, `traefik`,
+and `none` are the other drivers that ship). Exactly one driver is active per
 deployment: it's a per-deployment choice, not a per-entry one, so every
 gated/reverse-proxied inventory entry is served by the same proxy. The web
 UI's Settings page presents this choice as a dropdown of every driver
@@ -31,7 +32,10 @@ inventory into a preview and an opaque payload (the dry-run preview is
 always exactly what `--apply` sends); `apply()` sends that payload live and
 reloads the proxy, throwing on failure — a failed validate or write
 restores the proxy's previous configuration rather than leaving it
-half-written or silently reporting success; `snapshot()` reads back
+half-written or silently reporting success. Traefik is the first driver
+where reload is a no-op (its file provider hot-reloads on its own) and
+where validation itself is optional — see [Traefik](traefik.md#catching-a-rejected-configuration).
+`snapshot()` reads back
 whatever the proxy currently has deployed, for the status page. Any route
 whose auth mode the active driver can't enforce (e.g. a driver with no
 `oidc` support and an OIDC-gated entry) is refused at both `sync-proxy` and
@@ -69,17 +73,24 @@ cleanup is skipped too, through the same driver-capability check that
 skips it for any driver that doesn't issue certificates via Cloudflare
 DNS-01 (nginx, Nginx Proxy Manager, and HAProxy included).
 
-A driver that's configured through a file (Caddy, nginx, and HAProxy
-all are; a future Caddy-admin-API/HAProxy-Data-Plane-API driver might not
-be) is built with a shared `fileDriver` helper: it backs up the target file(s),
-writes the new content in place (either replacing a managed section while
-leaving everything else on the file untouched, or replacing a file
-Bellhop owns outright), runs the proxy's own validation command against
-the real path, restores every backup and fails if validation fails, and
-reloads the proxy otherwise. HAProxy is the first to own two files — its
-backends file and the `bellhop.map` beside it — backed up, written,
-validated, and restored together as one unit; its dry-run preview labels
-each file with a `==> <path> <==` line. Nginx Proxy Manager is the first driver
+A driver that's configured through a file (Caddy, nginx, HAProxy, and
+Traefik all are; a future Caddy-admin-API/HAProxy-Data-Plane-API driver
+might not be) is built with a shared `fileDriver` helper: it backs up the
+target file(s), writes the new content in place (either replacing a
+managed section while leaving everything else on the file untouched, or
+replacing a file Bellhop owns outright), runs the proxy's own validation
+command against the real path, restores every backup and fails if
+validation fails, and reloads the proxy otherwise. HAProxy is the first to
+own two files — its backends file and the `bellhop.map` beside it — backed
+up, written, validated, and restored together as one unit; its dry-run
+preview labels each file with a `==> <path> <==` line. Traefik is the
+first driver whose validate command and reload command can both be
+absent (`null`): validation runs only when `proxyApiUrl` is set, and
+there is never a reload line, since Traefik's file provider reloads on
+its own the moment the write lands — that write itself is also the first
+to ask for an atomic, same-directory rename rather than an in-place
+truncate, since Traefik's watcher could otherwise observe a half-written
+file (see [Traefik](traefik.md)). Nginx Proxy Manager is the first driver
 that manages a real proxy with *no* configuration file at all — it
 reconciles proxy hosts over NPM's own REST API instead (see [Nginx Proxy
 Manager](nginx-proxy-manager.md)), so a driver's config path is now
@@ -101,6 +112,9 @@ path the way it can trust them everywhere else on a gated site.
 
 **Certificates are the operator's job for a driver that doesn't issue them
 itself.** Caddy issues its own via Cloudflare DNS-01 with no extra setup;
+Traefik can too, but — unlike Caddy — through a certificate resolver you
+define yourself in its static configuration (Bellhop only names it on each
+router; see [Traefik](traefik.md#prerequisites-the-static-configuration-you-own)).
 nginx cannot obtain its own certificate, so every site the nginx driver
 generates shares one certificate/key pair instead — see [nginx
 driver](nginx.md). Nginx Proxy Manager sits in between: it reuses a
