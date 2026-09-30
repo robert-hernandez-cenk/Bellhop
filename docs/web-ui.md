@@ -76,9 +76,12 @@ subdomains, deleting a guest that had any) automatically re-run
 proxy configuration and status page never drift from what the Dashboard
 shows. Set `PORT` to run it on a port other than 3001.
 
-The deployed web UI can be gated behind Caddy's `forward_auth`, checking
+The deployed web UI can be gated behind its reverse proxy's Authentik
+forward-auth (Caddy's `forward_auth`, nginx's `auth_request`), checking
 every request against a self-hosted Authentik instance and forwarding
-trusted `X-authentik-*` identity headers on success — there is no login
+trusted `X-authentik-*` identity headers on success. (The HAProxy driver
+can't generate forward-auth, so under it you front the web UI yourself —
+see [HAProxy limits](reverse-proxy/haproxy.md#limits).) There is no login
 page or session store in this app itself, only a global Express middleware
 (`src/web/auth.ts`) that trusts those headers when present. Whether a
 request arriving with no such headers is rejected or served as a synthetic
@@ -86,7 +89,7 @@ always-admin local operator is controlled by `WEB_UI_AUTH_MODE` (see
 [Environment variables](environment-variables.md) and
 [Running without Authentik](authentik.md#running-without-authentik)).
 The default `auto` mode falls back to the local operator, so running
-`web:start`/`web:dev` directly (not routed through Caddy) works out of the
+`web:start`/`web:dev` directly (not routed through the proxy) works out of the
 box instead of 401ing the whole dashboard; set `WEB_UI_AUTH_MODE=authentik`
 on any deployment where authentication is load-bearing to get the old,
 fail-closed behavior back. `WEB_UI_DEV_USER` remains useful in dev/test for

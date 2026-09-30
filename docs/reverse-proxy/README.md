@@ -78,7 +78,8 @@ Bellhop owns outright), runs the proxy's own validation command against
 the real path, restores every backup and fails if validation fails, and
 reloads the proxy otherwise. HAProxy is the first to own two files — its
 backends file and the `bellhop.map` beside it — backed up, written,
-validated, and restored together as one unit. Nginx Proxy Manager is the first driver
+validated, and restored together as one unit; its dry-run preview labels
+each file with a `==> <path> <==` line. Nginx Proxy Manager is the first driver
 that manages a real proxy with *no* configuration file at all — it
 reconciles proxy hosts over NPM's own REST API instead (see [Nginx Proxy
 Manager](nginx-proxy-manager.md)), so a driver's config path is now
