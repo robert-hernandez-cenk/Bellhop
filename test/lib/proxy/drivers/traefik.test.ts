@@ -59,6 +59,36 @@ function renderOne(r: ProxyRoute, c: ProxyContext = ctx()): string {
 // regardless of routes (research.md R7).
 const FORWARDED_PORT_MIDDLEWARE = ['    bellhop-forwarded-port:', '      headers:', '        customRequestHeaders:', '          X-Forwarded-Port: "443"'];
 
+// The header-strip middleware body (final review F3), also present in every
+// rendered file and always the first key in http.middlewares.
+const STRIP_MIDDLEWARE = [
+  '    bellhop-strip-authentik-headers:',
+  '      headers:',
+  '        customRequestHeaders:',
+  '          X-authentik-username: ""',
+  '          X-authentik-groups: ""',
+  '          X-authentik-email: ""',
+  '          X-authentik-name: ""',
+  '          X-authentik-uid: ""',
+];
+const STRIP_MIDDLEWARE_OBJECT = {
+  headers: {
+    customRequestHeaders: {
+      'X-authentik-username': '',
+      'X-authentik-groups': '',
+      'X-authentik-email': '',
+      'X-authentik-name': '',
+      'X-authentik-uid': '',
+    },
+  },
+};
+
+// Every Bellhop router's middleware list without / with forward-auth. Copy
+// them ([...BASE_MIDDLEWARES]) inside any object passed to `stringify`: one
+// array referenced twice renders as a YAML anchor/alias pair, not two lists.
+const BASE_MIDDLEWARES = ['bellhop-strip-authentik-headers', 'bellhop-forwarded-port'];
+const GATED_MIDDLEWARES = [...BASE_MIDDLEWARES, 'bellhop-authentik'];
+
 function sha256First12(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 12);
 }
@@ -109,6 +139,7 @@ test('render: the contract example\'s wiki entry -- rule order, entry point, ser
     '        - websecure',
     '      service: bellhop-route-wiki-example-com',
     '      middlewares:',
+    '        - bellhop-strip-authentik-headers',
     '        - bellhop-forwarded-port',
     '      tls:',
     '        certResolver: cloudflare',
@@ -118,6 +149,7 @@ test('render: the contract example\'s wiki entry -- rule order, entry point, ser
     '        servers:',
     '          - url: http://192.0.2.20:8080',
     '  middlewares:',
+    ...STRIP_MIDDLEWARE,
     ...FORWARDED_PORT_MIDDLEWARE,
     '',
   ].join('\n');
@@ -134,6 +166,7 @@ test('render: the contract example\'s wiki entry -- rule order, entry point, ser
     '        - websecure',
     '      service: bellhop-route-wiki-example-com',
     '      middlewares:',
+    '        - bellhop-strip-authentik-headers',
     '        - bellhop-forwarded-port',
     '      tls:',
     '        certResolver: cloudflare',
@@ -143,6 +176,7 @@ test('render: the contract example\'s wiki entry -- rule order, entry point, ser
     '        servers:',
     '          - url: http://192.0.2.20:8080',
     '  middlewares:',
+    ...STRIP_MIDDLEWARE,
     ...FORWARDED_PORT_MIDDLEWARE,
     `    bellhop-generation-${hash}:`,
     '      headers:',
@@ -159,7 +193,7 @@ test('render: entry point is always [websecure], and middlewares lists bellhop-f
   const doc = parse(content) as { http: { routers: Record<string, { entryPoints: string[]; middlewares: string[] }> } };
   const router = doc.http.routers['bellhop-route-app-example-com'];
   assert.deepEqual(router.entryPoints, ['websecure']);
-  assert.deepEqual(router.middlewares, ['bellhop-forwarded-port']);
+  assert.deepEqual(router.middlewares, BASE_MIDDLEWARES);
 });
 
 // --- render: backend scheme (research.md R8) --------------------------------
@@ -206,7 +240,7 @@ test('render: an OIDC route renders identically to the same route ungated -- no 
 
 // --- render: zero routes -----------------------------------------------------
 
-test('render: zero routes -> header plus http.middlewares holding only bellhop-forwarded-port and the marker -- no routers/services/serversTransports', () => {
+test('render: zero routes -> header plus http.middlewares holding only the header strip, bellhop-forwarded-port, and the marker -- no routers/services/serversTransports', () => {
   const content = render([], ctx(), CONFIG_PATH)[0].content;
   assert.equal(content.split('\n')[0], HEADER);
   const doc = parse(content) as {
@@ -216,9 +250,9 @@ test('render: zero routes -> header plus http.middlewares holding only bellhop-f
   assert.equal(doc.http.services, undefined);
   assert.equal(doc.http.serversTransports, undefined);
   const names = Object.keys(doc.http.middlewares);
-  assert.equal(names.length, 2);
-  assert.equal(names[0], 'bellhop-forwarded-port');
-  assert.ok(names[1].startsWith('bellhop-generation-'), `expected a generation marker, got '${names[1]}'`);
+  assert.equal(names.length, 3);
+  assert.deepEqual(names.slice(0, 2), BASE_MIDDLEWARES);
+  assert.ok(names[2].startsWith('bellhop-generation-'), `expected a generation marker, got '${names[2]}'`);
 });
 
 // --- render: FileSpec shape --------------------------------------------------
@@ -335,7 +369,7 @@ test('render: the contract example\'s media entry -- main router middlewares/out
     rule: 'Host(`media.example.com`)',
     entryPoints: ['websecure'],
     service: 'bellhop-route-media-example-com',
-    middlewares: ['bellhop-forwarded-port', 'bellhop-authentik'],
+    middlewares: [...GATED_MIDDLEWARES],
     tls: { certResolver: 'cloudflare' },
   });
 
@@ -344,7 +378,7 @@ test('render: the contract example\'s media entry -- main router middlewares/out
     rule: '(Host(`media.example.com`)) && PathPrefix(`/outpost.goauthentik.io/`)',
     entryPoints: ['websecure'],
     service: 'bellhop-authentik-outpost',
-    middlewares: ['bellhop-forwarded-port'],
+    middlewares: [...BASE_MIDDLEWARES],
     tls: { certResolver: 'cloudflare' },
   });
 
@@ -353,7 +387,7 @@ test('render: the contract example\'s media entry -- main router middlewares/out
     rule: '(Host(`media.example.com`)) && (Path(`/health`) || PathPrefix(`/api/`))',
     entryPoints: ['websecure'],
     service: 'bellhop-route-media-example-com',
-    middlewares: ['bellhop-forwarded-port'],
+    middlewares: [...BASE_MIDDLEWARES],
     tls: { certResolver: 'cloudflare' },
   });
 
@@ -368,13 +402,13 @@ test('render: the contract example\'s media entry -- main router middlewares/out
   assert.deepEqual(doc.http.serversTransports['bellhop-insecure-backend-tls'], { insecureSkipVerify: true });
 });
 
-test('render: bellhop-authentik middleware is the second key in http.middlewares, after bellhop-forwarded-port and before the generation marker', () => {
+test('render: http.middlewares key order is the header strip, bellhop-forwarded-port, bellhop-authentik, then the generation marker', () => {
   const content = renderOne(mediaRoute(), gatedCtx());
   const doc = parse(content) as { http: { middlewares: Record<string, unknown> } };
   const names = Object.keys(doc.http.middlewares);
-  assert.deepEqual(names.slice(0, 2), ['bellhop-forwarded-port', 'bellhop-authentik']);
-  assert.ok(names[2].startsWith('bellhop-generation-'));
-  assert.equal(names.length, 3);
+  assert.deepEqual(names.slice(0, 3), GATED_MIDDLEWARES);
+  assert.ok(names[3].startsWith('bellhop-generation-'));
+  assert.equal(names.length, 4);
 });
 
 test('render: a bare /* exemption removes bellhop-authentik from the main router and renders no exempt router, but keeps the outpost router', () => {
@@ -385,7 +419,7 @@ test('render: a bare /* exemption removes bellhop-authentik from the main router
     gatedCtx()
   );
   const doc = parse(content) as { http: { routers: Record<string, { middlewares: string[] }> } };
-  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, ['bellhop-forwarded-port']);
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, BASE_MIDDLEWARES);
   assert.equal(doc.http.routers['bellhop-exempt-media-example-com'], undefined);
   assert.ok(doc.http.routers['bellhop-outpost-media-example-com'], 'outpost router must still be rendered');
 });
@@ -402,7 +436,7 @@ test('render: an outpost-namespace exempt pattern is skipped, so with only that 
     gatedCtx()
   );
   const doc = parse(content) as { http: { routers: Record<string, { middlewares: string[] }> } };
-  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, ['bellhop-forwarded-port', 'bellhop-authentik']);
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, GATED_MIDDLEWARES);
   assert.equal(doc.http.routers['bellhop-exempt-media-example-com'], undefined);
   assert.ok(doc.http.routers['bellhop-outpost-media-example-com'], 'outpost router must still be rendered');
 });
@@ -443,7 +477,7 @@ test('render: an OIDC route gets no forward-auth objects at all -- no outpost/ex
     http: { routers: Record<string, { middlewares: string[] }>; services: Record<string, unknown>; middlewares: Record<string, unknown> };
   };
   assert.deepEqual(Object.keys(doc.http.routers), ['bellhop-route-media-example-com']);
-  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, ['bellhop-forwarded-port']);
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, BASE_MIDDLEWARES);
   assert.equal(doc.http.services['bellhop-authentik-outpost'], undefined);
   assert.equal(doc.http.middlewares['bellhop-authentik'], undefined);
 });
@@ -464,28 +498,28 @@ test('render: the whole contract example (wiki ungated + media forward-gated) re
       rule: 'Host(`wiki.example.com`) || Host(`docs.example.com`)',
       entryPoints: ['websecure'],
       service: 'bellhop-route-wiki-example-com',
-      middlewares: ['bellhop-forwarded-port'],
+      middlewares: [...BASE_MIDDLEWARES],
       tls: { certResolver: 'cloudflare' },
     },
     'bellhop-route-media-example-com': {
       rule: 'Host(`media.example.com`)',
       entryPoints: ['websecure'],
       service: 'bellhop-route-media-example-com',
-      middlewares: ['bellhop-forwarded-port', 'bellhop-authentik'],
+      middlewares: [...GATED_MIDDLEWARES],
       tls: { certResolver: 'cloudflare' },
     },
     'bellhop-outpost-media-example-com': {
       rule: '(Host(`media.example.com`)) && PathPrefix(`/outpost.goauthentik.io/`)',
       entryPoints: ['websecure'],
       service: 'bellhop-authentik-outpost',
-      middlewares: ['bellhop-forwarded-port'],
+      middlewares: [...BASE_MIDDLEWARES],
       tls: { certResolver: 'cloudflare' },
     },
     'bellhop-exempt-media-example-com': {
       rule: '(Host(`media.example.com`)) && (Path(`/health`) || PathPrefix(`/api/`))',
       entryPoints: ['websecure'],
       service: 'bellhop-route-media-example-com',
-      middlewares: ['bellhop-forwarded-port'],
+      middlewares: [...BASE_MIDDLEWARES],
       tls: { certResolver: 'cloudflare' },
     },
   };
@@ -499,6 +533,7 @@ test('render: the whole contract example (wiki ungated + media forward-gated) re
   };
 
   const expectedMiddlewaresWithoutMarker = {
+    'bellhop-strip-authentik-headers': STRIP_MIDDLEWARE_OBJECT,
     'bellhop-forwarded-port': { headers: { customRequestHeaders: { 'X-Forwarded-Port': '443' } } },
     'bellhop-authentik': BELLHOP_AUTHENTIK_MIDDLEWARE,
   };
@@ -516,7 +551,7 @@ test('render: the whole contract example (wiki ungated + media forward-gated) re
     middlewares: expectedMiddlewaresWithoutMarker,
     serversTransports: expectedServersTransports,
   };
-  const contentWithoutMarker = `${HEADER}\n${stringify({ http: httpWithoutMarker })}`;
+  const contentWithoutMarker = `${HEADER}\n${stringify({ http: httpWithoutMarker }, { lineWidth: 0 })}`;
   const hash = sha256First12(contentWithoutMarker);
   const markerName = `bellhop-generation-${hash}`;
 
@@ -577,7 +612,7 @@ test('buildApiCheck: the timeout message names the path, "unreachable" for a 000
   assert.ok(check.includes('bellhop_result="HTTP $bellhop_code"'), `expected an HTTP <code> branch, got:\n${check}`);
   assert.ok(
     check.includes(
-      `printf 'Traefik did not load %s within 30 seconds (%s at %s)\\n' '${CONFIG_PATH}' "$bellhop_result" "$bellhop_api" >&2`
+      `printf 'Traefik did not load %s after 30 checks one second apart (%s at %s)\\n' '${CONFIG_PATH}' "$bellhop_result" "$bellhop_api" >&2`
     ),
     `expected the exact timeout message, got:\n${check}`
   );
@@ -782,7 +817,7 @@ test('buildApiCheck, executed: the marker never answers 200 -> exit non-zero, st
 
   assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
   const stderr = result.stderr.toString();
-  assert.match(stderr, /did not load .* within 30 seconds \(HTTP 404 at http:\/\/127\.0\.0\.1:8080\)/, `stderr was:\n${stderr}`);
+  assert.match(stderr, /did not load .* after 30 checks one second apart \(HTTP 404 at http:\/\/127\.0\.0\.1:8080\)/, `stderr was:\n${stderr}`);
   assert.match(stderr, /Traefik API check failed; restored previous configuration/, `stderr was:\n${stderr}`);
   assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the previous file must be restored byte for byte');
 });
@@ -823,7 +858,7 @@ test('buildApiCheck, executed: curl cannot reach the API (000) -> stderr says "u
 
   assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
   const stderr = result.stderr.toString();
-  assert.match(stderr, /did not load .* within 30 seconds \(unreachable at http:\/\/127\.0\.0\.1:8080\)/, `stderr was:\n${stderr}`);
+  assert.match(stderr, /did not load .* after 30 checks one second apart \(unreachable at http:\/\/127\.0\.0\.1:8080\)/, `stderr was:\n${stderr}`);
   assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the previous file must be restored byte for byte');
 });
 
@@ -922,4 +957,179 @@ test('buildApiCheck, executed: curl itself fails to fetch a router (empty body, 
   );
   assert.match(stderr, /Traefik API check failed; restored previous configuration/, `stderr was:\n${stderr}`);
   assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the previous file must be restored byte for byte');
+});
+
+// --- final review fixes (F2, F3, F5, F6, F8, F9) -----------------------------
+
+// F2: Traefik's file provider only loads .yml/.yaml/.toml files, and a
+// directory path would have Bellhop write a file Traefik never reads -- both
+// fail silently at Traefik's end, so render() refuses them up front.
+for (const badPath of ['/etc/traefik/dynamic', '/etc/traefik/dynamic/', '/etc/traefik/dynamic/bellhop.conf']) {
+  test(`render: proxyConfigPath '${badPath}' throws a named error naming the path and the set-config fix`, () => {
+    assert.throws(
+      () => render([], ctx(), badPath),
+      (err: Error) => {
+        assert.ok(err.message.includes(`proxyConfigPath '${badPath}'`), `expected the path named, got: ${err.message}`);
+        assert.ok(
+          err.message.includes('bellhop set-config proxyConfigPath /etc/traefik/dynamic/bellhop.yml --apply'),
+          `expected the set-config fix, got: ${err.message}`
+        );
+        assert.ok(err.message.includes('Settings page'), `expected the Settings page named, got: ${err.message}`);
+        return true;
+      }
+    );
+  });
+}
+
+test("render: a proxyConfigPath ending in '/' says it names a directory, not a file", () => {
+  assert.throws(() => render([], ctx(), '/etc/traefik/dynamic/'), /ends in '\/'/);
+});
+
+test('render: a proxyConfigPath without a .yml/.yaml extension says Traefik would not load it', () => {
+  assert.throws(() => render([], ctx(), '/etc/traefik/dynamic/bellhop.conf'), /\.yml or \.yaml/);
+});
+
+for (const goodPath of ['/etc/traefik/dynamic/bellhop.yml', '/etc/traefik/dynamic/bellhop.yaml']) {
+  test(`render: proxyConfigPath '${goodPath}' is accepted`, () => {
+    assert.doesNotThrow(() => render([], ctx(), goodPath));
+  });
+}
+
+test('traefikDriver.plan: a bad proxyConfigPath fails the dry run too, before anything is written', async () => {
+  const inventory: Inventory = { domain: 'example.com', hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }], guests: [] };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(traefikDriver.plan([], ctx(), driverDeps(inventory, ssh, '/etc/traefik/dynamic/')), /ends in '\/'/);
+  assert.equal(ssh.history.length, 0);
+});
+
+// F3: a router with no forward-auth in front of it would otherwise pass a
+// client-sent X-authentik-* header straight to a backend that trusts it
+// (parity with the HAProxy driver's `del-header x-authentik- -m beg`).
+const IDENTITY_HEADERS = ['X-authentik-username', 'X-authentik-groups', 'X-authentik-email', 'X-authentik-name', 'X-authentik-uid'];
+
+test('render: the header-strip middleware sets each of the five X-authentik identity headers to the empty string (a quoted "", never null)', () => {
+  const content = renderOne(route({ owner: { type: 'guest', name: 'app' } }));
+  const doc = parse(content) as {
+    http: { middlewares: Record<string, { headers: { customRequestHeaders: Record<string, unknown> } }> };
+  };
+  const headers = doc.http.middlewares['bellhop-strip-authentik-headers'].headers.customRequestHeaders;
+  assert.deepEqual(Object.keys(headers), IDENTITY_HEADERS);
+  for (const name of IDENTITY_HEADERS) {
+    assert.equal(headers[name], '', `${name} must parse back as the empty string`);
+    assert.ok(content.includes(`          ${name}: ""`), `${name} must be rendered as a quoted ""`);
+  }
+});
+
+test('render: every Bellhop router -- main, outpost, and exempt -- lists the header strip first', () => {
+  const content = renderOne(mediaRoute(), gatedCtx());
+  const doc = parse(content) as { http: { routers: Record<string, { middlewares: string[] }> } };
+  const names = Object.keys(doc.http.routers);
+  assert.deepEqual(names.sort(), ['bellhop-exempt-media-example-com', 'bellhop-outpost-media-example-com', 'bellhop-route-media-example-com']);
+  for (const name of names) {
+    assert.equal(doc.http.routers[name].middlewares[0], 'bellhop-strip-authentik-headers', `${name} must strip first`);
+  }
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, GATED_MIDDLEWARES);
+});
+
+// F5: the check needs curl on the proxy host; without it, every poll would
+// fail with "command not found" and report a misleading timeout.
+test('buildApiCheck: the first thing the subshell does is check curl is installed, and name the fix if not', () => {
+  const content = render([], ctx(), CONFIG_PATH)[0].content;
+  const lines = buildApiCheck('http://127.0.0.1:8080', CONFIG_PATH, content).split('\n');
+  assert.equal(lines[0], '(');
+  assert.equal(lines[1], '  if ! command -v curl >/dev/null 2>&1; then');
+  assert.equal(
+    lines[2],
+    "    printf '%s\\n' 'curl is not installed on the proxy host; the Traefik API check (proxyApiUrl) needs it -- install curl there, or unset proxyApiUrl' >&2"
+  );
+  assert.equal(lines[3], '    exit 1');
+  assert.equal(lines[4], '  fi');
+});
+
+test('buildApiCheck, executed: no curl on PATH -> exit non-zero, stderr says curl is not installed, the previous file is restored', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-traefik-api-check-'));
+  const stubDir = mkdtempSync(join(tmpdir(), 'bellhop-traefik-api-check-nocurl-'));
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = `${HEADER}\nhttp:\n  routers: {}\n# the previous version\n`;
+  writeFileSync(configPath, originalContent);
+
+  const { script } = buildTraefikApplyScript(routesNamed('app'), configPath, 'http://127.0.0.1:8080');
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, script);
+
+  // PATH becomes the stub directory alone: one exec wrapper per utility the
+  // apply script really needs (resolved to its absolute path up front), and
+  // no curl at all -- so `command -v curl` fails even on a machine that has
+  // curl installed.
+  for (const tool of ['mktemp', 'cp', 'mv', 'cat', 'rm', 'chmod', 'head']) {
+    const resolved = spawnSync('sh', ['-c', `command -v ${tool}`]).stdout.toString().trim();
+    assert.ok(resolved.startsWith('/'), `could not resolve ${tool} to an absolute path (got '${resolved}')`);
+    const wrapperPath = join(stubDir, tool);
+    writeFileSync(wrapperPath, `#!/bin/sh\nexec '${resolved}' "$@"\n`);
+    chmodSync(wrapperPath, 0o755);
+  }
+  writeSleepStub(stubDir);
+
+  // `cd && pwd` turns a Windows 'C:/...' directory into the shell's own
+  // form (/c/... under Git Bash) -- a drive-letter colon would otherwise
+  // split PATH in two. On Linux it is the same path unchanged.
+  const result = spawnSync('sh', ['-c', `PATH="$(cd '${posix(stubDir)}' && pwd)"; export PATH; . '${scriptPath}'`]);
+
+  assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
+  const stderr = result.stderr.toString();
+  assert.ok(stderr.includes('curl is not installed on the proxy host'), `stderr was:\n${stderr}`);
+  assert.match(stderr, /Traefik API check failed; restored previous configuration/, `stderr was:\n${stderr}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the previous file must be restored byte for byte');
+});
+
+// F6: a bare '/*' already makes the whole main router unauthenticated, so
+// any other exempt pattern alongside it needs no router of its own.
+test("render: '/*' alongside another exempt pattern -> no exempt router, no bellhop-authentik on the main router, outpost router kept", () => {
+  const content = renderOne(
+    mediaRoute({
+      auth: { mode: 'forward', exemptPaths: [parsePathPattern('/*'), parsePathPattern('/api/*')], rawExemptPaths: ['/*', '/api/*'] },
+    }),
+    gatedCtx()
+  );
+  const doc = parse(content) as { http: { routers: Record<string, { middlewares: string[] }> } };
+  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'], undefined);
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].middlewares, BASE_MIDDLEWARES);
+  assert.ok(doc.http.routers['bellhop-outpost-media-example-com'], 'outpost router must still be rendered');
+});
+
+// F8: encodeHostname is only injective for valid DNS hostnames, and a
+// subdomain is a plain string in the schema -- two routes whose names
+// collide would silently overwrite one another's objects.
+test('render: two routes whose canonical hostnames encode to the same name throw, naming both hostnames', () => {
+  const a = route({ owner: { type: 'guest', name: 'a' }, hostnames: ['a-.b.example.com'] });
+  const b = route({ owner: { type: 'guest', name: 'b' }, hostnames: ['a.-b.example.com'] });
+  assert.equal(encodeHostname('a-.b.example.com'), encodeHostname('a.-b.example.com'), 'sanity: these two do collide');
+  assert.throws(
+    () => render([a, b], ctx(), CONFIG_PATH),
+    (err: Error) => {
+      assert.ok(err.message.includes("'a-.b.example.com'"), `expected the first hostname, got: ${err.message}`);
+      assert.ok(err.message.includes("'a.-b.example.com'"), `expected the second hostname, got: ${err.message}`);
+      assert.ok(err.message.includes(routeName('a-.b.example.com')), `expected the colliding name, got: ${err.message}`);
+      return true;
+    }
+  );
+});
+
+// F9: the yaml package folds long plain scalars at 80 columns by default;
+// a folded rule still parses the same, but reads badly in a dry-run preview
+// and on the status page.
+test('render: a long rule is never folded -- it stays on a single line', () => {
+  const hostnames = [
+    'a-rather-long-subdomain-name-one.example.com',
+    'a-rather-long-subdomain-name-two.example.com',
+    'a-rather-long-subdomain-name-three.example.com',
+    'a-rather-long-subdomain-name-four.example.com',
+  ];
+  const content = renderOne(route({ owner: { type: 'guest', name: 'long' }, hostnames }));
+  const rule = hostnames.map((h) => `Host(\`${h}\`)`).join(' || ');
+  assert.ok(content.split('\n').includes(`      rule: ${rule}`), `expected the whole rule on one line, got:\n${content}`);
 });

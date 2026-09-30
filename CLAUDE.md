@@ -635,8 +635,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   own, all naming conventions rather than package-layout assumptions: the
   entry point Bellhop's routers address is always named `websecure`, an
   unset `proxyCertResolver` defaults to a resolver named `cloudflare`, and
-  the API check's load timeout is fixed at 30 seconds with no per-call
-  override -- see the "Traefik driver" bullet below.
+  the API check's load timeout is fixed at 30 checks one second apart with
+  no per-call override -- see the "Traefik driver" bullet below.
   Four files split the
   responsibility: `routes.ts`'s `buildRoutes(inventory)` derives a
   proxy-neutral `ProxyRoute[]` from `hosts[]`/`guests[]`/`externalSites[]`
@@ -812,7 +812,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   truncate, and the restore step in the trap handler mirrors it the same
   way -- see the "Traefik driver" bullet below for why a file-watching
   proxy needs this and Caddy/nginx/HAProxy, which all reload explicitly
-  only after a successful validate, don't. `apply()`
+  only after a successful validate, don't. For an atomic file only, the
+  backup is taken with `cp -p` (so a restore brings back the original
+  mode/owner, not `mktemp`'s 0600, which a non-root proxy couldn't read),
+  and `TMP_<i>` starts empty before the trap is armed so the restore can
+  first remove a temp file a failed or interrupted write left in the
+  watched directory; a non-atomic file's script is byte-identical to
+  before. `apply()`
   builds one POSIX `sh` script (`buildFileDriverScript`, run via
   `runRemote` on the proxy host) that: first refuses, touching nothing, to
   replace an existing `'owned'` file whose first line isn't that
@@ -1245,25 +1251,42 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   zero routes) -- with every object name prefixed `bellhop-` and a route's
   own names derived from its canonical hostname (`hostnames[0]`) by
   `encodeHostname`: lowercase, then every `-` doubled, *then* every `.`
-  turned into a single `-` -- doubling first is what keeps the encoding
-  injective, so `a.b-c.example.com` and `a-b.c.example.com` can never
-  collide. Per-route objects: router+service `bellhop-route-<enc>`,
+  turned into a single `-` -- doubling first keeps the encoding injective
+  for valid DNS hostnames, so `a.b-c.example.com` and `a-b.c.example.com`
+  never collide. A subdomain is a plain string in the schema, though, so
+  a label starting or ending in `-` can still collide (`a-.b` vs
+  `a.-b`): `render()` throws naming both canonical hostnames rather than
+  letting one route's objects overwrite another's. `render()` also
+  throws, dry run included, when `proxyConfigPath` ends in `/` or doesn't
+  end in `.yml`/`.yaml` (Traefik's file provider would never load it),
+  naming the path and the `settingFix` remedy -- the HAProxy driver's
+  trailing-slash guard, extended. Both `stringify` passes use
+  `lineWidth: 0`, so a long rule is never folded. Per-route objects:
+  router+service `bellhop-route-<enc>`,
   router `bellhop-exempt-<enc>` (forward-gated with exempt paths left
-  after dropping outpost-namespace ones and a bare `/*`), router
-  `bellhop-outpost-<enc>` (forward-gated only). Shared objects, emitted
-  once when any route needs them: middlewares `bellhop-forwarded-port`
+  after dropping outpost-namespace ones, and no bare `/*` among them),
+  router `bellhop-outpost-<enc>` (forward-gated only). Shared objects:
+  middlewares `bellhop-strip-authentik-headers` (always present; sets each
+  of the five `X-authentik-*` identity headers to `""`, which Traefik
+  treats as "remove", and every router -- main, outpost, exempt -- lists
+  it first, so a client-sent identity header never reaches a backend
+  that trusts it, e.g. through an exempt path or to Bellhop's own web UI;
+  parity with the HAProxy driver's `del-header x-authentik-`),
+  `bellhop-forwarded-port`
   (always present, sets `X-Forwarded-Port: 443` via `customRequestHeaders`
   -- issue #91's convention every driver follows) and `bellhop-authentik`
-  (forward-auth, only when some route is forward-gated); service
+  (forward-auth, only when some route is forward-gated, listed after the
+  strip so it sets the real values); service
   `bellhop-authentik-outpost`; `serversTransports` entry
   `bellhop-insecure-backend-tls` (`insecureSkipVerify: true`, only when
   some route's backend needs it). A forward-gated route's main router
-  carries `bellhop-authentik` unless its only exempt pattern is a bare
-  `/*`, in which case that middleware is dropped from it and no exempt
-  router is rendered at all -- it still keeps its outpost router either
-  way, mirroring the nginx driver's own `/*` handling. Exempt-path
-  dedup/outpost-namespace-skip (`dedupeExemptPatterns`/`isOutpostPrefixed`/
-  `isRootPrefix`) are imported from `nginx-locations.ts` rather than
+  carries `bellhop-authentik` unless its exempt patterns include a bare
+  `/*` (alone or alongside others), in which case that middleware is
+  dropped from it and no exempt router is rendered at all -- it still
+  keeps its outpost router either way, mirroring the nginx driver's own
+  `/*` handling. The exempt pattern list itself
+  (`candidateExemptPatterns`, dedup plus outpost-namespace skip) and
+  `isRootPrefix` are imported from `nginx-locations.ts` rather than
   reimplemented, shared with the nginx driver since issue #31/#35 -- the
   same rules both drivers must obey are defined exactly once. Backend
   scheme follows every other driver's rule (`backendUrl`): `https://` when
@@ -1346,8 +1369,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   router), collecting every one that doesn't contain
   `"status":"enabled"` before failing, so a multi-router misconfiguration
   is reported in full rather than one router at a time across repeated
-  applies. Both gaps this can't close: **the 30-second timeout is fixed**,
-  with no per-call override, comfortably above Traefik's default 2-second
+  applies. Its first step is `command -v curl`: with no curl on the proxy
+  host it fails at once naming the fix (install curl there, or unset
+  `proxyApiUrl`) rather than ending in a misleading timeout. Both gaps this
+  can't close: **the timeout is fixed at 30 checks one second apart**
+  (each check can take up to `--max-time 5`, so the wall-clock wait runs
+  longer against a slow API -- the failure message says "after 30 checks
+  one second apart", never "within 30 seconds"), with no per-call override, comfortably above Traefik's default 2-second
   file-provider throttle but still a hard ceiling either way; and **a
   router naming a `certResolver` the static configuration doesn't define
   stays `"status":"enabled"` with no error at all** -- live-verified, the
@@ -1369,7 +1397,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   every rendered router uses is fixed at `websecure` (Traefik's own
   documented convention; not configurable), an unset `proxyCertResolver`
   defaults to a resolver named `cloudflare`, and the API check's load
-  timeout is a fixed 30 seconds. The Docker-labels provider, an HTTP
+  timeout is a fixed 30 checks one second apart. The Docker-labels provider, an HTTP
   provider Bellhop itself would have to serve, and managing Traefik's
   static configuration are all explicitly out of scope -- this driver only
   ever writes into the file provider's directory.

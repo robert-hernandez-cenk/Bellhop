@@ -132,16 +132,27 @@ export function buildFileDriverScript(
     lines.push('fi');
   });
 
-  // 1. Back up each file, or record that it did not exist.
+  // 1. Back up each file, or record that it did not exist. An atomic file's
+  // backup is taken with `cp -p`: the restore below copies the backup with
+  // `cp -p` into a fresh temp file and renames that over the real path, so
+  // the backup itself must carry the original mode/owner -- a plain `cp`
+  // into mktemp's 0600 file would restore a 0600 root-owned file that a
+  // non-root proxy can no longer read. Its write-phase temp-file name starts
+  // empty before the trap is armed, so the restore can tell whether there
+  // is a temp file to clean up. Non-atomic files are unchanged (FR-016).
   files.forEach((file, i) => {
     const p = singleQuote(file.path);
+    const atomic = file.mode === 'owned' && file.atomic === true;
     lines.push(`BAK_${i}="$(mktemp)"`);
     lines.push(`if [ -f ${p} ]; then`);
-    lines.push(`  cp ${p} "$BAK_${i}"`);
+    lines.push(atomic ? `  cp -p ${p} "$BAK_${i}"` : `  cp ${p} "$BAK_${i}"`);
     lines.push(`  EXISTED_${i}=1`);
     lines.push('else');
     lines.push(`  EXISTED_${i}=0`);
     lines.push('fi');
+    if (atomic) {
+      lines.push(`TMP_${i}=""`);
+    }
   });
 
   // Install the restore-on-failure trap now that every backup exists -- a
@@ -150,6 +161,12 @@ export function buildFileDriverScript(
   lines.push('bellhop_restore_all() {');
   files.forEach((file, i) => {
     const p = singleQuote(file.path);
+    if (file.mode === 'owned' && file.atomic) {
+      // A write that failed (or was interrupted) between its mktemp and its
+      // mv -f leaves the dot-prefixed temp file in the proxy's own watched
+      // directory -- remove it first, before the restore's own mktemp.
+      lines.push(`  if [ -n "$TMP_${i}" ]; then rm -f "$TMP_${i}"; fi`);
+    }
     lines.push(`  if [ "$EXISTED_${i}" = "1" ]; then`);
     if (file.mode === 'owned' && file.atomic) {
       // Same same-directory-temp-file-then-mv-f convention as the write

@@ -883,3 +883,88 @@ test('buildFileDriverScript, executed: an atomic owned file restores the old con
   const leftover = readdirSync(tmpDir).filter((f) => f.startsWith('.bellhop.yml.'));
   assert.deepEqual(leftover, [], 'no .bellhop.yml.* temp file must remain after a restore');
 });
+
+// --- (i) atomic backup mode and temp-file cleanup (final review F1/F4) -------
+
+test('buildFileDriverScript: an atomic file is backed up with cp -p, so a restore brings back the original mode/owner, not mktemp\'s 0600', () => {
+  const script = buildFileDriverScript([atomicOwnedFile('http: {}')], 'false', null);
+  assert.ok(script.includes(`  cp -p '${TRAEFIK_PATH}' "$BAK_0"`), `expected the backup taken with cp -p, got:\n${script}`);
+});
+
+test('buildFileDriverScript: a non-atomic file is still backed up with a plain cp (FR-016: Caddy/nginx/HAProxy scripts unchanged)', () => {
+  const script = buildFileDriverScript([ownedFile('/etc/nginx/conf.d/bellhop.conf', 'server {}')], 'false', null);
+  assert.ok(script.includes(`  cp '/etc/nginx/conf.d/bellhop.conf' "$BAK_0"`));
+  assert.ok(!script.includes('cp -p'), 'no cp -p anywhere for a non-atomic file');
+  assert.ok(!script.includes('TMP_0=""'), 'no temp-file bookkeeping for a non-atomic file');
+});
+
+test('buildFileDriverScript: an atomic file\'s temp name starts empty before the trap is armed, and the restore removes it when set', () => {
+  const script = buildFileDriverScript([atomicOwnedFile('http: {}')], 'false', null);
+  const init = script.indexOf('TMP_0=""');
+  const trap = script.indexOf("trap 'BELLHOP_STATUS");
+  assert.ok(init !== -1 && init < trap, `expected TMP_0="" before the EXIT trap, got:\n${script}`);
+  const restoreFn = script.slice(script.indexOf('bellhop_restore_all() {'), trap);
+  assert.ok(restoreFn.includes('if [ -n "$TMP_0" ]; then rm -f "$TMP_0"; fi'), `expected the temp-file cleanup, got:\n${restoreFn}`);
+});
+
+test('buildFileDriverScript, executed: a failed validate restores an atomic file\'s content and its original mode', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-mode-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = 'http:\n  routers: {}\n';
+  writeFileSync(configPath, originalContent);
+  spawnSync('sh', ['-c', `chmod 640 '${configPath}'`]);
+  const modeBefore = permissionModeOf(configPath);
+
+  const files: FileSpec[] = [{ path: configPath, content: 'http:\n  routers:\n    new: {}\n', mode: 'owned', atomic: true }];
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, buildFileDriverScript(files, 'false', null));
+
+  const result = spawnSync('sh', [scriptPath]);
+  assert.equal(result.status, 1, `expected exit 1, got ${result.status}, stderr: ${result.stderr}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the original content must be restored byte for byte');
+
+  if (modeBefore === '640') {
+    assert.equal(permissionModeOf(configPath), '640', 'the restored file must keep the original mode, not the backup\'s 0600');
+  } else {
+    t.diagnostic('skipping mode assertion: this environment does not honor chmod 640 (e.g. Windows/MSYS)');
+  }
+});
+
+test('buildFileDriverScript, executed: a write failure after mktemp restores the original and leaves no temp file in the directory', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-leak-'));
+  const stubDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-leak-stubs-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = 'http:\n  routers: {}\n';
+  writeFileSync(configPath, originalContent);
+
+  // A stub `cat` that always fails: the write step's `cat > "$TMP_0"` is the
+  // first command after the temp file is created, and nothing in the
+  // restore path uses cat, so the failure lands exactly between mktemp and
+  // mv -f.
+  const catPath = join(stubDir, 'cat');
+  writeFileSync(catPath, '#!/bin/sh\nexit 1\n');
+  chmodSync(catPath, 0o755);
+
+  const files: FileSpec[] = [{ path: configPath, content: 'http:\n  routers:\n    new: {}\n', mode: 'owned', atomic: true }];
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, buildFileDriverScript(files, null, null));
+
+  const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}` };
+  const result = spawnSync('sh', [scriptPath], { env });
+  assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the original content must be restored byte for byte');
+  const leftover = readdirSync(tmpDir).filter((f) => f.startsWith('.bellhop.yml.'));
+  assert.deepEqual(leftover, [], 'no .bellhop.yml.* temp file must remain after a write failure');
+});

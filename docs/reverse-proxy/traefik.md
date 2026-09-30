@@ -28,6 +28,14 @@ expose an empty or half-written file to it. The temp file's name
 There is no reload command. The file is live the moment the rename lands —
 Traefik's own watcher picks it up.
 
+`proxyConfigPath` must name a file ending in `.yml` or `.yaml`: Traefik's
+file provider only loads those (and `.toml`, which Bellhop doesn't write).
+A path ending in `/`, or with any other extension, makes `sync-proxy` fail
+— dry run included — naming the path and the fix
+(`bellhop set-config proxyConfigPath /etc/traefik/dynamic/bellhop.yml
+--apply`, or the Settings page), rather than writing a file Traefik would
+silently ignore.
+
 ## Prerequisites: the static configuration you own
 
 Bellhop never touches Traefik's static configuration — the file (or
@@ -92,6 +100,7 @@ http:
         - websecure
       service: bellhop-route-wiki-example-com
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
       tls:
         certResolver: cloudflare
@@ -101,6 +110,7 @@ http:
         - websecure
       service: bellhop-route-media-example-com
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
         - bellhop-authentik
       tls:
@@ -111,6 +121,7 @@ http:
         - websecure
       service: bellhop-authentik-outpost
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
       tls:
         certResolver: cloudflare
@@ -120,6 +131,7 @@ http:
         - websecure
       service: bellhop-route-media-example-com
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
       tls:
         certResolver: cloudflare
@@ -138,6 +150,14 @@ http:
         servers:
           - url: http://192.0.2.5:9000
   middlewares:
+    bellhop-strip-authentik-headers:
+      headers:
+        customRequestHeaders:
+          X-authentik-username: ""
+          X-authentik-groups: ""
+          X-authentik-email: ""
+          X-authentik-name: ""
+          X-authentik-uid: ""
     bellhop-forwarded-port:
       headers:
         customRequestHeaders:
@@ -162,8 +182,9 @@ http:
 ```
 
 With no subdomain-bearing entries at all, the file is still valid: the
-header plus `http.middlewares` holding `bellhop-forwarded-port` and the
-generation marker.
+header plus `http.middlewares` holding `bellhop-strip-authentik-headers`,
+`bellhop-forwarded-port` and the generation marker. Long rules are never
+folded across lines, however many hostnames an entry has.
 
 The `bellhop-generation-<hash>` middleware isn't used by any router — it
 exists only so the optional API check (below) can tell whether Traefik has
@@ -185,9 +206,25 @@ drivers pass. Requests under `/outpost.goauthentik.io/` go straight to the
 outpost at a higher priority, and any `unauthenticatedPaths` exempt those
 paths from the check the same way they do under Caddy and nginx — an exact
 path becomes `Path(...)`, a `/api/*`-style prefix becomes `PathPrefix(...)`,
-and a bare `/*` removes the check entirely rather than producing a separate
-router for it. An `oidc`-mode or ungated entry gets no forward-auth router
-at all.
+and when the paths include a bare `/*` the check is removed from the whole
+entry, with no separate exempt router at all (whatever other paths are
+listed alongside it). An `oidc`-mode or ungated entry gets no forward-auth
+router at all.
+
+Every Bellhop router, gated or not, first removes any `X-authentik-*`
+identity header the client itself sent (`bellhop-strip-authentik-headers`
+sets each to the empty string, which Traefik treats as "remove"), so a
+client can never pose as an Authentik-verified user to a backend that
+trusts those headers — Bellhop's own web UI does. On a gated entry the
+forward-auth check then sets the real values from Authentik's answer. The
+HAProxy driver strips the same headers for the same reason.
+
+Router and service names come from each entry's canonical hostname
+(`wiki.example.com` becomes `bellhop-route-wiki-example-com`, with a
+hostname's own `-` doubled). That encoding is unique for valid DNS
+hostnames; if two entries' hostnames still encode to the same name (only
+possible with a label that starts or ends in `-`), `sync-proxy` fails
+naming both rather than letting one overwrite the other.
 
 ## Catching a rejected configuration
 
@@ -221,13 +258,18 @@ bellhop set-config proxyCertResolver cloudflare --apply   # only if your resolve
   stays `"status":"enabled"` in the API with no error — Traefik only logs
   it (`Router uses a nonexistent certificate resolver`). Check Traefik's
   own log after changing `proxyCertResolver` or your resolver definitions.
-- **30-second load timeout.** With `proxyApiUrl` set, an apply that
-  Traefik doesn't load within 30 seconds of the write is treated as
+- **A fixed load timeout.** With `proxyApiUrl` set, an apply that
+  Traefik hasn't loaded after 30 checks one second apart is treated as
   failed and rolled back — comfortably above Traefik's default 2-second
-  file-provider throttle, but still a hard ceiling.
+  file-provider throttle, but still a hard ceiling. Each check waits up to
+  5 seconds for an answer, so against a slow or unreachable API the whole
+  wait runs longer than 30 seconds.
 - **The check needs `curl` on the proxy host**, and an API address
   reachable from it — Bellhop itself never contacts Traefik's API
-  directly, since it's usually bound to loopback on the proxy host.
+  directly, since it's usually bound to loopback on the proxy host. With
+  no `curl` there, the apply fails at once (`curl is not installed on the
+  proxy host ...`) and restores the previous file; install curl, or unset
+  `proxyApiUrl`.
 - **No status page.** Traefik serves no static files of its own.
   `render-status-page` fails, saying to clear `statusPagePath` or choose
   another driver, and the web UI's push-live step logs a warning when
@@ -249,8 +291,8 @@ not something every Traefik install shares:
 - the entry point Bellhop's routers use is always named `websecure`;
 - the certificate resolver defaults to `cloudflare` when `proxyCertResolver`
   is unset;
-- the API check's load timeout is fixed at 30 seconds, with no per-call
-  override.
+- the API check's load timeout is fixed at 30 checks one second apart,
+  with no per-call override.
 
 Change the first two by naming your entry point `websecure` (no setting
 overrides this) or setting `proxyCertResolver` to match your resolver's

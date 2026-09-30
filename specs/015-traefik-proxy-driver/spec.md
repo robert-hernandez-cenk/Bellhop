@@ -154,7 +154,7 @@ status in each case.
    Bellhop router healthy, **When** the operator applies, **Then** the
    apply succeeds and the new file stays in place.
 3. **Given** `proxyApiUrl` is set and Traefik does not load the new file
-   within 30 seconds, **When** the operator applies, **Then** the previous
+   within 30 checks one second apart, **When** the operator applies, **Then** the previous
    file is restored (or the new file removed, if there was none) and the
    apply fails, naming the timeout.
 4. **Given** `proxyApiUrl` is set and Traefik loads the file but a Bellhop
@@ -201,7 +201,14 @@ assert which fields appear.
   rendered; they stay in the operator's own dynamic files.
 - Two routers for different entries never collide: router, service and
   middleware names are derived from each entry's canonical hostname, which
-  the inventory already keeps unique.
+  the inventory already keeps unique. The name encoding is only injective
+  for valid DNS hostnames, so two canonical hostnames that still encode to
+  the same name (`a-.b` and `a.-b`, say) make the render fail, naming
+  both, rather than one overwriting the other.
+- A `proxyConfigPath` ending in `/` (a directory), or not ending in
+  `.yml`/`.yaml`, would be written somewhere Traefik's file provider never
+  loads; the render (dry run and apply alike) fails naming the path and the
+  `set-config` fix instead.
 - A reapply that produces an identical file succeeds even though Traefik
   sees no change to reload.
 - The driver serves no status page: `render-status-page` fails with the
@@ -248,18 +255,20 @@ assert which fields appear.
   higher priority than its other routers.
 - **FR-009**: A forward-gated route's exempt paths MUST be served by a
   higher-priority router without the forward-auth check (exact path for an
-  exact pattern, prefix for a `/*` pattern); a bare `/*` MUST instead drop
-  the check from the main router; patterns inside the outpost namespace
-  MUST be skipped.
+  exact pattern, prefix for a `/*` pattern); a bare `/*` among the
+  patterns MUST instead drop the check from the main router and render no
+  exempt router at all; patterns inside the outpost namespace MUST be
+  skipped.
 - **FR-010**: The driver MUST declare support for the `forward` and `oidc`
   auth modes and for ACME DNS-01 via Cloudflare, and MUST declare no status
   page.
 - **FR-011**: An apply MUST replace the file atomically and MUST NOT run a
   reload command.
-- **FR-012**: When `proxyApiUrl` is set, an apply MUST wait up to 30
-  seconds for Traefik to load the new file, then fail if any Bellhop router
-  reports an error or warning; any such failure (including an unreachable
-  API) MUST restore the previous file and report what failed.
+- **FR-012**: When `proxyApiUrl` is set, an apply MUST wait for Traefik to
+  load the new file for up to 30 checks one second apart, then fail if any
+  Bellhop router reports an error or warning; any such failure (including
+  an unreachable API, or no `curl` on the proxy host) MUST restore the
+  previous file and report what failed.
 - **FR-013**: When `proxyApiUrl` is unset, an apply MUST NOT contact
   Traefik's API.
 - **FR-014**: `proxyCertResolver` and `proxyApiUrl` MUST be settable and
@@ -275,6 +284,12 @@ assert which fields appear.
   owns (file provider directory with watching, `websecure` entry point,
   certificate resolver, optional API), the two settings, and the
   hot-reload limitation.
+- **FR-018**: Every Bellhop router MUST remove client-supplied
+  `X-authentik-*` identity headers (the five the forward-auth passes on)
+  before any backend or forward-auth check sees the request, so a client
+  can never pose as an Authentik-verified user to a backend that trusts
+  those headers (added by the final code review, matching the HAProxy
+  driver's own header strip).
 
 ### Key Entities
 
@@ -296,8 +311,8 @@ assert which fields appear.
 - **SC-002**: Every forward-gated entry is unreachable without an Authentik
   login except on its exempt paths, as under the Caddy driver.
 - **SC-003**: With `proxyApiUrl` set, 100% of applies that Traefik rejects
-  end with the previous file restored and a failure reported, within 30
-  seconds of the write.
+  end with the previous file restored and a failure reported, after at
+  most 30 checks one second apart.
 - **SC-004**: Switching an existing deployment's driver among Caddy, nginx
   and Traefik changes nothing in the other two drivers' output.
 

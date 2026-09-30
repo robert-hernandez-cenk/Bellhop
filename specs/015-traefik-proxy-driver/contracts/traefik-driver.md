@@ -45,6 +45,7 @@ http:
         - websecure
       service: bellhop-route-wiki-example-com
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
       tls:
         certResolver: cloudflare
@@ -54,6 +55,7 @@ http:
         - websecure
       service: bellhop-route-media-example-com
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
         - bellhop-authentik
       tls:
@@ -64,6 +66,7 @@ http:
         - websecure
       service: bellhop-authentik-outpost
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
       tls:
         certResolver: cloudflare
@@ -73,6 +76,7 @@ http:
         - websecure
       service: bellhop-route-media-example-com
       middlewares:
+        - bellhop-strip-authentik-headers
         - bellhop-forwarded-port
       tls:
         certResolver: cloudflare
@@ -91,6 +95,14 @@ http:
         servers:
           - url: http://192.0.2.5:9000
   middlewares:
+    bellhop-strip-authentik-headers:
+      headers:
+        customRequestHeaders:
+          X-authentik-username: ""
+          X-authentik-groups: ""
+          X-authentik-email: ""
+          X-authentik-name: ""
+          X-authentik-uid: ""
     bellhop-forwarded-port:
       headers:
         customRequestHeaders:
@@ -116,9 +128,20 @@ http:
 
 Rules:
 
-- A route whose only exempt pattern is `/*` (or whose patterns include
-  `/*`) has no `bellhop-authentik` on its main router and no exempt router,
-  but keeps its outpost router.
+- Every router lists `bellhop-strip-authentik-headers` first. Traefik
+  removes a request header whose configured value is the empty string, so
+  a client-sent `X-authentik-*` identity header never reaches a backend;
+  on a forward-gated main router `bellhop-authentik` runs after the strip
+  and sets the real values from Authentik's answer. The empty values are
+  always the quoted string `""`, never a YAML null.
+- `http.middlewares` key order is `bellhop-strip-authentik-headers`,
+  `bellhop-forwarded-port`, `bellhop-authentik` (when present), then the
+  generation marker.
+- The file is written with the `yaml` package's line folding turned off
+  (`lineWidth: 0`), so a rule with many hostnames stays on one line.
+- A route whose exempt patterns include `/*` (alone or alongside others)
+  has no `bellhop-authentik` on its main router and no exempt router, but
+  keeps its outpost router.
 - A pattern equal to `/outpost.goauthentik.io` or under
   `/outpost.goauthentik.io/` is skipped. If nothing is left, no exempt
   router is rendered.
@@ -126,13 +149,23 @@ Rules:
 - A value containing a backtick is rendered as a JSON-style double-quoted
   string instead of a backtick one.
 - With zero routes the file is the header plus `http.middlewares` holding
-  `bellhop-forwarded-port` and the marker.
+  `bellhop-strip-authentik-headers`, `bellhop-forwarded-port` and the
+  marker.
+- `render()` throws, for a dry run and an apply alike, when
+  `proxyConfigPath` ends in `/` or does not end in `.yml`/`.yaml` (Traefik's
+  file provider would never load it), naming the path and the
+  `bellhop set-config proxyConfigPath /etc/traefik/dynamic/bellhop.yml
+  --apply` fix; and when two routes' canonical hostnames encode to the same
+  object name (the encoding is injective only for valid DNS hostnames),
+  naming both hostnames.
 
 ## Apply script (atomic owned file)
 
 For an `atomic` owned file, `buildFileDriverScript`:
 
-- does the header check, backup and trap exactly as today;
+- does the header check and trap exactly as today, but takes the backup
+  with `cp -p` (so a restore brings back the original mode and owner, not
+  `mktemp`'s 0600) and sets `TMP_i=""` before the trap is armed;
 - **writes** with:
 
   ```sh
@@ -145,8 +178,13 @@ For an `atomic` owned file, `buildFileDriverScript`:
   ```
 
 - **restores** in the trap handler the same way (a temp copy of the backup,
-  then `mv -f`). A file that didn't exist before is still removed with
-  `rm -f`.
+  then `mv -f`), after first removing a write-phase temp file left behind
+  by a failure between `mktemp` and `mv -f`
+  (`if [ -n "$TMP_i" ]; then rm -f "$TMP_i"; fi`). A file that didn't exist
+  before is still removed with `rm -f`.
+
+Non-atomic files (Caddy, nginx, HAProxy) get exactly the script they got
+before (FR-016).
 
 ## Validate step (proxyApiUrl set)
 
@@ -157,6 +195,10 @@ order.
 
 ```sh
 (
+  if ! command -v curl >/dev/null 2>&1; then
+    printf '%s\n' 'curl is not installed on the proxy host; the Traefik API check (proxyApiUrl) needs it -- install curl there, or unset proxyApiUrl' >&2
+    exit 1
+  fi
   bellhop_api='<API>'
   bellhop_tries=0
   while :; do
@@ -165,7 +207,7 @@ order.
     bellhop_tries=$((bellhop_tries + 1))
     if [ "$bellhop_tries" -ge 30 ]; then
       # 000 -> "unreachable", else "HTTP <code>"
-      printf 'Traefik did not load %s within 30 seconds (%s at %s)\n' '<path>' "<last result>" "$bellhop_api" >&2
+      printf 'Traefik did not load %s after 30 checks one second apart (%s at %s)\n' '<path>' "<last result>" "$bellhop_api" >&2
       exit 1
     fi
     sleep 1

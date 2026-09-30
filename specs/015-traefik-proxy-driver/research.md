@@ -115,6 +115,15 @@ It was rejected because `search` matched a router by its *rule* text
 that string), so it could sweep in the operator's own routers. Fetching by
 exact name avoids that.
 
+**Wording (final code review)**: the timeout message says "after 30 checks
+one second apart", not "within 30 seconds". Each check can itself take up
+to `--max-time 5`, so against a slow or unreachable API the real wait is
+well over 30 seconds, and the old wording promised a bound the loop
+doesn't keep. The subshell also checks `command -v curl` first: without
+curl every poll would fail with "command not found" and end in the same
+misleading timeout, so it fails straight away naming the fix (install
+curl on the proxy host, or unset `proxyApiUrl`).
+
 ## R5. Atomic replacement, and which temp names Traefik ignores
 
 **Decision**: An owned file flagged `atomic: true` is written to a temp
@@ -204,6 +213,17 @@ drops `bellhop-authentik` from its main router and gets no exempt router,
 but keeps its outpost router, as the nginx driver does. Every router,
 including the outpost and exempt ones, carries `bellhop-forwarded-port`.
 Live-checked: the configuration loads with every router `enabled`.
+
+**Header strip (final code review)**: every router also lists a shared
+`bellhop-strip-authentik-headers` `headers` middleware first, whose
+`customRequestHeaders` sets each of the five identity headers to `""`;
+Traefik removes a request header whose configured value is the empty
+string. Without it, a router with no forward-auth in front (an exempt path
+on a gated app, an ungated or OIDC app, Bellhop's own web UI) would pass a
+client-sent `X-authentik-username` straight to a backend that trusts it.
+This is parity with the HAProxy driver's `del-header x-authentik- -m beg`.
+On a forward-gated main router the strip runs before `bellhop-authentik`,
+whose `authResponseHeaders` then set the real values.
 
 ## R10. Certificates and settings
 

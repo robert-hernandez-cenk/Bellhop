@@ -3,11 +3,12 @@ import { parse, stringify, Scalar } from 'yaml';
 import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
+import { settingFix } from '../../settings-hint.ts';
 // Shared with the nginx driver (issue #31/#35): the same root-prefix/dedupe/
 // outpost-namespace rules a forward-gated route's exempt patterns must obey
 // no matter which driver renders them -- see nginx-locations.ts's own
 // comments on each for the reasoning; reused here rather than duplicated.
-import { dedupeExemptPatterns, isOutpostPrefixed, isRootPrefix } from '../nginx-locations.ts';
+import { candidateExemptPatterns, isRootPrefix } from '../nginx-locations.ts';
 
 // The whole file is generated and replaced wholesale on every apply ('owned'
 // mode), the same convention as the nginx/HAProxy drivers -- Traefik's file
@@ -28,12 +29,14 @@ const ATOMIC = true;
 
 // research.md R7: every object name is prefixed `bellhop-`, and a route's
 // own objects are derived from its canonical hostname (hostnames[0]) by this
-// injective encoding -- lowercase, then every `-` doubled, then every `.`
-// turned into a single `-`. Doubling `-` first is what keeps the encoding
-// injective: a hostname's own hyphens are distinguishable from the hyphens
-// this encoding introduces for `.`, so two different hostnames can never
-// collide on the same encoded name (e.g. 'a.b-c.example.com' and
-// 'a-b.c.example.com' encode differently -- see the test for this).
+// encoding -- lowercase, then every `-` doubled, then every `.` turned into
+// a single `-`. Doubling `-` first keeps a hostname's own hyphens
+// distinguishable from the ones this encoding introduces for `.` (e.g.
+// 'a.b-c.example.com' and 'a-b.c.example.com' encode differently -- see the
+// test for this). It is injective for valid DNS hostnames, whose labels
+// never start or end with '-'; a subdomain is a plain string in the schema,
+// though, so 'a-.b' and 'a.-b' can still collide -- render() rejects a
+// collision rather than letting one route's objects overwrite another's.
 export function encodeHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/-/g, '--').replace(/\./g, '-');
 }
@@ -76,6 +79,39 @@ export function ruleValue(value: string): string {
 function forwardedPortMiddleware(ctx: ProxyContext): unknown {
   return { headers: { customRequestHeaders: { 'X-Forwarded-Port': String(ctx.externalPort) } } };
 }
+
+// The five identity headers Authentik's forward-auth hands a backend -- the
+// same five (no entitlements) every other driver forwards.
+const AUTHENTIK_IDENTITY_HEADERS = [
+  'X-authentik-username',
+  'X-authentik-groups',
+  'X-authentik-email',
+  'X-authentik-name',
+  'X-authentik-uid',
+];
+
+// The shared header-strip middleware every router lists first (research.md
+// R9): Traefik removes a request header whose customRequestHeaders value is
+// the empty string, so a client-sent X-authentik-* header never reaches a
+// backend that trusts it -- the HAProxy driver's `del-header x-authentik-`
+// for the same reason. Without it, any router with no forward-auth in front
+// (an exempt path on a gated app, an ungated or OIDC app, Bellhop's own web
+// UI) would pass a spoofed identity straight through. On a forward-gated
+// router it runs before bellhop-authentik, whose authResponseHeaders then
+// set the real values from Authentik's answer. Each value is an explicit
+// double-quoted Scalar so it can never render as a YAML null.
+function stripAuthentikHeadersMiddleware(): unknown {
+  const headers: Record<string, Scalar> = {};
+  for (const name of AUTHENTIK_IDENTITY_HEADERS) {
+    const empty = new Scalar('');
+    empty.type = 'QUOTE_DOUBLE';
+    headers[name] = empty;
+  }
+  return { headers: { customRequestHeaders: headers } };
+}
+
+// Every Bellhop router's middleware list starts with these two, in this order.
+const BASE_MIDDLEWARES = ['bellhop-strip-authentik-headers', 'bellhop-forwarded-port'];
 
 // The generation-marker middleware (research.md R3): an unused `headers`
 // middleware whose sole purpose is to prove, via a 200 from Traefik's own
@@ -125,19 +161,18 @@ function patternRule(pattern: PathPattern): string {
 
 const OUTPOST_PATH_PREFIX = '/outpost.goauthentik.io/';
 
-// The route's own forward-auth-only object names (research.md R7): the
-// canonical (deduped, outpost-namespace-dropped, research.md R6) exempt
-// pattern list, whether a bare '/*' is among them (which drops
-// bellhop-authentik from the main router and suppresses the exempt router
-// entirely, research.md R9), and the exempt-router-worthy subset (the same
-// list minus that root pattern, since a root exemption isn't itself
-// rendered as a Path()/PathPrefix() term -- there being nothing left to gate
-// on for a route with only a root exemption).
+// The route's own forward-auth-only object names (research.md R7), from the
+// same deduped, outpost-namespace-dropped exempt pattern list the nginx
+// driver uses (candidateExemptPatterns, research.md R6): whether a bare '/*'
+// is among them, and the patterns the exempt router matches. A '/*' drops
+// bellhop-authentik from the main router, leaving it unauthenticated for
+// every path -- so the exempt router is then suppressed entirely, whatever
+// other patterns sit alongside it (research.md R9); there is nothing left
+// for it to exempt.
 function exemptPlan(route: ProxyRoute): { rootExempted: boolean; exemptTerms: PathPattern[] } {
-  if (route.auth.mode !== 'forward') return { rootExempted: false, exemptTerms: [] };
-  const patterns = dedupeExemptPatterns(route.auth.exemptPaths).filter((pattern) => !isOutpostPrefixed(pattern));
+  const patterns = candidateExemptPatterns(route);
   const rootExempted = patterns.some(isRootPrefix);
-  return { rootExempted, exemptTerms: patterns.filter((pattern) => !isRootPrefix(pattern)) };
+  return { rootExempted, exemptTerms: rootExempted ? [] : patterns };
 }
 
 // One route's own objects: the main router + service (contract "Rendered
@@ -159,7 +194,7 @@ function renderRouteObjects(
   const hosts = hostsRule(route);
   const { rootExempted, exemptTerms } = exemptPlan(route);
 
-  const middlewares = ['bellhop-forwarded-port'];
+  const middlewares = [...BASE_MIDDLEWARES];
   if (route.auth.mode === 'forward' && !rootExempted) {
     middlewares.push('bellhop-authentik');
   }
@@ -187,7 +222,7 @@ function renderRouteObjects(
       rule: `(${hosts}) && PathPrefix(${ruleValue(OUTPOST_PATH_PREFIX)})`,
       entryPoints: ['websecure'],
       service: 'bellhop-authentik-outpost',
-      middlewares: ['bellhop-forwarded-port'],
+      middlewares: [...BASE_MIDDLEWARES],
       tls: { certResolver: ctx.certResolver },
     };
 
@@ -196,7 +231,7 @@ function renderRouteObjects(
         rule: `(${hosts}) && (${exemptTerms.map(patternRule).join(' || ')})`,
         entryPoints: ['websecure'],
         service: name,
-        middlewares: ['bellhop-forwarded-port'],
+        middlewares: [...BASE_MIDDLEWARES],
         tls: { certResolver: ctx.certResolver },
       };
     }
@@ -217,7 +252,7 @@ function authentikMiddleware(ctx: ProxyContext): unknown {
     forwardAuth: {
       address: `http://${outpostAddr}${OUTPOST_PATH_PREFIX}auth/traefik`,
       trustForwardHeader: true,
-      authResponseHeaders: ['X-authentik-username', 'X-authentik-groups', 'X-authentik-email', 'X-authentik-name', 'X-authentik-uid'],
+      authResponseHeaders: [...AUTHENTIK_IDENTITY_HEADERS],
     },
   };
 }
@@ -226,26 +261,84 @@ function authentikOutpostService(ctx: ProxyContext): unknown {
   return { loadBalancer: { servers: [{ url: `http://${ctx.outpost!.ip}:${ctx.outpost!.port}` }] } };
 }
 
+// `lineWidth: 0` turns off the yaml package's default folding of long plain
+// scalars at 80 columns: a folded rule parses the same, but a many-hostname
+// rule split across lines reads badly in a dry-run preview and on the
+// status page. Shared by both of render()'s stringify passes, so the hash
+// input and the real output are always formatted alike.
+const STRINGIFY_OPTIONS = { lineWidth: 0 };
+
+const CONFIG_PATH_FIX = settingFix('proxyConfigPath', '/etc/traefik/dynamic/bellhop.yml');
+
+// Traefik's file provider only loads files ending .yml/.yaml (or .toml, but
+// Bellhop writes YAML), and a path ending in '/' names a directory -- either
+// way Bellhop would write a file Traefik never reads, and nothing at Traefik's
+// end reports it. SettingsSchema only requires an absolute path, so both are
+// reachable through set-config; refused here with the same wording style as
+// the HAProxy driver's own trailing-slash guard. Thrown from render(), so a
+// dry run fails the same way an apply would.
+function checkConfigPath(configPath: string): void {
+  if (configPath.endsWith('/')) {
+    throw new Error(
+      `proxyConfigPath '${configPath}' ends in '/', but the Traefik driver needs a file path for its dynamic ` +
+        `configuration file -- ${CONFIG_PATH_FIX}`
+    );
+  }
+  if (!configPath.endsWith('.yml') && !configPath.endsWith('.yaml')) {
+    throw new Error(
+      `proxyConfigPath '${configPath}' does not end in .yml or .yaml, so Traefik's file provider would not load it ` +
+        `(the Traefik driver writes YAML) -- ${CONFIG_PATH_FIX}`
+    );
+  }
+}
+
+// encodeHostname is injective only for valid DNS hostnames, and a subdomain
+// is a plain string in the schema, so two routes can still encode to the
+// same object names -- the second would silently overwrite the first's
+// router and service. Refused instead, naming both hostnames.
+function checkRouteNamesUnique(routes: ProxyRoute[]): void {
+  const seen = new Map<string, string>();
+  for (const route of routes) {
+    const canonical = route.hostnames[0];
+    const name = routeName(canonical);
+    const previous = seen.get(name);
+    if (previous !== undefined) {
+      throw new Error(
+        `The Traefik driver cannot render both '${previous}' and '${canonical}': their canonical hostnames ` +
+          `encode to the same object name '${name}' -- rename one of the two subdomains`
+      );
+    }
+    seen.set(name, canonical);
+  }
+}
+
 // Renders every route into the one file this driver owns whole (contract
 // "Rendered file: example"): the header comment, then a `http:` document
 // built from the proxy-neutral ProxyRoute[]/ProxyContext buildRoutes/
 // buildProxyContext have already derived, the same convention every other
 // driver follows. `routers`/`services` are omitted entirely when empty
-// (data-model.md), but `middlewares` always exists -- bellhop-forwarded-port
-// plus the generation marker, so the file is never actually empty even with
-// zero routes (research.md R7, live-checked: a file with only middlewares
-// loads fine).
+// (data-model.md), but `middlewares` always exists -- the header strip,
+// bellhop-forwarded-port, and the generation marker, so the file is never
+// actually empty even with zero routes (research.md R7, live-checked: a file
+// with only middlewares loads fine).
 //
 // The marker's hash is the SHA-256 of the file rendered *without* the
 // marker (research.md R3), so it is computed in two passes: build and
 // stringify the document with every other object in place first, hash that
 // text, then add the marker middleware (named after the hash) and stringify
 // again for the real output. This is what makes the hash change whenever
-// anything else about the file changes, and stay stable otherwise.
+// anything else about the file changes, and stay stable otherwise. Both
+// passes use STRINGIFY_OPTIONS, so a long rule is never folded across lines.
 export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[] {
+  checkConfigPath(configPath);
+  checkRouteNamesUnique(routes);
+
   const routers: Record<string, unknown> = {};
   const services: Record<string, unknown> = {};
-  const middlewares: Record<string, unknown> = { 'bellhop-forwarded-port': forwardedPortMiddleware(ctx) };
+  const middlewares: Record<string, unknown> = {
+    'bellhop-strip-authentik-headers': stripAuthentikHeadersMiddleware(),
+    'bellhop-forwarded-port': forwardedPortMiddleware(ctx),
+  };
   let anyInsecureTls = false;
 
   for (const route of routes) {
@@ -277,10 +370,10 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
     return http;
   }
 
-  const contentWithoutMarker = `${HEADER}\n${stringify({ http: buildHttp(null) })}`;
+  const contentWithoutMarker = `${HEADER}\n${stringify({ http: buildHttp(null) }, STRINGIFY_OPTIONS)}`;
   const hash = createHash('sha256').update(contentWithoutMarker).digest('hex').slice(0, 12);
   const markerName = `bellhop-generation-${hash}`;
-  const content = `${HEADER}\n${stringify({ http: buildHttp({ [markerName]: generationMarkerMiddleware(hash) }) })}`;
+  const content = `${HEADER}\n${stringify({ http: buildHttp({ [markerName]: generationMarkerMiddleware(hash) }) }, STRINGIFY_OPTIONS)}`;
 
   return [{ path: configPath, content, mode: 'owned', ownedHeader: HEADER, atomic: ATOMIC }];
 }
@@ -343,6 +436,9 @@ export function routerNames(content: string): string[] {
 // skipped straight past the retry loop with no diagnostic; it didn't).
 // Verified by the executed tests below with a stub curl that mirrors real
 // curl's own non-zero exit on the unreachable/router-fetch-failure paths.
+const CURL_MISSING_MESSAGE =
+  'curl is not installed on the proxy host; the Traefik API check (proxyApiUrl) needs it -- install curl there, or unset proxyApiUrl';
+
 export function buildApiCheck(apiUrl: string, configPath: string, content: string): string {
   const api = apiUrl.replace(/\/+$/, '');
   const marker = generationMarkerName(content);
@@ -350,6 +446,12 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
 
   const lines: string[] = [
     '(',
+    // Checked first: without curl every poll below would fail with "command
+    // not found" and the check would end in a misleading load timeout.
+    '  if ! command -v curl >/dev/null 2>&1; then',
+    `    printf '%s\\n' ${singleQuote(CURL_MISSING_MESSAGE)} >&2`,
+    '    exit 1',
+    '  fi',
     `  bellhop_api=${singleQuote(api)}`,
     '  bellhop_tries=0',
     '  while :; do',
@@ -362,7 +464,10 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
     '      else',
     '        bellhop_result="HTTP $bellhop_code"',
     '      fi',
-    `      printf 'Traefik did not load %s within 30 seconds (%s at %s)\\n' ${singleQuote(configPath)} "$bellhop_result" "$bellhop_api" >&2`,
+    // "30 checks one second apart", not "30 seconds": each check can itself
+    // take up to --max-time 5, so the wall-clock wait is longer than 30s
+    // whenever the API is slow to answer (research.md R4).
+    `      printf 'Traefik did not load %s after 30 checks one second apart (%s at %s)\\n' ${singleQuote(configPath)} "$bellhop_result" "$bellhop_api" >&2`,
     '      exit 1',
     '    fi',
     '    sleep 1',

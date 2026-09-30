@@ -156,8 +156,9 @@ export function isOutpostPrefixed(pattern: PathPattern): boolean {
 // silently dropped (see isOutpostPrefixed) -- computed once by
 // renderServerBody and threaded through to both the `location /`
 // root-exemption check and exemptLocations below, rather than each
-// recomputing it from the route's raw exemptPaths.
-function candidateExemptPatterns(route: ProxyRoute): PathPattern[] {
+// recomputing it from the route's raw exemptPaths. Exported for the Traefik
+// driver (issue #35), whose exempt router needs exactly this list.
+export function candidateExemptPatterns(route: ProxyRoute): PathPattern[] {
   if (route.auth.mode !== 'forward') return [];
   return dedupeExemptPatterns(route.auth.exemptPaths).filter((pattern) => !isOutpostPrefixed(pattern));
 }
