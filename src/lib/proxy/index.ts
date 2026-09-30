@@ -6,6 +6,8 @@ import { caddyDriver } from './drivers/caddy.ts';
 import { caddyApiDriver } from './drivers/caddy-api.ts';
 import { nginxDriver } from './drivers/nginx.ts';
 import { nginxProxyManagerDriver } from './drivers/nginx-proxy-manager.ts';
+import { haproxyDriver } from './drivers/haproxy.ts';
+import { traefikDriver } from './drivers/traefik.ts';
 import { noneDriver } from './drivers/none.ts';
 import { PROXY_DRIVER_IDS, type ProxyDriverId } from './ids.ts';
 
@@ -24,13 +26,16 @@ export const DEFAULT_PROXY_DRIVER_ID: ProxyDriverId = 'caddy';
 // itself only ever looks up ids that either come from PROXY_DRIVER_IDS-typed
 // inventory data or were added through that same test-only hook. Order
 // matters: this is registration order, and listDrivers() below returns it
-// verbatim (Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, then None)
+// verbatim (Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, HAProxy,
+// Traefik, then None)
 // for the Settings dropdown.
 const DRIVERS = new Map<string, ReverseProxyDriver>([
   [caddyDriver.id, caddyDriver],
   [caddyApiDriver.id, caddyApiDriver],
   [nginxDriver.id, nginxDriver],
   [nginxProxyManagerDriver.id, nginxProxyManagerDriver],
+  [haproxyDriver.id, haproxyDriver],
+  [traefikDriver.id, traefikDriver],
   [noneDriver.id, noneDriver],
 ]);
 

@@ -6,6 +6,7 @@ import {
   buildRoutes,
   buildProxyContext,
   buildRouteForEntry,
+  DEFAULT_CERT_RESOLVER,
   type ProxyRoute,
 } from '../../../src/lib/proxy/routes.ts';
 
@@ -218,6 +219,22 @@ test('buildRoutes: throws the exact missing-authentik message for a forward-gate
     () => buildRoutes(inv),
     /^Error: Entry 'app-lxc' has an 'authGroup' set but no inventory entry has 'authentik: true' with an ip set$/
   );
+  // requireOutpost defaults to true: passing it explicitly changes nothing.
+  assert.throws(() => buildRoutes(inv, { requireOutpost: true }), /no inventory entry has 'authentik: true'/);
+});
+
+test('buildRoutes: requireOutpost: false derives the forward-gated route with no authentik ip instead of throwing', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [
+      { name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-users' },
+    ],
+  };
+  const routes = buildRoutes(inv, { requireOutpost: false });
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].owner.name, 'app-lxc');
+  assert.equal(routes[0].auth.mode, 'forward');
 });
 
 test('buildRoutes: throws naming the entry and both accepted forms for an invalid unauthenticatedPaths pattern', () => {
@@ -264,7 +281,12 @@ const DEFAULT_TLS = {
 test('buildProxyContext: returns the outpost address and port when an authentik entry with an ip exists', () => {
   withPinnedOutpostPort(() => {
     const ctx = buildProxyContext(fixtureInventory());
-    assert.deepEqual(ctx, { outpost: { ip: '192.0.2.9', port: 9000 }, externalPort: 443, tls: DEFAULT_TLS });
+    assert.deepEqual(ctx, {
+      outpost: { ip: '192.0.2.9', port: 9000 },
+      externalPort: 443,
+      tls: DEFAULT_TLS,
+      certResolver: 'cloudflare',
+    });
   });
 });
 
@@ -275,7 +297,7 @@ test('buildProxyContext: omits outpost when no authentik entry has an ip', () =>
     guests: [],
   };
   const ctx = buildProxyContext(inv);
-  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS });
+  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS, certResolver: 'cloudflare' });
   assert.ok(!('outpost' in ctx));
 });
 
@@ -324,6 +346,30 @@ test('buildProxyContext: proxyTlsCertificate and proxyTlsKey default independent
     certificatePath: DEFAULT_TLS.certificatePath,
     keyPath: '/opt/certs/example.key',
   });
+});
+
+// issue #35: certResolver is the Traefik driver's own setting, inert for
+// every other driver -- same "always present, defaults independently"
+// precedent as tls above.
+
+test('buildProxyContext: certResolver defaults to DEFAULT_CERT_RESOLVER when proxyCertResolver is unset', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  assert.equal(buildProxyContext(inv).certResolver, DEFAULT_CERT_RESOLVER);
+  assert.equal(DEFAULT_CERT_RESOLVER, 'cloudflare');
+});
+
+test('buildProxyContext: certResolver uses the configured proxyCertResolver when set', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+    proxyCertResolver: 'my-resolver',
+  };
+  assert.equal(buildProxyContext(inv).certResolver, 'my-resolver');
 });
 
 // Sanity check that the exported ProxyRoute type shape lines up with what

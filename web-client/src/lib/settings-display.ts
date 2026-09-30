@@ -60,17 +60,31 @@ export interface ProxyFieldView {
   // whose metadata says it serves the shared certificate those settings
   // name (usesSharedCertificate) -- never an id comparison here.
   showTlsFields: boolean;
+  // Proxy cert resolver/API URL (issue #35): shown only for a managed
+  // driver whose metadata says it reads proxyCertResolver/proxyApiUrl
+  // (usesCertResolver/usesApiUrl) -- Traefik today, same "metadata, never
+  // an id comparison" rule as showTlsFields above.
+  showCertResolverField: boolean;
+  showApiUrlField: boolean;
 }
 
 export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): ProxyFieldView {
   const driver = drivers.find((d) => d.id === selectedId);
   if (!driver || !driver.managesProxy) {
-    return { showConfigPath: false, showStatusPagePath: false, showTlsFields: false };
+    return {
+      showConfigPath: false,
+      showStatusPagePath: false,
+      showTlsFields: false,
+      showCertResolverField: false,
+      showApiUrlField: false,
+    };
   }
   const shared = {
     showStatusPagePath: driver.suggestedStatusPagePath !== null,
     statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
     showTlsFields: driver.usesSharedCertificate,
+    showCertResolverField: driver.usesCertResolver,
+    showApiUrlField: driver.usesApiUrl,
   };
   // A managed driver with no config file at all (defaultConfigPath: null --
   // issue #31, e.g. a REST-managed driver like Nginx Proxy Manager) hides

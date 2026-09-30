@@ -327,6 +327,40 @@ export const SettingsSchema = z.object({
   // the Caddy driver, which never reads ProxyContext.tls.
   proxyTlsCertificate: z.string().regex(/^\//, 'must be an absolute path').optional(),
   proxyTlsKey: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // The Traefik driver's own two settings (issue #35), both inert for every
+  // other driver. proxyCertResolver names the ACME certificate resolver
+  // every Bellhop-rendered router's tls.certResolver is set to -- unset
+  // means 'cloudflare' (buildProxyContext, src/lib/proxy/routes.ts), a safe
+  // default since research.md's live Traefik instance was configured with a
+  // resolver of that name. The character class matches Traefik's own
+  // resolver-name rules and can never break the rendered YAML or a route's
+  // rule string, so there's nothing further to validate.
+  proxyCertResolver: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]+$/, 'must contain only letters, digits, - and _')
+    .optional(),
+  // proxyApiUrl points at Traefik's own read-only API (e.g.
+  // http://127.0.0.1:8080) -- when set, the driver's validate step polls it
+  // after writing the dynamic-configuration file to confirm Traefik loaded
+  // the new version before declaring the apply a success (research.md
+  // R2-R4); unset means no check at all. Parsed with `new URL` rather than
+  // a regex so an operator typo (a stray space, no scheme) is caught the
+  // same way a malformed URL always would be; the no-single-quote rule is
+  // defensive only, since the value is embedded in a single-quoted shell
+  // string that already escapes one (singleQuote, src/lib/proxy/
+  // file-driver.ts).
+  proxyApiUrl: z
+    .string()
+    .refine((value) => {
+      if (value.includes("'")) return false;
+      try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    }, 'must be an http:// or https:// URL')
+    .optional(),
   // GitHub "owner/repo" -- letters/digits/hyphens for the owner (no
   // leading/trailing hyphen), letters/digits/dots/hyphens/underscores for
   // the repo name (research R7).

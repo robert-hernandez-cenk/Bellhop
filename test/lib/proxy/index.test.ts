@@ -10,6 +10,8 @@ import { caddyApiDriver } from '../../../src/lib/proxy/drivers/caddy-api.ts';
 import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { noneDriver } from '../../../src/lib/proxy/drivers/none.ts';
 import { nginxProxyManagerDriver } from '../../../src/lib/proxy/drivers/nginx-proxy-manager.ts';
+import { haproxyDriver } from '../../../src/lib/proxy/drivers/haproxy.ts';
+import { traefikDriver } from '../../../src/lib/proxy/drivers/traefik.ts';
 import { fileDriver } from '../../../src/lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext, type ProxyContext, type ProxyRoute } from '../../../src/lib/proxy/routes.ts';
 import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
@@ -84,16 +86,51 @@ test('getDriver returns noneDriver when proxyDriver is "none"', () => {
 
 // --- driver ids / registry metadata (issue #33) ----------------------------
 
-test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, none, caddy-api]', () => {
-  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'none', 'caddy-api']);
+test('PROXY_DRIVER_IDS equals [caddy, nginx, nginx-proxy-manager, haproxy, traefik, none, caddy-api]', () => {
+  assert.deepEqual(PROXY_DRIVER_IDS, ['caddy', 'nginx', 'nginx-proxy-manager', 'haproxy', 'traefik', 'none', 'caddy-api']);
 });
 
 test('DEFAULT_PROXY_DRIVER_ID is caddy', () => {
   assert.equal(DEFAULT_PROXY_DRIVER_ID, 'caddy');
 });
 
-test('listDrivers returns Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, then None, in registration order', () => {
-  assert.deepEqual(listDrivers(), [caddyDriver, caddyApiDriver, nginxDriver, nginxProxyManagerDriver, noneDriver]);
+test('listDrivers returns Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, HAProxy, Traefik, then None, in registration order', () => {
+  assert.deepEqual(listDrivers(), [caddyDriver, caddyApiDriver, nginxDriver, nginxProxyManagerDriver, haproxyDriver, traefikDriver, noneDriver]);
+});
+
+test('getDriver returns traefikDriver when proxyDriver is "traefik" (issue #35)', () => {
+  const inv = baseInventory({ proxyDriver: 'traefik' });
+  assert.equal(getDriver(inv), traefikDriver);
+  assert.equal(managesProxy(traefikDriver), true);
+});
+
+test('driverDeps resolves configPath to the Traefik driver default when proxyConfigPath is unset (issue #35)', () => {
+  const inv = baseInventory({ proxyDriver: 'traefik' });
+  const deps = driverDeps(inv, new FakeSSHClient(defaultResponder), traefikDriver);
+  assert.equal(deps.configPath, '/etc/traefik/dynamic/bellhop.yml');
+});
+
+test('Traefik driver metadata: label, capabilities, default config path, status page, and cert-resolver/api-url hints', () => {
+  assert.equal(traefikDriver.id, 'traefik');
+  assert.equal(traefikDriver.label, 'Traefik');
+  assert.deepEqual(traefikDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true });
+  assert.equal(traefikDriver.defaultConfigPath, '/etc/traefik/dynamic/bellhop.yml');
+  assert.equal(traefikDriver.statusPage, null);
+  assert.equal(traefikDriver.usesCertResolver, true);
+  assert.equal(traefikDriver.usesApiUrl, true);
+  assert.equal(traefikDriver.usesSharedCertificate, undefined);
+});
+
+test('getDriver returns haproxyDriver when proxyDriver is "haproxy" (issue #32)', () => {
+  const inv = baseInventory({ proxyDriver: 'haproxy' });
+  assert.equal(getDriver(inv), haproxyDriver);
+  assert.equal(managesProxy(haproxyDriver), true);
+});
+
+test('driverDeps resolves configPath to the HAProxy driver default when proxyConfigPath is unset (issue #32)', () => {
+  const inv = baseInventory({ proxyDriver: 'haproxy' });
+  const deps = driverDeps(inv, new FakeSSHClient(defaultResponder), haproxyDriver);
+  assert.equal(deps.configPath, '/etc/haproxy/bellhop.cfg');
 });
 
 test('getDriver returns nginxProxyManagerDriver when proxyDriver is "nginx-proxy-manager" (issue #31)', () => {
@@ -146,7 +183,15 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
 test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = { ssh, inventory: baseInventory(), proxyHost: 'pve1', configPath: '/etc/caddy/Caddyfile' };
-  const plan = await noneDriver.plan([], { externalPort: 443, tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' } }, deps);
+  const plan = await noneDriver.plan(
+    [],
+    {
+      externalPort: 443,
+      tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' },
+      certResolver: 'cloudflare',
+    },
+    deps
+  );
   assert.equal(plan.preview, NO_PROXY_SYNC_MESSAGE);
 
   await noneDriver.apply(plan, deps);

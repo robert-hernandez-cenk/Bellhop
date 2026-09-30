@@ -274,6 +274,9 @@ export interface SettingsValues {
   proxyConfigPath?: string;
   proxyTlsCertificate?: string;
   proxyTlsKey?: string;
+  // Traefik's own two settings (issue #35) -- inert for every other driver.
+  proxyCertResolver?: string;
+  proxyApiUrl?: string;
 }
 
 // One entry per registered reverse-proxy driver (src/lib/proxy/index.ts's
@@ -292,6 +295,11 @@ export interface ProxyDriverInfo {
   // certificate the proxyTlsCertificate/proxyTlsKey settings name (nginx
   // today, issue #30) -- the page shows those two fields only then.
   usesSharedCertificate: boolean;
+  // true only for a driver that reads the proxyCertResolver/proxyApiUrl
+  // settings (Traefik today, issue #35) -- the page shows the matching
+  // field only then.
+  usesCertResolver: boolean;
+  usesApiUrl: boolean;
   // Driver-supplied sentence appended to the Proxy config path help, e.g.
   // nginx's "replaces this whole file" warning. null = none.
   configPathNote: string | null;

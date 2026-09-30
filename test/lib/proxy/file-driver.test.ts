@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -201,7 +201,7 @@ test('fileDriver.plan: an empty managed-section body is just the two markers', a
   assert.equal(plan.preview, '# BEGIN bellhop-managed\n# END bellhop-managed');
 });
 
-test('fileDriver.plan: several files join their content with a newline', async () => {
+test('fileDriver.plan: several files are each labelled ==> <path> <==, separated by a blank line (the payload stays unlabelled)', async () => {
   const files = [ownedFile('/etc/nginx/conf.d/bellhop-a.conf', 'server { listen 80; }'), ownedFile('/etc/nginx/conf.d/bellhop-b.conf', 'server { listen 81; }')];
   const driver = fileDriver({
     id: 'caddy',
@@ -220,7 +220,10 @@ test('fileDriver.plan: several files join their content with a newline', async (
     configPath: '/etc/nginx/nginx.conf',
   };
   const plan = await driver.plan([] as ProxyRoute[], { externalPort: 443 } as ProxyContext, deps);
-  assert.equal(plan.preview, `${files[0].content}\n${files[1].content}`);
+  assert.equal(
+    plan.preview,
+    '==> /etc/nginx/conf.d/bellhop-a.conf <==\nserver { listen 80; }\n\n==> /etc/nginx/conf.d/bellhop-b.conf <==\nserver { listen 81; }'
+  );
   assert.deepEqual(plan.payload, files);
 });
 
@@ -260,6 +263,42 @@ test('fileDriver.plan/apply/snapshot throw a named programming-error message whe
   await assert.rejects(() => driver.snapshot(deps), /^Error: nginx driver requires a config path$/);
 });
 
+// issue #35 (T006): usesCertResolver/usesApiUrl pass through fileDriver's
+// returned driver the same conditional-spread way usesSharedCertificate
+// already does -- present only when the driver definition sets them.
+
+test('fileDriver: usesCertResolver/usesApiUrl are absent when the driver definition does not set them', () => {
+  const driver = fileDriver({
+    id: 'caddy',
+    label: 'Test driver',
+    statusPage: null,
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/caddy/Caddyfile',
+    render: () => [],
+    validateCommand: () => 'caddy validate',
+    reloadCommand: RELOAD_COMMAND,
+  });
+  assert.ok(!('usesCertResolver' in driver));
+  assert.ok(!('usesApiUrl' in driver));
+});
+
+test('fileDriver: usesCertResolver/usesApiUrl pass through when the driver definition sets them', () => {
+  const driver = fileDriver({
+    id: 'traefik',
+    label: 'Traefik',
+    statusPage: null,
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
+    usesCertResolver: true,
+    usesApiUrl: true,
+    render: () => [],
+    validateCommand: () => null,
+    reloadCommand: null,
+  });
+  assert.equal(driver.usesCertResolver, true);
+  assert.equal(driver.usesApiUrl, true);
+});
+
 // --- (c) fileDriver(...).apply() ------------------------------------------
 
 test('fileDriver.apply: sends exactly one runRemote call, whose command equals buildFileDriverScript(files, validateCommand(configPath), reloadCommand)', async () => {
@@ -288,6 +327,38 @@ test('fileDriver.apply: sends exactly one runRemote call, whose command equals b
   assert.equal(ssh.history[0].sshTarget, '192.0.2.1');
   const expectedScript = buildFileDriverScript(files, validateCommand(deps.configPath), RELOAD_COMMAND);
   assert.equal(ssh.history[0].command, expectedScript);
+});
+
+// issue #35 (T004): validateCommand receives the plan's own files and the
+// inventory alongside configPath -- a validate step can need more than the
+// path alone (Traefik's API check needs every rendered router's name from
+// the files, and the configured proxyApiUrl from the inventory).
+test('fileDriver.apply: validateCommand is called with the plan\'s files and deps.inventory alongside configPath', async () => {
+  const files = [ownedFile('/etc/traefik/dynamic/bellhop.yml', 'http: {}')];
+  const seen: unknown[] = [];
+  const driver = fileDriver({
+    id: 'traefik',
+    label: 'Traefik',
+    statusPage: null,
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+    defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
+    render: () => files,
+    validateCommand: (configPath, ctx) => {
+      seen.push({ configPath, ctx });
+      return null;
+    },
+    reloadCommand: null,
+  });
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  const deps = { ssh, inventory, proxyHost: 'pve1', configPath: '/etc/traefik/dynamic/bellhop.yml' };
+  await driver.apply({ preview: files[0].content, payload: files }, deps);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], { configPath: '/etc/traefik/dynamic/bellhop.yml', ctx: { files, inventory } });
 });
 
 test('fileDriver.apply: throws with stderr on a non-zero exit', async () => {
@@ -639,3 +710,261 @@ test('buildFileDriverScript, executed: a write-phase failure (before validate ev
   assert.ok(!existsSync(systemctlLogPath), 'systemctl must not have been called -- validate was never reached');
 });
 
+// --- (f) null validateCommand/reloadCommand, and validateLabel (T002) -----
+// The Traefik driver has no validate command at all when proxyApiUrl is
+// unset (research.md R2), and never reloads (there's nothing to reload --
+// the file provider's own watcher picks up the change). Both become
+// string | null rather than always-required strings, and a validateLabel
+// lets a driver's failure message name something other than the literal
+// command text (Traefik's validate step is a multi-line subshell, not a
+// one-line command an operator would want echoed back at them).
+
+test('buildFileDriverScript: a null validateCommand emits no "if !" validate block at all', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, null, RELOAD_COMMAND);
+  assert.ok(!script.includes('if !'), `expected no validate block, got:\n${script}`);
+  assert.ok(script.includes(RELOAD_COMMAND), 'still reloads when a reload command is given');
+});
+
+test('buildFileDriverScript: a null reloadCommand ends the script at the last backup removal -- no reload line', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, VALIDATE_COMMAND, null);
+  const lines = script.split('\n');
+  assert.equal(lines[lines.length - 1], 'rm -f "$BAK_0"', 'the trap disarm and backup removal are the last lines');
+  assert.ok(!script.includes('systemctl'), 'no reload command anywhere in the script');
+});
+
+test('buildFileDriverScript: with both null, there is no validate block and no reload line', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, null, null);
+  assert.ok(!script.includes('if !'));
+  assert.ok(!script.includes('systemctl'));
+  const lines = script.split('\n');
+  assert.equal(lines[lines.length - 1], 'rm -f "$BAK_0"');
+});
+
+test('buildFileDriverScript: validateLabel replaces the command text in the failure message, but the real command still runs', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, VALIDATE_COMMAND, RELOAD_COMMAND, 'Traefik API check');
+  assert.ok(script.includes(`if ! ${VALIDATE_COMMAND}; then`), 'still runs the real validate command');
+  assert.ok(
+    script.includes("printf '%s failed; restored previous configuration\\n' 'Traefik API check' >&2"),
+    `expected the label in the failure message, got:\n${script}`
+  );
+  assert.ok(!script.includes(`'${VALIDATE_COMMAND}' >&2`), 'must not also print the raw command text');
+});
+
+test('buildFileDriverScript: with no validateLabel, the failure message still uses the command text (unchanged for Caddy/nginx)', () => {
+  const files = [managedFile('/etc/caddy/Caddyfile', 'example.com { }')];
+  const script = buildFileDriverScript(files, VALIDATE_COMMAND, RELOAD_COMMAND);
+  assert.ok(
+    script.includes(`printf '%s failed; restored previous configuration\\n' '${VALIDATE_COMMAND.replace(/'/g, `'\\''`)}' >&2`)
+  );
+});
+
+// --- (g) FileSpec.atomic (T003) --------------------------------------------
+// An atomic owned file (Traefik's dynamic-configuration file, research.md
+// R5) is written to a same-directory, dot-prefixed temp file and mv -f'd
+// into place, rather than truncated in place with `cat >` -- Traefik's file
+// provider watcher can otherwise observe a half-written file mid-`cat`.
+
+const TRAEFIK_PATH = '/etc/traefik/dynamic/bellhop.yml';
+
+function atomicOwnedFile(content: string): FileSpec {
+  return { path: TRAEFIK_PATH, content, mode: 'owned', atomic: true };
+}
+
+test('buildFileDriverScript: an atomic owned file writes via a same-directory dot-prefixed temp file, cp -p/chmod 644, and mv -f', () => {
+  const files = [atomicOwnedFile('http: {}')];
+  const script = buildFileDriverScript(files, null, null);
+  assert.match(
+    script,
+    /TMP_0="\$\(mktemp '\/etc\/traefik\/dynamic\/\.bellhop\.yml\.XXXXXX'\)"/,
+    'mktemp targets a dot-prefixed name in the same directory as the real file'
+  );
+  assert.ok(
+    script.includes(`if [ -f '${TRAEFIK_PATH}' ]; then cp -p '${TRAEFIK_PATH}' "$TMP_0"; else chmod 644 "$TMP_0"; fi`),
+    `expected the cp -p/chmod 644 branch, got:\n${script}`
+  );
+  assert.match(script, /cat > "\$TMP_0" <<'BELLHOP_FILE_0'/, 'writes the new content into the temp file');
+  assert.ok(script.includes(`mv -f "$TMP_0" '${TRAEFIK_PATH}'`), 'renames the temp file over the real path');
+});
+
+test('buildFileDriverScript: a non-atomic owned file is unchanged -- no mktemp-in-directory or mv -f write', () => {
+  const files = [ownedFile('/etc/nginx/conf.d/bellhop.conf', 'server {}')];
+  const script = buildFileDriverScript(files, null, null);
+  assert.ok(!script.includes('mv -f'), 'no atomic rename for a non-atomic owned file');
+  assert.ok(script.includes(`cat > '/etc/nginx/conf.d/bellhop.conf' <<'BELLHOP_FILE_0'`), 'writes in place as before');
+});
+
+test('buildFileDriverScript: an atomic file\'s restore also goes through a same-directory temp file and mv -f, and still rm -f\'s a file that did not previously exist', () => {
+  const files = [atomicOwnedFile('http: {}')];
+  const script = buildFileDriverScript(files, null, null);
+  const restoreStart = script.indexOf('bellhop_restore_all() {');
+  const restoreEnd = script.indexOf('}\ntrap', restoreStart);
+  const restoreFn = script.slice(restoreStart, restoreEnd);
+  assert.match(
+    restoreFn,
+    /mktemp '\/etc\/traefik\/dynamic\/\.bellhop\.yml\.XXXXXX'/,
+    'restore uses the same same-directory temp-file convention'
+  );
+  assert.match(restoreFn, /cp -p "\$BAK_0"/, 'restore copies the backup with cp -p so the mode survives');
+  assert.match(restoreFn, new RegExp(`mv -f .* '${TRAEFIK_PATH.replace(/\//g, '\\/')}'`), 'restore renames atomically over the real path');
+  assert.match(restoreFn, new RegExp(`rm -f '${TRAEFIK_PATH.replace(/\//g, '\\/')}'`), 'a file that did not exist before is still rm -f\'d');
+});
+
+// --- (h) FileSpec.atomic, executed (T003) -----------------------------------
+
+function permissionModeOf(path: string): string | undefined {
+  const result = spawnSync('sh', ['-c', `stat -c '%a' '${path}' 2>/dev/null`]);
+  if (result.status !== 0) return undefined;
+  return result.stdout.toString().trim();
+}
+
+test('buildFileDriverScript, executed: an atomic owned file lands its new content, preserves a pre-existing file\'s mode, and leaves no temp file behind on success', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = 'http:\n  routers: {}\n';
+  writeFileSync(configPath, originalContent);
+  spawnSync('sh', ['-c', `chmod 640 '${configPath}'`]);
+  const modeBefore = permissionModeOf(configPath);
+
+  const newContent = 'http:\n  routers:\n    new: {}\n';
+  const files: FileSpec[] = [{ path: configPath, content: newContent, mode: 'owned', atomic: true }];
+  const script = buildFileDriverScript(files, null, null);
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, script);
+
+  const result = spawnSync('sh', [scriptPath]);
+  assert.equal(result.status, 0, `expected exit 0, got ${result.status}, stderr: ${result.stderr}`);
+  // The heredoc itself always terminates the captured content with a
+  // newline (the same as every existing owned/managed-section write in
+  // this file) -- not an atomic-write-specific quirk.
+  assert.equal(readFileSync(configPath, 'utf8'), `${newContent}\n`, 'the new content must land');
+
+  const leftover = readdirSync(tmpDir).filter((f) => f.startsWith('.bellhop.yml.'));
+  assert.deepEqual(leftover, [], 'no .bellhop.yml.* temp file must remain after success');
+
+  if (modeBefore === '640') {
+    assert.equal(permissionModeOf(configPath), '640', "the mode of the pre-existing file must survive the atomic replace");
+  } else {
+    t.diagnostic('skipping mode-preservation assertion: this environment does not honor chmod 640 (e.g. Windows/MSYS)');
+  }
+});
+
+test('buildFileDriverScript, executed: an atomic owned file restores the old content and leaves no temp file behind when validate fails', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-fail-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = 'http:\n  routers: {}\n';
+  writeFileSync(configPath, originalContent);
+
+  const files: FileSpec[] = [{ path: configPath, content: 'http:\n  routers:\n    new: {}\n', mode: 'owned', atomic: true }];
+  // 'false' is a POSIX utility that always exits 1 -- no stub binary needed.
+  const script = buildFileDriverScript(files, 'false', null);
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, script);
+
+  const result = spawnSync('sh', [scriptPath]);
+  assert.equal(result.status, 1, `expected exit 1, got ${result.status}, stderr: ${result.stderr}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the original content must be restored byte for byte');
+
+  const leftover = readdirSync(tmpDir).filter((f) => f.startsWith('.bellhop.yml.'));
+  assert.deepEqual(leftover, [], 'no .bellhop.yml.* temp file must remain after a restore');
+});
+
+// --- (i) atomic backup mode and temp-file cleanup (final review F1/F4) -------
+
+test('buildFileDriverScript: an atomic file is backed up with cp -p, so a restore brings back the original mode/owner, not mktemp\'s 0600', () => {
+  const script = buildFileDriverScript([atomicOwnedFile('http: {}')], 'false', null);
+  assert.ok(script.includes(`  cp -p '${TRAEFIK_PATH}' "$BAK_0"`), `expected the backup taken with cp -p, got:\n${script}`);
+});
+
+test('buildFileDriverScript: a non-atomic file is still backed up with a plain cp (FR-016: Caddy/nginx/HAProxy scripts unchanged)', () => {
+  const script = buildFileDriverScript([ownedFile('/etc/nginx/conf.d/bellhop.conf', 'server {}')], 'false', null);
+  assert.ok(script.includes(`  cp '/etc/nginx/conf.d/bellhop.conf' "$BAK_0"`));
+  assert.ok(!script.includes('cp -p'), 'no cp -p anywhere for a non-atomic file');
+  assert.ok(!script.includes('TMP_0=""'), 'no temp-file bookkeeping for a non-atomic file');
+});
+
+test('buildFileDriverScript: an atomic file\'s temp name starts empty before the trap is armed, and the restore removes it when set', () => {
+  const script = buildFileDriverScript([atomicOwnedFile('http: {}')], 'false', null);
+  const init = script.indexOf('TMP_0=""');
+  const trap = script.indexOf("trap 'BELLHOP_STATUS");
+  assert.ok(init !== -1 && init < trap, `expected TMP_0="" before the EXIT trap, got:\n${script}`);
+  const restoreFn = script.slice(script.indexOf('bellhop_restore_all() {'), trap);
+  assert.ok(restoreFn.includes('if [ -n "$TMP_0" ]; then rm -f "$TMP_0"; fi'), `expected the temp-file cleanup, got:\n${restoreFn}`);
+});
+
+test('buildFileDriverScript, executed: a failed validate restores an atomic file\'s content and its original mode', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-mode-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = 'http:\n  routers: {}\n';
+  writeFileSync(configPath, originalContent);
+  spawnSync('sh', ['-c', `chmod 640 '${configPath}'`]);
+  const modeBefore = permissionModeOf(configPath);
+
+  const files: FileSpec[] = [{ path: configPath, content: 'http:\n  routers:\n    new: {}\n', mode: 'owned', atomic: true }];
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, buildFileDriverScript(files, 'false', null));
+
+  const result = spawnSync('sh', [scriptPath]);
+  assert.equal(result.status, 1, `expected exit 1, got ${result.status}, stderr: ${result.stderr}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the original content must be restored byte for byte');
+
+  if (modeBefore === '640') {
+    assert.equal(permissionModeOf(configPath), '640', 'the restored file must keep the original mode, not the backup\'s 0600');
+  } else {
+    t.diagnostic('skipping mode assertion: this environment does not honor chmod 640 (e.g. Windows/MSYS)');
+  }
+});
+
+test('buildFileDriverScript, executed: a write failure after mktemp restores the original and leaves no temp file in the directory', (t) => {
+  if (!shAvailable()) {
+    t.skip('sh not found on PATH -- cannot execute the generated script');
+    return;
+  }
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-leak-'));
+  const stubDir = mkdtempSync(join(tmpdir(), 'bellhop-file-driver-atomic-leak-stubs-'));
+  const posix = (p: string) => p.replace(/\\/g, '/');
+  const configPath = posix(join(tmpDir, 'bellhop.yml'));
+  const originalContent = 'http:\n  routers: {}\n';
+  writeFileSync(configPath, originalContent);
+
+  // A stub `cat` that always fails: the write step's `cat > "$TMP_0"` is the
+  // first command after the temp file is created, and nothing in the
+  // restore path uses cat, so the failure lands exactly between mktemp and
+  // mv -f.
+  const catPath = join(stubDir, 'cat');
+  writeFileSync(catPath, '#!/bin/sh\nexit 1\n');
+  chmodSync(catPath, 0o755);
+
+  const files: FileSpec[] = [{ path: configPath, content: 'http:\n  routers:\n    new: {}\n', mode: 'owned', atomic: true }];
+  const scriptPath = posix(join(tmpDir, 'apply.sh'));
+  writeFileSync(scriptPath, buildFileDriverScript(files, null, null));
+
+  const env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH}` };
+  const result = spawnSync('sh', [scriptPath], { env });
+  assert.notEqual(result.status, 0, `expected a non-zero exit, got ${result.status}`);
+  assert.equal(readFileSync(configPath, 'utf8'), originalContent, 'the original content must be restored byte for byte');
+  const leftover = readdirSync(tmpDir).filter((f) => f.startsWith('.bellhop.yml.'));
+  assert.deepEqual(leftover, [], 'no .bellhop.yml.* temp file must remain after a write failure');
+});

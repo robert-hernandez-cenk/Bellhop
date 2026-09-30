@@ -275,6 +275,53 @@ test("runRenderStatusPage rejects with statusPageUnsupportedError('nginx-proxy-m
   assert.equal(ssh.history.length, 0);
 });
 
+// Issue #32 (US1): the real registered 'haproxy' driver is another managed
+// driver with no status page (statusPage: null) -- it has no document root
+// of its own. Both checks reject before any SSH call.
+test("statusPageSkipReason names 'haproxy' as a managed driver with no status page -- warn when statusPagePath is set, info when unset", () => {
+  const haproxyInventory: Inventory = { ...inventory, proxyDriver: 'haproxy' };
+  const message = "The 'haproxy' proxy driver does not serve a status page -- skipping the status page render";
+  assert.deepEqual(statusPageSkipReason(haproxyInventory), { message, level: 'warn' });
+  assert.deepEqual(statusPageSkipReason({ ...haproxyInventory, statusPagePath: undefined }), { message, level: 'info' });
+});
+
+test("runRenderStatusPage rejects with statusPageUnsupportedError('haproxy'), and makes no SSH calls", async () => {
+  const haproxyInventory: Inventory = { ...inventory, proxyDriver: 'haproxy' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runRenderStatusPage({}, { ssh, inventory: haproxyInventory }, 'domain: example.com'),
+    (err: Error) => {
+      assert.equal(err.message, statusPageUnsupportedError('haproxy'));
+      return true;
+    }
+  );
+  assert.equal(ssh.history.length, 0);
+});
+
+// Issue #35 (US1): the real registered 'traefik' driver is another managed
+// driver with no status page (statusPage: null) -- Traefik has no
+// static-file server of its own (research.md R11). Both checks reject
+// before any SSH call, the same as haproxy above.
+test("statusPageSkipReason names 'traefik' as a managed driver with no status page -- warn when statusPagePath is set, info when unset", () => {
+  const traefikInventory: Inventory = { ...inventory, proxyDriver: 'traefik' };
+  const message = "The 'traefik' proxy driver does not serve a status page -- skipping the status page render";
+  assert.deepEqual(statusPageSkipReason(traefikInventory), { message, level: 'warn' });
+  assert.deepEqual(statusPageSkipReason({ ...traefikInventory, statusPagePath: undefined }), { message, level: 'info' });
+});
+
+test("runRenderStatusPage rejects with statusPageUnsupportedError('traefik'), and makes no SSH calls", async () => {
+  const traefikInventory: Inventory = { ...inventory, proxyDriver: 'traefik' };
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => runRenderStatusPage({}, { ssh, inventory: traefikInventory }, 'domain: example.com'),
+    (err: Error) => {
+      assert.equal(err.message, statusPageUnsupportedError('traefik'));
+      return true;
+    }
+  );
+  assert.equal(ssh.history.length, 0);
+});
+
 test('runRenderStatusPage single-quotes a proxyConfigPath containing a space', async () => {
   const inventory: Inventory = {
     domain: 'example.com',

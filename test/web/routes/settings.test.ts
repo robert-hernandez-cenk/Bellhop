@@ -232,17 +232,23 @@ test('PATCH /api/settings accepts proxyDriver nginx', async () => {
 
 const CADDY_CONFIG_PATH_NOTE = caddyDriver.configPathNote;
 const NGINX_CONFIG_PATH_NOTE = nginxDriver.configPathNote;
+const HAPROXY_CONFIG_PATH_NOTE =
+  "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate.";
+const TRAEFIK_CONFIG_PATH_NOTE =
+  "Traefik's file provider must watch this file's directory. The whole file is replaced on every apply, and a file Bellhop didn't generate is refused.";
 
 test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
   const { app } = testApp();
   const res = await asAdmin(request(app).get('/api/settings'));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
-    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
-    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
+    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, usesCertResolver: false, usesApiUrl: false, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+    { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
+    { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: true, usesApiUrl: true, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });
@@ -252,11 +258,13 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
   const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
-    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, configPathNote: NGINX_CONFIG_PATH_NOTE },
-    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, configPathNote: null },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
+    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, usesCertResolver: false, usesApiUrl: false, configPathNote: NGINX_CONFIG_PATH_NOTE },
+    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
+    { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
+    { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: true, usesApiUrl: true, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
   ]);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });
@@ -291,4 +299,48 @@ test('A stored proxyConfigPath is still returned while proxyDriver is none', asy
   assert.equal(res.status, 200);
   assert.equal(res.body.settings.proxyDriver, 'none');
   assert.equal(res.body.settings.proxyConfigPath, '/opt/proxy/Caddyfile');
+});
+
+// issue #35, US4 (T017): the two Traefik-only settings. GET's full driver
+// list is already covered above (traefik: usesCertResolver/usesApiUrl both
+// true, every other driver both false) -- these tests cover the settings
+// themselves.
+test('PATCH /api/settings writes proxyCertResolver and proxyApiUrl', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyCertResolver: 'cloudflare',
+    proxyApiUrl: 'http://127.0.0.1:8080',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyCertResolver, 'cloudflare');
+  assert.equal(res.body.settings.proxyApiUrl, 'http://127.0.0.1:8080');
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyCertResolver, 'cloudflare');
+  assert.equal(onDisk.proxyApiUrl, 'http://127.0.0.1:8080');
+});
+
+test('PATCH /api/settings clears proxyCertResolver/proxyApiUrl sent as null', async () => {
+  const { app, inventoryPath } = testApp({
+    ...baseInventory(),
+    proxyCertResolver: 'cloudflare',
+    proxyApiUrl: 'http://127.0.0.1:8080',
+  });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    proxyCertResolver: null,
+    proxyApiUrl: null,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyCertResolver, undefined);
+  assert.equal(res.body.settings.proxyApiUrl, undefined);
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.proxyCertResolver, undefined);
+  assert.equal(onDisk.proxyApiUrl, undefined);
+});
+
+test('PATCH /api/settings rejects a proxyApiUrl that is not an http(s) URL, with the same message set-config produces', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyApiUrl: 'ftp://x' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /proxyApiUrl: must be an http:\/\/ or https:\/\/ URL/);
+  assert.equal(loadInventory(inventoryPath).proxyApiUrl, undefined);
 });

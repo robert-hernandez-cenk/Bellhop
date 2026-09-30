@@ -103,8 +103,8 @@ Tests use Node's built-in test runner and live under `test/` as
   fixture in a `mkdtempSync` directory and points `INVENTORY_FILE` or the
   command's dependencies at it.
 - **Captured fixtures, not invented ones.** A fixture for a third-party API
-  (Proxmox, Authentik, Cloudflare, Nginx Proxy Manager, community-scripts)
-  must be captured from
+  (Proxmox, Authentik, Cloudflare, Nginx Proxy Manager, Traefik,
+  community-scripts) must be captured from
   a real response, then redacted to example values. Redaction keeps the
   response's shape exactly: field names, types, nesting and array lengths.
   A hand-written fixture that only looks plausible is not accepted.

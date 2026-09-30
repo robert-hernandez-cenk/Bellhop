@@ -107,7 +107,11 @@ const FORWARD_AUTH_LINES = [
 // pattern that, per research R7, produces no location of its own and instead
 // removes the forward-auth lines from `location /` (a second `location /`
 // would collide with the first under nginx's own routing rules).
-function isRootPrefix(pattern: PathPattern): boolean {
+// Exported for src/lib/proxy/drivers/traefik.ts (issue #35, User Story 2),
+// which needs the exact same root-prefix/dedupe/outpost-namespace rules for
+// its own exempt-router derivation -- one definition shared by both drivers
+// rather than a second copy that could drift.
+export function isRootPrefix(pattern: PathPattern): boolean {
   return pattern.kind === 'prefix' && pattern.path === '/';
 }
 
@@ -115,7 +119,7 @@ function isRootPrefix(pattern: PathPattern): boolean {
 // unauthenticatedPaths entries that parse to the same pattern (e.g. a typo'd
 // duplicate) must still produce only one location, or nginx -t fails with a
 // duplicate-location error.
-function dedupeExemptPatterns(patterns: PathPattern[]): PathPattern[] {
+export function dedupeExemptPatterns(patterns: PathPattern[]): PathPattern[] {
   const seen = new Set<string>();
   const result: PathPattern[] = [];
   for (const pattern of patterns) {
@@ -144,7 +148,7 @@ function dedupeExemptPatterns(patterns: PathPattern[]): PathPattern[] {
 // path outright (parseUnauthenticatedPaths in src/lib/inventory.ts); this
 // skip stays as defense in depth for an entry saved before that rule, or
 // written straight into bellhop.db.
-function isOutpostPrefixed(pattern: PathPattern): boolean {
+export function isOutpostPrefixed(pattern: PathPattern): boolean {
   return pattern.path === '/outpost.goauthentik.io' || pattern.path.startsWith('/outpost.goauthentik.io/');
 }
 
@@ -152,8 +156,9 @@ function isOutpostPrefixed(pattern: PathPattern): boolean {
 // silently dropped (see isOutpostPrefixed) -- computed once by
 // renderServerBody and threaded through to both the `location /`
 // root-exemption check and exemptLocations below, rather than each
-// recomputing it from the route's raw exemptPaths.
-function candidateExemptPatterns(route: ProxyRoute): PathPattern[] {
+// recomputing it from the route's raw exemptPaths. Exported for the Traefik
+// driver (issue #35), whose exempt router needs exactly this list.
+export function candidateExemptPatterns(route: ProxyRoute): PathPattern[] {
   if (route.auth.mode !== 'forward') return [];
   return dedupeExemptPatterns(route.auth.exemptPaths).filter((pattern) => !isOutpostPrefixed(pattern));
 }

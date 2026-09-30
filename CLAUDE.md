@@ -93,8 +93,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `subdomains`/`ip`/`port`/`insecureBackendTls` fields drive reverse-proxy
   generation through whichever driver is active (issue #10 — see the
   "Reverse-proxy driver interface" bullet below; Caddy, nginx (issue
-  #30), Nginx Proxy Manager (issue #31), and Caddy through its admin API
-  (issue #26) are the four drivers that manage a proxy today) — `subdomains` is a list (a host or guest can
+  #30), Nginx Proxy Manager (issue #31), HAProxy (issue #32), Traefik
+  (issue #35), and Caddy through its admin API (issue #26) are the
+  six drivers that manage a proxy today) — `subdomains` is a list (a host or guest can
   front more than one subdomain; `sync-proxy` emits one route per entry in
   the list, all pointing at the same `ip`/`port`);
   `insecureBackendTls` — see the driver-interface bullet below;
@@ -114,7 +115,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `authMode` (optional, hosts/guests/external_sites, issue #1) names *how*
   a gated entry's tier is enforced: `forward` (absent means this, the
   original behavior) puts the active proxy driver's forward-auth in front
-  of it (Caddy's `forward_auth` or nginx's `auth_request`), addressed
+  of it (Caddy's `forward_auth` or nginx's `auth_request`; the HAProxy
+  driver has none, so it refuses a forward-mode entry), addressed
   at whichever entry has `authentik: true`; `oidc` instead gives the entry
   its own Authentik OpenID Connect client, so the app itself checks the
   login rather than the proxy. Every consumer (`buildRoutes`,
@@ -272,16 +274,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   which one entry has `proxy: true`; written by `saveInventory` but not
   currently read back by `loadInventory`, which instead reads the `proxy`
   boolean column already present directly on the owning `hosts`/`guests`
-  row), and `meta` (`domain` plus ten optional operator-specific scalars,
+  row), and `meta` (`domain` plus twelve optional operator-specific scalars,
   issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`,
   plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch`, the
   issue #10 pair `proxyDriver`/`proxyConfigPath` (which reverse-proxy
   driver `src/lib/proxy/index.ts`'s `getDriver()` hands back, and its
   configuration-file location — see the "Reverse-proxy driver interface"
-  bullet below), and the issue #30 pair `proxyTlsCertificate`/
+  bullet below), the issue #30 pair `proxyTlsCertificate`/
   `proxyTlsKey` (the shared TLS certificate/key path pair the nginx
   driver's every server block references — see the "nginx driver" bullet
-  below; inert for Caddy, which issues its own per-site certificate)
+  below; inert for Caddy, which issues its own per-site certificate),
+  and the issue #35 pair `proxyCertResolver`/`proxyApiUrl` (the Traefik
+  driver's own certificate-resolver name and optional API address — see
+  the "Traefik driver" bullet below; inert for every other driver)
   — see `SettingsSchema`/`SETTINGS_KEYS` in
   `src/lib/inventory.ts`, spread into `InventorySchema` rather than nested
   under their own key, same flat placement as `domain`). Each used to be a
@@ -601,14 +606,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver seam between the inventory and whichever reverse proxy is actually
   running, put in place so a second proxy can be added by writing one
   driver rather than untangling Caddy-specific code throughout the toolkit.
-  Caddy, nginx (issue #30), Nginx Proxy Manager (issue #31), and an
+  Caddy, nginx (issue #30), Nginx Proxy Manager (issue #31), HAProxy
+  (issue #32, file-based), Traefik (issue #35, file-based), and an
   admin-API Caddy driver (`caddy-api`, issue #26 -- see its own bullet
-  below) are the four drivers that ship and actually manage a proxy -- an
+  below) are the six drivers that ship and actually manage a proxy -- an
   HAProxy Data Plane API driver is the remaining follow-up issue (its shape
   was checked against all four candidates on paper first; see
-  `specs/006-reverse-proxy-driver/research.md`). A fifth registered driver,
-  `none`, ships alongside them as of issue #33 -- see "A driver that
-  manages no reverse proxy at all" below.
+  `specs/006-reverse-proxy-driver/research.md`). A seventh registered
+  driver, `none`, ships alongside them as of issue #33 -- see "A driver
+  that manages no reverse proxy at all" below.
   Single-operator-assumption
   update: this toolkit is no longer hard-wired to Caddy -- exactly one
   driver is active per deployment (`proxyDriver`, a per-deployment choice,
@@ -622,7 +628,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   its shared-certificate default is derived from the inventory `domain`,
   not hardcoded, but its CA-bundle verification path and its `conf.d`
   default config path both assume a Debian/Ubuntu nginx layout -- see the
-  "nginx driver" bullet below.
+  "nginx driver" bullet below. The HAProxy driver (issue #32) adds three
+  fixed Debian/Ubuntu-package assumptions of the same kind -- its main
+  configuration path, CA bundle, and reload command -- see the "HAProxy
+  driver" bullet below. The Traefik driver (issue #35) adds three of its
+  own, all naming conventions rather than package-layout assumptions: the
+  entry point Bellhop's routers address is always named `websecure`, an
+  unset `proxyCertResolver` defaults to a resolver named `cloudflare`, and
+  the API check's load timeout is fixed at 30 checks one second apart with
+  no per-call override -- see the "Traefik driver" bullet below.
   Four files split the
   responsibility: `routes.ts`'s `buildRoutes(inventory)` derives a
   proxy-neutral `ProxyRoute[]` from `hosts[]`/`guests[]`/`externalSites[]`
@@ -647,22 +661,27 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`id`, `label` -- the Settings page dropdown's option text --,
   `capabilities`, `defaultConfigPath: string | null` (`null` means the
   driver uses no configuration file), `statusPage: { suggestedPath:
-  string } | null` (`null` means it serves no status page), two optional
+  string } | null` (`null` means it serves no status page), four optional
   Settings-page hints -- `usesSharedCertificate` (`true` means the driver
   serves `ctx.tls`'s shared certificate, so the page shows the
-  `proxyTlsCertificate`/`proxyTlsKey` fields; nginx only) and
+  `proxyTlsCertificate`/`proxyTlsKey` fields; nginx only),
+  `usesCertResolver`/`usesApiUrl` (`true` means the page shows the Proxy
+  cert resolver/Proxy API URL fields respectively; Traefik only, issue
+  #35 -- see the "Traefik driver" bullet below), and
   `configPathNote` (a sentence appended to the Proxy config path help) --,
   `plan()`/`apply()`/`snapshot()`) and `checkCapabilities(routes, driver)`;
   `file-driver.ts`'s
   `fileDriver(...)` is a shared builder for any driver configured by files
-  (Caddy and nginx, issue #30, both are; HAProxy is a candidate -- three of
+  (Caddy, nginx (issue #30), HAProxy (issue #32), and Traefik (issue #35)
+  all are -- three of
   the five analysed mechanisms have no file at all, e.g. Caddy's own admin
   API, so the top-level contract is "reconcile these routes" rather than
   "render this file", with `fileDriver` supplying everything a
   file-configured driver needs on top of that); `index.ts`'s
   `getDriver(inventory)` resolves the `proxyDriver` setting (unset means
   `DEFAULT_PROXY_DRIVER_ID` (`'caddy'`); `'caddy-api'` (issue #26),
-  `'nginx'` (issue #30), `'nginx-proxy-manager'` (issue #31), and `'none'`
+  `'nginx'` (issue #30), `'nginx-proxy-manager'` (issue #31),
+  `'haproxy'` (issue #32), `'traefik'` (issue #35), and `'none'`
   (issue #33) are the other registered ids;
   an id no registered driver has -- only reachable by hand-editing
   `bellhop.db`, since the schema's own zod enum already rejects any other
@@ -687,7 +706,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   resolves `configPath` through its own helper, which still throws a
   programming-error message if it's ever handed `null`. `index.ts` also
   exports `listDrivers()` (every registered driver, Caddy, Caddy (admin
-  API), nginx, Nginx Proxy Manager, then None, in
+  API), nginx, Nginx Proxy Manager, HAProxy, Traefik, then None, in
   registration order -- the Settings page's dropdown source), and
   `driver.ts` exports `managesProxy(driver)` (`driver.id !==
   NO_PROXY_DRIVER_ID`, the constant in `ids.ts` -- `false` only for the
@@ -701,7 +720,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   drivers/none.ts`'s `noneDriver`, issue #33 -- single-operator-assumption
   update: not every deployment has a Bellhop-managed reverse proxy in
   front of it, whether that's a hand-configured proxy or none at all) is
-  the fourth registered driver, selected the same way as the other three
+  the sixth registered driver, selected the same way as the other five
   via `proxyDriver: 'none'`. Its `label` is `'No proxy'`, its
   `defaultConfigPath` and `statusPage` are both `null`, and its
   `capabilities` accept both `forward` and `oidc` auth modes (so
@@ -748,9 +767,22 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   about to become live configuration or a specific entry is being saved --
   never from `validateInventory()` itself (FR-013), so changing
   `proxyDriver` can never make an already-saved inventory fail to load;
-  Caddy, nginx, and Nginx Proxy Manager all support both modes, so this
-  never actually triggers today, but it
-  is the guarantee every future driver inherits.
+  Caddy, nginx, Nginx Proxy Manager, and Traefik (issue #35) all support
+  both modes, but the
+  HAProxy driver (issue #32) supports `oidc` only, so it is the first
+  shipped driver where this refusal actually triggers: a forward-gated
+  entry fails `sync-proxy` and its own guest edit with `Entry '<name>'
+  uses forward-auth gating, but the 'haproxy' proxy driver cannot enforce
+  it -- set its authMode to oidc or clear authGroup`. That holds even with
+  no `authentik: true` entry: `runSyncProxy` calls `buildRoutes` before
+  `checkCapabilities`, and `buildRoutes` would otherwise throw its
+  missing-authentik error first and tell the operator to add an outpost a
+  forward-less driver could never use -- so `buildRoutes(inventory, {
+  requireOutpost })` takes an option (default `true`), and `runSyncProxy`
+  passes `requireOutpost: driver.capabilities.authModes.includes('forward')`
+  (research R8 addendum). Every driver that supports forward keeps the
+  missing-authentik error exactly as before. It is the guarantee every
+  future driver inherits.
 
   **`fileDriver(def)`** owns the full render -> back up -> write ->
   validate -> restore-or-reload cycle for a proxy configured by files, so
@@ -761,7 +793,33 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `usesSharedCertificate`/`configPathNote` are optional and passed
   through unchanged;
   `configFiles()` optionally overrides which paths `snapshot()` reads;
-  defaults to `[configPath]`). `apply()`
+  defaults to `[configPath]`). As of issue #35, `def.validateCommand` is a
+  function of `(configPath, { files, inventory })` -- not just the path --
+  returning `string | null`: Traefik needs the rendered files themselves
+  (to read back every router/marker name the API check polls for) and the
+  live `inventory` (to read `proxyApiUrl`), and a driver with nothing to
+  check at all (Traefik with `proxyApiUrl` unset) returns `null`, which
+  `buildFileDriverScript` renders as no validate step whatsoever rather
+  than an empty command. `def.reloadCommand` on the definition itself is
+  typed `string | null` for the same reason -- Traefik has none, since its
+  file provider reloads on its own the instant the write lands. An
+  optional `validateLabel` replaces the validate command's own text in the
+  "... failed; restored previous configuration" failure message when that
+  command isn't fit to echo back at an operator (Traefik's is a multi-line
+  polling subshell, not a one-liner); omitted (every other driver) means
+  the command text itself, unchanged. A `FileSpec` may also carry
+  `atomic: true` (Traefik's only, issue #35): the write step goes through
+  a same-directory `mktemp`/`mv -f` instead of an in-place `cat >`
+  truncate, and the restore step in the trap handler mirrors it the same
+  way -- see the "Traefik driver" bullet below for why a file-watching
+  proxy needs this and Caddy/nginx/HAProxy, which all reload explicitly
+  only after a successful validate, don't. For an atomic file only, the
+  backup is taken with `cp -p` (so a restore brings back the original
+  mode/owner, not `mktemp`'s 0600, which a non-root proxy couldn't read),
+  and `TMP_<i>` starts empty before the trap is armed so the restore can
+  first remove a temp file a failed or interrupted write left in the
+  watched directory; a non-atomic file's script is byte-identical to
+  before. `apply()`
   builds one POSIX `sh` script (`buildFileDriverScript`, run via
   `runRemote` on the proxy host) that: first refuses, touching nothing, to
   replace an existing `'owned'` file whose first line isn't that
@@ -777,15 +835,24 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   clears every trap, runs the same restore, and exits 1; writes each file (`'owned'` replaces it
   whole, `'managed-section'` removes any existing
   `# BEGIN bellhop-managed`…`# END bellhop-managed` block and appends the
-  new one, creating the file if absent); runs the validate command,
-  printing a named failure message and exiting non-zero if it fails (the
-  trap performs the actual restore); disarms every trap together
-  (`trap - EXIT HUP INT TERM`), removes the backups, and reloads. The
+  new one, creating the file if absent); runs the validate command, when
+  there is one, printing a named failure message and exiting non-zero if
+  it fails (the trap performs the actual restore) -- a `null`
+  `validateCommand` skips this block outright, so the script goes
+  straight from writing to disarming the traps with nothing checked in
+  between; disarms every trap together
+  (`trap - EXIT HUP INT TERM`), removes the backups, and reloads, when
+  there is a reload command -- Traefik's `null` means this line is
+  omitted too. The
   `bellhop-managed` markers are defined once, in `file-driver.ts`: a
   driver's `render()` returns only a `'managed-section'` file's body, and
   `plan()` wraps it with `wrapManagedSection` before previewing it or
   putting it in the payload, so the preview is still exactly what
-  `apply()` writes. `apply()` itself throws on a non-zero exit, with
+  `apply()` writes. A driver with more than one file (HAProxy) gets each
+  file labelled in the preview with the same `==> <path> <==` line
+  `snapshot()` uses, files separated by a blank line (`previewFiles`); a
+  single-file driver's preview is its content alone, byte-identical to
+  before, and the payload is never labelled. `apply()` itself throws on a non-zero exit, with
   stderr in the message -- this is a behavior fix, not just a rename
   (issue #10): the former `sync-caddy` validated a *temporary copy* before
   ever overwriting the real Caddyfile and reported a failed validate as a
@@ -1095,6 +1162,246 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (real Nginx Proxy Manager 2.16.0 responses, tokens/PEM bodies/loopback
   addresses replaced, shape unchanged -- constitution Principle I), the
   same convention `authentik-client.test.ts` established.
+- **HAProxy driver** (`src/lib/proxy/drivers/haproxy.ts`, issue #32) is
+  the fourth driver that manages a proxy, built with `fileDriver` over
+  **two** `'owned'` files -- the first driver to own more than one:
+  a backends file at `configPath` (default `/etc/haproxy/bellhop.cfg`),
+  one `backend` block per route, and a map file, `mapPath(configPath)`
+  = `bellhop.map` in `configPath`'s own POSIX directory (derived, never
+  configured, so one `proxyConfigPath` moves both; `render()` throws
+  naming `proxyConfigPath` if the two paths coincide once normalised, or
+  if `proxyConfigPath` ends in `/`, which `SettingsSchema` accepts), one
+  lower-cased `<hostname> <backend>` line per route hostname, canonical
+  first. Both open with the same "Generated by Bellhop sync-proxy for
+  HAProxy. Do not edit" header -- deliberately different from the nginx
+  driver's, which lacks "for HAProxy" -- which is each `FileSpec`'s
+  `ownedHeader`, so an apply refuses to replace a file (e.g. a Caddyfile
+  or an nginx-generated file left at a shared `proxyConfigPath`) whose
+  first line isn't it; `configFiles()` returns both, so `snapshot()`
+  reads both back (nothing calls it today -- `statusPage` is `null`, so
+  `render-status-page` never does -- but `snapshot()` is part of the
+  driver contract). Bellhop owns only backends and
+  the map: the operator keeps the `frontend` in their own
+  `/etc/haproxy/haproxy.cfg` (`bind :443 ssl crt <dir>`, their own
+  `default_backend`, and one `use_backend
+  %[req.hdr(host),field(1,:),lower,map(/etc/haproxy/bellhop.map)]` line),
+  loads the backends file with `EXTRAOPTS="-S /run/haproxy-master.sock -f
+  /etc/haproxy/bellhop.cfg"` in `/etc/default/haproxy` (the `-S` repeats
+  the Debian unit's own default `EXTRAOPTS`, which that file replaces; a
+  `systemctl restart` is needed once after the first edit), and runs their
+  own certificate tool -- documented in `docs/reverse-proxy/haproxy.md`,
+  never generated. Validation checks the main config plus `configPath`,
+  but the service loads whatever `EXTRAOPTS` names and the frontend reads
+  whatever `map()` path it names, so changing `proxyConfigPath` also
+  needs both updated (and a restart) -- documented, not validated (a
+  final-review ruling).
+  `validateCommand` is `haproxy -c -f /etc/haproxy/haproxy.cfg -f
+  '<configPath>'` (the backends file alone has no frontend or `global`,
+  so it's checked together with the main configuration the running proxy
+  actually loads); `reloadCommand` is `systemctl reload haproxy`.
+  Backend names are `bellhop_<owner.type>_<name>` (`backendNames`),
+  every character outside `[A-Za-z0-9_.:-]` replaced by `_` (a `/` or
+  space fails `haproxy -c`), with `_2`, `_3`, ... appended in route
+  order on a sanitisation collision -- the join key between the two files.
+  Each backend: `mode http`, `timeout server`/`timeout tunnel 1d` (the
+  nginx driver's 1d timeouts on the backend side; a WebSocket tunnel is
+  covered both ways, but a quiet server-sent-events stream's client side
+  stays under the operator frontend's own `timeout client`, which the docs
+  tell them to raise), then `http-request del-header x-authentik- -m beg`
+  as the first rule (no Bellhop HAProxy backend is ever behind
+  forward-auth, so any `X-authentik-*` header reaching one is
+  client-supplied and spoofable), `X-Forwarded-For` *set* to `%[src]` never
+  appended, `X-Forwarded-Proto https`, `X-Forwarded-Host` the original
+  Host, `X-Forwarded-Port` `ctx.externalPort`, and one `server app
+  <ip>:<port>` with no health `check`; its TLS suffix follows the
+  Caddy/nginx rule -- `ssl verify none` for `insecureTls`, `ssl verify
+  required ca-file /etc/ssl/certs/ca-certificates.crt` for a port-443
+  backend, else plain HTTP -- except HAProxy verifies the chain only, not
+  the name (no `sni`/`verifyhost`; research R6, documented rather than
+  worked around). `capabilities: { authModes: ['oidc'],
+  acmeDns01ViaCloudflare: false }` -- no forward-auth, so
+  `checkCapabilities` refuses a forward-gated entry before `render()`
+  sees it; `render()` still throws `HAProxy cannot enforce forward-auth
+  for entry '<name>'` as a backstop against a caller that skipped the
+  check, so a forward route can never be deployed ungated. An `oidc`
+  route renders exactly like an ungated one and `unauthenticatedPaths`
+  never appear. `statusPage: null` (no document root) and no
+  `usesSharedCertificate` (certificates live in the operator's frontend),
+  so the Settings page shows only Proxy config path, with its
+  `configPathNote` about the map file and the ownership refusal.
+  Single-operator assumptions this driver adds (research R4): the main
+  configuration path `/etc/haproxy/haproxy.cfg`, the CA bundle path
+  (shared with the nginx driver), and `systemctl reload haproxy` are all
+  fixed Debian/Ubuntu package defaults, not settings. Checked with a real
+  `haproxy -c` against HAProxy 2.6 and 3.4 (research R2, a one-off manual
+  check; `npm test` needs no HAProxy).
+- **Traefik driver** (`src/lib/proxy/drivers/traefik.ts`, issue #35) is
+  the fifth driver that manages a proxy, built with `fileDriver` over one
+  `'owned'`, `atomic: true` file at `configPath` (default
+  `/etc/traefik/dynamic/bellhop.yml`) -- the first driver whose `FileSpec`
+  sets `atomic` (see the `fileDriver(def)` bullet above for what that
+  changes about the write/restore steps and why: Traefik's file provider
+  watches the directory live, so an in-place truncate could expose a
+  half-written file to it, where Caddy/nginx/HAProxy only ever reload
+  after a successful validate). Checked against a real Traefik **v3.7.13**
+  binary (research.md); Traefik v2 is unsupported.
+
+  **Rendering and object names** (research R1/R7): `render()` emits one
+  `http:` document -- `routers`/`services` omitted entirely when empty,
+  `middlewares` always present (so the file is never truly empty even with
+  zero routes) -- with every object name prefixed `bellhop-` and a route's
+  own names derived from its canonical hostname (`hostnames[0]`) by
+  `encodeHostname`: lowercase, then every `-` doubled, *then* every `.`
+  turned into a single `-` -- doubling first keeps the encoding injective
+  for valid DNS hostnames, so `a.b-c.example.com` and `a-b.c.example.com`
+  never collide. A subdomain is a plain string in the schema, though, so
+  a label starting or ending in `-` can still collide (`a-.b` vs
+  `a.-b`): `render()` throws naming both canonical hostnames rather than
+  letting one route's objects overwrite another's. `render()` also
+  throws, dry run included, when `proxyConfigPath` ends in `/` or doesn't
+  end in `.yml`/`.yaml` (Traefik's file provider would never load it),
+  naming the path and the `settingFix` remedy -- the HAProxy driver's
+  trailing-slash guard, extended. Both `stringify` passes use
+  `lineWidth: 0`, so a long rule is never folded. Per-route objects:
+  router+service `bellhop-route-<enc>`,
+  router `bellhop-exempt-<enc>` (forward-gated with exempt paths left
+  after dropping outpost-namespace ones, and no bare `/*` among them),
+  router `bellhop-outpost-<enc>` (forward-gated only). Shared objects:
+  middlewares `bellhop-strip-authentik-headers` (always present; sets each
+  of the five `X-authentik-*` identity headers to `""`, which Traefik
+  treats as "remove", and every router -- main, outpost, exempt -- lists
+  it first, so a client-sent identity header never reaches a backend
+  that trusts it, e.g. through an exempt path or to Bellhop's own web UI;
+  parity with the HAProxy driver's `del-header x-authentik-`),
+  `bellhop-forwarded-port`
+  (always present, sets `X-Forwarded-Port: 443` via `customRequestHeaders`
+  -- issue #91's convention every driver follows) and `bellhop-authentik`
+  (forward-auth, only when some route is forward-gated, listed after the
+  strip so it sets the real values); service
+  `bellhop-authentik-outpost`; `serversTransports` entry
+  `bellhop-insecure-backend-tls` (`insecureSkipVerify: true`, only when
+  some route's backend needs it). A forward-gated route's main router
+  carries `bellhop-authentik` unless its exempt patterns include a bare
+  `/*` (alone or alongside others), in which case that middleware is
+  dropped from it and no exempt router is rendered at all -- it still
+  keeps its outpost router either way, mirroring the nginx driver's own
+  `/*` handling. The exempt pattern list itself
+  (`candidateExemptPatterns`, dedup plus outpost-namespace skip) and
+  `isRootPrefix` are imported from `nginx-locations.ts` rather than
+  reimplemented, shared with the nginx driver since issue #31/#35 -- the
+  same rules both drivers must obey are defined exactly once. Backend
+  scheme follows every other driver's rule (`backendUrl`): `https://` when
+  `insecureTls` is set or the port is 443, `http://` otherwise; with
+  `insecureTls` the service names the shared insecure-transport object,
+  and otherwise Traefik's default transport verifies the certificate
+  against the system CA pool for a 443 backend, matching Caddy.
+
+  **Rule syntax** (research R6): a router's `rule` is
+  `Host(`a`) || Host(`b`)` (canonical hostname first); the outpost
+  router's is `(<hosts>) && PathPrefix(`/outpost.goauthentik.io/`)`; the
+  exempt router's is `(<hosts>) && (Path(`/x`) || PathPrefix(`/api/`))`
+  with patterns in stored order. `ruleValue` backtick-quotes a value
+  unless it contains a backtick, in which case it falls back to
+  `JSON.stringify` (a double-quoted Go-style string, live-verified to
+  parse identically) -- hostnames never need the fallback. No router ever
+  sets an explicit `priority`: with none, Traefik ranks routers by rule
+  *length*, and the exempt/outpost rules always embed the main rule's
+  whole host expression plus more, so they're always longer and always
+  win; the two never compete for the same request either, since outpost
+  traffic and a bare `/*` both remove their own competing case.
+
+  **Forward-auth** (research R9): `bellhop-authentik` is a `forwardAuth`
+  middleware addressed at
+  `http://<outpost ip>:<port>/outpost.goauthentik.io/auth/traefik`, with
+  `trustForwardHeader: true` and the same five identity headers (username,
+  groups, email, name, uid -- no `entitlements`) Caddy, nginx, and NPM
+  already pass on to the backend, following Authentik's own Traefik
+  recipe. `ctx.outpost` is guaranteed set wherever this is read, the same
+  non-null convention the other drivers already rely on, since
+  `buildRoutes` throws its missing-authentik error before ever producing a
+  `'forward'` route with no outpost to address.
+
+  **Certificate resolver and settings** (research R10): every router's
+  `tls.certResolver` is `inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER`
+  (`'cloudflare'`, `src/lib/proxy/routes.ts`) -- carried to `render()` as a
+  new `ProxyContext.certResolver` field, always present (same
+  "never handle the unset case" precedent as `ctx.tls`), next to nginx's
+  own `tls` field. `capabilities: { authModes: ['forward', 'oidc'],
+  acmeDns01ViaCloudflare: true }` -- Traefik can obtain its own
+  certificates too, just through a resolver the *operator* defines in
+  Traefik's own static configuration rather than Bellhop's hardcoded
+  `TLS_BLOCK`, so `prune-acme-challenges` keeps running under it the same
+  as under Caddy. `statusPage: null` -- the first shipped *managed*
+  driver with no status page at all (Traefik serves no static files);
+  `render-status-page`'s existing `statusPageUnsupportedError`/
+  `statusPageSkipReason` paths already cover a `null` status page with no
+  changes needed. Two new settings, both inert for every other driver and
+  surfaced on the Settings page only while Traefik is selected via the
+  driver metadata flags `usesCertResolver`/`usesApiUrl` (see the
+  `driver.ts` paragraph above and the "Web UI Settings page" bullet
+  below): `proxyCertResolver` (`^[A-Za-z0-9_-]+$`, matching Traefik's own
+  resolver-name rules, so nothing further needs validating) and
+  `proxyApiUrl` (parsed with `new URL`, must be `http:`/`https:`; the
+  additional no-single-quote check is defensive only, since the value is
+  already embedded in a `singleQuote`-escaped shell string).
+
+  **The API check is opt-in and has two real gaps, both documented**
+  (research R2-R4, User Story 3): Traefik has no validate command at all
+  -- a file it can't even decode as YAML is rejected *in its entirety*
+  (none of Bellhop's routers/services/middlewares load), while an
+  object-level problem (a missing service/middleware, an unknown entry
+  point, an unparseable rule) leaves the rest of the file loaded and
+  reports just that router `"status":"disabled"` with an `"error"` array
+  -- so `def.validateCommand` returns `null` (no check at all) unless
+  `proxyApiUrl` is set, per the `fileDriver(def)` bullet above.
+  **`buildApiCheck(apiUrl, configPath, content)`** builds the POSIX `sh`
+  subshell `fileDriver` sends as the validate step: it first polls
+  `GET /api/http/middlewares/<marker>@file` (`curl -s -o /dev/null -w
+  '%{http_code}' --max-time 5`, once a second, up to 30 tries) until it
+  sees `200` -- proving Traefik has loaded *this exact rendered version*
+  of the file, since the marker's name is derived from a SHA-256 hash of
+  the file rendered *without* the marker (`generationMarkerName`/
+  `routerNames` parse both back out of the already-rendered `content`
+  passed in, rather than re-deriving them from `ProxyRoute[]`, so the
+  check always matches exactly what was written) -- then fetches
+  `GET /api/http/routers/<name>@file` for every router this file declares,
+  by exact name (not `?search=`, which research R4 found matches a
+  router's *rule text* too and could sweep in an unrelated operator
+  router), collecting every one that doesn't contain
+  `"status":"enabled"` before failing, so a multi-router misconfiguration
+  is reported in full rather than one router at a time across repeated
+  applies. Its first step is `command -v curl`: with no curl on the proxy
+  host it fails at once naming the fix (install curl there, or unset
+  `proxyApiUrl`) rather than ending in a misleading timeout. Both gaps this
+  can't close: **the timeout is fixed at 30 checks one second apart**
+  (each check can take up to `--max-time 5`, so the wall-clock wait runs
+  longer against a slow API -- the failure message says "after 30 checks
+  one second apart", never "within 30 seconds"), with no per-call override, comfortably above Traefik's default 2-second
+  file-provider throttle but still a hard ceiling either way; and **a
+  router naming a `certResolver` the static configuration doesn't define
+  stays `"status":"enabled"` with no error at all** -- live-verified, the
+  problem surfaces only in Traefik's own log
+  (`Router uses a nonexistent certificate resolver`), so this check
+  cannot catch a wrong `proxyCertResolver` and `docs/reverse-proxy/
+  traefik.md` says so explicitly. On failure `fileDriver` restores the
+  previous file via the same trap-based mechanism every other driver
+  uses; `reloadCommand: null` either way, since a successful write is
+  already live the moment the rename lands. The check needs only `sleep`
+  and `curl` on the proxy host (which may itself be an LXC guest --
+  `runRemote`'s usual POSIX-`sh` rule applies), making the executed-script
+  tests straightforward: both stubbed on `PATH`, with a stub `sleep` that
+  keeps the 30-attempt timeout case instant and deterministic rather than
+  a real 30-second test.
+
+  Single-operator assumptions this driver adds (research R10/R12, none of
+  them package-layout assumptions the way HAProxy's are): the entry point
+  every rendered router uses is fixed at `websecure` (Traefik's own
+  documented convention; not configurable), an unset `proxyCertResolver`
+  defaults to a resolver named `cloudflare`, and the API check's load
+  timeout is a fixed 30 checks one second apart. The Docker-labels provider, an HTTP
+  provider Bellhop itself would have to serve, and managing Traefik's
+  static configuration are all explicitly out of scope -- this driver only
+  ever writes into the file provider's directory.
 - **Caddy admin-API driver** (`src/lib/proxy/drivers/caddy-api.ts`, issue
   #26, `proxyDriver: 'caddy-api'`, label "Caddy (admin API)") serves exactly
   what the file-based Caddy driver serves but reconciles Caddy's *live JSON
@@ -1683,8 +1990,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   *when it runs inside `syncProxyLive`* is now gated on a driver
   capability (see below), since a driver without
   `capabilities.acmeDns01ViaCloudflare` (the nginx driver, issue #30,
-  declares this `false` since it never touches DNS at all; HAProxy, not
-  yet shipped, would too) never leaves one of these records behind in the
+  declares this `false` since it never touches DNS at all, and so do the
+  Nginx Proxy Manager and HAProxy drivers) never leaves one of these records behind in the
   first place.
   REST-only via
   `CloudflareClient` (`src/lib/cloudflare-client.ts`, the same
@@ -2569,7 +2876,17 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `X-authentik-*` identity headers the reverse proxy fronting it (the
   `proxy: true` entry's proxy -- Caddy's `forward_auth` or nginx's
   `auth_request`) adds once a request has been checked against a
-  self-hosted Authentik instance —
+  self-hosted Authentik instance. Under the HAProxy driver Bellhop cannot
+  put forward-auth in front of the web UI's own subdomain (forward-gating
+  is refused) and every Bellhop-generated backend strips `X-authentik-*`
+  headers, so routing the web UI through a Bellhop HAProxy backend under
+  `WEB_UI_AUTH_MODE=authentik` only gets 401s. To serve the web UI behind
+  HAProxy the operator fronts it themselves: mark that entry `proxyManual`
+  and hand-author its routing with their own Authentik forward-auth (e.g.
+  the community Lua integration), which must overwrite, never pass
+  through, the `X-authentik-*` headers. Production keeps
+  `WEB_UI_AUTH_MODE=authentik` regardless (see below, and "Limits" in
+  `docs/reverse-proxy/haproxy.md`) —
   there is no OIDC client, login page, or session store anywhere in this
   repo; Authentik and the proxy own the actual authentication session, and
   this app only ever reads already-verified headers off the request
@@ -2618,8 +2935,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   proxy was a deliberate choice over an app-embedded OIDC client: Authentik
   and the proxy own the session, and this app holds no session state of
   its own. Which proxy fronts the web UI is whatever runs on the
-  `proxy: true` entry -- Caddy, nginx, or Nginx Proxy Manager, per
-  `proxyDriver` -- and the
+  `proxy: true` entry -- Caddy, nginx, Nginx Proxy Manager, HAProxy, or
+  Traefik,
+  per `proxyDriver` -- and the
   firewall scope follows that entry, not the driver choice.
 - **Web UI user/group management** (`src/web/routes/users.ts`,
   `src/web/routes/groups.ts`): full CRUD on Authentik users/groups from
@@ -2816,15 +3134,21 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `proxyDriver` and `proxyConfigPath` alongside the pre-existing six;
   issue #30 adds `proxyTlsCertificate`/`proxyTlsKey` (placeholders
   showing certbot's own default path for the inventory domain) beside
-  those, inert unless the nginx driver is active.
+  those, inert unless the nginx driver is active; issue #35 adds
+  `proxyCertResolver`/`proxyApiUrl` (placeholders `cloudflare` and
+  `http://127.0.0.1:8080`) the same way, inert unless the Traefik driver
+  is active.
   `proxyDriver` renders as a `<select>`, not the plain `<input>` every other
   setting gets: as of issue #33, `settingsResponse()` (`src/web/routes/
   settings.ts`, shared by GET and PATCH so the two can never disagree)
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
-  managesProxy, usesSharedCertificate, configPathNote }`, Caddy, Caddy
-  (admin API), nginx, Nginx Proxy Manager, then None) and
-  `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`) to the
+  managesProxy, usesSharedCertificate, usesCertResolver, usesApiUrl,
+  configPathNote }` (the last two, issue #35's `proxyDriversInfo()`
+  addition, default `false` the same way `usesSharedCertificate` does),
+  Caddy, Caddy (admin API), nginx,
+  Nginx Proxy Manager, HAProxy, Traefik, then None) and `defaultProxyDriver`
+  (`DEFAULT_PROXY_DRIVER_ID`) to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
   tested with plain `node --test`, same convention as `admin-nav.ts`)
@@ -2835,14 +3159,18 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   like every other field. The same file's `proxyFieldView(selectedId,
   drivers)` decides, for whichever driver is currently selected in that
   *unsaved* dropdown value, whether the Proxy config path, Status page
-  path, and Proxy TLS certificate/key fields apply at all: a driver whose
+  path, Proxy TLS certificate/key, and (issue #35) Proxy cert
+  resolver/Proxy API URL fields apply at all: a driver whose
   `managesProxy` is `false` (only `none` today) hides all of them
   entirely rather than showing them disabled or empty; a managed driver
   with a `defaultConfigPath` shows Proxy config path with that path as its
   placeholder (the driver's own `configPathNote` appended to the help text
   when it has one -- nginx's says it replaces the whole file and refuses
-  one it didn't generate, Caddy's that only the managed section is
-  replaced); a managed driver with no config file at all
+  one it didn't generate, HAProxy's that it also writes `bellhop.map`
+  beside the file and refuses one it didn't generate, Traefik's that its
+  file provider must watch the directory and that a file it didn't
+  generate is likewise refused, Caddy's that only
+  the managed section is replaced); a managed driver with no config file at all
   (`defaultConfigPath: null` -- issue #31, the Nginx Proxy Manager driver,
   which reconciles over REST instead) hides the config path field the same
   way a driver that manages no proxy does, since there is no file for the
@@ -2851,12 +3179,18 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   never actually reachable before a real driver had `defaultConfigPath:
   null` to trigger it. Every managed driver shows Status page path only
   when its `suggestedStatusPagePath` is non-null (`null` for Nginx Proxy
-  Manager too, since it has no document root to serve one from; the Caddy
-  admin-API driver, issue #26, has no file but does suggest one, so it
-  shows Status page path alone), and shows the two TLS fields only when
-  `usesSharedCertificate` is true (`showTlsFields`; nginx only, issue #30
-  -- driver metadata, never an id comparison in the page); an unrecognized id (never reachable through the
-  dropdown itself, but defensive) hides all of them. The TLS fields also
+  Manager, HAProxy, and Traefik too, since none of the three has a
+  document root to serve one from; the Caddy admin-API driver, issue #26,
+  has no file but does suggest one, so it shows Status page path alone),
+  and shows the two TLS fields only when `usesSharedCertificate` is true
+  (`showTlsFields`; nginx only, issue #30 -- driver metadata, never an id
+  comparison in the page), and (issue #35) shows the Proxy cert
+  resolver/Proxy API URL fields only when `usesCertResolver`/`usesApiUrl`
+  are true respectively (`showCertResolverField`/`showApiUrlField`;
+  Traefik only today, same metadata-driven pattern); an unrecognized id
+  (never reachable through the
+  dropdown itself, but defensive) hides all of them. The TLS and
+  cert-resolver/API-URL fields also
   stay hidden until the driver list has loaded, since unlike the other two
   they mean nothing for the default driver. Until the driver list has
   loaded (or if the load fails) the
