@@ -404,6 +404,92 @@ test('an unanswered prompt auto-cancels the job after the configured abandon dur
   store.close();
 });
 
+// Issue #52 Unit 2 (US2/FR-012): the stall tier is JobSSHClient's one
+// backstop with no actual evidence a question is waiting, so once new
+// meaningful output arrives there is nothing left for the pause to be
+// guarding against -- it clears itself the same way a dismissal would,
+// stopping the abandon countdown that would otherwise cancel a job that is,
+// in fact, still working.
+test('a stall pause cleared by new output returns the job to running, emits prompt-cleared, and the abandon timeout never fires', async () => {
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  let onChunkCb: ((chunk: string, stream: 'stdout' | 'stderr') => void) | undefined;
+  let resolveExec: ((result: ExecResult) => void) | undefined;
+  const ssh: SSHClient = {
+    exec: (_target: SshTarget, _command: string, onChunk) => {
+      onChunkCb = onChunk;
+      return new Promise((resolve) => {
+        resolveExec = resolve;
+      });
+    },
+    execInteractive: () => Promise.reject(new Error('not used in this fixture')),
+    putFile: () => Promise.resolve(),
+  };
+  let fireCheck: (() => void) | undefined;
+  const runner = new JobRunner(store, log, ssh, {
+    // Deliberately short -- long enough for the stall pause to clear and
+    // the timer to be cancelled, short enough that the test would observe
+    // it firing (a cancelled job) if it somehow stayed armed.
+    abandonPromptMs: 20,
+    promptScheduleCheck: (fn) => {
+      fireCheck = fn;
+      return { cancel: () => { fireCheck = undefined; } };
+    },
+  });
+
+  const clearedEvents: Array<{ jobId: number }> = [];
+  runner.events.on('prompt-cleared', (p) => clearedEvents.push(p));
+  const statusEvents: Array<{ jobId: number; status: string }> = [];
+  runner.events.on('status', (p) => statusEvents.push(p));
+
+  const id = runner.enqueue({
+    command: 'install-app',
+    category: 'provisioning',
+    argsJson: '{}',
+    watchForPrompts: true,
+    run: async (jobSsh) => {
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    },
+  });
+
+  await waitForStatus(runner, id, 'running');
+  onChunkCb?.('Configuring the database\n', 'stdout');
+  // Three fires walk tier 0 -> tier 1 -> tier 2 (stall): nothing in this
+  // text matches an expected hint or either heuristic along the way.
+  fireCheck?.();
+  fireCheck?.();
+  fireCheck?.();
+
+  assert.equal(store.get(id)?.status, 'awaiting_input');
+  assert.equal(store.get(id)?.promptOrigin, 'stall');
+
+  const statusEventsBeforeClear = statusEvents.length;
+
+  // New meaningful output arrives while the stall pause is still waiting --
+  // FR-012 says this clears the pause exactly like a dismissal, well
+  // within the 20ms abandon window configured above.
+  onChunkCb?.('Service is now responding\n', 'stdout');
+
+  assert.equal(clearedEvents.length, 1);
+  assert.equal(store.get(id)?.status, 'running');
+  assert.ok(statusEvents.slice(statusEventsBeforeClear).some((e) => e.jobId === id && e.status === 'running'));
+
+  // Give the (deliberately short) abandon window time to have fired if the
+  // pause had somehow stayed armed -- it must not have, since it already
+  // cleared above and the clearTimeout in onPromptCleared ran synchronously.
+  await delay(40);
+  assert.equal(store.get(id)?.status, 'running');
+  assert.equal(clearedEvents.length, 1, 'no second prompt-cleared from an abandon timeout that should never have fired');
+
+  resolveExec?.({ stdout: '', stderr: '', code: 0 });
+  await waitForFinished(runner, id);
+  assert.equal(store.get(id)?.status, 'success');
+
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
 test('answerPrompt and dismissPrompt return false for an unknown or non-awaiting job id', async () => {
   const { runner } = makeRunner();
   assert.equal(runner.answerPrompt(999, 'y'), false);

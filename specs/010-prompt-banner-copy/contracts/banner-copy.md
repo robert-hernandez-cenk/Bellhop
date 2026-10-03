@@ -9,7 +9,7 @@ verbatim.
 | `expected`, otherwise | `Matches a known prompt in this app's install script.` | ordinary | `Ignore — keep waiting` | dismiss |
 | `heuristic`, `expectedCount > 0` | `Looks like a question, but it doesn't match any prompt in this app's install script — it may not be one.` | ordinary | `Not a question — keep waiting` | none |
 | `heuristic`, `expectedCount === 0` | `Looks like a question, but there were no known prompts for this app to check it against — it may not be one.` | ordinary | `Not a question — keep waiting` | none |
-| `stall` | `Output stopped for 5 minutes and this does not match any known prompt — it may not be a question at all. The line above is the last output received. Choose "Not a question — keep waiting" to keep waiting, or answer if it is in fact a prompt.` | strong | `Not a question — keep waiting` | answers (Yes, No, Submit) |
+| `stall` | `No new output for 5 minutes (repeating progress or spinner lines don't count) and this does not match any known prompt — it may not be a question at all. The line above is the last new output. Choose "Not a question — keep waiting" to keep waiting, or answer if it is in fact a prompt.` | strong | `Not a question — keep waiting` | answers (Yes, No, Submit) |
 | no origin on the page (`null`; the server reports a stored NULL as `heuristic`) | none | — | `Not a question — keep waiting` | none |
 
 Unchanged: the prompt text line, the Yes/No/free-text controls and their

@@ -49,7 +49,7 @@ const BANNER_VIEWS: Record<PromptOrigin | 'none', BannerEntry> = {
   }),
   stall: () => ({
     hint:
-      `Output stopped for 5 minutes and this does not match any known prompt — it may not be a question at all. The line above is the last output received. Choose "${NOT_A_QUESTION_LABEL}" to keep waiting, or answer if it is in fact a prompt.`,
+      `No new output for 5 minutes (repeating progress or spinner lines don't count) and this does not match any known prompt — it may not be a question at all. The line above is the last new output. Choose "${NOT_A_QUESTION_LABEL}" to keep waiting, or answer if it is in fact a prompt.`,
     hintStrong: true,
     dismissLabel: NOT_A_QUESTION_LABEL,
     quiet: 'answers',

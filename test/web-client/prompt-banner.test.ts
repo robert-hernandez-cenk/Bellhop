@@ -39,7 +39,7 @@ test("promptBannerView('stall', ...) names the dismiss control by its own label 
   const view = promptBannerView('stall', null, 0);
   assert.equal(
     view.hint,
-    'Output stopped for 5 minutes and this does not match any known prompt — it may not be a question at all. The line above is the last output received. Choose "Not a question — keep waiting" to keep waiting, or answer if it is in fact a prompt.',
+    `No new output for 5 minutes (repeating progress or spinner lines don't count) and this does not match any known prompt — it may not be a question at all. The line above is the last new output. Choose "Not a question — keep waiting" to keep waiting, or answer if it is in fact a prompt.`,
   );
   assert.equal(view.hintStrong, true);
   assert.equal(view.dismissLabel, 'Not a question — keep waiting');

@@ -1,0 +1,272 @@
+// Separates real installer output from a redrawing spinner, so the prompt
+// detection in JobSSHClient can treat redraws as silence. Issue #52.
+//
+// community-scripts' host-side build.func spinner rewrites its status line
+// about ten times a second (`\r\x1b[2K⠋ <status text>`) and can keep doing so
+// for an entire install. Before this module, every frame counted as new
+// output, so the silence tiers never ran and a `read -p` prompt printed under
+// the spinner hung the job indefinitely. Here each line (split on `\r` and
+// `\n`) is keyed on its text alone and compared with the recently seen lines:
+// a frame repeating a recent line is a redraw and carries no information, so
+// it never restarts the checks and never becomes the line they test.
+//
+// No I/O and no timers -- JobSSHClient owns both. One instance per watched
+// exec() call.
+
+// Same escape-sequence pattern useJobStream.ts's stripAnsi() strips for
+// display (duplicated, not shared -- web-client is a fully separate build,
+// see CLAUDE.md's "sortInventoryForFile" precedent for this pattern).
+// Community-scripts' whiptail-based build.func emits real color/cursor
+// control codes even over a non-interactive-looking pty, so output needs
+// this stripped before either matching against it or handing it to the
+// operator as promptText. Moved here from job-ssh-client.ts for issue #52,
+// since line keys are built from it too.
+export const ANSI_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][A-Za-z0-9]|[78]|[@-Z\\^_])/g;
+
+// An escape sequence a chunk boundary cut short: ANSI_ESCAPE can't match it
+// yet, and without this its leftover bytes (`[2` of `\x1b[2K`) would read as
+// text and make half of a spinner frame look like new output.
+const INCOMPLETE_ESCAPE_AT_END = /\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b]*|[()])?$/;
+// Spinner glyphs, check marks, bullets and indentation -- anything before the
+// first letter or digit is decoration, not content.
+const LEADING_DECORATION = /^[^\p{L}\p{N}]+/u;
+
+const TAIL_CHARS = 200;
+// FR-011: memory stays bounded however long the job runs.
+const MAX_TRANSCRIPT_CHARS = 16 * 1024;
+// Enough for a spinner alternating with a few other status lines (research
+// R2); the spec's floor is 8. Exported so src/mcp/elicitation.ts's dialog
+// context drops redraws by the same rule.
+export const RECENT_KEY_LIMIT = 16;
+// Braille spinner glyphs (U+2800-U+28FF) and whitespace: what is left of a
+// line once these are gone decides whether a line with no letters or digits
+// says anything at all.
+const SPINNER_GLYPHS_AND_SPACE = /[⠀-⣿\s]+/g;
+
+// A line's identity for redraw detection: its text with ANSI codes, leading
+// decoration and whitespace runs ignored. Digits are kept on purpose
+// (operator decision): a ticking percentage is real progress, and collapsing
+// it would let a long download raise a false stall.
+//
+// A line with no letters or digits at all (bash select's `#? `, a
+// `read -p "> "`) keys on its punctuation instead, so it still counts as
+// output. Only a line of nothing but Braille spinner glyphs and whitespace
+// is keyless, which makes it a redraw.
+export function lineKey(text: string): string {
+  const stripped = text.replace(ANSI_ESCAPE, '');
+  const key = stripped.replace(LEADING_DECORATION, '').replace(/\s+/g, ' ').trim();
+  if (key.length > 0) return key;
+  return stripped.replace(SPINNER_GLYPHS_AND_SPACE, '');
+}
+
+// Makes key the most recent entry of recent, keeping at most
+// RECENT_KEY_LIMIT distinct keys. A line whose key is empty or already in
+// recent is a redraw.
+export function rememberKey(recent: string[], key: string): void {
+  const existing = recent.indexOf(key);
+  if (existing !== -1) recent.splice(existing, 1);
+  recent.push(key);
+  if (recent.length > RECENT_KEY_LIMIT) recent.shift();
+}
+
+function tail(text: string): string {
+  return text.length > TAIL_CHARS ? text.slice(-TAIL_CHARS) : text;
+}
+
+export class OutputActivity {
+  // The meaningful transcript: committed meaningful lines, each followed by
+  // its ending (`\n` for a newline, `\r` for a line overwritten in place),
+  // plus the unfinished line once it is meaningful. Redraw lines and their
+  // endings never enter it. Append-only apart from dropping text at the
+  // front (trimming, consumeThrough); `trimmed` counts everything dropped,
+  // so a position from mark() stays valid however much is dropped later.
+  private text = '';
+  private trimmed = 0;
+  // The raw unfinished line from its start, and whether it has been judged
+  // meaningful (and so is already being appended to `text`). Sticky: once a
+  // line has said something new, more characters can't make it a redraw.
+  private partial = '';
+  private partialMeaningful = false;
+  // A `\r` that ended the last chunk. Held back until the next character,
+  // because a pty sends a newline as `\r\n` and the two halves can arrive in
+  // separate chunks -- committing it as an in-place overwrite too early would
+  // leave a finished line looking like a waiting prompt.
+  private pendingCarriageReturn = false;
+  private recentKeys: string[] = [];
+  // Keys of prompts already reported and then answered or dismissed. A line
+  // whose key starts with one is never a redraw, so a script that re-asks
+  // the same question after an invalid answer is caught again -- even though
+  // the pty echoed the answer onto the first asking (`Enter port: abc`),
+  // which the re-asked `Enter port: ` would otherwise merely extend.
+  private exemptKeys: string[] = [];
+
+  get length(): number {
+    return this.text.length;
+  }
+
+  // An absolute position in everything the transcript has ever held, for
+  // consumeThrough(). Later trimming does not move it.
+  mark(): number {
+    return this.trimmed + this.text.length;
+  }
+
+  // Drops the transcript up to a position from mark() (output a pause has
+  // already reported), clamped to what is still retained. It may cut into
+  // the unfinished line; the rest of that line stays. The recent lines are
+  // kept, so a spinner is still a redraw after a resume.
+  consumeThrough(mark: number): void {
+    const count = Math.max(0, Math.min(mark - this.trimmed, this.text.length));
+    this.text = this.text.slice(count);
+    this.trimmed += count;
+  }
+
+  // Called with a reported prompt's text once the operator answers or
+  // dismisses it. Not for a stall: its text may be the spinner line itself,
+  // and exempting that would make every later frame count as output.
+  exemptFromRedraw(text: string): void {
+    const key = lineKey(text);
+    if (key.length > 0) rememberKey(this.exemptKeys, key);
+  }
+
+  // Returns true when the chunk added meaningful text: a new line, or more of
+  // a line that is already meaningful. A line ending alone returns false, so
+  // the `\r` the next spinner frame uses to overwrite a prompt does not count
+  // as activity -- only a newline after meaningful text does.
+  push(chunk: string): boolean {
+    let active = false;
+    let segmentStart = 0;
+    for (let i = 0; i < chunk.length; i += 1) {
+      const char = chunk[i];
+      if (char !== '\r' && char !== '\n') continue;
+      if (i > segmentStart) active = this.appendText(chunk.slice(segmentStart, i)) || active;
+      segmentStart = i + 1;
+      if (char === '\n') {
+        this.pendingCarriageReturn = false;
+        active = this.commitLine('\n') || active;
+      } else {
+        // A run of `\r`s is one ending (`\r\r\n` is still a newline).
+        if (this.pendingCarriageReturn) continue;
+        this.pendingCarriageReturn = true;
+      }
+    }
+    if (segmentStart < chunk.length) active = this.appendText(chunk.slice(segmentStart)) || active;
+    this.trim();
+    return active;
+  }
+
+  candidate(): string {
+    if (this.text.endsWith('\n')) return '';
+    const withoutOverwrite = this.text.replace(/\r+$/, '');
+    const boundary = Math.max(withoutOverwrite.lastIndexOf('\n'), withoutOverwrite.lastIndexOf('\r'));
+    return tail(withoutOverwrite.slice(boundary + 1).replace(ANSI_ESCAPE, ''));
+  }
+
+  lastLine(): string {
+    const lines = this.text
+      .replace(ANSI_ESCAPE, '')
+      .split(/[\r\n]+/)
+      .filter((line) => line.trim().length > 0);
+    const last = lines[lines.length - 1];
+    return last === undefined ? '' : tail(last);
+  }
+
+  private appendText(segment: string): boolean {
+    let active = false;
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      // A line still a prefix of a recent one while unfinished can turn out
+      // to be new once it ends; that commit adds to the transcript, so it has
+      // to count as activity too.
+      active = this.commitLine('\r');
+    }
+    // Bound the raw line too: a line that never ends and never becomes
+    // meaningful would otherwise grow without limit. Its key is decided long
+    // before 16 KiB, so the dropped text cannot change the verdict.
+    if (this.partial.length < MAX_TRANSCRIPT_CHARS) {
+      this.partial += segment.slice(0, MAX_TRANSCRIPT_CHARS - this.partial.length);
+    }
+    if (this.partialMeaningful) {
+      this.text += segment;
+      return true;
+    }
+    // An unfinished line is still a redraw while it is a prefix of a recent
+    // line, which is what makes a frame split across two chunks a redraw in
+    // both halves.
+    const key = lineKey(this.partial.replace(INCOMPLETE_ESCAPE_AT_END, ''));
+    if (key.length === 0) return active;
+    if (!this.isExempt(key) && this.recentKeys.some((recent) => recent.startsWith(key))) return active;
+    this.partialMeaningful = true;
+    this.text += this.newPart(key);
+    return true;
+  }
+
+  // `read -rp` prints at the cursor, which sits at the end of the spinner's
+  // last frame, so the prompt usually arrives on the same line as
+  // `⠋ <status>`. Only the text after the repeated status is new; keeping
+  // the status would put it in front of the prompt the operator is shown.
+  // Returns the raw line from where it diverges from the longest recent line
+  // it extends (keeping the new part's own leading whitespace), or the whole
+  // raw line when it extends none.
+  //
+  // Only a line that starts with a glyph or other non-space decoration (a
+  // spinner frame) is cut this way. An ordinary line that merely begins with
+  // an earlier line's text -- `Unpacking 10` after `Unpacking 1` -- is
+  // genuinely new and keeps its whole text.
+  private newPart(key: string): string {
+    const decoration = LEADING_DECORATION.exec(this.partial.replace(ANSI_ESCAPE, ''))?.[0] ?? '';
+    if (!/\S/.test(decoration)) return this.partial;
+    let extended = '';
+    for (const recent of this.recentKeys) {
+      if (recent.length > extended.length && key.length > recent.length && key.startsWith(recent)) extended = recent;
+    }
+    if (extended.length === 0) return this.partial;
+    // Normalizing only removes or collapses characters, so the raw prefix
+    // matching `extended` is at least that long. The first raw prefix whose
+    // key equals it ends right after its last character.
+    for (let end = extended.length; end <= this.partial.length; end += 1) {
+      if (lineKey(this.partial.slice(0, end)) === extended) return this.partial.slice(end);
+    }
+    return this.partial;
+  }
+
+  private commitLine(ending: '\n' | '\r'): boolean {
+    const key = lineKey(this.partial);
+    let active = false;
+    if (this.partialMeaningful) {
+      this.text += ending;
+      this.remember(key);
+      active = ending === '\n';
+    } else if (key.length > 0 && (this.isExempt(key) || !this.recentKeys.includes(key))) {
+      // Only reachable for a line that was a prefix of a recent one while
+      // unfinished and stopped short of it -- a complete line is judged on
+      // exact equality.
+      this.text += this.partial + ending;
+      this.remember(key);
+      active = true;
+    } else if (ending === '\n' && this.text.endsWith('\r')) {
+      // A redraw ended by a newline (msg_ok's `\r\x1b[2K✔ <status>\n` after
+      // msg_info's spinner) moves the terminal past the line the spinner
+      // overwrote in place, so that line is finished output, no longer a
+      // waiting prompt. Same length, so positions from mark() still hold.
+      this.text = `${this.text.slice(0, -1)}\n`;
+    }
+    this.partial = '';
+    this.partialMeaningful = false;
+    return active;
+  }
+
+  private remember(key: string): void {
+    rememberKey(this.recentKeys, key);
+  }
+
+  private isExempt(key: string): boolean {
+    return this.exemptKeys.some((exempt) => key.startsWith(exempt));
+  }
+
+  private trim(): void {
+    const excess = this.text.length - MAX_TRANSCRIPT_CHARS;
+    if (excess <= 0) return;
+    this.text = this.text.slice(excess);
+    this.trimmed += excess;
+  }
+}

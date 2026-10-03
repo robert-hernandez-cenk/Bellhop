@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import type { ElicitRequestFormParams, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import type { JobRow } from '../web/jobs/job-store.ts';
-import { ANSI_ESCAPE, type PromptOrigin } from '../web/jobs/job-ssh-client.ts';
+import type { PromptOrigin } from '../web/jobs/job-ssh-client.ts';
+import { ANSI_ESCAPE, lineKey, rememberKey } from '../web/jobs/output-activity.ts';
 
 export const ELICITATION_CONTEXT_LINES = 20;
 const ANSWER_TITLE_PROMPT_CHARS = 80;
@@ -40,7 +41,8 @@ export function buildElicitationSchema(job: JobRow): ElicitRequestFormParams['re
 const ORIGIN_NOTES: Record<PromptOrigin, string> = {
   expected: 'The installer is asking a question it is known to ask.',
   heuristic: 'The installer went quiet after output that looks like a question.',
-  stall: 'The installer has printed nothing for 5 minutes. This may not be a real question; it could still be working.',
+  stall:
+    "The installer has printed no new output for 5 minutes (repeating progress or spinner lines don't count), and the text above is the last new output. This may not be a real question; it could still be working.",
 };
 
 // community-scripts' spinner redraws its line once per frame ("⠋ Installing
@@ -49,19 +51,28 @@ const ORIGIN_NOTES: Record<PromptOrigin, string> = {
 const IN_PLACE_REDRAW = /\r|\x1b\[2K/g;
 const SPINNER_FRAME = /^\s*[⠀-⣿]\s+/;
 
+// Drops redraws by the job's own rule (output-activity.ts, issue #52): a line
+// whose key is empty or repeats one of the last RECENT_KEY_LIMIT distinct
+// lines kept, so the dialog's context matches what prompt detection counted
+// -- a check mark repeating the spinner's status, or a spinner alternating
+// between two status lines, adds nothing.
 export function lastLines(log: string, n: number): string {
   const kept: string[] = [];
+  const recentKeys: string[] = [];
   for (const raw of log.replace(IN_PLACE_REDRAW, '\n').replace(ANSI_ESCAPE, '').split('\n')) {
     const line = raw.replace(SPINNER_FRAME, '').trimEnd();
-    // Consecutive repeats (a run of frames, a run of blank lines) add nothing.
-    // Each redraw also leaves a blank line behind, so a repeat separated from
-    // its previous copy only by blanks counts as consecutive too.
-    let last = kept.length - 1;
-    while (line !== '' && last >= 0 && kept[last] === '') last--;
-    if (last >= 0 && kept[last] === line) {
-      kept.length = last + 1;
+    if (line.trim() === '') {
+      // A run of blank lines is one.
+      if (kept.length > 0 && kept[kept.length - 1] !== '') kept.push('');
       continue;
     }
+    const key = lineKey(line);
+    if (key.length === 0 || recentKeys.includes(key)) {
+      // Each redraw also leaves a blank line behind; drop it with the frame.
+      while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
+      continue;
+    }
+    rememberKey(recentKeys, key);
     kept.push(line);
   }
   while (kept[0] === '') kept.shift();

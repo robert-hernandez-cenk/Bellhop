@@ -546,3 +546,506 @@ test('output arriving during a pause is retained and visible to the matcher afte
   resolveExec?.({ stdout: '', stderr: '', code: 0 });
   await promise;
 });
+
+// Issue #52: community-scripts' host-side spinner redraws its status line
+// about ten times a second for the whole install, so output never went quiet
+// and a prompt printed under it was never checked. Redraws now count as
+// silence (src/web/jobs/output-activity.ts).
+
+const SPINNER_STATUS = 'Skipping host LXC stack upgrade prompt (unattended mode)';
+const SPINNER_GLYPHS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+function spinnerFrame(index: number): string {
+  return `\r\x1b[2K${SPINNER_GLYPHS[index % SPINNER_GLYPHS.length]} ${SPINNER_STATUS}`;
+}
+
+// Stays pending like the mid-exec fixtures above, and hands back the chunk
+// callback so a test can stream as many chunks as it likes into one exec().
+function streamingInner() {
+  let onChunk: ((chunk: string, stream: 'stdout' | 'stderr') => void) | undefined;
+  let resolveExec: ((result: ExecResult) => void) | undefined;
+  const inner: SSHClient = {
+    exec: (_target: SshTarget, _command: string, onChunkCb) => {
+      onChunk = onChunkCb;
+      return new Promise((resolve) => {
+        resolveExec = resolve;
+      });
+    },
+    execInteractive: () => Promise.reject(new Error('not used in this fixture')),
+    putFile: () => Promise.resolve(),
+  };
+  return {
+    inner,
+    send: (...chunks: string[]) => {
+      for (const chunk of chunks) onChunk?.(chunk, 'stdout');
+    },
+    finish: () => resolveExec?.({ stdout: '', stderr: '', code: 0 }),
+  };
+}
+
+const MARIADB_PROMPTS = ['${TAB3}Would you like to add PhpMyAdmin? <y/N> ', '${TAB3}Enter the MariaDB root password: '];
+
+test('a pre-scanned prompt printed under a running spinner fires at the first tier, and later frames do not re-arm it', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  const { scheduleCheck, delays, pending, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, _resume, origin, matchedIndex) =>
+      detected.push({ text, origin, matchedIndex }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 20; i += 1) send(spinnerFrame(i));
+  send('\r\n   Would you like to add PhpMyAdmin? <y/N> ');
+  const armedForPrompt = pending[pending.length - 1];
+  const armsBeforeFrames = delays.length;
+
+  for (let i = 20; i < 60; i += 1) send(spinnerFrame(i));
+
+  assert.equal(delays.length, armsBeforeFrames, 'spinner frames after the prompt must not re-arm a tier');
+  assert.equal(armedForPrompt.cancelled, false);
+  assert.equal(armedForPrompt.ms, 2000);
+
+  fireLatest();
+
+  assert.deepEqual(detected, [
+    { text: '   Would you like to add PhpMyAdmin? <y/N> ', origin: 'expected', matchedIndex: 0 },
+  ]);
+
+  finish();
+  await promise;
+});
+
+test('after answering, a second pre-scanned prompt under the same spinner fires with its own index', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 10; i += 1) send(spinnerFrame(i));
+  send('\r\n   Would you like to add PhpMyAdmin? <y/N> ');
+  for (let i = 10; i < 20; i += 1) send(spinnerFrame(i));
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  // The operator answers; the pty echoes it and the spinner keeps going.
+  resumeFn?.();
+  send('n\r\n');
+  for (let i = 20; i < 30; i += 1) send(spinnerFrame(i));
+  send('\r\n   Enter the MariaDB root password: ');
+  for (let i = 30; i < 40; i += 1) send(spinnerFrame(i));
+  fireLatest();
+
+  assert.deepEqual(detected, [
+    { text: '   Would you like to add PhpMyAdmin? <y/N> ', origin: 'expected', matchedIndex: 0 },
+    { text: '   Enter the MariaDB root password: ', origin: 'expected', matchedIndex: 1 },
+  ]);
+
+  finish();
+  await promise;
+});
+
+test('a prompt that was not pre-scanned, printed under a running spinner, fires at the second tier as heuristic', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin, matchedIndex) =>
+      detected.push({ text, origin, matchedIndex }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 10; i += 1) send(spinnerFrame(i));
+  send('\r\nContinue? (y/n) ');
+  const armsAtPrompt = delays.length;
+  for (let i = 10; i < 20; i += 1) send(spinnerFrame(i));
+  fireLatest();
+  assert.equal(detected.length, 0, 'tier 0 tests expected hints only');
+  for (let i = 20; i < 30; i += 1) send(spinnerFrame(i));
+  fireLatest();
+
+  assert.deepEqual(delays.slice(armsAtPrompt - 1), [2000, 28000]);
+  assert.deepEqual(detected, [{ text: 'Continue? (y/n) ', origin: 'heuristic', matchedIndex: null }]);
+
+  finish();
+  await promise;
+});
+
+test('a pre-scanned prompt printed onto the end of a spinner frame fires with the bare prompt as its text', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, _resume, origin, matchedIndex) =>
+      detected.push({ text, origin, matchedIndex }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 20; i += 1) send(spinnerFrame(i));
+  // read -rp prints at the cursor, which sits at the end of the last frame.
+  send('   Would you like to add PhpMyAdmin? <y/N> ');
+  const armsBeforeFrames = delays.length;
+  for (let i = 20; i < 60; i += 1) send(spinnerFrame(i));
+  assert.equal(delays.length, armsBeforeFrames, 'spinner frames after the prompt must not re-arm a tier');
+
+  fireLatest();
+
+  assert.deepEqual(detected, [
+    { text: '   Would you like to add PhpMyAdmin? <y/N> ', origin: 'expected', matchedIndex: 0 },
+  ]);
+
+  finish();
+  await promise;
+});
+
+test('resume() still finds a prompt that printed during the pause after more than 16 KiB of output trimmed the transcript', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+  const flood = (from: number) => {
+    for (let i = from; i < from + 800; i += 1) send(`Unpacking package number ${i}\r\n`);
+  };
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  // Fill the transcript to its cap, so the first fire records an offset near
+  // 16 KiB.
+  flood(0);
+  send('   Would you like to add PhpMyAdmin? <y/N> ');
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  // While paused, more than 16 KiB arrives and then the next prompt. Without
+  // the trim adjustment, resume() would consume the full fired offset from
+  // the already-trimmed transcript and take the new prompt with it.
+  flood(1000);
+  send('   Enter the MariaDB root password: ');
+  resumeFn?.();
+  fireLatest();
+
+  assert.deepEqual(detected[1], { text: '   Enter the MariaDB root password: ', origin: 'expected', matchedIndex: 1 });
+
+  finish();
+  await promise;
+});
+
+// Issue #52 Unit 2 (US2): the stall tier is the one backstop that exists
+// purely because nothing else recognised what's on screen, so once new
+// meaningful output arrives there is nothing left for it to be guarding
+// against -- FR-012, an explicit operator decision (spec Assumptions).
+// 'expected'/'heuristic' pauses are confident matches on an actual question
+// and must keep waiting for the operator regardless of what prints next.
+
+test('a meaningful line followed only by spinner redraws of it still reaches the stall tier, showing that line', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin) => detected.push({ text, origin }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('Configuring the database\n');
+  // Redraws of the same text the meaningful line already committed -- a
+  // spinner glyph in front is decoration FR-002 strips before comparing.
+  for (let i = 0; i < 30; i += 1) send(`\r\x1b[2K${SPINNER_GLYPHS[i % SPINNER_GLYPHS.length]} Configuring the database`);
+  fireLatest();
+  fireLatest();
+  fireLatest();
+
+  assert.deepEqual(delays, [2000, 28000, 270000]);
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].origin, 'stall');
+  assert.equal(detected[0].text, 'Configuring the database');
+
+  finish();
+  await promise;
+});
+
+test('a stall pause clears itself on new meaningful output -- calling onPromptCleared once and re-arming tier 0 -- but spinner-only redraws during the pause do not clear it', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  let clearedCount = 0;
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin) => detected.push({ text, origin }),
+    onPromptCleared: () => {
+      clearedCount += 1;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('Configuring the database\n');
+  fireLatest();
+  fireLatest();
+  fireLatest();
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].origin, 'stall');
+
+  const armsAtStall = delays.length;
+
+  // Spinner-only output while the stall pause is waiting must not clear it:
+  // push() already judged each of these a redraw, so watchChunk's
+  // meaningful flag is false and the auto-clear never even considers them.
+  for (let i = 0; i < 10; i += 1) send(`\r\x1b[2K${SPINNER_GLYPHS[i % SPINNER_GLYPHS.length]} Configuring the database`);
+  assert.equal(clearedCount, 0);
+  assert.equal(delays.length, armsAtStall, 'a redraw during a stall pause must not re-arm anything');
+
+  // Genuinely new output clears the pause and re-arms from tier 0.
+  send('Running migrations\n');
+  assert.equal(clearedCount, 1);
+  assert.equal(delays.length, armsAtStall + 1);
+  assert.equal(delays[delays.length - 1], 2000, 're-armed at tier 0');
+
+  finish();
+  await promise;
+});
+
+test('an expected or heuristic pause is NOT cleared by new meaningful output -- only a stall pause auto-clears', async () => {
+  // 'expected' pause.
+  {
+    const detected: Array<{ origin: string }> = [];
+    let clearedCount = 0;
+    const { scheduleCheck, fireLatest } = tieredScheduler();
+    const { inner, send, finish } = streamingInner();
+    const client = new JobSSHClient(inner, () => {}, undefined, {
+      watchForPrompts: true,
+      expectedPrompts: ['Enter the API token: '],
+      onPromptDetected: (_text, _expected, _write, _resume, origin) => detected.push({ origin }),
+      onPromptCleared: () => {
+        clearedCount += 1;
+      },
+      scheduleCheck,
+    });
+
+    const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    send('Enter the API token: ');
+    fireLatest();
+    assert.equal(detected.length, 1);
+    assert.equal(detected[0].origin, 'expected');
+
+    send('a brand new meaningful line\n');
+    assert.equal(clearedCount, 0, 'an expected-origin pause must not auto-clear on new output');
+
+    finish();
+    await promise;
+  }
+
+  // 'heuristic' pause.
+  {
+    const detected: Array<{ origin: string }> = [];
+    let clearedCount = 0;
+    const { scheduleCheck, fireLatest } = tieredScheduler();
+    const { inner, send, finish } = streamingInner();
+    const client = new JobSSHClient(inner, () => {}, undefined, {
+      watchForPrompts: true,
+      onPromptDetected: (_text, _expected, _write, _resume, origin) => detected.push({ origin }),
+      onPromptCleared: () => {
+        clearedCount += 1;
+      },
+      scheduleCheck,
+    });
+
+    const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    send('Continue? (y/n) ');
+    fireLatest();
+    fireLatest();
+    assert.equal(detected.length, 1);
+    assert.equal(detected[0].origin, 'heuristic');
+
+    send('a brand new meaningful line\n');
+    assert.equal(clearedCount, 0, 'a heuristic-origin pause must not auto-clear on new output');
+
+    finish();
+    await promise;
+  }
+});
+
+// Final review, findings 1+5: resume() used to forget every recent line, so
+// the first spinner frame after an answer looked new, committed a second
+// prompt printed before it with `\r`, and became the line the tiers tested.
+test('after answering, a second pre-scanned prompt printed before the next spinner frame still fires with its own index', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 10; i += 1) send(spinnerFrame(i));
+  send('\r\n   Would you like to add PhpMyAdmin? <y/N> ');
+  for (let i = 10; i < 20; i += 1) send(spinnerFrame(i));
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  resumeFn?.();
+  send('n\r\n');
+  send('   Enter the MariaDB root password: ');
+  for (let i = 20; i < 30; i += 1) send(spinnerFrame(i));
+  fireLatest();
+
+  assert.deepEqual(detected[1], { text: '   Enter the MariaDB root password: ', origin: 'expected', matchedIndex: 1 });
+
+  finish();
+  await promise;
+});
+
+test('a prompt re-asked word for word after an invalid answer fires again', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  let writeFn: ((text: string) => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: ['Enter port: '],
+    onPromptDetected: (text, _expected, write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+      writeFn = write;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('Enter port: ');
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  // The operator answers -- JobRunner.answerPrompt writes the answer, then
+  // resumes -- so the reported prompt is exempted from redraw detection and
+  // a verbatim re-ask after an invalid answer still counts as new output.
+  writeFn?.('abc\n');
+  resumeFn?.();
+  // The pty echoes the answer onto the prompt's line.
+  send('abc\r\n');
+  send('Invalid port\r\n');
+  send('Enter port: ');
+  fireLatest();
+
+  assert.deepEqual(detected[1], { text: 'Enter port: ', origin: 'expected', matchedIndex: 0 });
+
+  finish();
+  await promise;
+});
+
+// Issue #52 follow-up: a dismissed pause (JobRunner.dismissPrompt calls only
+// resume(), never write()) must NOT exempt its reported text from redraw
+// detection. Before this fix, resume() exempted the text whether the
+// operator answered or merely dismissed a false positive -- so a spinner
+// status line that happened to match the trailing-'?' heuristic, once
+// dismissed, had every later frame of that same line counted as "new"
+// meaningful output (since isExempt() short-circuits the redraw check),
+// which re-armed tier 0 forever and kept the stall tier from ever running --
+// the original hang this issue was about.
+test('dismissing a false-positive pause on a spinner status line does not exempt its text, so later frames of the same line stay redraws and tier 0 stops re-arming', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, resume, origin) => {
+      detected.push({ text, origin });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  // The spinner's own status line happens to end in '?' -- a false positive
+  // for the trailing-'?' heuristic.
+  send('\r\x1b[2K⠋ Is network ready?');
+  fireLatest(); // tier 0: no expected hints configured -> arms tier 1
+  fireLatest(); // tier 1: trailing '?' matches -> fires
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].origin, 'heuristic');
+
+  const armsAtFire = delays.length;
+
+  // The operator dismisses it as not a real question -- resume() only, no
+  // write() call.
+  resumeFn?.();
+  // resume() always re-arms tier 0 once on its own; that one rearm is
+  // expected and not the bug under test.
+  assert.equal(delays.length, armsAtFire + 1);
+  const armsAfterResume = delays.length;
+
+  // More spinner frames of the exact same status line. Under the bug, these
+  // each counted as new meaningful output (exempted from redraw) and kept
+  // re-arming tier 0 -- forever, since the spinner never stops on its own.
+  for (let i = 1; i <= 10; i += 1) {
+    send(`\r\x1b[2K${SPINNER_GLYPHS[i % SPINNER_GLYPHS.length]} Is network ready?`);
+  }
+
+  assert.equal(
+    delays.length,
+    armsAfterResume,
+    'further frames of the dismissed spinner line must not re-arm tier 0'
+  );
+
+  finish();
+  await promise;
+});
+
+// Final review, finding 3: a punctuation-only prompt (bash `select`'s `#? `)
+// has no letters or digits, and must not be mistaken for a glyph-only redraw.
+test('a bash select prompt (#? ) after its menu fires at the second tier as heuristic', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin) => detected.push({ text, origin }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('1) stable\r\n2) beta\r\n#? ');
+  fireLatest();
+  fireLatest();
+
+  assert.deepEqual(delays, [2000, 28000]);
+  assert.deepEqual(detected, [{ text: '#? ', origin: 'heuristic' }]);
+
+  finish();
+  await promise;
+});
