@@ -123,6 +123,8 @@ behaves.
 - [Environment variables](docs/environment-variables.md) — overrides and
   the local `data/*.env` files.
 - [Web UI](docs/web-ui.md) — running the dashboard and how it authenticates.
+- [Permissions](docs/permissions.md) — per-group allow-lists/block-lists and
+  a guest creator's automatic access to it.
 - [MCP server](docs/mcp-server.md) — Bellhop's operations as tools for an AI
   assistant.
 - [Authentik](docs/authentik.md) — running without it, and gating apps
