@@ -9,7 +9,7 @@ import { getScriptCatalog } from '../../lib/script-catalog.ts';
 import type { GoBuilder } from '../../lib/go-build.ts';
 import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
-import { isResourceAllowed } from '../access.ts';
+import { ANONYMOUS_CALLER, isResourceAllowed } from '../access.ts';
 import { usedMidsByHost } from '../../lib/targets.ts';
 import { resolveActor, resolveTriggeredBy } from '../impersonation.ts';
 import { checkAppUrl } from '../../operations/app-check.ts';
@@ -61,27 +61,27 @@ export function provisioningRoutes(
   // hidden from the caller. Numbers only (contracts/used-mids.md); hosts the
   // caller can't see are left out. Not admin-gated, like the routes above.
   router.get('/used-mids', (req, res) => {
-    const groups = req.user?.groups ?? [];
+    const caller = req.user ?? ANONYMOUS_CALLER;
     const allowed = inventory.hosts
       .map((h) => h.name)
-      .filter((name) => isResourceAllowed(inventoryPath, groups, { type: 'host', name }));
+      .filter((name) => isResourceAllowed(inventoryPath, inventory, caller, { type: 'host', name }));
     res.json({ usedMids: usedMidsByHost(inventory, allowed) });
   });
 
   // canSeeGuest (#54): a VMID-in-use error names the conflicting guest only
-  // when the caller's groups may see it. Groups are captured now, so the
+  // when the caller may see it (creator access included, #58). The caller is captured now, so the
   // job's later apply checks against the requester, not whoever is asking then.
   // actor (issue #53): the signed-in creator, for create-vm's Proxmox grant
   // -- set on preview and apply alike so the preview can name them.
   const deps = (req: Request): OperationDeps => {
-    const groups = req.user?.groups ?? [];
+    const caller = req.user ?? ANONYMOUS_CALLER;
     return {
       ssh,
       inventory,
       inventoryPath,
       authentik,
       cloudflare,
-      canSeeGuest: (name) => isResourceAllowed(inventoryPath, groups, { type: 'guest', name }),
+      canSeeGuest: (name) => isResourceAllowed(inventoryPath, inventory, caller, { type: 'guest', name }),
       actor: resolveActor(req),
       ...testDeps,
     };
@@ -91,8 +91,8 @@ export function provisioningRoutes(
   // the pre-#16 ordering (a blocked caller gets 403, never a parse error).
   function forbidden(req: Request, res: Response, op: Operation): boolean {
     const targetName = op.target(req.body ?? {});
-    const groups = req.user?.groups ?? [];
-    if (targetName && op.targetType && !isResourceAllowed(inventoryPath, groups, { type: op.targetType, name: targetName })) {
+    const caller = req.user ?? ANONYMOUS_CALLER;
+    if (targetName && op.targetType && !isResourceAllowed(inventoryPath, inventory, caller, { type: op.targetType, name: targetName })) {
       res.status(403).json({ error: `forbidden: no access to ${op.targetType} '${targetName}'` });
       return true;
     }

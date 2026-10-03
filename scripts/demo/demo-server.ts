@@ -148,7 +148,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
     // so the headers are in place before attachJobsWebSocket's own listener
     // resolves the user.
     server.prependListener('upgrade', (req) => setDemoIdentity(req.headers));
-    const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, impersonationStore);
+    const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, inventory, impersonationStore);
 
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error) => {

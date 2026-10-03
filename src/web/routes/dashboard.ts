@@ -4,7 +4,7 @@ import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
 import { getGuestStatuses } from '../../lib/guest-status.ts';
-import { filterInventoryForUser, requireResourceAccess } from '../access.ts';
+import { ANONYMOUS_CALLER, filterInventoryForUser, requireResourceAccess } from '../access.ts';
 import { isAdminUser } from '../auth.ts';
 import { authentikConfig, rungsAtOrAbove } from '../../lib/authentik-config.ts';
 import { applyGuestEdits, commitGuestEdit, GuestEditValidationError } from '../../operations/edit-guest.ts';
@@ -130,8 +130,7 @@ export function dashboardRoutes(
 ): Router {
   const router = Router();
   router.get('/inventory', (req, res) => {
-    const groups = req.user?.groups ?? [];
-    const { hosts, guests } = filterInventoryForUser(inventoryPath, groups, inventory);
+    const { hosts, guests } = filterInventoryForUser(inventoryPath, req.user ?? ANONYMOUS_CALLER, inventory);
     // Both-or-neither (see customScriptSource/CLAUDE.md's Settings bullet):
     // null unless both settings are actually set, so the client's
     // communityScriptsUrl never has to re-derive that rule itself. Read
@@ -170,8 +169,7 @@ export function dashboardRoutes(
   });
 
   router.get('/guests/status', async (req, res) => {
-    const groups = req.user?.groups ?? [];
-    const { hosts, guests } = filterInventoryForUser(inventoryPath, groups, inventory);
+    const { hosts, guests } = filterInventoryForUser(inventoryPath, req.user ?? ANONYMOUS_CALLER, inventory);
     // getGuestStatuses still queries every host in inventory.hosts (unfiltered)
     // for connectivity -- a guest could live on a host the caller can't see
     // but is itself still visible, so its parent host must still be reached.
@@ -197,7 +195,7 @@ export function dashboardRoutes(
   // so stay web-specific.
   router.patch(
     '/inventory/guests/:name',
-    requireResourceAccess(inventoryPath, (req) => ({ type: 'guest', name: req.params.name as string })),
+    requireResourceAccess(inventoryPath, inventory, (req) => ({ type: 'guest', name: req.params.name as string })),
     async (req, res) => {
       const current = inventory.guests.find((g) => g.name === req.params.name);
       if (!current) {

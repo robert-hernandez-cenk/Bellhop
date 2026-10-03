@@ -19,7 +19,7 @@ test('connecting to /ws/jobs/:id streams status + chunk events for that job only
 
   const server = http.createServer();
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
-  const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, new Map());
+  const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, { domain: 'example.com', hosts: [], guests: [] }, new Map());
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const port = (server.address() as any).port;
 

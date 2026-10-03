@@ -1288,3 +1288,84 @@ test('PATCH guest flags an adoptable conflict on this guest with authentikConfli
   assert.deepEqual(res2.body.authentikConflicts, ['sonarr']);
   assert.equal('authentikConflictAdoptable' in res2.body, false);
 });
+
+// issue #58 (US1): a restricted creator sees and edits the guest they made.
+// app-users is an allow-list group naming only host pve1; web-lxc was
+// created by test-user.
+function creatorInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true },
+    ],
+    guests: [
+      { name: 'web-lxc', type: 'lxc', vmid: 4005, host: 'pve1', ip: '192.168.1.5', creator: { username: 'test-user' } },
+      { name: 'media', type: 'lxc', vmid: 4006, host: 'pve1', ip: '192.168.1.6' },
+    ],
+  };
+}
+
+async function creatorApp() {
+  const app = testApp(creatorInventory(), (_target, _user, cmd) => {
+    if (cmd.includes('/lxc')) {
+      return { stdout: JSON.stringify([{ vmid: 4005, status: 'running' }, { vmid: 4006, status: 'stopped' }]), stderr: '', code: 0 };
+    }
+    return { stdout: '[]', stderr: '', code: 0 };
+  });
+  await asAdmin(request(app).put('/api/permissions/app-users')).send({
+    mode: 'allow-list',
+    resources: [{ type: 'host', name: 'pve1' }],
+  });
+  return app;
+}
+
+function as(username: string, groups: string, req: request.Test): request.Test {
+  return req.set('x-authentik-username', username).set('x-authentik-groups', groups);
+}
+
+test('GET /api/inventory and /api/guests/status include a created guest for its creator under an allow-list that omits it', async () => {
+  const app = await creatorApp();
+  const inv = await as('test-user', 'app-users', request(app).get('/api/inventory'));
+  assert.equal(inv.status, 200);
+  assert.deepEqual(inv.body.guests.map((g: any) => g.name), ['web-lxc']);
+  assert.deepEqual(inv.body.guests[0].creator, { username: 'test-user' });
+
+  const status = await as('test-user', 'app-users', request(app).get('/api/guests/status'));
+  assert.equal(status.status, 200);
+  assert.deepEqual(status.body.statuses, { 'web-lxc': 'running' });
+});
+
+test('GET /api/inventory and /api/guests/status omit the created guest for another user in the same group', async () => {
+  const app = await creatorApp();
+  const inv = await as('other-user', 'app-users', request(app).get('/api/inventory'));
+  assert.deepEqual(inv.body.guests.map((g: any) => g.name), []);
+
+  const status = await as('other-user', 'app-users', request(app).get('/api/guests/status'));
+  assert.deepEqual(status.body.statuses, {});
+});
+
+test('PATCH /api/inventory/guests/web-lxc is allowed for its creator and 403 for another user', async () => {
+  const app = await creatorApp();
+  const ok = await as('test-user', 'app-users', request(app).patch('/api/inventory/guests/web-lxc')).send({ port: '8080' });
+  assert.equal(ok.status, 200);
+
+  const denied = await as('other-user', 'app-users', request(app).patch('/api/inventory/guests/web-lxc')).send({ port: '8081' });
+  assert.equal(denied.status, 403);
+});
+
+test('a block-list group naming the created guest overrides creator access (explicit block wins)', async () => {
+  const app = await creatorApp();
+  await asAdmin(request(app).put('/api/permissions/blocked')).send({
+    mode: 'block-list',
+    resources: [{ type: 'guest', name: 'web-lxc' }],
+  });
+
+  const inv = await as('test-user', 'app-users|blocked', request(app).get('/api/inventory'));
+  assert.deepEqual(inv.body.guests.map((g: any) => g.name), []);
+
+  const status = await as('test-user', 'app-users|blocked', request(app).get('/api/guests/status'));
+  assert.deepEqual(status.body.statuses, {});
+
+  const denied = await as('test-user', 'app-users|blocked', request(app).patch('/api/inventory/guests/web-lxc')).send({ port: '8080' });
+  assert.equal(denied.status, 403);
+});

@@ -1,4 +1,5 @@
 import { openDb } from './sqlite.ts';
+import type { GuestCreator } from './inventory.ts';
 
 export type PermissionMode = 'allow-list' | 'block-list';
 export type ResourceType = 'host' | 'guest';
@@ -102,6 +103,28 @@ export function clearPermissionGroup(path: string, groupName: string): void {
   }
 }
 
+// The caller fields isGuestCreator reads -- a structural subset of
+// src/web/auth.ts's AuthUser, so a request's req.user fits directly.
+export interface CreatorCaller {
+  username: string;
+  uid?: string;
+  impersonating?: string;
+}
+
+// Whether `caller` is the person recorded as a guest's creator (issue #58).
+// Never true while the caller is impersonating a group: impersonation shows
+// exactly that group's view, so the admin's own creator access must not
+// leak into it. When both sides carry the identity provider's stable uid,
+// the uid decides (a renamed user keeps access; a new user reusing an old
+// name gets none); otherwise the username does. An empty caller username
+// never matches.
+export function isGuestCreator(creator: GuestCreator | undefined, caller: CreatorCaller): boolean {
+  if (caller.impersonating) return false;
+  if (!creator) return false;
+  if (creator.uid && caller.uid) return creator.uid === caller.uid;
+  return caller.username !== '' && creator.username === caller.username;
+}
+
 // Pure, synchronous effective-access computation -- no DB/network calls.
 // A caller's access is the intersection across every group they belong to:
 // a group with no row in `rules` allows everything; an allow-list group
@@ -110,12 +133,25 @@ export function clearPermissionGroup(path: string, groupName: string): void {
 // it via another, more permissive group. Callers needing admin bypass
 // (bellhop-admins / authentik Admins) must check that themselves
 // before calling this -- see src/web/access.ts's isAdmin.
-export function isAllowed(rules: Map<string, GroupPermission>, groups: string[], ref: ResourceRef): boolean {
+//
+// Creator lift (issue #58): `opts.isCreator` (see isGuestCreator) makes an
+// allow-list group treat a *guest* ref as listed, so a guest's creator can
+// reach it without an admin adding it to their group. It never applies to
+// a host ref, and never to a block-list group: an explicit block wins, so
+// an admin can still take a guest away from the person who made it.
+// Omitting `opts` behaves exactly as before.
+export function isAllowed(
+  rules: Map<string, GroupPermission>,
+  groups: string[],
+  ref: ResourceRef,
+  opts: { isCreator?: boolean } = {}
+): boolean {
+  const creatorLift = ref.type === 'guest' && opts.isCreator === true;
   for (const groupName of groups) {
     const perm = rules.get(groupName);
     if (!perm) continue;
     const listed = perm.resources.some((r) => r.type === ref.type && r.name === ref.name);
-    const allowedByThisGroup = perm.mode === 'allow-list' ? listed : !listed;
+    const allowedByThisGroup = perm.mode === 'allow-list' ? listed || creatorLift : !listed;
     if (!allowedByThisGroup) return false;
   }
   return true;
