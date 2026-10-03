@@ -86,6 +86,20 @@ test('lastLines splits spinner frames redrawn in place on one line', () => {
   assert.equal(lastLines(log, 20), 'Fetching release\ntar: Unexpected EOF in archive');
 });
 
+// Final review, finding 6: the dialog's context uses the job's own redraw
+// rule (output-activity.ts), so it shows what the detector counted.
+test('lastLines drops a check-mark line repeating the spinner status', () => {
+  const log = '\x1b[2K⠋ Installing Valkey\r\x1b[2K⠙ Installing Valkey\r\x1b[2K✔ Installing Valkey\nDone\n';
+  assert.equal(lastLines(log, 20), 'Installing Valkey\nDone');
+});
+
+test('lastLines collapses a spinner alternating between two status lines', () => {
+  const log = ['⠋ Fetching release', '⠙ Checking checksum', '⠹ Fetching release', '⠸ Checking checksum', '⠼ Fetching release']
+    .map((frame) => `\r${frame}`)
+    .join('');
+  assert.equal(lastLines(`${log}\nUnpacking\n`, 20), 'Fetching release\nChecking checksum\nUnpacking');
+});
+
 // Claude Code shows only the first few lines of the message (#174).
 test('buildElicitationMessage leads with the trimmed prompt, then the job, then recent output', () => {
   const message = buildElicitationMessage(row({}), 'building\nAdd Adminer? (y/N) ');

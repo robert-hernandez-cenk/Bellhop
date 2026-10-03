@@ -162,8 +162,13 @@ unchanged.
   falling back to the previously reported question as it does today.
 - **FR-008**: After a pause is answered or dismissed, the watcher MUST
   forget what the pause already reported, keep meaningful output that
-  arrived during the pause, restart the checks from the first one, and
-  forget its record of recent lines so a repeated question counts as new.
+  arrived during the pause, and restart the checks from the first one. It
+  MUST keep its record of recent lines, so the spinner stays a redraw.
+  After an answered or dismissed expected or heuristic pause, it MUST
+  treat any line starting with the reported question as new, so a
+  repeated question counts as new. (Revised in the final code review:
+  forgetting every recent line let the first spinner frame after an
+  answer hide the next question.)
 - **FR-009**: The job log MUST keep recording all output, redraws included,
   exactly as today.
 - **FR-010**: Jobs that do not watch for questions MUST be unaffected.

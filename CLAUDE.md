@@ -2442,8 +2442,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   *meaningful* output (issue #52): `src/web/jobs/output-activity.ts`'s
   `OutputActivity` splits the stream on `\r`/`\n` (a pty's `\r\n` is one
   newline) and keys each line by its text with ANSI codes, leading glyphs
-  and whitespace runs ignored. A line whose key is empty or repeats one of
-  the last 16 distinct meaningful lines is a *redraw*, such as the
+  and whitespace runs ignored. A line with no letters or digits (bash
+  `select`'s `#? `) keys on its punctuation instead, so only a line of
+  Braille spinner glyphs and whitespace has an empty key. A line whose key
+  is empty or repeats one of the last 16 distinct meaningful lines is a
+  *redraw*, such as the
   `build.func` spinner that redraws `⠋ Skipping host LXC stack upgrade
   prompt (unattended mode)` about ten times a second for a whole install.
   A redraw never re-arms a tier, and it is kept out of what the tiers
@@ -2452,12 +2455,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   a long download showing only a percentage would raise a false stall.
   The text the tiers test is the last meaningful line unless a newline
   ended it. A prompt the next spinner frame overwrote with `\r` still
-  counts. A prompt printed onto the end of a glyph-led spinner frame has
-  the frame's text stripped, so the operator sees the bare question. The
-  stall text is the last meaningful line. The retained transcript is
-  capped at 16 KiB rather than holding the whole log. `resume()` also
-  forgets the recent lines, so a question re-asked word for word after an
-  invalid answer is caught again. Because spinner-only steps now count as
+  counts, until a redraw ended by a newline (`msg_ok`'s check-mark line)
+  moves past it. A prompt printed onto the end of a glyph-led spinner
+  frame has the frame's text stripped, so the operator sees the bare
+  question. The stall text is the last meaningful line. The retained
+  transcript is capped at 16 KiB rather than holding the whole log.
+  `resume()` keeps the recent lines, so the spinner is still a redraw
+  after an answer and the next prompt stays the line the tiers test.
+  After an expected or heuristic pause (never a stall, whose text may be
+  the spinner line itself) it instead exempts the reported prompt: a line
+  starting with that prompt's text is never a redraw, so a question
+  re-asked word for word after an invalid answer is caught again. The MCP
+  dialog's recent-output context (`lastLines`, `src/mcp/elicitation.ts`)
+  drops redraws by the same rule. Because spinner-only steps now count as
   silent, a long one raises a stall pause. New meaningful output arriving
   while a *stall* pause waits clears it exactly as a dismissal would, so
   the abandon timer can't cancel a job that was still working (the

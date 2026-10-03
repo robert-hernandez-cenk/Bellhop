@@ -58,6 +58,18 @@ a redraw and the question would only surface at the 5-minute stall. The cost
 is that the first spinner frame after a resume counts as one meaningful
 line, which is harmless.
 
+**Superseded in the final code review**: the cost was not harmless. Once
+the keys were forgotten, the first spinner frame after an answer was new,
+so it committed a second prompt printed before it with `\r` and became the
+line the tiers tested. The second prompt then waited for the 5-minute
+stall. `resume()` now keeps the recent keys. After an expected or
+heuristic pause only, it exempts the reported prompt: a line whose key
+starts with that prompt's key is never a redraw. That also covers the pty
+echoing the answer onto the first asking (`Enter port: abc`), which the old
+clearing missed. A stall's text is never exempted, since it may be the
+spinner line itself. `JobSSHClient` now holds an absolute `mark()` and
+calls `consumeThrough()` in place of R4's length/trimmed arithmetic.
+
 ## R4. Keeping existing resume semantics
 
 **Decision**: the module exposes the meaningful transcript as one

@@ -890,3 +890,97 @@ test('an expected or heuristic pause is NOT cleared by new meaningful output -- 
     await promise;
   }
 });
+
+// Final review, findings 1+5: resume() used to forget every recent line, so
+// the first spinner frame after an answer looked new, committed a second
+// prompt printed before it with `\r`, and became the line the tiers tested.
+test('after answering, a second pre-scanned prompt printed before the next spinner frame still fires with its own index', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 10; i += 1) send(spinnerFrame(i));
+  send('\r\n   Would you like to add PhpMyAdmin? <y/N> ');
+  for (let i = 10; i < 20; i += 1) send(spinnerFrame(i));
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  resumeFn?.();
+  send('n\r\n');
+  send('   Enter the MariaDB root password: ');
+  for (let i = 20; i < 30; i += 1) send(spinnerFrame(i));
+  fireLatest();
+
+  assert.deepEqual(detected[1], { text: '   Enter the MariaDB root password: ', origin: 'expected', matchedIndex: 1 });
+
+  finish();
+  await promise;
+});
+
+test('a prompt re-asked word for word after an invalid answer fires again', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: ['Enter port: '],
+    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('Enter port: ');
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  resumeFn?.();
+  // The pty echoes the answer onto the prompt's line.
+  send('abc\r\n');
+  send('Invalid port\r\n');
+  send('Enter port: ');
+  fireLatest();
+
+  assert.deepEqual(detected[1], { text: 'Enter port: ', origin: 'expected', matchedIndex: 0 });
+
+  finish();
+  await promise;
+});
+
+// Final review, finding 3: a punctuation-only prompt (bash `select`'s `#? `)
+// has no letters or digits, and must not be mistaken for a glyph-only redraw.
+test('a bash select prompt (#? ) after its menu fires at the second tier as heuristic', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin) => detected.push({ text, origin }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('1) stable\r\n2) beta\r\n#? ');
+  fireLatest();
+  fireLatest();
+
+  assert.deepEqual(delays, [2000, 28000]);
+  assert.deepEqual(detected, [{ text: '#? ', origin: 'heuristic' }]);
+
+  finish();
+  await promise;
+});

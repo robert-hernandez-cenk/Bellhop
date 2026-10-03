@@ -2,10 +2,6 @@ import type { ExecResult, SSHClient, SshTarget } from '../../lib/ssh-client.ts';
 import { compilePromptHints, matchExpectedPrompt } from './prompt-matcher.ts';
 import { OutputActivity } from './output-activity.ts';
 
-// Moved to output-activity.ts (issue #52); re-exported for existing importers
-// such as src/mcp/elicitation.ts.
-export { ANSI_ESCAPE } from './output-activity.ts';
-
 // Which of the three detection tiers produced a pause. 'expected' means the
 // trailing output matched one of the app script's own pre-scanned `read -p`
 // prompts and is the confident case; 'heuristic' is the pre-#160 pattern
@@ -101,16 +97,14 @@ export class JobSSHClient implements SSHClient {
   private pausedOrigin: PromptOrigin | undefined;
   private pendingCheck: { cancel: () => void } | undefined;
   private currentWrite: ((text: string) => void) | undefined;
-  // activity.length at the moment fire() last paused watching -- resume()
+  // activity.mark() at the moment fire() last paused watching -- resume()
   // consumes the transcript up to this point rather than blanking it
   // outright, so output that arrived *during* the pause (see watchChunk)
   // survives into the next detection cycle instead of being discarded
   // along with the already-reported prompt text ahead of it. Issue #160
-  // Finding 1. trimmedAtFire records activity.trimmedBy at the same moment,
-  // since the transcript is bounded and may lose its front during a long
-  // pause, which shifts every offset into it (issue #52).
-  private firedAtLength = 0;
-  private trimmedAtFire = 0;
+  // Finding 1. The mark is absolute, so it stays right even when the
+  // bounded transcript loses its front during a long pause (issue #52).
+  private firedMark = 0;
   // The text of the most recent fire(), regardless of origin -- the
   // fallback stallText() reaches for when resume() leaves nothing new in
   // the transcript, so a re-escalation to the stall tier never renders an
@@ -184,8 +178,7 @@ export class JobSSHClient implements SSHClient {
     this.pendingCheck = undefined;
     this.tierIndex = 0;
     this.currentWrite = undefined;
-    this.firedAtLength = 0;
-    this.trimmedAtFire = 0;
+    this.firedMark = 0;
     this.lastFiredText = undefined;
   }
 
@@ -269,8 +262,7 @@ export class JobSSHClient implements SSHClient {
     // losing output that arrives during the pause, and stallText() has
     // something to fall back to if nothing new ever does. Issue #160
     // Finding 1.
-    this.firedAtLength = this.activity.length;
-    this.trimmedAtFire = this.activity.trimmedBy;
+    this.firedMark = this.activity.mark();
     this.lastFiredText = text;
     const write = this.currentWrite ?? (() => {});
     this.onPromptDetected?.(text, this.expectedPrompts, write, () => this.resume(), origin, matchedIndex);
@@ -313,7 +305,7 @@ export class JobSSHClient implements SSHClient {
   //
   // Two things this deliberately does NOT do (Finding 1, issue #160):
   //   - It does not blank the transcript outright. Consuming only the
-  //     already-fired prefix (firedAtLength) keeps whatever arrived during
+  //     already-fired prefix (firedMark) keeps whatever arrived during
   //     the pause -- e.g. a real prompt that printed while an unrelated
   //     false positive was still awaiting a dismiss -- visible to the next
   //     check() instead of discarding it right when the operator finally
@@ -327,16 +319,20 @@ export class JobSSHClient implements SSHClient {
   //     (and, eventually, JobRunner's 15-minute abandon timer) instead of
   //     going permanently quiet.
   private resume(): void {
+    const origin = this.pausedOrigin;
     this.paused = false;
     this.pausedOrigin = undefined;
-    // consume() also forgets the recent lines, so a prompt the script
-    // re-asks verbatim (after an invalid answer) counts as new output
-    // rather than a redraw. Front trimming during the pause shifts the
-    // fired offset left by however much was trimmed.
-    const trimmedSinceFire = this.activity.trimmedBy - this.trimmedAtFire;
-    this.activity.consume(Math.max(0, this.firedAtLength - trimmedSinceFire));
-    this.firedAtLength = 0;
-    this.trimmedAtFire = 0;
+    this.activity.consumeThrough(this.firedMark);
+    this.firedMark = 0;
+    // The recent lines are kept, so the spinner is still a redraw after an
+    // answer; forgetting them let the first frame after it commit the next
+    // prompt with `\r` and take its place as the line the tiers test. A
+    // prompt the script re-asks verbatim after an invalid answer is exempted
+    // instead, so it still counts as new output. Never a stall's text: that
+    // may be the spinner line itself.
+    if ((origin === 'expected' || origin === 'heuristic') && this.lastFiredText !== undefined) {
+      this.activity.exemptFromRedraw(this.lastFiredText);
+    }
     this.armTier(0);
     this.onPromptCleared?.();
   }

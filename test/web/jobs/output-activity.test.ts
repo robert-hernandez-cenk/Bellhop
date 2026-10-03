@@ -102,30 +102,62 @@ test('\\r\\n split across two chunks is still one newline ending', () => {
   assert.equal(activity.lastLine(), 'line');
 });
 
-test('consume(n) drops the first n characters and forgets recent lines', () => {
-  const activity = new OutputActivity();
+test('consumeThrough(mark) drops everything up to the mark but keeps the recent lines', () => {
+  const activity = withSeenSpinner();
   const prompt = 'Enter the API token: ';
-  activity.push(`${prompt}\r`);
-  activity.push('\x1b[2K');
-  const length = activity.length;
-  activity.consume(length);
-  assert.equal(activity.length, 0);
-  assert.equal(activity.candidate(), '');
-  // The identical prompt re-asked after an answer is activity again.
-  assert.equal(activity.push(`\r\n${prompt}`), true);
-  assert.equal(activity.candidate(), prompt);
+  activity.push(`\r\n${prompt}`);
+  const mark = activity.mark();
+  activity.push(frame(2));
+  activity.consumeThrough(mark);
+  // Only the prompt's own `\r` ending, added after the mark, is left.
+  assert.equal(activity.length, 1);
+  // Spinner frames are still remembered, so they stay redraws after a resume.
+  assert.equal(activity.push(frame(3)), false);
 });
 
-test('consume(n) can cut into the unfinished line and keeps the rest of it', () => {
+test('a re-asked prompt extending a recent line is a redraw unless it starts with an exempted prompt', () => {
+  const prompt = 'Enter port: ';
+  const plain = new OutputActivity();
+  plain.push(prompt);
+  plain.consumeThrough(plain.mark());
+  // The pty echoes the answer onto the prompt's line, then the script
+  // complains and asks again word for word.
+  plain.push('abc\r\nInvalid port\r\n');
+  assert.equal(plain.push(prompt), false, 'without an exemption it extends the echoed line');
+
+  const exempted = new OutputActivity();
+  exempted.push(prompt);
+  exempted.consumeThrough(exempted.mark());
+  exempted.exemptFromRedraw(prompt);
+  exempted.push('abc\r\nInvalid port\r\n');
+  assert.equal(exempted.push(prompt), true);
+  assert.equal(exempted.candidate(), prompt);
+});
+
+test('consumeThrough(mark) can cut into the unfinished line and keeps the rest of it', () => {
   const activity = new OutputActivity();
   activity.push('Continue? (y/n) ');
-  const fired = activity.length;
+  const fired = activity.mark();
   activity.push('   Enter the API token: ');
-  activity.consume(fired);
+  activity.consumeThrough(fired);
   assert.equal(activity.candidate(), '   Enter the API token: ');
 });
 
-test('the transcript stays at or below 16 KiB and trimmedBy reports what was trimmed', () => {
+test('consumeThrough(mark) lands on the same text after the front was trimmed, and a stale mark is clamped', () => {
+  const activity = new OutputActivity();
+  for (let i = 0; i < 800; i += 1) activity.push(`Unpacking package number ${i}\r\n`);
+  activity.push('Continue? (y/n) ');
+  const fired = activity.mark();
+  for (let i = 1000; i < 1800; i += 1) activity.push(`Unpacking package number ${i}\r\n`);
+  activity.push('   Enter the API token: ');
+  activity.consumeThrough(fired);
+  assert.equal(activity.candidate(), '   Enter the API token: ');
+  const before = activity.length;
+  activity.consumeThrough(0);
+  assert.equal(activity.length, before, 'a mark already trimmed away consumes nothing');
+});
+
+test('the transcript stays at or below 16 KiB and mark() counts every character ever kept', () => {
   const activity = new OutputActivity();
   let pushed = 0;
   for (let i = 0; i < 2000; i += 1) {
@@ -135,8 +167,8 @@ test('the transcript stays at or below 16 KiB and trimmedBy reports what was tri
     pushed += line.length - 1;
   }
   assert.ok(activity.length <= 16 * 1024, `length ${activity.length}`);
-  assert.ok(activity.trimmedBy > 0);
-  assert.equal(activity.length + activity.trimmedBy, pushed);
+  assert.ok(activity.mark() > activity.length, 'some of the front was trimmed');
+  assert.equal(activity.mark(), pushed);
   assert.equal(activity.lastLine(), 'Unpacking package number 1999');
 });
 
@@ -200,4 +232,44 @@ test('an ordinary line that starts with an earlier line\'s text keeps its whole 
   activity.push('Unpacking package number 1\r\n');
   assert.equal(activity.push('Unpacking package number 10'), true);
   assert.equal(activity.candidate(), 'Unpacking package number 10');
+});
+
+// Final review, finding 2: a redraw ended by a newline (msg_ok's
+// `\r\x1b[2K✔ <status>\n` after msg_info's spinner) moves the terminal past
+// the line the spinner overwrote, so that line is no longer a candidate.
+test('a redraw ended by a newline turns an in-place overwrite into a finished line', () => {
+  const activity = withSeenSpinner();
+  activity.push(frame(2));
+  const before = activity.length;
+  assert.equal(activity.push(`\r\x1b[2K✔ ${STATUS}\n`), false);
+  assert.equal(activity.length, before, 'the ending is replaced in place, so offsets are unaffected');
+  assert.equal(activity.candidate(), '');
+  assert.equal(activity.lastLine(), `⠋ ${STATUS}`, 'the first frame is the line that was kept');
+});
+
+test('a redraw ended by \r\n also finishes an overwritten line', () => {
+  const activity = new OutputActivity();
+  activity.push('⠋ Doing X');
+  activity.push('\r\x1b[2K⠙ Doing X');
+  assert.equal(activity.candidate(), '⠋ Doing X', 'overwritten in place, still the candidate');
+  activity.push('\r\x1b[2K✔ Doing X\r\n');
+  assert.equal(activity.candidate(), '');
+});
+
+// Final review, finding 3: a line with no letters or digits keys on its
+// punctuation, so `#? ` (bash select) is output; only Braille spinner glyphs
+// and whitespace make a line keyless.
+test('a punctuation-only prompt after a select menu is new output and the candidate', () => {
+  const activity = new OutputActivity();
+  activity.push('1) stable\r\n2) beta\r\n');
+  assert.equal(activity.push('#? '), true);
+  assert.equal(activity.candidate(), '#? ');
+});
+
+test('a Braille-only frame is still a redraw', () => {
+  const activity = new OutputActivity();
+  activity.push('Working\r\n');
+  const before = activity.length;
+  assert.equal(activity.push('\r\x1b[2K⠋ \r\x1b[2K⠙'), false);
+  assert.equal(activity.length, before);
 });
