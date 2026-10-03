@@ -100,7 +100,7 @@ app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
 });
 
 const server = http.createServer(app);
-attachJobsWebSocket(server, jobRunner, jobStore, jobLog, invPath, impersonationStore);
+attachJobsWebSocket(server, jobRunner, jobStore, jobLog, invPath, inventory, impersonationStore);
 
 const port = Number(process.env.PORT ?? 3000);
 server.listen(port, () => {

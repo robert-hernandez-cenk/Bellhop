@@ -169,6 +169,12 @@ export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClos
                 )}
               </div>
             </div>
+            {guest.creator && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('created by')}</div>
+                <div className="form-row-value">{guest.creator.username}</div>
+              </div>
+            )}
           </div>
         )}
         {tab === 'access' && (

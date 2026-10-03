@@ -227,7 +227,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   community-scripts.org one (research R8 in
   `specs/003-custom-script-repo/research.md`); falls back to no link at
   all if the custom settings are later unset, since there's no repository
-  left to point at. `proxy: true` (renamed from `caddy: true` in issue #10)
+  left to point at. `creator` (optional, issue #58, a `{ uid?, username, since? }`
+  record backed by three nullable `created_by_uid`/`created_by_username`/
+  `created_by_since` columns added via `ensureColumn`) records the real signed-in web-UI user
+  who created the guest -- set by `create-lxc`/`create-vm`/`install-app`/
+  `deploy-vpn-gateway`'s web apply paths via `creatorFromActor(deps.actor)`
+  (never by the CLI or MCP server, which have no such actor), and
+  preserved across `sync-inventory`/repeat `upsertGuestEntry` merges and
+  `migrate-guest` the same way `app` is -- see "Web UI per-resource group
+  permissions" above for what it grants and "Web UI authentication" for
+  where `uid` comes from. `proxy: true` (renamed from `caddy: true` in issue #10)
   on exactly one entry marks where the reverse proxy runs — this
   cross-field rule (along with "every guest's `host` resolves to a real
   entry", "non-empty `subdomains` requires `ip` unless `proxyManual` is
@@ -2969,7 +2978,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   active admin-user-impersonation override (see "Web UI admin user
   impersonation" below) can overlay after `requireAuth` runs; `req.user`'s
   other fields and `req.realUser` (when set) always reflect the real,
-  header-verified identity untouched.
+  header-verified identity untouched. `resolveAuthUser` also reads
+  `x-authentik-uid` into `AuthUser.uid` (issue #58) when the header is
+  present and non-empty -- Authentik's own stable per-user identifier,
+  unlike the username, which real users have already had renamed once in
+  practice. It's absent for dev/test identities and the synthetic local
+  operator, none of which have one. `Actor` (`src/lib/pve-acl.ts`, issue
+  #53's real-signed-in-person type) gained its own optional `uid`, copied
+  from the real `AuthUser` by `resolveActor` the same way `username` is,
+  so `creatorFromActor` (see "Web UI per-resource group permissions" above)
+  can record it on a newly created guest; `applyImpersonation`'s overlay
+  leaves `uid` untouched (it only replaces `groups` and sets
+  `impersonating`), since `isGuestCreator` keys off `impersonating` being
+  set, not off `uid` disappearing.
   Whether authentication is required at all is now controlled by
   `WEB_UI_AUTH_MODE` (issue #123): `auto` (the default) falls back to a
   synthetic always-admin local operator when no trusted headers are
@@ -3142,6 +3163,73 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   blocking a host hides only that host's own inventory entry, never the
   guests running on it, which are controlled entirely by their own
   separate rules.
+
+  **Creator access** (issue #58) extends this so a user whose group is
+  allow-list-restricted keeps access to a guest *they themselves created*
+  through the web UI, with no admin edit to the group's allow-list.
+  `isGuestCreator(creator, caller)` (`src/lib/permissions.ts`) is the one
+  pure predicate: `false` while the caller is impersonating (so an admin's
+  own creator access never leaks into an impersonated view); `false` with
+  no recorded `creator`; a uid comparison when both the recorded creator
+  and the caller carry the identity provider's stable uid (see "Web UI
+  authentication" below); a username comparison otherwise. `isAllowed`
+  gained an `opts.isCreator` parameter: for a `guest` ref only, an
+  allow-list group treats the guest as listed when `isCreator` is true --
+  a **block-list** group is unchanged, so an explicit block-list entry
+  naming the guest still denies it regardless of who created it (the
+  user's stated "explicit block wins" rule). Every caller of `isAllowed`
+  that can resolve a guest's creator now passes `opts.isCreator`:
+  `isResourceAllowed`/`filterInventoryForUser` (`src/web/access.ts`, which
+  now take the caller -- `AccessCaller`, a structural subset of `AuthUser`
+  carrying `groups`/`username`/`uid`/`impersonating` -- instead of bare
+  `groups[]`, since the creator lift needs more than group membership) read
+  it from the in-memory `Inventory` the routes already hold; `isJobVisible`
+  (`src/web/routes/jobs.ts`) takes an additional `creators:
+  Map<guestName, GuestCreator>` (`guestCreators(inventory)`, built once per
+  request) so a job whose target is a guest the caller created is visible
+  and controllable the same way the guest itself is, even though a job's
+  `target` is just a name with no resource type to resolve a creator from
+  otherwise. Two limits keep that job lift on the caller's own guest (#58
+  final review): `guestCreators` (now taking `hosts` too) omits any guest
+  whose name equals a host name, since the guest-creating commands record
+  the *host* as a job's target and a guest named like a host would
+  otherwise expose every job on that host (no `validateInventory` rule,
+  which could make a saved inventory unloadable); and `isJobVisible` now
+  takes the job row (`{ target, startedAt }`) and lifts only a job that
+  started at or after the creator's `since` (an ISO-8601 time on the
+  creator record, `created_by_since` column -- `creatorFromActor`'s clock,
+  injectable as `OperationDeps.now`, or the creating job's `startedAt` for
+  the backfill), so a guest re-created under a reused name never exposes
+  the old guest's jobs. A creator without `since`, or a job not yet
+  started, gets no job lift (fail closed); guest access itself never reads
+  `since`. The WS upgrade handler builds its caller/creators the same way,
+  inline, since it bypasses Express middleware already (see "Web UI admin
+  user impersonation" below). `recordProvisionedGuest`'s
+  `create-lxc`/`create-vm`/`install-app` paths and `deploy-vpn-gateway`'s own
+  operation (`src/operations/provisioning.ts`) set a new guest's `creator`
+  from `creatorFromActor(deps.actor, deps.now?.())` -- `deps.actor` is already exactly
+  "the real, never-impersonated signed-in person, or `undefined` for
+  MCP/CLI/the local operator" (issue #53's plumbing), so a guest created
+  through any of those four paths by a real person gets a creator record
+  and every other path gets none, satisfying FR-002/FR-003 with no new
+  plumbing. `upsertGuestEntry` keeps the existing `creator` on a repeat
+  apply with no actor (e.g. a re-run from the MCP server) and replaces it
+  on a repeat apply *with* one (a real re-creation is a deliberate new
+  authorship record); `sync-inventory`'s `{ ...existing }` merge and
+  `migrate-guest`'s `{ ...g, host, vmid, ip }` rewrite both preserve it
+  unconditionally, the same way `subdomains`/`port`/`proxy`/`app` are
+  preserved, and it is gone once the guest leaves the inventory (no
+  separate cleanup needed -- it's a column on the `guests` row, not a
+  separate table). A `creator` field in a Dashboard PATCH is ignored because
+  `applyGuestEdits` (`src/operations/edit-guest.ts`) copies only the fields
+  it names, and `creator` is not one of them; an MCP `edit_guest` call is
+  additionally protected because `EDIT_GUEST_SHAPE`'s zod object strips
+  unknown keys before the input reaches it (FR-009) -- no explicit
+  rejection needed. The guest Advanced modal's General tab
+  shows a read-only "Created by" row with the recorded `creator.username`
+  when present and no row at all otherwise; the uid itself is never shown.
+  `backfill-guest-creators` (see its own bullet below) is the one-time
+  migration for guests that predate this field.
   Because `GET /api/inventory` is filtered, nothing that must account for
   *every* guest may be computed from it in the browser (issue #54): the
   provisioning form's MID suggestion, migrate-guest's preferred-MID
@@ -3154,6 +3242,53 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   provisioning routes from `isResourceAllowed`) and drops the occupying
   guest's name from its error when the caller can't see it; the CLI and
   MCP server pass none, so their errors still name it.
+- **`backfill-guest-creators`**
+  (`src/commands/maintenance/backfill-guest-creators.ts`, issue #58) is a
+  one-time, **CLI-only** migration that attributes a creator (the bullet
+  above) to a guest created before that field existed, by mining
+  `data/jobs.sqlite3`'s own job history rather than touching live
+  infrastructure. CLI-only is deliberate, the same reasoning as
+  `import-yaml-inventory`/`convert-caddyfile`: it's a one-time operator
+  migration with no ongoing use, and an `Operation` would expose a
+  fleet-wide inventory rewrite to the web UI/MCP server for nothing.
+  `bellhop backfill-guest-creators [--map <old=new>]... [--apply]`, dry-run
+  by default like every other mutating command. It considers only job rows
+  whose `command` is `create-lxc`/`create-vm`/`install-app`/
+  `deploy-vpn-gateway`, whose `status` is `success`, and whose
+  `triggered_by_username` is non-null and is neither the literal `mcp` MCP
+  jobs are recorded under nor the synthetic local operator's username
+  (`localOperatorUsername()`, `src/web/auth.ts` -- `WEB_UI_LOCAL_USER`,
+  default `local`, passed in as the run function's `localOperator` option)
+  -- never a failed/cancelled/interrupted job, never one with no recorded
+  human triggerer. Each recorded creator's `since` is the matched job's
+  `startedAt`, so its job lift covers that job and later ones only. From each candidate's `args_json` (the
+  raw form input the job recorded, secrets already redacted) it reads
+  `host`, `mid`, and the guest's name (`hostname` for create-lxc/
+  install-app, `name` for create-vm/deploy-vpn-gateway), derives the VMID
+  with the same `resolveMid` every creation command uses, and matches a
+  *current* inventory guest with that exact host+VMID+name -- a guest whose
+  name matches but whose host/VMID differs (a deleted-and-reused name) is
+  not matched. When several successful jobs match the same guest, the
+  newest wins and the rest are reported `superseded`; a guest that already
+  has a recorded creator is never touched (`already-has-creator`), so the
+  command is safe to re-run. The job's recorded login name is resolved
+  against `AuthentikClient.listUsers()` (which gained a `uid` field for
+  this) to attach the identity provider's stable uid alongside it; repeatable
+  `--map old=new` flags translate a job's recorded login to its
+  current one before that lookup, for a user renamed since the job ran --
+  a name neither mapped nor found is skipped as `unknown-user`, naming the
+  `--map` flag that would fix it. Requires Authentik configured
+  (`data/authentik.env`) -- without it, it fails with the same "not
+  configured" message the Users page gives, since a username-only record
+  here would silently reintroduce the exact rename problem the uid exists
+  to solve (see "Web UI per-resource group permissions" above). Every run
+  prints every guest it (would) update and every job it skipped with a
+  reason, whether or not `--apply` was passed; exit code is always 0,
+  since a skip is informational, not a failure. `--apply` re-checks every
+  planned update against the inventory reloaded just before writing, and an
+  update dropped there (its guest gained a creator, or left the inventory)
+  moves from `updates` to `skipped` (`already-has-creator`/
+  `no-matching-guest`), so the report lists only what was actually written.
 - **Web UI admin user impersonation** (`src/web/impersonation.ts`,
   `src/web/routes/impersonation.ts` -- issue #101): once per-resource
   permissions exist (the bullet above), an admin can view/act on the app as

@@ -17,6 +17,9 @@ bellhop guest-power --guest plex --state start --apply
 bellhop guest-power --guest plex --state shutdown --apply
 bellhop audit-nfs-mounts        # report NFS mounts across all lxc guests
 bellhop audit-nfs-mounts --host plex-lxc  # just one guest
+bellhop backfill-guest-creators          # dry run: prints guests it would attribute, and jobs it skips
+bellhop backfill-guest-creators --apply  # records them
+bellhop backfill-guest-creators --map old-login=test-user --apply  # attribute jobs recorded under a renamed login
 ```
 
 `update-all --group` only accepts `pve` or `lxc` (not `vm`), and `--host`
@@ -41,6 +44,37 @@ report which NFS shares are in use where, grouped by export. It never reads
 anything from inside the guest itself (there's no guest-side fstab NFS
 mount left to read since `attach-nfs-mount`/`migrate-nfs-mount` moved every
 guest onto host-relay bind-mounts). Read-only — it never modifies anything.
+
+`backfill-guest-creators` is a one-time, CLI-only migration for the web
+UI's [per-resource permissions](permissions.md): it records a creator on
+every existing guest it can attribute from a successful web-UI
+`create-lxc`/`create-vm`/`install-app`/`deploy-vpn-gateway` job in job
+history, so a restricted user who already created a guest before creator
+recording existed regains access without an admin editing an allow-list by
+hand. Dry run by default, printing the plan and changing nothing;
+`--apply` writes it. It matches a job to a guest by host, the VMID derived
+from the job's recorded machine ID, and guest name all agreeing with a
+guest currently in inventory — if several jobs match the same guest, the
+most recent successful one wins, and a guest that already has a recorded
+creator is never touched. The creator is recorded as of that job's start
+time, so it covers that job and later ones on the guest. A job's recorded
+login name is resolved against the identity provider's current user list
+to attach its stable identifier alongside the name; pass
+`--map <old>=<new>` (repeatable) when a job was recorded under a login name
+since renamed — without a mapping, that job is
+skipped and reported as `unknown-user`. Every skip is reported with a
+reason (`unknown-user`, `no-matching-guest`, `already-has-creator`,
+`unparseable-args`, or `superseded` by a newer matching job) so nothing is
+silently dropped; with `--apply`, a guest that gained a creator or left the
+inventory while the command ran is not written and is reported under the
+skips instead. A job triggered by the MCP server, by the CLI, by the local
+operator (the identity named by `WEB_UI_LOCAL_USER`, `local` by default), by
+no recorded user, or that didn't succeed is never used. Requires Authentik
+configured (`data/authentik.env`) — without it, it fails with the same
+"not configured" error the Users page gives, since a username-only record
+would reintroduce the rename problem the stable identifier exists to
+solve. See [Permissions](permissions.md) for what the recorded creator
+actually grants.
 
 **Provisioning** (all default to a dry run that prints the command without
 running it — pass `--apply` to actually execute):

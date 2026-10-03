@@ -10,7 +10,12 @@ import { accessFieldsFor, isOidcEffective, type AccessField, type AccessFieldsIn
 
 export type AdvancedTab = 'general' | 'access';
 
-// In the order AdvancedGuestModal renders them on the General tab.
+// In the order AdvancedGuestModal renders them on the General tab. 'created
+// by' is the one field here that isn't unconditional (unlike 'app', which
+// always renders and just shows '—' when unset) -- it's a row that doesn't
+// exist at all for a guest with no recorded creator (issue #58), so
+// renderedAdvancedFields below filters it out rather than including it
+// unconditionally.
 export const GENERAL_TAB_FIELDS: readonly AdvancedFieldLabel[] = [
   'type',
   'ip',
@@ -22,6 +27,7 @@ export const GENERAL_TAB_FIELDS: readonly AdvancedFieldLabel[] = [
   'insecure backend tls',
   'vpn',
   'app',
+  'created by',
 ];
 
 const ACCESS_FIELD_LABELS: Record<AccessField, AdvancedFieldLabel> = {
@@ -33,8 +39,21 @@ const ACCESS_FIELD_LABELS: Record<AccessField, AdvancedFieldLabel> = {
   oidcClient: 'oidc client',
 };
 
-export function renderedAdvancedFields(tab: AdvancedTab, guest: AccessFieldsInput): Set<AdvancedFieldLabel> {
-  if (tab === 'general') return new Set(GENERAL_TAB_FIELDS);
+// Who created this guest from Bellhop, mirroring the server's GuestEntry
+// (src/lib/inventory.ts's GuestCreatorSchema) -- undefined for a guest
+// created another way (issue #58).
+export interface GeneralTabInput {
+  creator?: { uid?: string; username: string; since?: string };
+}
+
+export function renderedAdvancedFields(
+  tab: AdvancedTab,
+  guest: AccessFieldsInput & GeneralTabInput
+): Set<AdvancedFieldLabel> {
+  if (tab === 'general') {
+    const fields = GENERAL_TAB_FIELDS.filter((f) => f !== 'created by' || !!guest.creator);
+    return new Set(fields);
+  }
   const fields = accessFieldsFor(guest).filter((f) => f !== 'oidcClient' || isOidcEffective(guest));
   return new Set(fields.map((f) => ACCESS_FIELD_LABELS[f]));
 }

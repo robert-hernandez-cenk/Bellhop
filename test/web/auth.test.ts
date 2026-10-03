@@ -103,6 +103,31 @@ test('resolveAuthUser ignores an empty x-authentik-username header and falls bac
   }
 });
 
+// issue #58 (unit U1): uid is the identity provider's stable user id,
+// used downstream to match a guest's recorded creator across username
+// renames (src/lib/permissions.ts's isGuestCreator).
+test('resolveAuthUser sets uid from a non-empty x-authentik-uid header', () => {
+  const user = resolveAuthUser({ 'x-authentik-username': 'test-user', 'x-authentik-uid': 'uid-test-user' });
+  assert.equal(user?.uid, 'uid-test-user');
+  assert.deepEqual(user, { username: 'test-user', email: undefined, groups: [], uid: 'uid-test-user' });
+});
+
+test('resolveAuthUser omits uid when the x-authentik-uid header is absent or empty', () => {
+  const absent = resolveAuthUser({ 'x-authentik-username': 'test-user' });
+  assert.ok(absent && !('uid' in absent), 'no x-authentik-uid header must round-trip without a uid key at all');
+
+  const empty = resolveAuthUser({ 'x-authentik-username': 'test-user', 'x-authentik-uid': '' });
+  assert.ok(empty && !('uid' in empty), 'an empty x-authentik-uid header must be treated the same as absent');
+});
+
+test('dev/local identities never carry a uid', () => {
+  const devUser = resolveAuthUser({}, { WEB_UI_DEV_USER: 'dev-user' });
+  assert.ok(devUser && !('uid' in devUser), 'the dev-bypass identity has no uid');
+
+  const local = resolveAuthUser({}, {});
+  assert.ok(local && !('uid' in local), 'the synthetic local operator has no uid');
+});
+
 test('resolveAuthUser honors WEB_UI_DEV_GROUPS as a pipe-delimited list alongside WEB_UI_DEV_USER', () => {
   const originalUser = process.env.WEB_UI_DEV_USER;
   const originalGroups = process.env.WEB_UI_DEV_GROUPS;

@@ -307,6 +307,20 @@ export class JobStore {
     return rows.map((row) => this.toJobRow(row));
   }
 
+  // Every finished-successfully job of the given commands, newest first --
+  // backfill-guest-creators' (issue #58) only read of job history, so the
+  // command never needs raw SQL of its own.
+  listSuccessfulByCommands(commands: readonly string[]): JobRow[] {
+    if (commands.length === 0) return [];
+    const placeholders = commands.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs WHERE status = 'success' AND command IN (${placeholders}) ORDER BY started_at DESC, id DESC`
+      )
+      .all(...commands) as any[];
+    return rows.map((row) => this.toJobRow(row));
+  }
+
   createControlRequest(input: CreateControlRequestInput): number {
     const stmt = this.db.prepare(
       `INSERT INTO job_control_requests (job_id, action, text, requested_by_owner, requested_by_username, created_at) VALUES (?, ?, ?, ?, ?, ?)`

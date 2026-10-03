@@ -4,6 +4,10 @@ import { authentikConfig, authentikConfigured } from './authentik-config.ts';
 export interface AuthentikUser {
   id: string;
   username: string;
+  // Authentik's stable per-user identifier (a 64-hex hash), unchanged by a
+  // username rename -- what a guest's creator record keys on (issue #58).
+  // Empty when the response carried none.
+  uid: string;
   email: string;
   isActive: boolean;
   groupIds: string[];
@@ -275,6 +279,7 @@ export interface AuthentikClient {
 interface RawUser {
   pk: number | string;
   username: string;
+  uid?: string;
   email?: string;
   is_active?: boolean;
   groups?: Array<number | string>;
@@ -405,6 +410,7 @@ export class RealAuthentikClient implements AuthentikClient {
     return {
       id: String(raw.pk),
       username: raw.username,
+      uid: raw.uid ?? '',
       email: raw.email ?? '',
       isActive: !!raw.is_active,
       groupIds: (raw.groups ?? []).map(String),

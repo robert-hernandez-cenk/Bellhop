@@ -1,0 +1,268 @@
+{
+  "pagination": {
+    "next": 0,
+    "previous": 0,
+    "count": 6,
+    "current": 1,
+    "total_pages": 1,
+    "start_index": 1,
+    "end_index": 6
+  },
+  "results": [
+    {
+      "pk": 1001,
+      "username": "outpost-svc",
+      "name": "Outpost Svc",
+      "is_active": true,
+      "last_login": null,
+      "date_joined": "2026-01-01T00:00:00.000000Z",
+      "is_superuser": false,
+      "groups": [],
+      "groups_obj": [],
+      "roles": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "roles_obj": [
+        {
+          "pk": "00000000-0000-4000-8000-000000000001",
+          "name": "example-role"
+        }
+      ],
+      "email": "",
+      "avatar": "https://example.com/avatar/outpost-svc.png",
+      "attributes": {},
+      "uid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": "goauthentik.io/outposts",
+      "type": "internal_service_account",
+      "uuid": "00000000-0000-4000-8000-000000000002",
+      "password_change_date": "2026-01-01T00:00:00.000000Z",
+      "last_updated": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "pk": 1002,
+      "username": "test-user",
+      "name": "Test User",
+      "is_active": true,
+      "last_login": "2026-01-01T00:00:00.000000Z",
+      "date_joined": "2026-01-01T00:00:00.000000Z",
+      "is_superuser": false,
+      "groups": [
+        "00000000-0000-4000-8000-000000000003"
+      ],
+      "groups_obj": [
+        {
+          "pk": "00000000-0000-4000-8000-000000000003",
+          "num_pk": 1003,
+          "name": "app-users",
+          "is_superuser": false,
+          "attributes": {}
+        }
+      ],
+      "roles": [],
+      "roles_obj": [],
+      "email": "test-user@example.com",
+      "avatar": "https://example.com/avatar/test-user.png",
+      "attributes": {
+        "settings": {
+          "locale": "en"
+        }
+      },
+      "uid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "path": "users",
+      "type": "internal",
+      "uuid": "00000000-0000-4000-8000-000000000004",
+      "password_change_date": "2026-01-01T00:00:00.000000Z",
+      "last_updated": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "pk": 1004,
+      "username": "other-user",
+      "name": "Other User",
+      "is_active": true,
+      "last_login": "2026-01-01T00:00:00.000000Z",
+      "date_joined": "2026-01-01T00:00:00.000000Z",
+      "is_superuser": false,
+      "groups": [
+        "00000000-0000-4000-8000-000000000005"
+      ],
+      "groups_obj": [
+        {
+          "pk": "00000000-0000-4000-8000-000000000005",
+          "num_pk": 1005,
+          "name": "blocked",
+          "is_superuser": false,
+          "attributes": {}
+        }
+      ],
+      "roles": [],
+      "roles_obj": [],
+      "email": "other-user@example.com",
+      "avatar": "https://example.com/avatar/other-user.png",
+      "attributes": {
+        "goauthentik.io/user/sources": [
+          "example-source"
+        ]
+      },
+      "uid": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "path": "users",
+      "type": "external",
+      "uuid": "00000000-0000-4000-8000-000000000006",
+      "password_change_date": "2026-01-01T00:00:00.000000Z",
+      "last_updated": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "pk": 1006,
+      "username": "admin",
+      "name": "Admin",
+      "is_active": true,
+      "last_login": "2026-01-01T00:00:00.000000Z",
+      "date_joined": "2026-01-01T00:00:00.000000Z",
+      "is_superuser": true,
+      "groups": [
+        "00000000-0000-4000-8000-000000000007",
+        "00000000-0000-4000-8000-000000000003"
+      ],
+      "groups_obj": [
+        {
+          "pk": "00000000-0000-4000-8000-000000000007",
+          "num_pk": 1007,
+          "name": "admins",
+          "is_superuser": true,
+          "attributes": {}
+        },
+        {
+          "pk": "00000000-0000-4000-8000-000000000003",
+          "num_pk": 1003,
+          "name": "app-users",
+          "is_superuser": false,
+          "attributes": {}
+        }
+      ],
+      "roles": [],
+      "roles_obj": [],
+      "email": "admin@example.com",
+      "avatar": "https://example.com/avatar/admin.png",
+      "attributes": {
+        "settings": {
+          "locale": ""
+        }
+      },
+      "uid": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "path": "users",
+      "type": "internal",
+      "uuid": "00000000-0000-4000-8000-000000000008",
+      "password_change_date": "2026-01-01T00:00:00.000000Z",
+      "last_updated": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "pk": 1008,
+      "username": "third-user",
+      "name": "Third User",
+      "is_active": true,
+      "last_login": "2026-01-01T00:00:00.000000Z",
+      "date_joined": "2026-01-01T00:00:00.000000Z",
+      "is_superuser": false,
+      "groups": [
+        "00000000-0000-4000-8000-000000000005"
+      ],
+      "groups_obj": [
+        {
+          "pk": "00000000-0000-4000-8000-000000000005",
+          "num_pk": 1005,
+          "name": "blocked",
+          "is_superuser": false,
+          "attributes": {}
+        }
+      ],
+      "roles": [],
+      "roles_obj": [],
+      "email": "third-user@example.com",
+      "avatar": "https://example.com/avatar/third-user.png",
+      "attributes": {
+        "goauthentik.io/user/sources": [
+          "example-source"
+        ]
+      },
+      "uid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "path": "users",
+      "type": "external",
+      "uuid": "00000000-0000-4000-8000-000000000009",
+      "password_change_date": "2026-01-01T00:00:00.000000Z",
+      "last_updated": "2026-01-01T00:00:00.000000Z"
+    },
+    {
+      "pk": 1009,
+      "username": "fourth-user",
+      "name": "Fourth User",
+      "is_active": true,
+      "last_login": "2026-01-01T00:00:00.000000Z",
+      "date_joined": "2026-01-01T00:00:00.000000Z",
+      "is_superuser": false,
+      "groups": [],
+      "groups_obj": [],
+      "roles": [],
+      "roles_obj": [],
+      "email": "fourth-user@example.com",
+      "avatar": "https://example.com/avatar/fourth-user.png",
+      "attributes": {
+        "goauthentik.io/user/sources": [
+          "example-source"
+        ]
+      },
+      "uid": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "path": "users",
+      "type": "external",
+      "uuid": "00000000-0000-4000-8000-000000000010",
+      "password_change_date": "2026-01-01T00:00:00.000000Z",
+      "last_updated": "2026-01-01T00:00:00.000000Z"
+    }
+  ],
+  "autocomplete": {
+    "current_model": "authentik_core.user",
+    "models": {
+      "authentik_core.user": {
+        "username": {
+          "type": "string",
+          "nullable": false,
+          "options": null
+        },
+        "name": {
+          "type": "string",
+          "nullable": false,
+          "options": null
+        },
+        "email": {
+          "type": "string",
+          "nullable": false,
+          "options": null
+        },
+        "path": {
+          "type": "string",
+          "nullable": false,
+          "options": null
+        },
+        "is_active": {
+          "type": "boolean",
+          "nullable": true,
+          "options": null
+        },
+        "type": {
+          "type": "string",
+          "nullable": false,
+          "options": [
+            "internal",
+            "external",
+            "service_account",
+            "internal_service_account"
+          ]
+        },
+        "attributes": {
+          "type": "json",
+          "nullable": false,
+          "options": null,
+          "relation": "example-relation"
+        }
+      }
+    }
+  }
+}

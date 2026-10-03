@@ -75,7 +75,7 @@ export function buildApp(deps: AppDeps): express.Express {
     next();
   });
   app.use('/api', dashboardRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.fetchImpl));
-  app.use('/api/jobs', jobsRoutes(deps.jobStore, deps.jobLog, deps.jobRunner, deps.inventoryPath));
+  app.use('/api/jobs', jobsRoutes(deps.jobStore, deps.jobLog, deps.jobRunner, deps.inventoryPath, deps.inventory));
   app.use(
     '/api/provisioning',
     provisioningRoutes(deps.inventory, deps.baseSsh, deps.jobRunner, deps.inventoryPath, deps.authentik, cloudflare, {

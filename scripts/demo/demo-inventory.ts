@@ -155,6 +155,9 @@ export function buildDemoInventory(): Inventory {
         port: 3000,
         authGroup: 'bellhop-app-users-open',
         app: 'grafana',
+        // The one demo guest with a recorded creator (issue #58), showing the
+        // Advanced modal's read-only "Created by" row.
+        creator: { username: 'test-user' },
       },
       {
         name: 'pihole',

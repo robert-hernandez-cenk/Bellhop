@@ -7,8 +7,9 @@ import type { JobRunner } from '../jobs/job-runner.ts';
 import { createForeignJobTail } from '../jobs/job-tail.ts';
 import { requestJobControl } from '../jobs/job-control.ts';
 import { resolveAuthUser } from '../auth.ts';
-import { isAdmin } from '../access.ts';
-import { loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
+import { ANONYMOUS_CALLER, guestCreators, isAdmin, type AccessCaller } from '../access.ts';
+import { isGuestCreator, loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
+import type { GuestCreator, Inventory } from '../../lib/inventory.ts';
 import type { ImpersonationStore } from '../impersonation.ts';
 
 const TERMINAL_JOB_STATUSES: JobStatus[] = ['success', 'failed', 'cancelled', 'interrupted'];
@@ -37,6 +38,18 @@ export function completeUtf8Length(buffer: Buffer): number {
   return continuationBytes + 1 < seqLen ? i : buffer.length;
 }
 
+// Whether a job that started at `startedAt` falls inside a creator record
+// written at `since` (both ISO-8601). Compared as instants, not strings, so
+// differently-formatted timestamps still order correctly; anything missing
+// or unparseable is false.
+function startedSince(startedAt: string | null, since: string | undefined): boolean {
+  if (!startedAt || !since) return false;
+  const started = Date.parse(startedAt);
+  const recorded = Date.parse(since);
+  if (Number.isNaN(started) || Number.isNaN(recorded)) return false;
+  return started >= recorded;
+}
+
 // A job's `target` is either a host name (provisioning's guest-creating
 // commands) or a guest name (everything else that has one) -- JobRow
 // itself doesn't record which. This deliberately does NOT go through
@@ -46,43 +59,78 @@ export function completeUtf8Length(buffer: Buffer): number {
 // at all for the same name under 'host' -- under a block-list group, that
 // missing row defaults to "allowed," so an OR of the two typed checks
 // would leak a job whose target is blocked under its real type, as soon
-// as the untagged type's check trivially passed. A job's target name is
-// never simultaneously a real host and a real guest, so matching purely
-// by name (ignoring resource_type) against every rule row is the correct
-// -- and only correct -- way to evaluate visibility here.
+// as the untagged type's check trivially passed. Matching purely by name
+// (ignoring resource_type) against every rule row is the correct way to
+// evaluate visibility here. (If a guest shares a host's name, a rule naming
+// either one applies to every job on that name -- an admin-authored rule
+// ambiguity, left as is; the creator lift below deliberately does not
+// extend it to jobs on the host.)
 //
 // Takes a pre-loaded rules map (from loadPermissionRules) rather than an
 // inventoryPath so callers that check many jobs in one request (GET /,
 // the WS upgrade handler) load the rules once and reuse it, instead of
 // opening/closing a fresh SQLite connection per job.
-export function isJobVisible(rules: Map<string, GroupPermission>, groups: string[], target: string | null): boolean {
-  if (isAdmin(groups)) return true;
-  if (target === null) return false;
-  for (const groupName of groups) {
+//
+// Creator lift (issue #58): `creators` (guestCreators(inventory)) maps guest
+// names to their recorded creator. When `job.target` names a guest the
+// caller created (isGuestCreator -- never while impersonating), an
+// allow-list group treats it as listed, mirroring isAllowed in
+// src/lib/permissions.ts; a block-list group listing it still hides the job
+// (explicit block wins). Two limits keep the lift from reaching jobs that
+// were never about the caller's guest (#58 final review):
+// - guestCreators omits any guest whose name is also a host name, so a
+//   host-targeted job (the guest-creating commands target the host) is
+//   never lifted, even when a guest happens to share that host's name;
+// - the job must have started at or after the creator was recorded
+//   (`creator.since`), so a guest re-created under a reused name never
+//   exposes the old guest's history. A creator with no `since`, or a job
+//   that never started (no startedAt), gets no lift at all -- fail closed.
+export function isJobVisible(
+  rules: Map<string, GroupPermission>,
+  caller: AccessCaller,
+  job: Pick<JobRow, 'target' | 'startedAt'> | null,
+  creators: Map<string, GuestCreator>
+): boolean {
+  if (isAdmin(caller.groups)) return true;
+  if (!job || job.target === null) return false;
+  const target = job.target;
+  const creator = creators.get(target);
+  const isCreator = isGuestCreator(creator, caller) && startedSince(job.startedAt, creator?.since);
+  for (const groupName of caller.groups) {
     const perm = rules.get(groupName);
     if (!perm) continue;
     const listed = perm.resources.some((r) => r.name === target);
-    const allowedByThisGroup = perm.mode === 'allow-list' ? listed : !listed;
+    const allowedByThisGroup = perm.mode === 'allow-list' ? listed || isCreator : !listed;
     if (!allowedByThisGroup) return false;
   }
   return true;
 }
 
-export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRunner, inventoryPath: string): Router {
+export function jobsRoutes(
+  jobStore: JobStore,
+  jobLog: JobLog,
+  jobRunner: JobRunner,
+  inventoryPath: string,
+  inventory: Inventory
+): Router {
   const router = Router();
 
+  // Rules and creators are read fresh per request; req.user is the overlaid
+  // identity, so an active impersonation switches the creator lift off.
+  const visible = (req: Request, job: JobRow): boolean =>
+    isJobVisible(loadPermissionRules(inventoryPath), req.user ?? ANONYMOUS_CALLER, job, guestCreators(inventory));
+
   router.get('/', (req, res) => {
-    const groups = req.user?.groups ?? [];
+    const caller = req.user ?? ANONYMOUS_CALLER;
     const rules = loadPermissionRules(inventoryPath);
-    res.json(jobStore.list().filter((j) => isJobVisible(rules, groups, j.target)));
+    const creators = guestCreators(inventory);
+    res.json(jobStore.list().filter((j) => isJobVisible(rules, caller, j, creators)));
   });
 
   router.get('/:id', (req, res) => {
     const id = Number(req.params.id);
     const job = jobStore.get(id);
-    const groups = req.user?.groups ?? [];
-    const rules = loadPermissionRules(inventoryPath);
-    if (!job || !isJobVisible(rules, groups, job.target)) {
+    if (!job || !visible(req, job)) {
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
@@ -118,9 +166,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
   router.post('/:id/cancel', (req, res) => {
     const id = Number(req.params.id);
     const job = jobStore.get(id);
-    const groups = req.user?.groups ?? [];
-    const rules = loadPermissionRules(inventoryPath);
-    if (!job || !isJobVisible(rules, groups, job.target)) {
+    if (!job || !visible(req, job)) {
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
@@ -130,9 +176,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
   router.post('/:id/answer', (req, res) => {
     const id = Number(req.params.id);
     const job = jobStore.get(id);
-    const groups = req.user?.groups ?? [];
-    const rules = loadPermissionRules(inventoryPath);
-    if (!job || !isJobVisible(rules, groups, job.target)) {
+    if (!job || !visible(req, job)) {
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
@@ -143,9 +187,7 @@ export function jobsRoutes(jobStore: JobStore, jobLog: JobLog, jobRunner: JobRun
   router.post('/:id/dismiss-prompt', (req, res) => {
     const id = Number(req.params.id);
     const job = jobStore.get(id);
-    const groups = req.user?.groups ?? [];
-    const rules = loadPermissionRules(inventoryPath);
-    if (!job || !isJobVisible(rules, groups, job.target)) {
+    if (!job || !visible(req, job)) {
       res.status(404).json({ error: `Unknown job id: ${req.params.id}` });
       return;
     }
@@ -161,6 +203,7 @@ export function attachJobsWebSocket(
   jobStore: JobStore,
   jobLog: JobLog,
   inventoryPath: string,
+  inventory: Inventory,
   impersonationStore: ImpersonationStore,
   // isPidAlive: overridable for tests (see job-tail.ts) so a route-level
   // test can deterministically exercise the dead-owner path without
@@ -182,10 +225,13 @@ export function attachJobsWebSocket(
     // impersonation-overlay lookup -- applyImpersonation (src/web/
     // impersonation.ts) never sees this request. Mirrors that middleware's
     // overlay logic exactly: an active entry replaces the real groups with
-    // just the impersonated group for the purposes of this connection's
+    // just the impersonated group and sets `impersonating` (which switches
+    // the issue #58 creator lift off) for the purposes of this connection's
     // job-visibility check.
     const impersonatedGroup = impersonationStore.get(user.username);
-    const effectiveGroups = impersonatedGroup ? [impersonatedGroup] : user.groups;
+    const caller: AccessCaller = impersonatedGroup
+      ? { ...user, groups: [impersonatedGroup], impersonating: impersonatedGroup }
+      : user;
     const match = req.url?.match(/^\/ws\/jobs\/(\d+)$/);
     if (!match) {
       socket.destroy();
@@ -194,7 +240,7 @@ export function attachJobsWebSocket(
     const jobId = Number(match[1]);
     const job = jobStore.get(jobId);
     const rules = loadPermissionRules(inventoryPath);
-    if (!isJobVisible(rules, effectiveGroups, job?.target ?? null)) {
+    if (!isJobVisible(rules, caller, job ?? null, guestCreators(inventory))) {
       socket.destroy();
       return;
     }

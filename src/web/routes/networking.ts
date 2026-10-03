@@ -15,7 +15,7 @@ function respond(res: Response, result: GatewayResult): void {
 
 export function networkingRoutes(inventory: Inventory, inventoryPath: string, fetchImpl: typeof fetch = fetch): Router {
   const router = Router();
-  const requireGatewayAccess = requireResourceAccess(inventoryPath, (req) => ({
+  const requireGatewayAccess = requireResourceAccess(inventoryPath, inventory, (req) => ({
     type: 'guest',
     name: req.params.name as string,
   }));

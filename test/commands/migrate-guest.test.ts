@@ -795,6 +795,29 @@ test('runMigrateGuest apply rewrites host/vmid/ip in inventory, preserving name/
   assert.equal(inMemoryGuest?.host, 'pve-secondary');
 });
 
+// T025 (issue #58, US2): migrate-guest's inventory rewrite spreads the
+// existing guest entry (`{ ...g, host, vmid, ip }`), so a recorded creator
+// must survive the host move/renumber the same way name/type/subdomains/
+// port already do above.
+test("runMigrateGuest apply preserves a guest's recorded creator across a successful migration", async () => {
+  const ssh = new FakeSSHClient(orderedStatusResponder(4012, 5012));
+  const inv = isolatedInventory();
+  const media = inv.guests.find((g) => g.name === 'media')!;
+  media.creator = { uid: 'uid-test-user', username: 'test-user' };
+  const invPath = tempSavedInventoryPath(inv);
+  await runMigrateGuest(
+    { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+    { ssh, inventory: inv, inventoryPath: invPath }
+  );
+
+  const saved = loadInventory(invPath);
+  const guest = saved.guests.find((g) => g.name === 'media');
+  assert.deepEqual(guest?.creator, { uid: 'uid-test-user', username: 'test-user' });
+
+  const inMemoryGuest = inv.guests.find((g) => g.name === 'media');
+  assert.deepEqual(inMemoryGuest?.creator, { uid: 'uid-test-user', username: 'test-user' });
+});
+
 test('runMigrateGuest apply renumbers a guest in place on the same host (backup/restore under a new vmid, then destroys the old one)', async () => {
   const ssh = new FakeSSHClient(orderedStatusResponder(4012, 4050));
   const inv = isolatedInventory();

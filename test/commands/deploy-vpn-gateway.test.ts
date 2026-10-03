@@ -251,6 +251,56 @@ test('runDeployVpnGateway apply creates the LXC, builds+pushes the agent, and re
   assert.equal(gateway?.ip, '192.168.1.15');
 });
 
+// Issue #58, US1/T014: the real web-UI actor who triggered a deploy, already
+// reduced to GuestEntry.creator's shape by creatorFromActor
+// (src/operations/provisioning.ts's deploy-vpn-gateway operation apply).
+test('runDeployVpnGateway apply records the given creator on the new gateway guest', async () => {
+  process.env.NORDVPN_ACCESS_TOKEN = 'my-token';
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const invPath = tempInventoryPath(inventory);
+
+  const result = await runDeployVpnGateway(
+    {
+      host: 'pve1',
+      mid: 18,
+      name: 'nordvpn-creator-gw-lxc',
+      vpn: 'nordvpn',
+      apply: true,
+      connectPollAttempts: 1,
+      connectPollDelayMs: 0,
+      creator: { username: 'test-user', uid: 'uid-test-user', since: '2026-05-06T07:08:09.000Z' },
+    },
+    { ssh, inventory: { ...inventory, guests: [] }, inventoryPath: invPath, goBuilder: new FakeGoBuilder(), fetchImpl: fakeFetch() }
+  );
+
+  assert.equal(result.applied, true);
+  const saved = loadInventory(invPath).guests.find((g) => g.name === 'nordvpn-creator-gw-lxc');
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user', since: '2026-05-06T07:08:09.000Z' });
+});
+
+test('runDeployVpnGateway apply records no creator when none is given (CLI)', async () => {
+  process.env.NORDVPN_ACCESS_TOKEN = 'my-token';
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const invPath = tempInventoryPath(inventory);
+
+  const result = await runDeployVpnGateway(
+    {
+      host: 'pve1',
+      mid: 19,
+      name: 'nordvpn-no-creator-gw-lxc',
+      vpn: 'nordvpn',
+      apply: true,
+      connectPollAttempts: 1,
+      connectPollDelayMs: 0,
+    },
+    { ssh, inventory: { ...inventory, guests: [] }, inventoryPath: invPath, goBuilder: new FakeGoBuilder(), fetchImpl: fakeFetch() }
+  );
+
+  assert.equal(result.applied, true);
+  const saved = loadInventory(invPath).guests.find((g) => g.name === 'nordvpn-no-creator-gw-lxc');
+  assert.equal(saved?.creator, undefined);
+});
+
 test('runDeployVpnGateway apply rejects and leaves inventory unwritten when the agent never reports connected', async () => {
   process.env.NORDVPN_ACCESS_TOKEN = 'my-token';
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));

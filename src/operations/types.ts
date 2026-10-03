@@ -33,6 +33,9 @@ export interface OperationDeps {
   // so a VMID-in-use error never names a guest their group can't see.
   // The CLI and MCP server omit it -- full operator trust.
   canSeeGuest?: (guestName: string) => boolean;
+  // Test-only clock injection (#58): the time a newly recorded guest creator's
+  // `since` is stamped with. Undefined in production -- the real clock.
+  now?: () => Date;
 }
 
 // One toolkit action with a dry-run preview and a real apply, shared by the

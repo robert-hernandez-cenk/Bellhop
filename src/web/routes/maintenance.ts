@@ -6,7 +6,7 @@ import type { JobRunner } from '../jobs/job-runner.ts';
 import { MAINTENANCE_ACTIONS } from '../commands-meta.ts';
 import { runAuditNfsMounts, formatAuditNfsMounts } from '../../commands/maintenance/audit-nfs-mounts.ts';
 import { requireAdminGroup } from '../auth.ts';
-import { isAdmin, isResourceAllowed, requireResourceAccess } from '../access.ts';
+import { ANONYMOUS_CALLER, isAdmin, isResourceAllowed, requireResourceAccess } from '../access.ts';
 import { resolveTriggeredBy } from '../impersonation.ts';
 import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
@@ -57,7 +57,7 @@ export function maintenanceRoutes(
 
   router.post(
     '/guest-power',
-    requireResourceAccess(inventoryPath, (req) => {
+    requireResourceAccess(inventoryPath, inventory, (req) => {
       const guest = req.body?.guest;
       return typeof guest === 'string' && guest ? { type: 'guest', name: guest } : undefined;
     }),
@@ -73,7 +73,7 @@ export function maintenanceRoutes(
 
   router.post(
     '/set-guest-vpn',
-    requireResourceAccess(inventoryPath, (req) => {
+    requireResourceAccess(inventoryPath, inventory, (req) => {
       const guest = req.body?.guest;
       return typeof guest === 'string' && guest ? { type: 'guest', name: guest } : undefined;
     }),
@@ -143,7 +143,7 @@ export function maintenanceRoutes(
     }
     if (op.targetType) {
       const targetName = op.target(req.body ?? {});
-      if (targetName && !isResourceAllowed(inventoryPath, groups, { type: op.targetType, name: targetName })) {
+      if (targetName && !isResourceAllowed(inventoryPath, inventory, req.user ?? ANONYMOUS_CALLER, { type: op.targetType, name: targetName })) {
         res.status(403).json({ error: `forbidden: no access to ${op.targetType} '${targetName}'` });
         return undefined;
       }

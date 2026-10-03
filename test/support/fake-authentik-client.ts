@@ -317,6 +317,7 @@ export class FakeAuthentikClient implements AuthentikClient {
     const user: AuthentikUser = {
       id: this.newId(),
       username: input.username,
+      uid: `uid-${input.username}`,
       email: input.email,
       isActive: true,
       groupIds: input.groupIds,

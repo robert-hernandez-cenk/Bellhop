@@ -21,6 +21,7 @@ import {
   refreshInventory,
   HostEntrySchema,
   GuestEntrySchema,
+  GuestCreatorSchema,
   ExternalSiteSchema,
   UnauthenticatedPathSchema,
   SettingsSchema,
@@ -195,6 +196,90 @@ test('saveInventory/loadInventory round-trips appSource on a guest', () => {
   const upstream = loaded.guests.find((g) => g.name === 'plex-lxc');
   assert.equal(custom?.appSource, 'custom');
   assert.equal(upstream?.appSource, undefined, 'a guest with no appSource must round-trip as undefined, not null/custom');
+});
+
+// issue #58 (unit U1): creator records the web-UI actor that created a
+// guest, set only by create-lxc/create-vm/install-app's apply step or
+// backfill-guest-creators -- but, same as appSource above, must survive a
+// plain save/load cycle like every other guest field.
+test('saveInventory/loadInventory round-trips a guest creator with uid and username', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [{ name: 'web-lxc', type: 'lxc', vmid: 4020, host: 'pve1', creator: { uid: 'uid-test-user', username: 'test-user' } }],
+  };
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  const guest = loaded.guests.find((g) => g.name === 'web-lxc');
+  assert.deepEqual(guest?.creator, { uid: 'uid-test-user', username: 'test-user' });
+});
+
+test('saveInventory/loadInventory round-trips a guest creator with username only, omitting the uid key entirely', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [{ name: 'demo-vm', type: 'vm', vmid: 4021, host: 'pve1', creator: { username: 'other-user' } }],
+  };
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  const guest = loaded.guests.find((g) => g.name === 'demo-vm');
+  assert.equal(guest?.creator?.username, 'other-user');
+  assert.ok(guest?.creator && !('uid' in guest.creator), 'a creator with no uid must round-trip without a uid key at all, not creator.uid === undefined');
+});
+
+test('a guest saved without a creator loads with no creator key at all', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [{ name: 'media', type: 'lxc', vmid: 4022, host: 'pve1' }],
+  };
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  const guest = loaded.guests.find((g) => g.name === 'media');
+  assert.ok(guest && !('creator' in guest), 'a guest with no creator must round-trip without a creator key at all, not creator === undefined');
+});
+
+test('GuestCreatorSchema rejects an empty username, with or without a uid', () => {
+  assert.equal(GuestCreatorSchema.safeParse({ username: '' }).success, false);
+  assert.equal(GuestCreatorSchema.safeParse({ uid: '', username: 'x' }).success, false);
+  assert.equal(GuestCreatorSchema.safeParse({ username: 'test-user' }).success, true);
+  assert.equal(GuestCreatorSchema.safeParse({ uid: 'uid-test-user', username: 'test-user' }).success, true);
+  assert.equal(GuestCreatorSchema.safeParse({ username: 'test-user', since: '' }).success, false);
+});
+
+// Final review (#58), finding 2: `since` records when the creator was
+// recorded, so the job lift never reaches a reused name's older jobs.
+test('saveInventory/loadInventory round-trips a creator `since`, and omits the key when absent', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      {
+        name: 'web-lxc',
+        type: 'lxc',
+        vmid: 4020,
+        host: 'pve1',
+        creator: { uid: 'uid-test-user', username: 'test-user', since: '2026-01-02T03:04:05.000Z' },
+      },
+      { name: 'demo-vm', type: 'vm', vmid: 4021, host: 'pve1', creator: { username: 'other-user' } },
+    ],
+  };
+  const dest = path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-test-')), 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  assert.deepEqual(loaded.guests.find((g) => g.name === 'web-lxc')?.creator, {
+    uid: 'uid-test-user',
+    username: 'test-user',
+    since: '2026-01-02T03:04:05.000Z',
+  });
+  const noSince = loaded.guests.find((g) => g.name === 'demo-vm')?.creator;
+  assert.ok(noSince && !('since' in noSince), 'a creator with no since must round-trip without a since key at all');
 });
 
 test('saveInventory/loadInventory round-trips insecureBackendTls: false (not just true/unset) for hosts, guests, and external_sites', () => {
@@ -843,6 +928,55 @@ test('opening a pre-existing database without the app_source column migrates it 
   saveInventory(dest, updated);
   const reloaded = loadInventory(dest);
   assert.equal(reloaded.guests[0].appSource, 'custom', 'the migrated app_source column must actually be writable/readable');
+});
+
+test('opening a pre-existing database without the created_by_uid/created_by_username columns migrates it in place', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  const legacyDb = new Database(dest);
+  legacyDb.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE hosts (
+      name TEXT PRIMARY KEY, ssh_target TEXT NOT NULL, ssh_user TEXT NOT NULL,
+      proxy INTEGER NOT NULL DEFAULT 0,
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      bridges_json TEXT, storages_json TEXT, nfs_mounts_json TEXT
+    );
+    CREATE TABLE guests (
+      name TEXT PRIMARY KEY, type TEXT NOT NULL, vmid INTEGER NOT NULL,
+      host TEXT NOT NULL REFERENCES hosts(name),
+      ip TEXT, port INTEGER, insecure_backend_tls INTEGER,
+      proxy INTEGER NOT NULL DEFAULT 0, unprivileged INTEGER, app TEXT,
+      UNIQUE (host, vmid)
+    );
+    CREATE TABLE external_sites (name TEXT PRIMARY KEY, ip TEXT NOT NULL, port INTEGER, insecure_backend_tls INTEGER);
+    CREATE TABLE subdomains (subdomain TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+    CREATE TABLE proxy_owner (id INTEGER PRIMARY KEY CHECK (id = 1), owner_type TEXT NOT NULL, owner_name TEXT NOT NULL);
+  `);
+  legacyDb.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'example.com')").run();
+  legacyDb.prepare("INSERT INTO hosts (name, ssh_target, ssh_user) VALUES ('pve1', 'pve1.local', 'root')").run();
+  legacyDb
+    .prepare("INSERT INTO guests (name, type, vmid, host, app) VALUES ('web-lxc', 'lxc', 4020, 'pve1', 'myapp')")
+    .run();
+  legacyDb.close();
+
+  const inv = loadInventory(dest);
+  assert.equal(inv.guests[0].creator, undefined, 'a pre-migration row has no creator value');
+
+  const updated: Inventory = {
+    ...inv,
+    guests: inv.guests.map((g) => ({
+      ...g,
+      creator: { uid: 'uid-test-user', username: 'test-user', since: '2026-01-02T03:04:05.000Z' },
+    })),
+  };
+  saveInventory(dest, updated);
+  const reloaded = loadInventory(dest);
+  assert.deepEqual(
+    reloaded.guests[0].creator,
+    { uid: 'uid-test-user', username: 'test-user', since: '2026-01-02T03:04:05.000Z' },
+    'the migrated created_by_uid/created_by_username/created_by_since columns must actually be writable/readable'
+  );
 });
 
 test('sortInventoryForFile groups guests by host name, then type, then name', () => {

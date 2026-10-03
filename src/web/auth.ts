@@ -28,6 +28,12 @@ export interface AuthUser {
   // play (see authMode below). Drives the web UI's unauthenticated banner;
   // admin rights come from group membership like everyone else.
   localOperator?: boolean;
+  // The identity provider's stable user id (Authentik's X-authentik-uid,
+  // issue #58) -- used to match a guest's recorded creator across
+  // username renames (src/lib/permissions.ts's isGuestCreator) rather than
+  // by username alone. Absent for dev/test identities and the synthetic
+  // local operator, which have no such id.
+  uid?: string;
 }
 
 // Axis 1 of issue #123's design. The default is inferred rather than
@@ -54,14 +60,20 @@ export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {
   throw new Error(`WEB_UI_AUTH_MODE must be one of auto, authentik, none -- got: ${raw}`);
 }
 
+// The local operator's username: WEB_UI_LOCAL_USER, else 'local'. Exported for
+// backfill-guest-creators, which must recognize (and skip) its jobs.
+export function localOperatorUsername(env: NodeJS.ProcessEnv = process.env): string {
+  const name = env.WEB_UI_LOCAL_USER;
+  return name !== undefined && name !== '' ? name : 'local';
+}
+
 // The synthetic identity used when there is no identity provider. It is put
 // *in* the configured admin group rather than special-cased as an admin, so
 // isAdminUser and every per-resource permission check keep working with no
 // awareness of this mode at all.
 function localOperator(env: NodeJS.ProcessEnv): AuthUser {
-  const name = env.WEB_UI_LOCAL_USER;
   return {
-    username: name !== undefined && name !== '' ? name : 'local',
+    username: localOperatorUsername(env),
     groups: [authentikConfig(env).adminGroup],
     localOperator: true,
   };
@@ -83,10 +95,15 @@ export function resolveAuthUser(
   if (typeof username === 'string' && username.length > 0) {
     const email = headers['x-authentik-email'];
     const groupsHeader = headers['x-authentik-groups'];
+    const uid = headers['x-authentik-uid'];
     return {
       username,
       email: typeof email === 'string' ? email : undefined,
       groups: typeof groupsHeader === 'string' && groupsHeader.length > 0 ? groupsHeader.split('|') : [],
+      // A conditional spread, not `uid: ... ?? undefined`, so a request
+      // with no (or an empty) x-authentik-uid header round-trips without
+      // a uid key at all rather than one set to `undefined`.
+      ...(typeof uid === 'string' && uid.length > 0 ? { uid } : {}),
     };
   }
 

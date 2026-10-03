@@ -75,6 +75,7 @@ test('FakeAuthentikClient can be seeded with initial users and groups', async ()
   const seededUser: AuthentikUser = {
     id: '1',
     username: 'seed',
+    uid: 'uid-seed',
     email: 'seed@example.com',
     isActive: true,
     groupIds: [],
@@ -87,6 +88,7 @@ test('FakeAuthentikClient advances nextId past seeded numeric ids to avoid colli
   const seededUser: AuthentikUser = {
     id: '1',
     username: 'seed',
+    uid: 'uid-seed',
     email: 'seed@example.com',
     isActive: true,
     groupIds: [],
@@ -848,6 +850,34 @@ test('RealAuthentikClient.clearFlowCache POSTs to the cache_clear endpoint', asy
       assert.deepEqual(requests, [
         { url: 'https://auth.example.com/api/v3/flows/instances/cache_clear/', method: 'POST', body: undefined },
       ]);
+    }
+  );
+});
+
+// Driven from a captured, redacted GET /api/v3/core/users/ response (issue
+// #58, T032): every user carries a 64-hex `uid`, the stable identifier a
+// guest's creator record keeps across a username change.
+test('RealAuthentikClient.listUsers maps each user uid from the captured users listing', async () => {
+  const users = fixture('core-users.json') as { results: Array<{ username: string; uid: string }> };
+  await withStubbedFetch(
+    () => json(users),
+    async (client, requests) => {
+      const listed = await client.listUsers();
+      assert.equal(requests[0].url, 'https://auth.example.com/api/v3/core/users/?page_size=500');
+      assert.equal(listed.length, users.results.length);
+      const testUser = listed.find((u) => u.username === 'test-user');
+      assert.equal(testUser?.uid, 'b'.repeat(64));
+      for (const u of listed) assert.match(u.uid, /^[0-9a-f]{64}$/);
+    }
+  );
+});
+
+test('RealAuthentikClient.listUsers maps a missing uid to an empty string', async () => {
+  await withStubbedFetch(
+    () => json({ results: [{ pk: 1, username: 'test-user' }] }),
+    async (client) => {
+      const [u] = await client.listUsers();
+      assert.equal(u.uid, '');
     }
   );
 });

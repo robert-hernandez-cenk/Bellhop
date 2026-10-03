@@ -13,15 +13,24 @@ import {
 // blocks hover on every visible field (#34's FR-006).
 
 const FORWARD_GUEST = { authMode: 'forward' as const };
-const OIDC_GUEST = { authGroup: 'bellhop-users', authMode: 'oidc' as const };
+const OIDC_GUEST = { authGroup: 'bellhop-users', authMode: 'oidc' as const, creator: { username: 'test-user' } };
 
-test('the General tab renders exactly the general fields', () => {
+test('the General tab renders exactly the general fields for a guest with a recorded creator', () => {
   assert.deepEqual(renderedAdvancedFields('general', OIDC_GUEST), new Set(GENERAL_TAB_FIELDS));
+});
+
+// issue #58: 'created by' only renders for a guest with a recorded creator,
+// unlike every other General-tab field, which renders unconditionally.
+test("the General tab omits 'created by' for a guest with no recorded creator", () => {
+  const rendered = renderedAdvancedFields('general', FORWARD_GUEST);
+  assert.equal(rendered.has('created by'), false);
+  assert.deepEqual(rendered, new Set(GENERAL_TAB_FIELDS.filter((f) => f !== 'created by')));
 });
 
 test('every help label is rendered on some tab for some guest', () => {
   const all = new Set([
     ...renderedAdvancedFields('general', FORWARD_GUEST),
+    ...renderedAdvancedFields('general', OIDC_GUEST),
     ...renderedAdvancedFields('access', FORWARD_GUEST),
     ...renderedAdvancedFields('access', OIDC_GUEST),
   ]);

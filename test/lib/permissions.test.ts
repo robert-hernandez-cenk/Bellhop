@@ -8,6 +8,7 @@ import {
   savePermissionGroup,
   clearPermissionGroup,
   isAllowed,
+  isGuestCreator,
   type GroupPermission,
 } from '../../src/lib/permissions.ts';
 
@@ -115,4 +116,67 @@ test('isAllowed: an allow-list group membership cannot be widened by a second, u
 test('isAllowed: a user in no configured groups is unrestricted', () => {
   const rules = new Map<string, GroupPermission>([['family', { mode: 'allow-list', resources: [] }]]);
   assert.equal(isAllowed(rules, [], { type: 'guest', name: 'stash-lxc' }), true);
+});
+
+// issue #58: creator access (data-model.md "Access decision").
+
+test('isGuestCreator: false while the caller is impersonating, even for the real creator', () => {
+  assert.equal(
+    isGuestCreator({ uid: 'uid-test-user', username: 'test-user' }, { username: 'test-user', uid: 'uid-test-user', impersonating: 'app-users' }),
+    false
+  );
+});
+
+test('isGuestCreator: false when the guest has no recorded creator', () => {
+  assert.equal(isGuestCreator(undefined, { username: 'test-user', uid: 'uid-test-user' }), false);
+});
+
+test('isGuestCreator: compares uid when both sides have one, ignoring username', () => {
+  // Same username, different uid: a different person reusing a name.
+  assert.equal(isGuestCreator({ uid: 'uid-test-user', username: 'test-user' }, { username: 'test-user', uid: 'uid-other-user' }), false);
+  // Different username, same uid: the creator after a rename.
+  assert.equal(isGuestCreator({ uid: 'uid-test-user', username: 'test-user' }, { username: 'renamed-user', uid: 'uid-test-user' }), true);
+});
+
+test('isGuestCreator: compares username when either side lacks a uid', () => {
+  assert.equal(isGuestCreator({ username: 'test-user' }, { username: 'test-user', uid: 'uid-test-user' }), true);
+  assert.equal(isGuestCreator({ uid: 'uid-test-user', username: 'test-user' }, { username: 'test-user' }), true);
+  assert.equal(isGuestCreator({ username: 'test-user' }, { username: 'other-user' }), false);
+  assert.equal(isGuestCreator({ uid: 'uid-test-user', username: 'test-user' }, { username: 'other-user' }), false);
+});
+
+test('isGuestCreator: an empty caller username never matches', () => {
+  assert.equal(isGuestCreator({ username: 'test-user' }, { username: '' }), false);
+});
+
+test('isAllowed: an allow-list group lets the creator through to an unlisted guest', () => {
+  const rules = new Map<string, GroupPermission>([['app-users', { mode: 'allow-list', resources: [{ type: 'host', name: 'pve1' }] }]]);
+  assert.equal(isAllowed(rules, ['app-users'], { type: 'guest', name: 'web-lxc' }, { isCreator: true }), true);
+  assert.equal(isAllowed(rules, ['app-users'], { type: 'guest', name: 'web-lxc' }, { isCreator: false }), false);
+});
+
+test('isAllowed: the creator lift never applies to a host ref', () => {
+  const rules = new Map<string, GroupPermission>([['app-users', { mode: 'allow-list', resources: [{ type: 'host', name: 'pve1' }] }]]);
+  assert.equal(isAllowed(rules, ['app-users'], { type: 'host', name: 'pve2' }, { isCreator: true }), false);
+});
+
+test('isAllowed: an explicit block-list entry denies the creator', () => {
+  const rules = new Map<string, GroupPermission>([['blocked', { mode: 'block-list', resources: [{ type: 'guest', name: 'web-lxc' }] }]]);
+  assert.equal(isAllowed(rules, ['blocked'], { type: 'guest', name: 'web-lxc' }, { isCreator: true }), false);
+  assert.equal(isAllowed(rules, ['blocked'], { type: 'guest', name: 'demo-vm' }, { isCreator: true }), true);
+});
+
+test('isAllowed: allow-list unlisted plus a block-list listing the guest denies the creator (explicit block wins)', () => {
+  const rules = new Map<string, GroupPermission>([
+    ['app-users', { mode: 'allow-list', resources: [{ type: 'host', name: 'pve1' }] }],
+    ['blocked', { mode: 'block-list', resources: [{ type: 'guest', name: 'web-lxc' }] }],
+  ]);
+  assert.equal(isAllowed(rules, ['app-users', 'blocked'], { type: 'guest', name: 'web-lxc' }, { isCreator: true }), false);
+});
+
+test('isAllowed: allow-list listing the guest allows regardless of isCreator; omitted opts behaves as before', () => {
+  const rules = new Map<string, GroupPermission>([['app-users', { mode: 'allow-list', resources: [{ type: 'guest', name: 'web-lxc' }] }]]);
+  assert.equal(isAllowed(rules, ['app-users'], { type: 'guest', name: 'web-lxc' }, { isCreator: false }), true);
+  assert.equal(isAllowed(rules, ['app-users'], { type: 'guest', name: 'web-lxc' }), true);
+  assert.equal(isAllowed(rules, ['app-users'], { type: 'guest', name: 'media' }), false);
 });

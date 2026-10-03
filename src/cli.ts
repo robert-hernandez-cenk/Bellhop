@@ -16,6 +16,8 @@ import { runGuestPower } from './commands/maintenance/guest-power.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from './commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/push-ssh-key.ts';
 import { runSetConfig } from './commands/maintenance/set-config.ts';
+import { runBackfillGuestCreators, formatBackfillGuestCreators } from './commands/maintenance/backfill-guest-creators.ts';
+import { JobStore } from './web/jobs/job-store.ts';
 import { runSyncProxy } from './commands/networking/sync-proxy.ts';
 import { runConvertCaddyfile, formatConvertCaddyfile } from './commands/networking/convert-caddyfile.ts';
 import { runRenderStatusPage } from './commands/networking/render-status-page.ts';
@@ -26,6 +28,7 @@ import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/ne
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
 import type { AuthentikClient } from './lib/authentik-client.ts';
+import { localOperatorUsername } from './web/auth.ts';
 import { runAttachNfsMount } from './commands/provisioning/attach-nfs-mount.ts';
 import { runConfigureGuest } from './commands/provisioning/configure-guest.ts';
 import { runCreateLxc } from './commands/provisioning/create-lxc.ts';
@@ -171,6 +174,33 @@ program
       const result = runSetConfig({ key, value, ...opts }, { inventoryPath: invPath });
       if (!result.applied) return;
       logInfo(result.value === undefined ? `Cleared ${result.key} in ${invPath}` : `Set ${result.key} to ${result.value} in ${invPath}`);
+    })
+  );
+
+program
+  .command('backfill-guest-creators')
+  .description("One-time migration: record each guest's creator from successful web-UI create jobs in job history")
+  .option(
+    '--map <old=new>',
+    'treat jobs recorded under login old as login new (repeatable)',
+    (value: string, previous: string[]) => [...previous, value],
+    [] as string[]
+  )
+  .option('--apply', 'write the creators to the inventory (default: dry run)')
+  .action(
+    action(async (opts: { map: string[]; apply?: boolean }) => {
+      const invPath = inventoryPath();
+      // Same job history database the web service and MCP server use.
+      const jobStore = new JobStore(path.join(dataDir(), 'jobs.sqlite3'));
+      try {
+        const report = await runBackfillGuestCreators(
+          { maps: opts.map, apply: opts.apply ?? false, localOperator: localOperatorUsername() },
+          { inventory: loadInventory(invPath), inventoryPath: invPath, jobStore, authentik: buildAuthentikClient() }
+        );
+        console.log(formatBackfillGuestCreators(report));
+      } finally {
+        jobStore.close();
+      }
     })
   );
 

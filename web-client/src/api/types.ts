@@ -151,6 +151,13 @@ export interface GuestEntry {
   appSource?: 'custom';
   vpnGateway?: 'nordvpn' | 'pia';
   vpn?: string;
+  // The web-UI actor who created this guest from Bellhop (issue #58),
+  // mirrors the server's GuestEntry.creator (src/lib/inventory.ts's
+  // GuestCreatorSchema) -- absent for a guest created another way (CLI,
+  // Sync Inventory picking up something created outside Bellhop, ...).
+  // Shown as a read-only "Created by" row in the Advanced modal; `uid` is
+  // never displayed.
+  creator?: { uid?: string; username: string; since?: string };
 }
 
 // GET /api/inventory's customScripts field -- null unless both

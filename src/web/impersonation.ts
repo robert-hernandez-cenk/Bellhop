@@ -47,5 +47,9 @@ export function resolveTriggeredBy(
 export function resolveActor(req: Request): Actor | undefined {
   const real = req.realUser ?? req.user;
   if (!real || real.localOperator) return undefined;
-  return real.email === undefined ? { username: real.username } : { username: real.username, email: real.email };
+  return {
+    username: real.username,
+    ...(real.email === undefined ? {} : { email: real.email }),
+    ...(real.uid === undefined ? {} : { uid: real.uid }),
+  };
 }

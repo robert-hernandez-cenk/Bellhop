@@ -17,6 +17,12 @@ export const DEFAULT_CREATOR_ROLE = 'PVEVMAdmin';
 export interface Actor {
   username: string;
   email?: string;
+  // The identity provider's stable user id (issue #58), copied from the
+  // real AuthUser by resolveActor -- used to match a guest's recorded
+  // creator across username renames (src/lib/permissions.ts's
+  // isGuestCreator). Absent for the synthetic local operator and any
+  // caller resolveActor returns undefined for in the first place.
+  uid?: string;
 }
 
 // Only the two fields buildRealmReadCommand's host-side filter prints. A
