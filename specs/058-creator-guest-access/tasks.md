@@ -74,10 +74,10 @@ description: "Task list for creator access to guests (#58)"
 
 **Goal**: prove (and fix if needed) persistence through routine operations and uid-based matching.
 
-- [ ] T024 [P] [US2] Tests in `test/commands/sync-inventory.test.ts`: an existing guest's `creator` is preserved across `runSyncInventory --apply`; a newly discovered guest has none; a guest that disappears from Proxmox is dropped together with its creator.
-- [ ] T025 [P] [US2] Tests in `test/commands/migrate-guest.test.ts`: after a successful migration the guest keeps its `creator`.
-- [ ] T026 [P] [US2] Test in `test/web/routes/dashboard.test.ts`: guest `creator: { uid: 'uid-test-user', username: 'old-login' }` is visible to a request with headers `x-authentik-username: new-login`, `x-authentik-uid: uid-test-user`, `x-authentik-groups: app-users` (allow-list, host only); and a request with `x-authentik-username: old-login` but a different uid is denied.
-- [ ] T027 [US2] Fix any failing preservation in `src/commands/maintenance/sync-inventory.ts` / `src/commands/provisioning/migrate-guest.ts` (expected: none needed — both spread the existing entry). Run tests.
+- [x] T024 [P] [US2] Tests in `test/commands/sync-inventory.test.ts`: an existing guest's `creator` is preserved across `runSyncInventory --apply`; a newly discovered guest has none; a guest that disappears from Proxmox is dropped together with its creator.
+- [x] T025 [P] [US2] Tests in `test/commands/migrate-guest.test.ts`: after a successful migration the guest keeps its `creator`.
+- [x] T026 [P] [US2] Test in `test/web/routes/dashboard.test.ts`: guest `creator: { uid: 'uid-test-user', username: 'old-login' }` is visible to a request with headers `x-authentik-username: new-login`, `x-authentik-uid: uid-test-user`, `x-authentik-groups: app-users` (allow-list, host only); and a request with `x-authentik-username: old-login` but a different uid is denied.
+- [x] T027 [US2] Fix any failing preservation in `src/commands/maintenance/sync-inventory.ts` / `src/commands/provisioning/migrate-guest.ts` (expected: none needed — both spread the existing entry). Run tests.
 
 **Checkpoint**: US2 complete.
 

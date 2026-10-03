@@ -1396,3 +1396,74 @@ test('a block-list group naming the created guest overrides creator access (expl
   const denied = await as('test-user', 'app-users|blocked', request(app).patch('/api/inventory/guests/web-lxc')).send({ port: '8080' });
   assert.equal(denied.status, 403);
 });
+
+// T026 (issue #58, US2): creator access is tied to the identity provider's
+// stable uid, not the spelling of the login name -- isGuestCreator
+// (src/lib/permissions.ts) prefers the uid match when both sides carry one.
+// web-lxc's recorded creator here kept their old login name ('old-login')
+// on the guest record but is now signed in under a new one ('new-login');
+// app-users is the same host-only allow-list as creatorApp() above, so
+// web-lxc is reachable only via the creator lift.
+function uidCreatorInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true },
+    ],
+    guests: [
+      { name: 'web-lxc', type: 'lxc', vmid: 4005, host: 'pve1', ip: '192.168.1.5', creator: { uid: 'uid-test-user', username: 'old-login' } },
+    ],
+  };
+}
+
+async function uidCreatorApp() {
+  const app = testApp(uidCreatorInventory(), (_target, _user, cmd) => {
+    if (cmd.includes('/lxc')) {
+      return { stdout: JSON.stringify([{ vmid: 4005, status: 'running' }]), stderr: '', code: 0 };
+    }
+    return { stdout: '[]', stderr: '', code: 0 };
+  });
+  await asAdmin(request(app).put('/api/permissions/app-users')).send({
+    mode: 'allow-list',
+    resources: [{ type: 'host', name: 'pve1' }],
+  });
+  return app;
+}
+
+function asUid(username: string, uid: string, groups: string, req: request.Test): request.Test {
+  return req.set('x-authentik-username', username).set('x-authentik-uid', uid).set('x-authentik-groups', groups);
+}
+
+test(
+  "a guest's recorded creator stays reachable by uid after their login name changes, but a different user who reuses the old login name is not the creator",
+  async () => {
+    const app = await uidCreatorApp();
+
+    // Same stable uid, new login name ('new-login' vs. the recorded
+    // 'old-login') -- still the creator, by uid match.
+    const renamed = await asUid('new-login', 'uid-test-user', 'app-users', request(app).get('/api/inventory'));
+    assert.equal(renamed.status, 200);
+    assert.deepEqual(renamed.body.guests.map((g: any) => g.name), ['web-lxc']);
+    const renamedPatch = await asUid(
+      'new-login',
+      'uid-test-user',
+      'app-users',
+      request(app).patch('/api/inventory/guests/web-lxc')
+    ).send({ port: '8080' });
+    assert.equal(renamedPatch.status, 200);
+
+    // Same recorded login name ('old-login'), but a different uid -- both
+    // sides carry a uid, so the uid decides and this caller is not the
+    // creator: the guest is invisible and the edit is denied.
+    const differentUid = await asUid('old-login', 'uid-other-user', 'app-users', request(app).get('/api/inventory'));
+    assert.equal(differentUid.status, 200);
+    assert.deepEqual(differentUid.body.guests.map((g: any) => g.name), []);
+    const differentUidPatch = await asUid(
+      'old-login',
+      'uid-other-user',
+      'app-users',
+      request(app).patch('/api/inventory/guests/web-lxc')
+    ).send({ port: '8081' });
+    assert.equal(differentUidPatch.status, 403);
+  }
+);

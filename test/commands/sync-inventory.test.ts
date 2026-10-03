@@ -142,6 +142,62 @@ test('runSyncInventory preserves an existing guest\'s oidcMobileRedirectUris whe
   assert.deepEqual(media?.oidcMobileRedirectUris, ['app.example:///callback']);
 });
 
+// T024 (issue #58, US2): a guest's recorded creator must survive a sync the
+// same way its app slug/subdomains/port already do (finalEntry's
+// `{ ...existing }` spread carries it forward); a guest sync-inventory
+// discovers for the first time has no creator at all (only create-lxc/
+// create-vm/install-app's web apply, or backfill-guest-creators, ever set
+// one); and a guest that disappears from Proxmox is dropped from the
+// result together with whatever creator it carried -- there is no
+// separate creator record to leak.
+test(
+  "runSyncInventory preserves an existing guest's creator, assigns none to a newly discovered guest, and drops a removed guest's creator along with it",
+  async () => {
+    const inv: Inventory = {
+      ...baseInventory,
+      guests: [
+        {
+          name: 'media',
+          type: 'lxc',
+          vmid: 105,
+          host: 'pve1',
+          ip: '192.168.1.50',
+          creator: { uid: 'uid-test-user', username: 'test-user' },
+        },
+        { name: 'gone', type: 'lxc', vmid: 199, host: 'pve1', creator: { username: 'other-user' } },
+      ],
+    };
+    const ssh = new FakeSSHClient(
+      responderFor({
+        lxcList: [
+          { vmid: 105, name: 'media', template: 0 },
+          { vmid: 300, name: 'newbox', template: 0 },
+        ],
+        qemuList: [],
+        configByVmid: {
+          105: { net0: 'name=eth0,bridge=vmbr0,ip=192.168.1.50/24,gw=192.168.1.1' },
+          300: { net0: 'name=eth0,bridge=vmbr0,ip=192.168.1.60/24,gw=192.168.1.1' },
+        },
+      })
+    );
+
+    const result = await runSyncInventory({}, { ssh, inventory: inv });
+
+    const media = result.guests.find((g) => g.name === 'media');
+    assert.deepEqual(media?.creator, { uid: 'uid-test-user', username: 'test-user' }, "an existing guest's creator must be preserved across a sync");
+
+    const newbox = result.guests.find((g) => g.name === 'newbox');
+    assert.equal(newbox?.creator, undefined, 'a newly discovered guest must have no creator');
+
+    assert.ok(
+      !result.guests.some((g) => g.name === 'gone'),
+      'a guest no longer present in Proxmox must be dropped from the result'
+    );
+    assert.equal(result.removedEntries.length, 1);
+    assert.match(result.removedEntries[0], /gone/);
+  }
+);
+
 test('runSyncInventory reports a removed guest that no longer appears live', async () => {
   const ssh = new FakeSSHClient(
     responderFor({
