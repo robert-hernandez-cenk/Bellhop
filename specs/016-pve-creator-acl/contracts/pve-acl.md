@@ -76,6 +76,15 @@ export async function copyGuestAcls(
 - Failed (grant script exited non-zero): `Failed to grant <role> on VM <vmid> to <userid> (exit <n>): <stderr> -- run on <host> by hand:\n<script>`
 - Failed (the remote call itself threw -- no exit code to invent): `Failed to grant <role> on VM <vmid> to <userid>: <error message> -- run on <host> by hand:\n<script>`
 
+`copyGuestAcls` (`<from>` is `/vms/<oldVmid>`, `<to>` is `/vms/<newVmid>`):
+
+- Copied: `Copied <n> permission(s) from <from> to <to>`
+- None: `No permissions on <from> to copy`
+- Read failed (non-zero exit, or exit 0 with output that fails `AclEntrySchema.array()`, `<stderr>` then reading `unexpected output`): `Couldn't read the permissions on <from> on <host> (exit <n>): <detail> -- check pveum acl list on <host> and re-create any permissions on <to> by hand`
+- Read failed (the remote call itself threw -- no exit code to report): `Couldn't read the permissions on <from> on <host>: <error message> -- check pveum acl list on <host> and re-create any permissions on <to> by hand`
+- Copy failed (copy script exited non-zero): `Failed to copy permissions from <from> to <to> (exit <n>): <stderr> -- run on <host> by hand:\n<script>`
+- Copy failed (the remote call itself threw -- no exit code to invent): `Failed to copy permissions from <from> to <to>: <error message> -- run on <host> by hand:\n<script>`
+
 ## Settings contract
 
 `pveUserRealm` and `pveCreatorRole` are added to `SettingsSchema`, with the

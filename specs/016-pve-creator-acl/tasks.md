@@ -167,7 +167,7 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T022 [P] Write `docs/proxmox-access.md`, covering:
+- [x] T022 [P] Write `docs/proxmox-access.md`, covering:
   - what the feature does
   - Proxmox realm prerequisites (OpenID, username claim `username` or `email`, same identity provider)
   - both settings
@@ -179,8 +179,8 @@ description: "Task list for Proxmox access for VM creators (#53)"
   - the job-log messages and their fixes
 
   Link it from the docs index in `README.md`, keeping README at 200 lines or fewer
-- [ ] T023 [P] Add `pveUserRealm`/`pveCreatorRole` to the settings reference in `docs/configuration.md`
-- [ ] T024 [P] Add a CLAUDE.md architecture bullet for the creator grant and ACL copy, covering:
+- [x] T023 [P] Add `pveUserRealm`/`pveCreatorRole` to the settings reference in `docs/configuration.md`
+- [x] T024 [P] Add a CLAUDE.md architecture bullet for the creator grant and ACL copy, covering:
   - `src/lib/pve-acl.ts`
   - `OperationDeps.actor` (set only by the web provisioning router, via `resolveActor`)
   - the on-host JSON::PP filtering and why (the realm read carries `client-key`, and job logs capture stdout)
