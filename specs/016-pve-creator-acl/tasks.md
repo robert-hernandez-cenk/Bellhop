@@ -190,8 +190,8 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
   Mention the two new settings in the existing `meta` settings list
 - [ ] T025 Run `npm run typecheck`, `npm test`, `npm run web:build` in the worktree; all must pass
-- [ ] T026 Verify the Settings page in a browser at desktop width and at ≤640px against the demo (`npm run demo`): both new fields render, wrap correctly, and save
-- [ ] T027 Regenerate screenshots with `npm run docs:screenshots` and check `docs/images/` by eye for example-only values (the Settings screenshot gains two fields)
+- [x] T026 Verify the Settings page in a browser at desktop width and at ≤640px against the demo (`npm run demo`): both new fields render, wrap correctly, and save
+- [x] T027 Regenerate screenshots with `npm run docs:screenshots` and check `docs/images/` by eye for example-only values (the Settings screenshot gains two fields)
 - [ ] T028 Live verification per `quickstart.md` steps 1–7 against a real cluster. This needs the operator (it creates and destroys a real VM), so record it as unverified in the PR unless it's done
 
 ---
