@@ -15,6 +15,7 @@ import { runDeployVpnGateway } from '../commands/provisioning/deploy-vpn-gateway
 import { runMigrateGuest } from '../commands/provisioning/migrate-guest.ts';
 import { runSyncAuthentik, conflictExplanation } from '../commands/networking/sync-authentik.ts';
 import { logWarn } from '../lib/log.ts';
+import { creatorGrantPreview, grantCreatorAccess } from '../lib/pve-acl.ts';
 import type { Operation, OperationDeps } from './types.ts';
 import { reqStr, optStr, reqInt, optInt, flag, portStr } from './fields.ts';
 
@@ -174,19 +175,29 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     targetType: 'host',
     preview: async (i, deps) => {
       const { text, result } = await withCapturedConsole(() => runCreateVm({ ...(i as any), apply: false }, deps));
-      return [text, result.command].filter(Boolean).join('\n');
+      return [text, result.command, creatorGrantPreview(deps.inventory, deps.actor, result.mid.vmid)]
+        .filter(Boolean)
+        .join('\n');
     },
     apply: async (i, deps) => {
       const result = await runCreateVm({ ...(i as any), apply: true }, deps);
-      await recordProvisionedGuest(deps, {
-        name: i.name,
-        type: 'vm',
-        vmid: result.mid.vmid,
-        host: i.host,
-        ip: stripCidr(result.mid.ip),
-        subdomains: parseSubdomains(i.subdomains),
-        insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
-      });
+      // The VM exists from here on, so its creator is granted access even if
+      // recording it (an inventory write, a subdomains push) fails the job.
+      // grantCreatorAccess never throws, so it can't mask that error (issue
+      // #53, research R7).
+      try {
+        await recordProvisionedGuest(deps, {
+          name: i.name,
+          type: 'vm',
+          vmid: result.mid.vmid,
+          host: i.host,
+          ip: stripCidr(result.mid.ip),
+          subdomains: parseSubdomains(i.subdomains),
+          insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
+        });
+      } finally {
+        await grantCreatorAccess(deps.ssh, deps.inventory, i.host, result.mid.vmid, deps.actor);
+      }
     },
   },
   'install-app': {

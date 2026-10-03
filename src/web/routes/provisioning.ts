@@ -10,7 +10,7 @@ import type { GoBuilder } from '../../lib/go-build.ts';
 import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
 import { isResourceAllowed } from '../access.ts';
-import { resolveTriggeredBy } from '../impersonation.ts';
+import { resolveActor, resolveTriggeredBy } from '../impersonation.ts';
 import { checkAppUrl } from '../../operations/app-check.ts';
 export { checkAppUrl, parseAppDefaults, parsePromptHints, type AppDefaults } from '../../operations/app-check.ts';
 import type { Operation, OperationDeps } from '../../operations/types.ts';
@@ -55,7 +55,17 @@ export function provisioningRoutes(
     res.json(await getScriptCatalog(inventoryPath, testDeps.fetchImpl ?? fetch, new Date(), inventory));
   });
 
-  const deps = (): OperationDeps => ({ ssh, inventory, inventoryPath, authentik, cloudflare, ...testDeps });
+  // actor (issue #53): the signed-in creator, for create-vm's Proxmox grant
+  // -- set on preview and apply alike so the preview can name them.
+  const deps = (req: Request): OperationDeps => ({
+    ssh,
+    inventory,
+    inventoryPath,
+    authentik,
+    cloudflare,
+    actor: resolveActor(req),
+    ...testDeps,
+  });
 
   // Permission check runs on the raw body before schema parsing, preserving
   // the pre-#16 ordering (a blocked caller gets 403, never a parse error).
@@ -77,7 +87,7 @@ export function provisioningRoutes(
     }
     if (forbidden(req, res, op)) return;
     try {
-      const preview = await op.preview(parseOperationInput(op, req.body), deps());
+      const preview = await op.preview(parseOperationInput(op, req.body), deps(req));
       res.json({ preview });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -92,7 +102,7 @@ export function provisioningRoutes(
     }
     if (forbidden(req, res, op)) return;
     try {
-      const { jobId } = await previewAndEnqueue(op, req.body, deps(), jobRunner, resolveTriggeredBy(req));
+      const { jobId } = await previewAndEnqueue(op, req.body, deps(req), jobRunner, resolveTriggeredBy(req));
       res.json({ jobId });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });

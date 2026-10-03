@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import type { Actor } from '../lib/pve-acl.ts';
 
 // Keyed by the real, trusted x-authentik-username -- see resolveAuthUser in
 // auth.ts. Not persisted to disk: a server restart clears every active
@@ -36,4 +37,15 @@ export function resolveTriggeredBy(
 ): { triggeredByUsername?: string; triggeredByImpersonating?: string } {
   const real = req.realUser ?? req.user;
   return { triggeredByUsername: real?.username, triggeredByImpersonating: req.user?.impersonating };
+}
+
+// The person a job is run for, for anything that acts on their behalf
+// outside Bellhop (issue #53's Proxmox creator grant). Same real-user rule as
+// resolveTriggeredBy -- an admin impersonating a group is still the creator
+// -- but undefined for the synthetic local operator, who is no real person
+// and so has no Proxmox account to grant.
+export function resolveActor(req: Request): Actor | undefined {
+  const real = req.realUser ?? req.user;
+  if (!real || real.localOperator) return undefined;
+  return real.email === undefined ? { username: real.username } : { username: real.username, email: real.email };
 }

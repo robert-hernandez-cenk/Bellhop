@@ -403,3 +403,81 @@ test('install-app apply preserves a previously-recorded appSource across a repea
     'a repeat apply from a pasted URL (no resolvable slug) must carry the existing provenance forward, same as app'
   );
 });
+
+// --- issue #53, US1: create-vm grants its creator access in Proxmox ---
+
+const realmFixture = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'proxmox', 'realm-openid-email.json'),
+  'utf8'
+);
+
+// Answers the realm read from the captured openid/email-claim fixture and
+// succeeds every other command (qm create, the grant script).
+function grantResponder(_t: string, _u: string, command: string) {
+  if (command.includes('/access/domains/')) return { stdout: realmFixture, stderr: '', code: 0 };
+  return { stdout: '', stderr: '', code: 0 };
+}
+
+function grantDeps(inv: Inventory): OperationDeps & { ssh: FakeSSHClient } {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'opprov-grant-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  return {
+    ssh: new FakeSSHClient(grantResponder),
+    inventory: structuredClone(inv),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient(),
+    actor: { username: 'alice', email: 'alice@example.com' },
+  };
+}
+
+const ALICE_GRANT_SCRIPT = (role: string) =>
+  [
+    `pvesh get '/access/users/alice@example.com@authentik' >/dev/null 2>&1 || pveum user add 'alice@example.com@authentik' --comment 'Created by Bellhop for VM 4006'`,
+    `pveum acl modify '/vms/4006' --users 'alice@example.com@authentik' --roles '${role}'`,
+  ].join('\n');
+
+test('create-vm apply sends qm create, then the realm read, then the grant script, with the default PVEVMAdmin role', async () => {
+  const d = grantDeps({ ...inventory, pveUserRealm: 'authentik' });
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  const { text } = await withCapturedConsole(() =>
+    op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm' }), d)
+  );
+  const commands = d.ssh.history.map((c) => c.command);
+  assert.equal(commands.length, 3);
+  assert.match(commands[0], /^qm create 4006 /);
+  assert.match(commands[1], /pvesh get '\/access\/domains\/authentik'/);
+  assert.equal(commands[2], ALICE_GRANT_SCRIPT('PVEVMAdmin'));
+  assert.match(text, /Granted PVEVMAdmin on VM 4006 to alice@example\.com@authentik/);
+});
+
+test('create-vm apply grants pveCreatorRole instead of the default when it is set', async () => {
+  const d = grantDeps({ ...inventory, pveUserRealm: 'authentik', pveCreatorRole: 'PVEVMUser' });
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  await withCapturedConsole(() => op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm' }), d));
+  assert.equal(d.ssh.history.at(-1)?.command, ALICE_GRANT_SCRIPT('PVEVMUser'));
+});
+
+test('create-vm preview includes the grant line and makes no extra SSH call', async () => {
+  const d = grantDeps({ ...inventory, pveUserRealm: 'authentik' });
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  const preview = await op.preview(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm' }), d);
+  assert.match(preview, /Would grant PVEVMAdmin on \/vms\/4006 to alice's Proxmox account \(realm authentik\)/);
+  assert.equal(d.ssh.history.length, 0);
+});
+
+test('create-vm apply still grants when recording the guest fails, and the job error is unchanged', async () => {
+  // No entry has proxy: true, so the subdomains' syncProxyLive push throws.
+  const noProxy: Inventory = {
+    ...inventory,
+    pveUserRealm: 'authentik',
+    guests: inventory.guests.map((g) => ({ ...g, proxy: undefined })),
+  };
+  const d = grantDeps(noProxy);
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  const input = parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm', subdomains: 'alice' });
+  await assert.rejects(
+    withCapturedConsole(() => op.apply(input, d)),
+    /No inventory entry has 'proxy: true'/
+  );
+  assert.equal(d.ssh.history.at(-1)?.command, ALICE_GRANT_SCRIPT('PVEVMAdmin'));
+});

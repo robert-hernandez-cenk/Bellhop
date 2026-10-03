@@ -49,27 +49,27 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ### Tests (write first, must fail)
 
-- [ ] T005 [P] [US1] Unit tests in `test/lib/pve-acl.test.ts`:
+- [x] T005 [P] [US1] Unit tests in `test/lib/pve-acl.test.ts`:
   - `buildRealmReadCommand` prints only the filtered fields (it contains the JSON::PP filter and `pipefail`, and the realm is shell-quoted)
   - `RealmInfoSchema` parses `realm-openid-email.json` and `realm-pve.json`
   - `pveUserIdFor`: username claim gives `alice@authentik`, email claim gives `alice@example.com@authentik`
   - `buildGrantScript` produces the exact two-line script from research R3 with every value `shellQuote`d and the comment `Created by Bellhop for VM <vmid>`
   - `creatorGrantPreview` returns `Would grant <role> on /vms/<vmid> to <username>'s Proxmox account (realm <realm>)`, or undefined when the realm is unset
-- [ ] T006 [P] [US1] Operation tests in `test/operations/provisioning.test.ts`, create-vm with `pveUserRealm` set and `actor` in deps:
+- [x] T006 [P] [US1] Operation tests in `test/operations/provisioning.test.ts`, create-vm with `pveUserRealm` set and `actor` in deps:
   - apply sends `qm create`, then the realm read, then the grant script, in that order (realm read answered from `realm-openid-email.json`)
   - the default role is `PVEVMAdmin`, and `pveCreatorRole` overrides it
   - the preview contains the grant line and makes no extra SSH call
   - the grant still runs when `recordProvisionedGuest` throws (stub a failing proxy sync by giving the VM subdomains with no `proxy: true` entry), and the job error is unchanged
-- [ ] T007 [P] [US1] Web route tests in `test/web/routes/provisioning.test.ts`:
+- [x] T007 [P] [US1] Web route tests in `test/web/routes/provisioning.test.ts`:
   - create-vm apply as a normal user sets `actor` from the auth headers, including email
   - while impersonating a group, `actor` is the real admin
   - preview and apply both receive the actor
 
 ### Implementation
 
-- [ ] T008 [US1] Create `src/lib/pve-acl.ts` with the `DEFAULT_CREATOR_ROLE`, `Actor`, `RealmInfoSchema`, `buildRealmReadCommand`, `pveUserIdFor` (happy paths), `buildGrantScript`, `creatorGrantPreview`, and `grantCreatorAccess` (realm read, user ID, grant script, the `Granted …` info line) exports, exactly as in `contracts/pve-acl.md` (makes T005 pass)
-- [ ] T009 [US1] Add `resolveActor(req)` to `src/web/impersonation.ts`. It uses `req.realUser ?? req.user` and returns `undefined` when there's no user or `localOperator` is true. Change `deps()` in `src/web/routes/provisioning.ts` to take the request and set `actor` for both the `/preview` and `/apply` routes (makes T007 pass)
-- [ ] T010 [US1] In `src/operations/provisioning.ts`, the create-vm `preview` appends `creatorGrantPreview(deps.inventory, deps.actor, mid.vmid)` when it's defined, and `apply` wraps `recordProvisionedGuest` in `try { … } finally { await grantCreatorAccess(deps.ssh, deps.inventory, i.host, result.mid.vmid, deps.actor) }` (research R7) (makes T006 pass)
+- [x] T008 [US1] Create `src/lib/pve-acl.ts` with the `DEFAULT_CREATOR_ROLE`, `Actor`, `RealmInfoSchema`, `buildRealmReadCommand`, `pveUserIdFor` (happy paths), `buildGrantScript`, `creatorGrantPreview`, and `grantCreatorAccess` (realm read, user ID, grant script, the `Granted …` info line) exports, exactly as in `contracts/pve-acl.md` (makes T005 pass)
+- [x] T009 [US1] Add `resolveActor(req)` to `src/web/impersonation.ts`. It uses `req.realUser ?? req.user` and returns `undefined` when there's no user or `localOperator` is true. Change `deps()` in `src/web/routes/provisioning.ts` to take the request and set `actor` for both the `/preview` and `/apply` routes (makes T007 pass)
+- [x] T010 [US1] In `src/operations/provisioning.ts`, the create-vm `preview` appends `creatorGrantPreview(deps.inventory, deps.actor, mid.vmid)` when it's defined, and `apply` wraps `recordProvisionedGuest` in `try { … } finally { await grantCreatorAccess(deps.ssh, deps.inventory, i.host, result.mid.vmid, deps.actor) }` (research R7) (makes T006 pass)
 
 **Checkpoint**: A configured web create-vm grants the creator. Commit `Grant VM creators access in Proxmox (#53, US1)`.
 
