@@ -110,6 +110,14 @@ export class JobSSHClient implements SSHClient {
   // the transcript, so a re-escalation to the stall tier never renders an
   // empty banner. See stallText() and resume(). Issue #160 Finding 1.
   private lastFiredText: string | undefined;
+  // Set by the wrapped write() handed to onPromptDetected the moment it is
+  // actually called -- i.e. the operator answered (JobRunner.answerPrompt
+  // calls write(text) then resume()) rather than merely dismissed a false
+  // positive (JobRunner.dismissPrompt calls only resume()). resume() reads
+  // this to decide whether to exempt the reported prompt's text from redraw
+  // detection; a dismissed prompt must never set it. Reset in fire() and
+  // resetWatchState().
+  private answeredSinceFire = false;
 
   constructor(
     private inner: SSHClient,
@@ -180,6 +188,7 @@ export class JobSSHClient implements SSHClient {
     this.currentWrite = undefined;
     this.firedMark = 0;
     this.lastFiredText = undefined;
+    this.answeredSinceFire = false;
   }
 
   // Output keeps accumulating into the transcript even while paused (Finding
@@ -264,7 +273,15 @@ export class JobSSHClient implements SSHClient {
     // Finding 1.
     this.firedMark = this.activity.mark();
     this.lastFiredText = text;
-    const write = this.currentWrite ?? (() => {});
+    this.answeredSinceFire = false;
+    const innerWrite = this.currentWrite ?? (() => {});
+    // Wrapped so resume() can tell an actual answer (this gets called) from
+    // a dismiss (it never does) without JobRunner or the PromptDetectedHandler
+    // signature having to say so explicitly.
+    const write = (answerText: string) => {
+      this.answeredSinceFire = true;
+      innerWrite(answerText);
+    };
     this.onPromptDetected?.(text, this.expectedPrompts, write, () => this.resume(), origin, matchedIndex);
   }
 
@@ -300,8 +317,10 @@ export class JobSSHClient implements SSHClient {
 
   // Clears paused state and resumes watching -- called both when an answer
   // was written (JobRunner.answerPrompt) and when the operator dismisses a
-  // false positive (JobRunner.dismissPrompt); the two differ only in
-  // whether something was written to the channel first.
+  // false positive (JobRunner.dismissPrompt); the two differ in whether
+  // something was written to the channel first, which answeredSinceFire
+  // (set by fire()'s wrapped write(), read just below) is what lets this
+  // method tell apart.
   //
   // Two things this deliberately does NOT do (Finding 1, issue #160):
   //   - It does not blank the transcript outright. Consuming only the
@@ -329,8 +348,13 @@ export class JobSSHClient implements SSHClient {
     // prompt with `\r` and take its place as the line the tiers test. A
     // prompt the script re-asks verbatim after an invalid answer is exempted
     // instead, so it still counts as new output. Never a stall's text: that
-    // may be the spinner line itself.
-    if ((origin === 'expected' || origin === 'heuristic') && this.lastFiredText !== undefined) {
+    // may be the spinner line itself. And only after an actual answer
+    // (answeredSinceFire) -- a merely dismissed false positive must not be
+    // exempted, or a spinner status line that happened to match a heuristic
+    // would have every later frame of itself counted as new meaningful
+    // output once dismissed, re-arming tier 0 forever and never reaching the
+    // stall tier (the original #52 hang).
+    if ((origin === 'expected' || origin === 'heuristic') && this.answeredSinceFire && this.lastFiredText !== undefined) {
       this.activity.exemptFromRedraw(this.lastFiredText);
     }
     this.armTier(0);

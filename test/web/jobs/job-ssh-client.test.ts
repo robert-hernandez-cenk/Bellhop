@@ -931,14 +931,16 @@ test('after answering, a second pre-scanned prompt printed before the next spinn
 test('a prompt re-asked word for word after an invalid answer fires again', async () => {
   const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
   let resumeFn: (() => void) | undefined;
+  let writeFn: ((text: string) => void) | undefined;
   const { scheduleCheck, fireLatest } = tieredScheduler();
   const { inner, send, finish } = streamingInner();
   const client = new JobSSHClient(inner, () => {}, undefined, {
     watchForPrompts: true,
     expectedPrompts: ['Enter port: '],
-    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+    onPromptDetected: (text, _expected, write, resume, origin, matchedIndex) => {
       detected.push({ text, origin, matchedIndex });
       resumeFn = resume;
+      writeFn = write;
     },
     scheduleCheck,
   });
@@ -948,6 +950,10 @@ test('a prompt re-asked word for word after an invalid answer fires again', asyn
   fireLatest();
   assert.equal(detected.length, 1);
 
+  // The operator answers -- JobRunner.answerPrompt writes the answer, then
+  // resumes -- so the reported prompt is exempted from redraw detection and
+  // a verbatim re-ask after an invalid answer still counts as new output.
+  writeFn?.('abc\n');
   resumeFn?.();
   // The pty echoes the answer onto the prompt's line.
   send('abc\r\n');
@@ -956,6 +962,65 @@ test('a prompt re-asked word for word after an invalid answer fires again', asyn
   fireLatest();
 
   assert.deepEqual(detected[1], { text: 'Enter port: ', origin: 'expected', matchedIndex: 0 });
+
+  finish();
+  await promise;
+});
+
+// Issue #52 follow-up: a dismissed pause (JobRunner.dismissPrompt calls only
+// resume(), never write()) must NOT exempt its reported text from redraw
+// detection. Before this fix, resume() exempted the text whether the
+// operator answered or merely dismissed a false positive -- so a spinner
+// status line that happened to match the trailing-'?' heuristic, once
+// dismissed, had every later frame of that same line counted as "new"
+// meaningful output (since isExempt() short-circuits the redraw check),
+// which re-armed tier 0 forever and kept the stall tier from ever running --
+// the original hang this issue was about.
+test('dismissing a false-positive pause on a spinner status line does not exempt its text, so later frames of the same line stay redraws and tier 0 stops re-arming', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, resume, origin) => {
+      detected.push({ text, origin });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  // The spinner's own status line happens to end in '?' -- a false positive
+  // for the trailing-'?' heuristic.
+  send('\r\x1b[2K⠋ Is network ready?');
+  fireLatest(); // tier 0: no expected hints configured -> arms tier 1
+  fireLatest(); // tier 1: trailing '?' matches -> fires
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].origin, 'heuristic');
+
+  const armsAtFire = delays.length;
+
+  // The operator dismisses it as not a real question -- resume() only, no
+  // write() call.
+  resumeFn?.();
+  // resume() always re-arms tier 0 once on its own; that one rearm is
+  // expected and not the bug under test.
+  assert.equal(delays.length, armsAtFire + 1);
+  const armsAfterResume = delays.length;
+
+  // More spinner frames of the exact same status line. Under the bug, these
+  // each counted as new meaningful output (exempted from redraw) and kept
+  // re-arming tier 0 -- forever, since the spinner never stops on its own.
+  for (let i = 1; i <= 10; i += 1) {
+    send(`\r\x1b[2K${SPINNER_GLYPHS[i % SPINNER_GLYPHS.length]} Is network ready?`);
+  }
+
+  assert.equal(
+    delays.length,
+    armsAfterResume,
+    'further frames of the dismissed spinner line must not re-arm tier 0'
+  );
 
   finish();
   await promise;

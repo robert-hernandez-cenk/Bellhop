@@ -42,10 +42,12 @@ export class OutputActivity {
   // unfinished line; the rest of it stays. The recent-line keys are kept.
   consumeThrough(mark: number): void;
 
-  // Registers a reported prompt (answered or dismissed after an expected or
-  // heuristic pause, never a stall) so that any line whose key starts with
-  // its key is never a redraw -- a prompt re-asked verbatim after an invalid
-  // answer counts as new output.
+  // Registers a reported prompt that was actually answered (never a merely
+  // dismissed false positive, and never a stall, whose text may be the
+  // spinner line itself) so that any line whose key starts with its key is
+  // never a redraw -- a prompt re-asked verbatim after an invalid answer
+  // counts as new output. The caller (JobSSHClient.resume()) is what tells
+  // an answer apart from a dismiss.
   exemptFromRedraw(text: string): void;
 
   // Prompt candidate: the trailing meaningful line not ended by a newline,

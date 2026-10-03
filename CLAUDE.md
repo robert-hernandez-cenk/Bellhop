@@ -2462,10 +2462,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   transcript is capped at 16 KiB rather than holding the whole log.
   `resume()` keeps the recent lines, so the spinner is still a redraw
   after an answer and the next prompt stays the line the tiers test.
-  After an expected or heuristic pause (never a stall, whose text may be
-  the spinner line itself) it instead exempts the reported prompt: a line
+  After an *answered* expected or heuristic pause (never a stall, whose
+  text may be the spinner line itself, and never a merely dismissed false
+  positive -- see below) it instead exempts the reported prompt: a line
   starting with that prompt's text is never a redraw, so a question
-  re-asked word for word after an invalid answer is caught again. The MCP
+  re-asked word for word after an invalid answer is caught again. A
+  dismissed pause (JobRunner.dismissPrompt calls only `resume()`, never
+  `write()`) must not get this exemption: a spinner status line that
+  happens to match a heuristic, once dismissed, would otherwise have every
+  later frame of that same line counted as new meaningful output instead
+  of a redraw, re-arming tier 0 forever and never letting the stall tier
+  run -- the original hang this issue was about. `fire()` hands
+  `onPromptDetected` a `write()` wrapped to record whether it was actually
+  called, and `resume()` reads that flag rather than trusting `origin`
+  alone. The MCP
   dialog's recent-output context (`lastLines`, `src/mcp/elicitation.ts`)
   drops redraws by the same rule. Because spinner-only steps now count as
   silent, a long one raises a stall pause. New meaningful output arriving
