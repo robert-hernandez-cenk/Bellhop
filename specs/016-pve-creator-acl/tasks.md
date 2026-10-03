@@ -109,9 +109,9 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 **Independent Test**: `set-config pveUserRealm 'bad realm' --apply` and `PATCH /api/settings {pveUserRealm:'bad realm'}` both fail with the same message, and valid values round-trip.
 
-- [ ] T014 [P] [US3] Tests in `test/commands/set-config.test.ts`: set, clear and reject both keys
-- [ ] T015 [P] [US3] Tests in `test/web/routes/settings.test.ts`: PATCH sets, clears and rejects both keys with the same message as T014, and GET returns them
-- [ ] T016 [US3] Add `pveUserRealm`/`pveCreatorRole` to `SettingsValues` in `web-client/src/api/types.ts`. Add two always-visible `FIELDS` entries in `web-client/src/pages/SettingsPage.tsx`:
+- [x] T014 [P] [US3] Tests in `test/commands/set-config.test.ts`: set, clear and reject both keys
+- [x] T015 [P] [US3] Tests in `test/web/routes/settings.test.ts`: PATCH sets, clears and rejects both keys with the same message as T014, and GET returns them
+- [x] T016 [US3] Add `pveUserRealm`/`pveCreatorRole` to `SettingsValues` in `web-client/src/api/types.ts`. Add two always-visible `FIELDS` entries in `web-client/src/pages/SettingsPage.tsx`:
   - "Proxmox realm": placeholder `authentik`. Help: `OpenID realm in Proxmox whose users get access to VMs they create from the web UI. Its username claim must be username or email. Unset: no access is granted.`
   - "VM creator role": placeholder `PVEVMAdmin`. Help: `Proxmox role granted on a VM to the person who created it from the web UI. Unset: PVEVMAdmin.`
   

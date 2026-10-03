@@ -215,3 +215,50 @@ test('runSetConfig round-trips proxyDriver nginx through --apply', () => {
   runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath });
   assert.equal(loadInventory(inventoryPath).proxyDriver, 'nginx');
 });
+
+// issue #53, US3 (T014): pveUserRealm/pveCreatorRole, the Proxmox
+// creator-grant settings -- set-config validates both against the same
+// SettingsSchema regexes PATCH /api/settings uses (see
+// test/web/routes/settings.test.ts), so the two front ends reject the
+// same bad value with the same message.
+test('runSetConfig round-trips pveUserRealm through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'pveUserRealm', value: 'authentik', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).pveUserRealm, 'authentik');
+  runSetConfig({ key: 'pveUserRealm', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).pveUserRealm, undefined);
+});
+
+test('runSetConfig rejects a pveUserRealm that does not start with a letter', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'pveUserRealm', value: '1realm', apply: true }, { inventoryPath }),
+    /pveUserRealm: must start with a letter and contain only letters, digits, \., - and _/
+  );
+  assert.equal(loadInventory(inventoryPath).pveUserRealm, undefined);
+});
+
+test('runSetConfig rejects a pveUserRealm with an invalid character', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'pveUserRealm', value: 'my realm', apply: true }, { inventoryPath }),
+    /pveUserRealm: must start with a letter and contain only letters, digits, \., - and _/
+  );
+});
+
+test('runSetConfig round-trips pveCreatorRole through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'pveCreatorRole', value: 'PVEVMAdmin', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).pveCreatorRole, 'PVEVMAdmin');
+  runSetConfig({ key: 'pveCreatorRole', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).pveCreatorRole, undefined);
+});
+
+test('runSetConfig rejects a pveCreatorRole with an invalid character', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'pveCreatorRole', value: 'My Role', apply: true }, { inventoryPath }),
+    /pveCreatorRole: must contain only letters, digits, \., - and _/
+  );
+  assert.equal(loadInventory(inventoryPath).pveCreatorRole, undefined);
+});

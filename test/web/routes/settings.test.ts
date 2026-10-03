@@ -344,3 +344,67 @@ test('PATCH /api/settings rejects a proxyApiUrl that is not an http(s) URL, with
   assert.match(res.body.error, /proxyApiUrl: must be an http:\/\/ or https:\/\/ URL/);
   assert.equal(loadInventory(inventoryPath).proxyApiUrl, undefined);
 });
+
+// issue #53, US3 (T015): pveUserRealm/pveCreatorRole, the Proxmox
+// creator-grant settings. Same SettingsSchema `set-config` validates
+// against (test/commands/set-config.test.ts), so the message text here
+// must match that file's assertions exactly.
+test('GET /api/settings includes pveUserRealm/pveCreatorRole', async () => {
+  const { app } = testApp({
+    ...baseInventory(),
+    pveUserRealm: 'authentik',
+    pveCreatorRole: 'PVEVMAdmin',
+  });
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.pveUserRealm, 'authentik');
+  assert.equal(res.body.settings.pveCreatorRole, 'PVEVMAdmin');
+});
+
+test('PATCH /api/settings writes pveUserRealm and pveCreatorRole', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    pveUserRealm: 'authentik',
+    pveCreatorRole: 'PVEVMAdmin',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.pveUserRealm, 'authentik');
+  assert.equal(res.body.settings.pveCreatorRole, 'PVEVMAdmin');
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.pveUserRealm, 'authentik');
+  assert.equal(onDisk.pveCreatorRole, 'PVEVMAdmin');
+});
+
+test('PATCH /api/settings clears pveUserRealm/pveCreatorRole sent as null', async () => {
+  const { app, inventoryPath } = testApp({
+    ...baseInventory(),
+    pveUserRealm: 'authentik',
+    pveCreatorRole: 'PVEVMAdmin',
+  });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    pveUserRealm: null,
+    pveCreatorRole: null,
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.pveUserRealm, undefined);
+  assert.equal(res.body.settings.pveCreatorRole, undefined);
+  const onDisk = loadInventory(inventoryPath);
+  assert.equal(onDisk.pveUserRealm, undefined);
+  assert.equal(onDisk.pveCreatorRole, undefined);
+});
+
+test('PATCH /api/settings rejects a pveUserRealm that does not start with a letter, with the same message set-config produces', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ pveUserRealm: '1realm' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /pveUserRealm: must start with a letter and contain only letters, digits, \., - and _/);
+  assert.equal(loadInventory(inventoryPath).pveUserRealm, undefined);
+});
+
+test('PATCH /api/settings rejects a pveCreatorRole with an invalid character, with the same message set-config produces', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ pveCreatorRole: 'My Role' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /pveCreatorRole: must contain only letters, digits, \., - and _/);
+  assert.equal(loadInventory(inventoryPath).pveCreatorRole, undefined);
+});
