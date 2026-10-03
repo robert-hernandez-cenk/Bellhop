@@ -44,3 +44,29 @@ test('set-config --help lists every setting key', async () => {
     assert.ok(flat.includes(key), `set-config --help should list ${key}`);
   }
 });
+
+test('backfill-guest-creators --help documents --map and --apply', () => {
+  const output = execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'backfill-guest-creators', '--help'], {
+    encoding: 'utf8',
+  });
+  assert.match(output, /backfill-guest-creators/);
+  assert.match(output, /--map <old=new>/);
+  assert.match(output, /--apply/);
+});
+
+test('backfill-guest-creators fails with the not-configured message when Authentik is unset', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { saveInventory } = await import('../src/lib/inventory.ts');
+  const { UNCONFIGURED_MESSAGE } = await import('../src/lib/authentik-client.ts');
+  const dir = mkdtempSync(path.join(tmpdir(), 'backfill-cli-'));
+  const inventoryFile = path.join(dir, 'bellhop.db');
+  saveInventory(inventoryFile, { domain: 'example.com', hosts: [], guests: [] });
+  const env: NodeJS.ProcessEnv = { ...process.env, INVENTORY_FILE: inventoryFile, WEB_DATA_DIR: dir };
+  delete env.AUTHENTIK_API_URL;
+  delete env.AUTHENTIK_API_TOKEN;
+  const { spawnSync } = await import('node:child_process');
+  const result = spawnSync(process.execPath, ['--import', 'tsx', cliPath, 'backfill-guest-creators'], { encoding: 'utf8', env });
+  assert.equal(result.status, 1);
+  assert.ok(result.stderr.includes(UNCONFIGURED_MESSAGE) || result.stdout.includes(UNCONFIGURED_MESSAGE));
+});

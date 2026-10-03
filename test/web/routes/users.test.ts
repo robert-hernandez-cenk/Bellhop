@@ -54,7 +54,7 @@ test('GET /api/users returns 403 for an authenticated user who is not an admin',
 
 test('GET /api/users lists users for an admin', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'alice', email: 'a@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'alice', uid: 'uid-alice', email: 'a@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).get('/api/users'));
   assert.equal(res.status, 200);
@@ -109,7 +109,7 @@ test('POST /api/users rejects a request missing email', async () => {
 
 test('PATCH /api/users/:id edits an existing user', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'alice', email: 'a@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'alice', uid: 'uid-alice', email: 'a@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).patch('/api/users/1')).send({ email: 'alice2@example.com' });
   assert.equal(res.status, 200);
@@ -125,7 +125,7 @@ test('GET /api/users returns 503 with a clear message when Authentik is not conf
 
 test('POST /api/users/:id/deactivate deactivates another user', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'alice', email: 'a@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'alice', uid: 'uid-alice', email: 'a@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).post('/api/users/1/deactivate')).send({});
   assert.equal(res.status, 200);
@@ -134,7 +134,7 @@ test('POST /api/users/:id/deactivate deactivates another user', async () => {
 
 test('POST /api/users/:id/deactivate rejects deactivating your own account', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'admin', email: 'admin@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'admin', uid: 'uid-admin', email: 'admin@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).post('/api/users/1/deactivate')).send({});
   assert.equal(res.status, 400);
@@ -142,7 +142,7 @@ test('POST /api/users/:id/deactivate rejects deactivating your own account', asy
 
 test('POST /api/users/:id/reactivate reactivates a deactivated user', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'alice', email: 'a@example.com', isActive: false, groupIds: [] }],
+    users: [{ id: '1', username: 'alice', uid: 'uid-alice', email: 'a@example.com', isActive: false, groupIds: [] }],
   });
   const res = await asAdmin(request(app).post('/api/users/1/reactivate')).send({});
   assert.equal(res.status, 200);
@@ -151,7 +151,7 @@ test('POST /api/users/:id/reactivate reactivates a deactivated user', async () =
 
 test('POST /api/users/:id/recovery-link returns a fresh link', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'alice', email: 'a@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'alice', uid: 'uid-alice', email: 'a@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).post('/api/users/1/recovery-link')).send({});
   assert.equal(res.status, 200);
@@ -160,7 +160,7 @@ test('POST /api/users/:id/recovery-link returns a fresh link', async () => {
 
 test('DELETE /api/users/:id deletes another user', async () => {
   const { app, authentik } = testApp({
-    users: [{ id: '1', username: 'alice', email: 'a@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'alice', uid: 'uid-alice', email: 'a@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).delete('/api/users/1'));
   assert.equal(res.status, 204);
@@ -169,7 +169,7 @@ test('DELETE /api/users/:id deletes another user', async () => {
 
 test('DELETE /api/users/:id rejects deleting your own account', async () => {
   const { app } = testApp({
-    users: [{ id: '1', username: 'admin', email: 'admin@example.com', isActive: true, groupIds: [] }],
+    users: [{ id: '1', username: 'admin', uid: 'uid-admin', email: 'admin@example.com', isActive: true, groupIds: [] }],
   });
   const res = await asAdmin(request(app).delete('/api/users/1'));
   assert.equal(res.status, 400);
