@@ -88,6 +88,10 @@ meaningful line.
 2. **Given** a line whose numbers keep changing (a counter or percentage),
    **When** it keeps updating, **Then** it counts as real activity and the
    stall check does not fire while it updates.
+3. **Given** a long install step that shows only a spinner has raised a
+   stall pause, **When** the step finishes and new meaningful output
+   arrives, **Then** the stall pause clears itself, the job returns to
+   running, and it is not cancelled for an unanswered prompt.
 
 ---
 
@@ -165,6 +169,11 @@ unchanged.
 - **FR-010**: Jobs that do not watch for questions MUST be unaffected.
 - **FR-011**: The watcher's retained output MUST be bounded in size
   regardless of how long the job runs.
+- **FR-012**: While a stall pause is waiting, new meaningful output MUST
+  clear the pause exactly as a dismissal would: the job returns to running,
+  the abandon countdown stops, and the checks restart from the first one.
+  Expected and heuristic pauses MUST NOT clear themselves this way; they
+  stay paused until answered, dismissed, or cancelled, as today.
 
 ### Key Entities
 
@@ -186,6 +195,8 @@ unchanged.
   its expectations.
 - **SC-004**: No install-app job can sit "running" with a question waiting
   for more than 5 minutes because of a redrawing status line.
+- **SC-005**: A stall pause raised during a long spinner-only step never
+  leads to the job being cancelled once the step produces new output.
 
 ## Assumptions
 
@@ -194,6 +205,12 @@ unchanged.
   activity, by the operator's decision, so such a spinner can still delay
   stall detection. Progress bars are the reason: a long download showing
   only a percentage should not raise a false stall.
+- A stall pause clearing itself on new output is the operator's decision.
+  Once redraws count as silence, a long spinner-only step raises a stall
+  pause, and without this the existing 15-minute abandon timer would cancel
+  a job that was still working. A step showing nothing but redraws for more
+  than 20 minutes can still be cancelled, which is the same risk a silent
+  step carries today.
 - Matching stays limited to the last meaningful line rather than anywhere in
   recent output, so a question echoed back after it has been answered never
   pauses the job.
