@@ -19,6 +19,7 @@ import { withCapturedConsole } from '../../src/web/console-capture.ts';
 import { JobStore } from '../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../src/web/jobs/job-log.ts';
 import { JobRunner } from '../../src/web/jobs/job-runner.ts';
+import { FakeGoBuilder, fakeNordVpnFetch } from '../support/fake-go-builder-and-fetch.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -555,4 +556,151 @@ test('create-lxc and install-app apply send no realm/grant command even with the
     )
   );
   assert.ok(!appDeps.ssh.history.some((c) => c.command.includes('/access/domains/') || c.command.includes('pveum')));
+});
+
+// --- issue #58, US1: recording the web creator on new guests (T013/T014) ---
+
+test('create-lxc apply with deps.actor records the creator on the new guest', async () => {
+  const d = deps();
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  const op = PROVISIONING_OPERATIONS['create-lxc'];
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-lxc');
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+});
+
+test('create-lxc apply with no deps.actor (MCP/CLI) records no creator', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['create-lxc'];
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-lxc');
+  assert.equal(saved?.creator, undefined);
+});
+
+test('create-vm apply with deps.actor records the creator on the new guest', async () => {
+  const d = deps();
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'new-vm' }), d);
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-vm');
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+});
+
+test('create-vm apply with no deps.actor (MCP/CLI) records no creator', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'new-vm' }), d);
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-vm');
+  assert.equal(saved?.creator, undefined);
+});
+
+test('install-app apply with deps.actor records the creator on the new guest', async () => {
+  const d = deps();
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  const op = PROVISIONING_OPERATIONS['install-app'];
+  await withCapturedConsole(() =>
+    op.apply(
+      parseOperationInput(op, { app: 'https://example.com/myapp-install.sh', host: 'pve1', mid: 5, hostname: 'new-app-lxc' }),
+      d
+    )
+  );
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-app-lxc');
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+});
+
+test('install-app apply with no deps.actor (MCP/CLI) records no creator', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['install-app'];
+  await withCapturedConsole(() =>
+    op.apply(
+      parseOperationInput(op, { app: 'https://example.com/myapp-install.sh', host: 'pve1', mid: 5, hostname: 'new-app-lxc' }),
+      d
+    )
+  );
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-app-lxc');
+  assert.equal(saved?.creator, undefined);
+});
+
+// upsertGuestEntry itself is not exported -- exercised the same way the
+// existing appSource repeat-apply tests above do, through two sequential
+// op.apply() calls against the same host+vmid.
+test('a repeat create-lxc apply with no actor keeps the creator recorded by an earlier apply', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['create-lxc'];
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
+
+  d.actor = undefined;
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
+
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
+  assert.deepEqual(
+    saved?.creator,
+    { username: 'test-user', uid: 'uid-test-user' },
+    'a repeat apply with no actor (e.g. MCP) must keep the previously-recorded creator'
+  );
+});
+
+test('a repeat create-lxc apply with a different actor replaces the previously-recorded creator', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['create-lxc'];
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
+
+  d.actor = { username: 'other-user', uid: 'uid-other-user' };
+  await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
+
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
+  assert.deepEqual(
+    saved?.creator,
+    { username: 'other-user', uid: 'uid-other-user' },
+    'a repeat apply by a real signed-in actor must replace the previously-recorded creator'
+  );
+});
+
+test('deploy-vpn-gateway operation apply passes deps.actor through as the recorded creator', async () => {
+  process.env.NORDVPN_ACCESS_TOKEN = 'my-token';
+  const d = deps();
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  d.goBuilder = new FakeGoBuilder();
+  d.fetchImpl = fakeNordVpnFetch();
+  const op = PROVISIONING_OPERATIONS['deploy-vpn-gateway'];
+  await withCapturedConsole(() =>
+    op.apply(
+      parseOperationInput(op, {
+        vpn: 'nordvpn',
+        host: 'pve1',
+        mid: 8,
+        name: 'nordvpn-gw-lxc',
+        connectPollAttempts: 1,
+        connectPollDelayMs: 0,
+      }),
+      d
+    )
+  );
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'nordvpn-gw-lxc');
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+});
+
+test('deploy-vpn-gateway operation apply with no deps.actor (MCP/CLI) records no creator', async () => {
+  process.env.NORDVPN_ACCESS_TOKEN = 'my-token';
+  const d = deps();
+  d.goBuilder = new FakeGoBuilder();
+  d.fetchImpl = fakeNordVpnFetch();
+  const op = PROVISIONING_OPERATIONS['deploy-vpn-gateway'];
+  await withCapturedConsole(() =>
+    op.apply(
+      parseOperationInput(op, {
+        vpn: 'nordvpn',
+        host: 'pve1',
+        mid: 9,
+        name: 'nordvpn-gw2-lxc',
+        connectPollAttempts: 1,
+        connectPollDelayMs: 0,
+      }),
+      d
+    )
+  );
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'nordvpn-gw2-lxc');
+  assert.equal(saved?.creator, undefined);
 });

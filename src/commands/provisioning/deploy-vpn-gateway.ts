@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SSHClient } from '../../lib/ssh-client.ts';
-import type { Inventory, GuestEntry } from '../../lib/inventory.ts';
+import type { Inventory, GuestEntry, GuestCreator } from '../../lib/inventory.ts';
 import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
 import { runRemote, resolveMid, stripCidr, hostSshTarget, type ResolvedMid } from '../../lib/targets.ts';
 import { shellQuote } from '../../lib/ssh-client.ts';
@@ -83,6 +83,12 @@ export interface DeployVpnGatewayOptions {
   // cover container boot + NordVPN auth + wg-quick up on a first deploy.
   connectPollAttempts?: number;
   connectPollDelayMs?: number;
+  // The real (never impersonated) web-UI actor who triggered this deploy
+  // (issue #58), already reduced to GuestEntry.creator's shape by
+  // creatorFromActor (src/operations/provisioning.ts's deploy-vpn-gateway
+  // operation apply) -- undefined for the CLI, which has no actor at all
+  // and never passes this.
+  creator?: GuestCreator;
 }
 
 export function buildCreateGatewayLxcCommand(mid: ResolvedMid, hostname: string, storage: string, bridge = 'vmbr0'): string {
@@ -347,6 +353,7 @@ export async function runDeployVpnGateway(
     host: opts.host,
     ip: stripCidr(mid.ip),
     vpnGateway: opts.vpn,
+    creator: opts.creator,
   };
   // Issue #16: this save lands at the end of a multi-minute remote pipeline,
   // and nothing refreshes inventory mid-job (the MCP process has no

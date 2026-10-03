@@ -190,6 +190,33 @@ test('PATCH /api/inventory/guests/:name ignores the old caddyManual key, leaving
   assert.equal(invRes.body.guests[0].proxyManual, undefined);
 });
 
+// Issue #58, FR-009: a creator key in the PATCH body must never change
+// who's recorded as the guest's creator -- applyGuestEdits only copies the
+// fields it names, and 'creator' is deliberately not one of them (R7).
+test('PATCH /api/inventory/guests/:name ignores a creator key, leaving the stored creator unchanged', async () => {
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.3.1' }, proxy: true }],
+    guests: [
+      {
+        name: 'web-lxc',
+        type: 'lxc',
+        vmid: 4010,
+        host: 'pve1',
+        ip: '192.168.1.10',
+        creator: { username: 'test-user', uid: 'uid-test-user' },
+      },
+    ],
+  };
+  const app = testApp(inventory);
+  const res = await request(app).patch('/api/inventory/guests/web-lxc').send({ creator: { username: 'other-user' } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.guest.creator, { username: 'test-user', uid: 'uid-test-user' });
+
+  const invRes = await request(app).get('/api/inventory');
+  assert.deepEqual(invRes.body.guests[0].creator, { username: 'test-user', uid: 'uid-test-user' });
+});
+
 test('PATCH /api/inventory/guests/:name updates insecureBackendTls independently, leaving subdomains untouched', async () => {
   const inventory: Inventory = {
     domain: 'example.com',

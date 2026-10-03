@@ -285,6 +285,49 @@ test('applyGuestEdits ignores the old caddyManual key (no alias)', () => {
   assert.ok(!('caddyManual' in updated));
 });
 
+// Issue #58, FR-009/T015/R7: applyGuestEdits only copies the fields it
+// names -- 'creator' is deliberately not one of them, so a Dashboard PATCH
+// or an MCP edit_guest call can never rewrite who's recorded as a guest's
+// creator.
+test('applyGuestEdits ignores a creator key, leaving the current creator untouched', () => {
+  const current = { ...inventory.guests[1], creator: { username: 'test-user', uid: 'uid-test-user' } };
+  const updated = applyGuestEdits(current, { creator: { username: 'other-user' }, port: 8080 });
+  assert.deepEqual(updated.creator, { username: 'test-user', uid: 'uid-test-user' });
+  assert.equal(updated.port, 8080);
+});
+
+test('runEditGuest ignores a creator key in the input, leaving the stored creator unchanged (FR-009)', async () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
+    guests: [
+      {
+        name: 'web-lxc',
+        type: 'lxc',
+        vmid: 4010,
+        host: 'pve1',
+        ip: '192.168.1.10',
+        creator: { username: 'test-user', uid: 'uid-test-user' },
+      },
+    ],
+  };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-creator-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  const d: OperationDeps = {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loadInventory(inventoryPath),
+    inventoryPath,
+    authentik: new UnconfiguredAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+
+  const result = await runEditGuest({ name: 'web-lxc', creator: { username: 'other-user' } }, d);
+  assert.deepEqual(result.guest.creator, { username: 'test-user', uid: 'uid-test-user' });
+
+  const saved = loadInventory(inventoryPath).guests.find((g) => g.name === 'web-lxc');
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+});
+
 test('applyGuestEdits leaves untouched fields alone and clears authGroup on null', () => {
   const updated = applyGuestEdits({ ...inventory.guests[1], authGroup: 'bellhop-users', port: 80 }, { authGroup: null });
   assert.equal(updated.authGroup, undefined);

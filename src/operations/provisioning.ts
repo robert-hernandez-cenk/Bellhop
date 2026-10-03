@@ -1,4 +1,4 @@
-import type { GuestEntry } from '../lib/inventory.ts';
+import type { GuestEntry, GuestCreator } from '../lib/inventory.ts';
 import { saveInventory, refreshInventory, parseSubdomains, parsePort } from '../lib/inventory.ts';
 import { probeInsecureBackendTls } from '../lib/tls-probe.ts';
 import { stripCidr } from '../lib/targets.ts';
@@ -15,9 +15,21 @@ import { runDeployVpnGateway } from '../commands/provisioning/deploy-vpn-gateway
 import { runMigrateGuest } from '../commands/provisioning/migrate-guest.ts';
 import { runSyncAuthentik, conflictExplanation } from '../commands/networking/sync-authentik.ts';
 import { logWarn } from '../lib/log.ts';
-import { creatorGrantPreview, grantCreatorAccess } from '../lib/pve-acl.ts';
+import { creatorGrantPreview, grantCreatorAccess, type Actor } from '../lib/pve-acl.ts';
 import type { Operation, OperationDeps } from './types.ts';
 import { reqStr, optStr, reqInt, optInt, flag, portStr } from './fields.ts';
+
+// The real (never impersonated) web-UI actor (issue #53's deps.actor, see
+// OperationDeps) who triggered this apply, reduced to exactly what
+// GuestEntry.creator stores -- undefined for the CLI/MCP/local operator,
+// none of which carry an actor at all. `uid` is a conditional spread, not
+// `uid: actor.uid`, so an actor with no uid (a dev/test identity) records a
+// creator with no `uid` key rather than one holding `undefined` -- this
+// repo's tests compare with node:assert/strict, where the two differ.
+export function creatorFromActor(actor: Actor | undefined): GuestCreator | undefined {
+  if (!actor) return undefined;
+  return { username: actor.username, ...(actor.uid ? { uid: actor.uid } : {}) };
+}
 
 function upsertGuestEntry(guests: GuestEntry[], entry: GuestEntry): GuestEntry[] {
   const idx = guests.findIndex((g) => g.host === entry.host && g.vmid === entry.vmid);
@@ -58,7 +70,14 @@ function upsertGuestEntry(guests: GuestEntry[], entry: GuestEntry): GuestEntry[]
   // generic form's values object) -- fall back to whatever the existing
   // entry already had rather than silently clearing it on a repeat apply.
   const insecureBackendTls = entry.insecureBackendTls !== undefined ? entry.insecureBackendTls : existing.insecureBackendTls;
-  const merged: GuestEntry = { ...existing, ...entry, subdomains, port, app, appSource, insecureBackendTls };
+  // entry.creator is undefined whenever this apply ran with no real
+  // signed-in actor (MCP, CLI, the local operator) -- fall back to whatever
+  // creator the existing entry already recorded rather than silently
+  // clearing it on a repeat apply. When entry.creator IS set, it replaces
+  // whatever was there: a real signed-in person re-creating the same
+  // host+VMID is a deliberate new authorship record.
+  const creator = entry.creator !== undefined ? entry.creator : existing.creator;
+  const merged: GuestEntry = { ...existing, ...entry, subdomains, port, app, appSource, insecureBackendTls, creator };
   return guests.map((g, i) => (i === idx ? merged : g));
 }
 
@@ -154,6 +173,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
         ip: stripCidr(result.mid.ip),
         subdomains: parseSubdomains(i.subdomains),
         insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
+        creator: creatorFromActor(deps.actor),
       });
     },
   },
@@ -194,6 +214,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
           ip: stripCidr(result.mid.ip),
           subdomains: parseSubdomains(i.subdomains),
           insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
+          creator: creatorFromActor(deps.actor),
         });
       } finally {
         await grantCreatorAccess(deps.ssh, deps.inventory, i.host, result.mid.vmid, deps.actor);
@@ -241,6 +262,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
         app: appSlugFor(i.app),
         appSource: i.appSource?.kind === 'custom' ? 'custom' : undefined,
         insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
+        creator: creatorFromActor(deps.actor),
       });
     },
   },
@@ -279,7 +301,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
       return [text, result.createCommand].filter(Boolean).join('\n');
     },
     apply: async (i, deps) => {
-      await runDeployVpnGateway({ ...(i as any), apply: true }, deps);
+      await runDeployVpnGateway({ ...(i as any), apply: true, creator: creatorFromActor(deps.actor) }, deps);
     },
   },
   'configure-guest': {
