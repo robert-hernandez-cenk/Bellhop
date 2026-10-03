@@ -20,6 +20,7 @@ import type { Inventory } from '../../../src/lib/inventory.ts';
 import { loadInventory, saveInventory } from '../../../src/lib/inventory.ts';
 import type { GoBuilder } from '../../../src/lib/go-build.ts';
 import type { AuthentikClient } from '../../../src/lib/authentik-client.ts';
+import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
 import { FakeGoBuilder, fakeNordVpnFetch, fakePiaFetch } from '../../support/fake-go-builder-and-fetch.ts';
 
 const inventory: Inventory = {
@@ -95,7 +96,7 @@ function waitForFinished(store: JobStore, id: number): Promise<void> {
 function isolatedApp(
   inv: Inventory,
   respond: (t: string, u: string, c: string) => { stdout: string; stderr: string; code: number },
-  extra?: { goBuilder?: GoBuilder; fetchImpl?: typeof fetch; authentik?: AuthentikClient }
+  extra?: { goBuilder?: GoBuilder; fetchImpl?: typeof fetch; authentik?: AuthentikClient; impersonationStore?: ImpersonationStore }
 ) {
   const jobStore = new JobStore(':memory:');
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
@@ -118,6 +119,8 @@ function isolatedApp(
       fetchImpl,
     }),
     jobStore,
+    jobLog,
+    ssh,
     authentik,
   };
 }
@@ -1667,6 +1670,77 @@ test('POST /api/provisioning/:id/preview 404s for an inherited prototype key lik
     const res = await request(app).post(`/api/provisioning/toString/${action}`).send({});
     assert.equal(res.status, 404, `${action} should 404`);
   }
+});
+
+// --- issue #53, US1: the signed-in creator reaches create-vm as `actor` ---
+
+const realmFixture = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'proxmox', 'realm-openid-email.json'),
+  'utf8'
+);
+
+function grantResponder(_t: string, _u: string, command: string) {
+  if (command.includes('/access/domains/')) return { stdout: realmFixture, stderr: '', code: 0 };
+  return { stdout: '', stderr: '', code: 0 };
+}
+
+function grantInventory(): Inventory {
+  return { ...structuredClone(inventory), pveUserRealm: 'authentik', guests: [] };
+}
+
+function jobLogText(ctx: ReturnType<typeof isolatedApp>, jobId: number): string {
+  return ctx.jobLog.read(ctx.jobStore.get(jobId)!.logFile);
+}
+
+// The grant script's acl line names the Proxmox user ID it granted.
+function grantedUserId(ctx: ReturnType<typeof isolatedApp>): string | undefined {
+  const grant = ctx.ssh.history.find((c) => c.command.includes('pveum acl modify'));
+  return grant?.command.match(/--users '([^']+)'/)?.[1];
+}
+
+test('create-vm apply as a normal user grants the header-identified creator, using their email', async () => {
+  const ctx = isolatedApp(grantInventory(), grantResponder);
+  const res = await request(ctx.app)
+    .post('/api/provisioning/create-vm/apply')
+    .set('x-authentik-username', 'alice')
+    .set('x-authentik-email', 'alice@example.com')
+    .set('x-authentik-groups', 'family')
+    .send({ host: 'pve1', mid: 31, name: 'alice-vm' });
+  assert.equal(res.status, 200);
+  await waitForFinished(ctx.jobStore, res.body.jobId);
+  assert.equal(ctx.jobStore.get(res.body.jobId)?.status, 'success');
+  assert.equal(grantedUserId(ctx), 'alice@example.com@authentik');
+  assert.match(jobLogText(ctx, res.body.jobId), /Granted PVEVMAdmin on VM 4031 to alice@example\.com@authentik/);
+});
+
+test('create-vm apply while impersonating a group grants the real admin, not the impersonated identity', async () => {
+  const ctx = isolatedApp(grantInventory(), grantResponder, { impersonationStore: new Map([['admin', 'family']]) });
+  const res = await request(ctx.app)
+    .post('/api/provisioning/create-vm/apply')
+    .set('x-authentik-username', 'admin')
+    .set('x-authentik-email', 'admin@example.com')
+    .set('x-authentik-groups', 'bellhop-admins')
+    .send({ host: 'pve1', mid: 32, name: 'admin-vm' });
+  assert.equal(res.status, 200);
+  await waitForFinished(ctx.jobStore, res.body.jobId);
+  assert.equal(ctx.jobStore.get(res.body.jobId)?.status, 'success');
+  assert.equal(grantedUserId(ctx), 'admin@example.com@authentik');
+});
+
+test('create-vm preview and apply both receive the actor', async () => {
+  const ctx = isolatedApp(grantInventory(), grantResponder);
+  const withAlice = (r: request.Test) =>
+    r.set('x-authentik-username', 'alice').set('x-authentik-email', 'alice@example.com').set('x-authentik-groups', 'family');
+  const preview = await withAlice(request(ctx.app).post('/api/provisioning/create-vm/preview')).send({ host: 'pve1', mid: 33, name: 'alice-vm' });
+  assert.equal(preview.status, 200);
+  assert.match(preview.body.preview, /Would grant PVEVMAdmin on \/vms\/4033 to alice's Proxmox account \(realm authentik\)/);
+
+  const apply = await withAlice(request(ctx.app).post('/api/provisioning/create-vm/apply')).send({ host: 'pve1', mid: 33, name: 'alice-vm' });
+  await waitForFinished(ctx.jobStore, apply.body.jobId);
+  const log = jobLogText(ctx, apply.body.jobId);
+  // The preview logged at the top of the job and the apply's own grant.
+  assert.match(log, /Would grant PVEVMAdmin on \/vms\/4033 to alice's Proxmox account/);
+  assert.match(log, /Granted PVEVMAdmin on VM 4033 to alice@example\.com@authentik/);
 });
 
 // issue #54: the occupied-MID set behind the form's MID suggestion counts

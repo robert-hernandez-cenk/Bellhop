@@ -277,6 +277,10 @@ export interface SettingsValues {
   // Traefik's own two settings (issue #35) -- inert for every other driver.
   proxyCertResolver?: string;
   proxyApiUrl?: string;
+  // The Proxmox VM-creator grant (issue #53) -- always-visible, not tied
+  // to any proxy driver.
+  pveUserRealm?: string;
+  pveCreatorRole?: string;
 }
 
 // One entry per registered reverse-proxy driver (src/lib/proxy/index.ts's

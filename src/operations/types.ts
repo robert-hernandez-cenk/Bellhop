@@ -4,6 +4,7 @@ import type { Inventory } from '../lib/inventory.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
 import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import type { GoBuilder } from '../lib/go-build.ts';
+import type { Actor } from '../lib/pve-acl.ts';
 
 // Everything any operation's preview/apply may need -- the union of what the
 // web routes' separate Deps types carried before #16 moved these handlers
@@ -21,6 +22,13 @@ export interface OperationDeps {
   goBuilder?: GoBuilder;
   fetchImpl?: typeof fetch;
   tlsProbeSleepFn?: (ms: number) => Promise<void>;
+  // The signed-in web user, read from the request's already-verified
+  // X-authentik-* headers (research R6) -- only the web provisioning
+  // router sets this (grantCreatorAccess's 'no-actor' outcome otherwise).
+  // Always absent for the CLI, the MCP server, and the synthetic local
+  // operator, none of which carry a real signed-in identity to grant
+  // Proxmox access to.
+  actor?: Actor;
   // Web provisioning only (#54): the caller's per-resource guest permission,
   // so a VMID-in-use error never names a guest their group can't see.
   // The CLI and MCP server omit it -- full operator trust.

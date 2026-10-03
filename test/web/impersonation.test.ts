@@ -12,7 +12,8 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { savePermissionGroup } from '../../src/lib/permissions.ts';
-import type { ImpersonationStore } from '../../src/web/impersonation.ts';
+import { resolveActor, type ImpersonationStore } from '../../src/web/impersonation.ts';
+import type { Request } from 'express';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -105,4 +106,26 @@ test('impersonation overlay drives downstream permission checks, not just whoami
     .set('x-authentik-groups', 'bellhop-admins');
   assert.equal(unblocked.status, 200);
   assert.equal(unblocked.body.hosts.length, 1);
+});
+
+// --- resolveActor (issue #53, controller review) ---
+
+test('resolveActor returns the real, non-impersonated identity when req.user and req.realUser differ', () => {
+  const req = {
+    user: {
+      username: 'bellhop-viewers-view',
+      email: 'viewer@example.com',
+      groups: ['bellhop-viewers'],
+      impersonating: 'bellhop-viewers',
+    },
+    realUser: { username: 'admin', email: 'admin@example.com', groups: ['bellhop-admins'] },
+  } as unknown as Request;
+  assert.deepEqual(resolveActor(req), { username: 'admin', email: 'admin@example.com' });
+});
+
+test('resolveActor returns undefined for the synthetic local operator', () => {
+  const req = {
+    user: { username: 'local', groups: [], localOperator: true },
+  } as unknown as Request;
+  assert.equal(resolveActor(req), undefined);
 });

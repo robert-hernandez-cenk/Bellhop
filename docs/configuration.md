@@ -41,7 +41,7 @@ go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
 
 ## Inventory-wide settings
 
-Twelve values live in the inventory database rather than in code, because
+Fourteen values live in the inventory database rather than in code, because
 they are specific to your network. Set them with `set-config`:
 
 ```bash
@@ -77,11 +77,14 @@ value — see
 | `proxyApiUrl` | the Traefik driver | no post-apply check at all — the file is written and trusted to load; set to Traefik's API address as reachable from the proxy host to have every apply confirm it loaded before succeeding; ignored by every other driver, and shown on the Settings page only while Traefik is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
+| `pveUserRealm` | `create-vm`'s web-UI creator grant | the creator grant is off entirely |
+| `pveCreatorRole` | same as `pveUserRealm` | `PVEVMAdmin` |
 
 See [Reverse proxy drivers](reverse-proxy/README.md) for what `proxyDriver`, `proxyConfigPath`,
 the nginx driver's `proxyTlsCertificate`/`proxyTlsKey`, and the [Traefik
 driver](reverse-proxy/traefik.md)'s `proxyCertResolver`/`proxyApiUrl`
-actually do.
+actually do. See [Proxmox access for VM creators](proxmox-access.md) for
+what `pveUserRealm`/`pveCreatorRole` actually do.
 
 `statusPagePath` unset is a hard failure only for the standalone
 `render-status-page` command; the web UI's combined push-live step and

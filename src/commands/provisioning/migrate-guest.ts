@@ -12,6 +12,7 @@ import { getDriver } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
+import { copyGuestAcls } from '../../lib/pve-acl.ts';
 import { stringify } from 'yaml';
 
 export interface MigrateGuestOptions {
@@ -214,6 +215,7 @@ export async function runMigrateGuest(
     backupCommand,
     `# then, if still running (vzdump --mode stop restarts a guest that was running before the backup): ${tool} stop ${guest.vmid}`,
     `# then, once the new guest is verified running on ${opts.toHost}:`,
+    `# then copy any ACLs on /vms/${guest.vmid} to /vms/${mid.vmid}`,
     `${tool} destroy ${guest.vmid}`,
   ].join('\n');
   const targetScript = [
@@ -307,7 +309,16 @@ export async function runMigrateGuest(
   logInfo(`Waiting for vmid ${mid.vmid} on ${opts.toHost} to report running...`);
   await waitForGuestRunning(ssh, inventory, opts.toHost, mid.vmid, tool, VERIFY_ATTEMPTS, VERIFY_INTERVAL_MS, sleepFn, guest.host, guest.vmid);
 
-  logInfo(`Verified -- destroying original '${opts.guest}' (vmid ${guest.vmid}) on ${guest.host}...`);
+  // Issue #53 US4: the destroy below removes every permission on the old
+  // VMID, so copy them onto the new one first. Never throws -- a failure
+  // only warns, with the manual commands.
+  logInfo(`Verified vmid ${mid.vmid} on ${opts.toHost} -- copying permissions from vmid ${guest.vmid} on ${guest.host}...`);
+  await copyGuestAcls(ssh, inventory, guest.host, guest.vmid, mid.vmid);
+
+  logInfo(`Destroying original '${opts.guest}' (vmid ${guest.vmid}) on ${guest.host}...`);
+  // No separate ACL cleanup: Proxmox's destroy itself removes the VMID's ACLs
+  // and pool membership (remove_vm_access, verified on PVE 9.2.10 -- see
+  // specs/016-pve-creator-acl/research.md R4).
   const destroyResult = await runRemote(ssh, inventory, guest.host, `${tool} destroy ${guest.vmid}`);
   if (destroyResult.code !== 0) {
     logWarn(

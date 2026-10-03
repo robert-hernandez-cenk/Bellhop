@@ -83,6 +83,18 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help
     placeholder: 'branch',
     help: 'Branch on that repository to resolve apps from. Must be set together with Custom script repository above.',
   },
+  {
+    key: 'pveUserRealm',
+    label: 'Proxmox realm',
+    placeholder: 'authentik',
+    help: 'OpenID realm in Proxmox whose users get access to VMs they create from the web UI. Its username claim must be username or email. Unset: no access is granted.',
+  },
+  {
+    key: 'pveCreatorRole',
+    label: 'VM creator role',
+    placeholder: 'PVEVMAdmin',
+    help: 'Proxmox role granted on a VM to the person who created it from the web UI. Unset: PVEVMAdmin.',
+  },
 ];
 
 export function SettingsPage() {

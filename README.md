@@ -127,6 +127,8 @@ behaves.
   assistant.
 - [Authentik](docs/authentik.md) — running without it, and gating apps
   through OpenID Connect (OIDC mode).
+- [Proxmox access for VM creators](docs/proxmox-access.md) — granting a
+  web UI VM creator access to it in Proxmox, and how migration keeps it.
 - [Reverse proxy drivers](docs/reverse-proxy/README.md) — how `sync-proxy`
   manages a proxy, with a page per driver: [Caddy](docs/reverse-proxy/caddy.md),
   [Caddy (admin API)](docs/reverse-proxy/caddy-api.md),

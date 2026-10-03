@@ -11,7 +11,7 @@ import type { AuthentikClient } from '../../lib/authentik-client.ts';
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
 import { isResourceAllowed } from '../access.ts';
 import { usedMidsByHost } from '../../lib/targets.ts';
-import { resolveTriggeredBy } from '../impersonation.ts';
+import { resolveActor, resolveTriggeredBy } from '../impersonation.ts';
 import { checkAppUrl } from '../../operations/app-check.ts';
 export { checkAppUrl, parseAppDefaults, parsePromptHints, type AppDefaults } from '../../operations/app-check.ts';
 import type { Operation, OperationDeps } from '../../operations/types.ts';
@@ -71,6 +71,8 @@ export function provisioningRoutes(
   // canSeeGuest (#54): a VMID-in-use error names the conflicting guest only
   // when the caller's groups may see it. Groups are captured now, so the
   // job's later apply checks against the requester, not whoever is asking then.
+  // actor (issue #53): the signed-in creator, for create-vm's Proxmox grant
+  // -- set on preview and apply alike so the preview can name them.
   const deps = (req: Request): OperationDeps => {
     const groups = req.user?.groups ?? [];
     return {
@@ -80,6 +82,7 @@ export function provisioningRoutes(
       authentik,
       cloudflare,
       canSeeGuest: (name) => isResourceAllowed(inventoryPath, groups, { type: 'guest', name }),
+      actor: resolveActor(req),
       ...testDeps,
     };
   };

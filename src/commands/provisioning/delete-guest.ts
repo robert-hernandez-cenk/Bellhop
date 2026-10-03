@@ -85,6 +85,9 @@ export async function runDeleteGuest(
     }
   }
 
+  // No ACL cleanup step: Proxmox's destroy itself removes the VMID's ACLs and
+  // pool membership (remove_vm_access, verified on PVE 9.2.10 -- see
+  // specs/016-pve-creator-acl/research.md R4).
   const destroy = await runRemote(deps.ssh, deps.inventory, parentHost, `${tool} destroy ${guest.vmid}`);
   if (destroy.code !== 0) {
     throw new Error(`Failed to destroy ${opts.guest} on ${parentHost} (exit ${destroy.code}): ${destroy.stderr || destroy.stdout}`);

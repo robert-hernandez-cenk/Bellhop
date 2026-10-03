@@ -274,7 +274,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   which one entry has `proxy: true`; written by `saveInventory` but not
   currently read back by `loadInventory`, which instead reads the `proxy`
   boolean column already present directly on the owning `hosts`/`guests`
-  row), and `meta` (`domain` plus twelve optional operator-specific scalars,
+  row), and `meta` (`domain` plus fourteen optional operator-specific scalars,
   issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`,
   plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch`, the
   issue #10 pair `proxyDriver`/`proxyConfigPath` (which reverse-proxy
@@ -284,9 +284,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `proxyTlsKey` (the shared TLS certificate/key path pair the nginx
   driver's every server block references — see the "nginx driver" bullet
   below; inert for Caddy, which issues its own per-site certificate),
-  and the issue #35 pair `proxyCertResolver`/`proxyApiUrl` (the Traefik
+  the issue #35 pair `proxyCertResolver`/`proxyApiUrl` (the Traefik
   driver's own certificate-resolver name and optional API address — see
-  the "Traefik driver" bullet below; inert for every other driver)
+  the "Traefik driver" bullet below; inert for every other driver),
+  and the issue #53 pair `pveUserRealm`/`pveCreatorRole` (the Proxmox
+  OpenID realm and role a VM's web-UI creator is granted on it — see the
+  "Proxmox access for VM creators" bullet below; `pveUserRealm` unset
+  means the feature is off entirely)
   — see `SettingsSchema`/`SETTINGS_KEYS` in
   `src/lib/inventory.ts`, spread into `InventorySchema` rather than nested
   under their own key, same flat placement as `domain`). Each used to be a
@@ -2662,6 +2666,75 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   create-lxc/create-vm/install-app commands nor any other CLI command has
   a way to set `port`+`subdomains` on a guest at all, so there's no
   per-guest hook point to probe from.
+- **Proxmox access for VM creators** (`src/lib/pve-acl.ts`, issue #53) is
+  the only module that knows how a Bellhop user maps to a Proxmox user and
+  how per-guest Proxmox ACLs are read and written; every remote call it
+  makes goes through `runRemote` against a `pve` host -- see
+  `specs/016-pve-creator-acl/contracts/pve-acl.md` for its exports and
+  exact message text. Without `pveUserRealm` set (see "Reading/writing
+  the inventory database" above), the creator grant (`grantCreatorAccess`)
+  is off entirely -- but `migrate-guest`'s permission copy
+  (`copyGuestAcls`, see below) runs unconditionally regardless of
+  `pveUserRealm`, since it copies whatever permissions already exist on a
+  guest's old VMID (a creator grant from this feature, or one an
+  administrator added by hand) rather than anything this setting gates.
+  `grantCreatorAccess` is called from `create-vm`'s operation `apply()`
+  (`src/operations/provisioning.ts`) in a `finally` wrapped around
+  `recordProvisionedGuest` -- deliberately, not sequenced after it:
+  `runCreateVm` having succeeded means the VM already exists in Proxmox,
+  so the grant is attempted even if recording it in inventory or pushing
+  its subdomains live then fails the job; `grantCreatorAccess` itself
+  never throws (every outcome is a logged line and a return value), so it
+  can never mask whatever error `recordProvisionedGuest` raised. The
+  signed-in person it grants to comes from `OperationDeps.actor`
+  (`Actor | undefined`, `src/operations/types.ts`), set only by the
+  provisioning router's `deps()` via `resolveActor(req)`
+  (`src/web/impersonation.ts`, next to `resolveTriggeredBy`) -- same
+  real-user rule as `resolveTriggeredBy` (`req.realUser ?? req.user`, so
+  an impersonating admin's grant goes to their own real account, never the
+  impersonated group), but `undefined` for the synthetic local operator
+  (`localOperator: true`), who is no real person and has no Proxmox
+  account to grant to. The CLI never sets `actor` at all (it has no
+  per-operation deps layer), and the MCP server's `create_vm` tool runs
+  through the same `Operation`/`apply()` but passes no `actor` either, so
+  a grant is attempted only for a web-UI-triggered job with a real signed-in
+  person -- `grantCreatorAccess`'s own `no-actor` branch is what reports
+  "nothing to grant to" for every other case (MCP, CLI, or the local
+  operator), one informational line rather than three different code
+  paths. Reading the realm's configuration from Proxmox
+  (`buildRealmReadCommand`) and reading a guest's ACLs for a migration
+  (`buildGuestAclReadCommand`) both filter their output *on the Proxmox
+  host itself*, with a small inline `perl -MJSON::PP` program, rather than
+  piping the raw `pvesh` JSON back to Node: a realm's own config carries
+  its OIDC client secret (`client-key`) in clear text, and the cluster's
+  full ACL list carries every other person's user ID, and every `exec`
+  inside a web or MCP job streams its stdout straight into the job log
+  (`JobSSHClient.exec`'s `onChunk`) -- so filtering has to happen before
+  the output is ever captured, not after. Node still re-validates and
+  re-filters the (already-filtered) result with zod and a second,
+  identical filter (`aclsForVmid`), so a misbehaving host-side filter can
+  never widen what a migration copies. `migrate-guest`
+  (`src/commands/provisioning/migrate-guest.ts`) calls `copyGuestAcls`
+  unconditionally -- not gated on `pveUserRealm`, since it copies whatever
+  permissions already exist on the old VMID (a creator grant from this
+  feature, or one an administrator added by hand), regardless of whether
+  the creator-grant feature is configured at all -- right after the new
+  guest is verified running and *before* the original is destroyed, since
+  destroying a guest is what removes its VMID's permissions. That destroy
+  step needs no ACL cleanup of its own: Proxmox's own
+  `PVE::AccessControl::remove_vm_access`, called by both the VM and
+  container destroy APIs regardless of `--purge`, already deletes every
+  permission on a destroyed VMID (verified by reading the live Proxmox VE
+  9.2.10 source, `specs/016-pve-creator-acl/research.md` R4) -- so a VMID
+  Bellhop later reuses never inherits an old guest's grants, and
+  `delete-guest`/`migrate-guest`'s own destroy step adds nothing extra.
+  Pool membership is a documented exception: the same destroy call also
+  drops the old VMID's pool membership, and `copyGuestAcls` doesn't
+  re-create it, so a pooled guest needs to be added back to its pool by
+  hand after a migration (`docs/proxmox-access.md`). No single-operator
+  assumption is introduced by this feature: `pveUserRealm`/`pveCreatorRole`
+  are both optional per-deployment settings, and every realm/role name is
+  read from Proxmox or supplied by the operator, never hardcoded.
 - **Web UI responsiveness/theming** (`web-client/src/`): a single
   `640px` breakpoint (`index.css`) separates desktop layout from mobile
   layout — there is no intermediate tablet breakpoint. Below it, `Sidebar`

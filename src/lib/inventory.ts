@@ -385,6 +385,25 @@ export const SettingsSchema = z.object({
       'must be a valid git branch name'
     )
     .optional(),
+  // The Authentik-backed Proxmox realm whose users get granted access to
+  // the VMs/containers they create through this toolkit (issue #53) --
+  // unset means the creator grant is off entirely (src/lib/pve-acl.ts's
+  // grantCreatorAccess returns 'off'). Must start with a letter, matching
+  // Proxmox's own realm-id rules, so it can never produce an invalid
+  // `pveum realm` lookup.
+  pveUserRealm: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9._-]+$/, 'must start with a letter and contain only letters, digits, ., - and _')
+    .optional(),
+  // The Proxmox role granted to a VM/container's creator on its own
+  // /vms/<vmid> path (issue #53) -- unset means DEFAULT_CREATOR_ROLE
+  // ('PVEVMAdmin', src/lib/pve-acl.ts). Matches Proxmox's own role-id
+  // character class so it can never produce an invalid `pveum acl modify`
+  // call.
+  pveCreatorRole: z
+    .string()
+    .regex(/^[A-Za-z0-9._-]+$/, 'must contain only letters, digits, ., - and _')
+    .optional(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

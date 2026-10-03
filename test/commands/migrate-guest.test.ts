@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Inventory } from '../../src/lib/inventory.ts';
@@ -8,6 +9,7 @@ import { loadInventory, saveInventory } from '../../src/lib/inventory.ts';
 import { runMigrateGuest, archiveLogPath } from '../../src/commands/provisioning/migrate-guest.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
+import { withCapturedConsole } from '../../src/web/console-capture.ts';
 
 test('archiveLogPath replaces the tar/vma + compression extension with .log', () => {
   assert.equal(
@@ -239,6 +241,18 @@ test('runMigrateGuest dry run defaults --mid to the current vmid\'s numeric suff
   // actually needed can only be known live, at apply time.
   assert.match(result.sourceScript, /if still running.*pct stop 4012/);
   assert.match(result.sourceScript, /pct destroy 4012/);
+  // Issue #53 US4: the permission copy runs after verification, before the
+  // destroy, so the preview lists it between those two lines.
+  assert.equal(
+    result.sourceScript,
+    [
+      'vzdump 4012 --storage nas-proxmox --mode stop --compress zstd',
+      '# then, if still running (vzdump --mode stop restarts a guest that was running before the backup): pct stop 4012',
+      '# then, once the new guest is verified running on pve-secondary:',
+      '# then copy any ACLs on /vms/4012 to /vms/5012',
+      'pct destroy 4012',
+    ].join('\n')
+  );
   assert.match(result.targetScript, /pct restore 5012 .* --storage local-lvm/);
   // Fix 2: only ip= is ever rewritten -- the exact rewritten net0 value is
   // only known at apply time (it depends on reading the restored guest's
@@ -265,6 +279,7 @@ test('runMigrateGuest dry run uses qm for a vm guest', async () => {
     { ssh, inventory, inventoryPath: tempInventoryPath() }
   );
   assert.match(result.sourceScript, /qm destroy 4020/);
+  assert.match(result.sourceScript, /# then copy any ACLs on \/vms\/4020 to \/vms\/5020\nqm destroy 4020$/);
   assert.match(result.targetScript, /qm restore 5020 .* --storage local-lvm/);
   // The exact rewritten ipconfig0 value is only known at apply time (it
   // depends on reading the restored guest's own config) -- the preview
@@ -317,6 +332,7 @@ function happyPathResponder(overrides: Record<string, { stdout: string; stderr: 
     for (const [prefix, response] of Object.entries(overrides)) {
       if (cmd.startsWith(prefix)) return response;
     }
+    if (cmd.includes('pvesh get /access/acl')) return { stdout: '[]\n', stderr: '', code: 0 }; // no permissions to copy
     if (cmd.startsWith('pct config') || cmd.startsWith('qm config')) {
       return { stdout: cmd.startsWith('pct') ? RESTORED_NET0 : RESTORED_IPCONFIG0, stderr: '', code: 0 };
     }
@@ -353,6 +369,7 @@ function happyPathResponder(overrides: Record<string, { stdout: string; stderr: 
 function orderedStatusResponder(sourceVmid: number, targetVmid: number, opts: { sourceRunning?: boolean } = {}) {
   const sourceRunning = opts.sourceRunning ?? true;
   return (_target: string, _user: string, cmd: string) => {
+    if (cmd.includes('pvesh get /access/acl')) return { stdout: '[]\n', stderr: '', code: 0 }; // no permissions to copy
     if (cmd.startsWith('pct status') && cmd.includes('>/dev/null')) return { stdout: '', stderr: '', code: 1 }; // checkVmidAvailable probe: free
     if (cmd === `pct status ${sourceVmid}` || cmd === `qm status ${sourceVmid}`) {
       return sourceRunning
@@ -999,4 +1016,96 @@ test('runMigrateGuest apply preserves a setting written to disk while the remote
   const reloaded = loadInventory(invPath);
   assert.equal(reloaded.dnsServer, '10.0.0.53', 'a concurrently-written setting must not be reverted');
   assert.equal(reloaded.guests.find((g) => g.name === 'media')?.vmid, 5012);
+});
+
+// --- Issue #53 US4: copy every Proxmox permission on the old VMID to the new
+// one, after verification and before the original is destroyed. ---
+
+const aclFixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'proxmox');
+// Captured from a real host: one PVEVMAdmin user entry on /vms/4005.
+const ACL_FILTERED_4005 = readFileSync(path.join(aclFixtureDir, 'acl-filtered.json'), 'utf8');
+
+// The captured fixture's entry sits on /vms/4005, so these tests migrate a
+// guest renumbered to vmid 4005 (default --mid 5 -> 5005 on pve-secondary).
+function inventoryWithGuestAt4005(name: 'media' | 'winbox'): Inventory {
+  const inv = isolatedInventory();
+  inv.guests = inv.guests.map((g) => (g.name === name ? { ...g, vmid: 4005, ip: '192.168.1.5' } : g));
+  return inv;
+}
+
+function aclResponder(base: ReturnType<typeof orderedStatusResponder>, acl: { stdout: string; stderr: string; code: number }, copy?: { stdout: string; stderr: string; code: number }) {
+  return (t: string, u: string, cmd: string) => {
+    if (cmd.includes('pvesh get /access/acl')) return acl;
+    if (copy && cmd.startsWith('set -e\npveum acl modify')) return copy;
+    return base(t, u, cmd) as { stdout: string; stderr: string; code: number };
+  };
+}
+
+for (const [name, tool] of [
+  ['media', 'pct'],
+  ['winbox', 'qm'],
+] as const) {
+  test(`runMigrateGuest apply (${tool}) reads and copies the old VMID's permissions after verification and before destroying the original`, async () => {
+    const inv = inventoryWithGuestAt4005(name);
+    const invPath = tempSavedInventoryPath(inv);
+    const ssh = new FakeSSHClient(aclResponder(orderedStatusResponder(4005, 5005), { stdout: ACL_FILTERED_4005, stderr: '', code: 0 }));
+    const result = await runMigrateGuest(
+      { guest: name, toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+      { ssh, inventory: inv, inventoryPath: invPath }
+    );
+    assert.equal(result.applied, true);
+
+    const commands = ssh.history.map((c) => c.command);
+    const targets = ssh.history.map((c) => c.sshTarget);
+    const verifyIdx = commands.lastIndexOf(`${tool} status 5005`);
+    const readIdx = commands.findIndex((c) => c.includes('pvesh get /access/acl'));
+    const copyIdx = commands.findIndex((c) => c.startsWith('set -e\npveum acl modify'));
+    const destroyIdx = commands.indexOf(`${tool} destroy 4005`);
+    assert.ok(verifyIdx > -1 && readIdx > verifyIdx, 'the read must come after the running verification');
+    assert.ok(copyIdx === readIdx + 1, 'the copy must follow the read directly');
+    assert.ok(destroyIdx === copyIdx + 1, 'the destroy must come right after the copy');
+    assert.match(commands[readIdx], /grep \{ \$_->\{path\} eq "\/vms\/4005" \}/);
+    assert.equal(
+      commands[copyIdx],
+      "set -e\npveum acl modify '/vms/5005' --users 'alice@example.com@authentik' --roles 'PVEVMAdmin' --propagate 1"
+    );
+    assert.equal(targets[readIdx], 'pve-main.local');
+    assert.equal(targets[copyIdx], 'pve-main.local');
+  });
+}
+
+test('runMigrateGuest apply sends no copy script when the old VMID has no permissions', async () => {
+  const inv = isolatedInventory();
+  const invPath = tempSavedInventoryPath(inv);
+  const ssh = new FakeSSHClient(orderedStatusResponder(4012, 5012));
+  const { text } = await withCapturedConsole(() =>
+    runMigrateGuest(
+      { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+      { ssh, inventory: inv, inventoryPath: invPath }
+    )
+  );
+  const commands = ssh.history.map((c) => c.command);
+  assert.ok(commands.some((c) => c.includes('pvesh get /access/acl')), 'the permissions must still be read');
+  assert.ok(!commands.some((c) => c.includes('pveum acl modify')), 'nothing to copy, so no copy script');
+  assert.match(text, /No permissions on \/vms\/4012 to copy/);
+});
+
+test('runMigrateGuest apply warns when the permission copy fails, and still destroys, cleans up and saves inventory', async () => {
+  const inv = inventoryWithGuestAt4005('media');
+  const invPath = tempSavedInventoryPath(inv);
+  const ssh = new FakeSSHClient(
+    aclResponder(orderedStatusResponder(4005, 5005), { stdout: ACL_FILTERED_4005, stderr: '', code: 0 }, { stdout: '', stderr: 'no such role', code: 2 })
+  );
+  const { text, result } = await withCapturedConsole(() =>
+    runMigrateGuest(
+      { guest: 'media', toHost: 'pve-secondary', apply: true, sleepFn: async () => {} },
+      { ssh, inventory: inv, inventoryPath: invPath }
+    )
+  );
+  assert.equal(result.applied, true, 'a failed copy must not fail the migration');
+  assert.match(text, /Failed to copy permissions from \/vms\/4005 to \/vms\/5005 \(exit 2\): no such role -- run on pve-main by hand:/);
+  const commands = ssh.history.map((c) => c.command);
+  assert.ok(commands.includes('pct destroy 4005'), 'the original must still be destroyed');
+  assert.ok(commands.some((c) => c.startsWith('rm -f')), 'the backup must still be cleaned up');
+  assert.equal(loadInventory(invPath).guests.find((g) => g.name === 'media')?.vmid, 5005, 'inventory must still be saved');
 });
