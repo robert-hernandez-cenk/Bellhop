@@ -68,7 +68,21 @@ export function provisioningRoutes(
     res.json({ usedMids: usedMidsByHost(inventory, allowed) });
   });
 
-  const deps = (): OperationDeps => ({ ssh, inventory, inventoryPath, authentik, cloudflare, ...testDeps });
+  // canSeeGuest (#54): a VMID-in-use error names the conflicting guest only
+  // when the caller's groups may see it. Groups are captured now, so the
+  // job's later apply checks against the requester, not whoever is asking then.
+  const deps = (req: Request): OperationDeps => {
+    const groups = req.user?.groups ?? [];
+    return {
+      ssh,
+      inventory,
+      inventoryPath,
+      authentik,
+      cloudflare,
+      canSeeGuest: (name) => isResourceAllowed(inventoryPath, groups, { type: 'guest', name }),
+      ...testDeps,
+    };
+  };
 
   // Permission check runs on the raw body before schema parsing, preserving
   // the pre-#16 ordering (a blocked caller gets 403, never a parse error).
@@ -90,7 +104,7 @@ export function provisioningRoutes(
     }
     if (forbidden(req, res, op)) return;
     try {
-      const preview = await op.preview(parseOperationInput(op, req.body), deps());
+      const preview = await op.preview(parseOperationInput(op, req.body), deps(req));
       res.json({ preview });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -105,7 +119,7 @@ export function provisioningRoutes(
     }
     if (forbidden(req, res, op)) return;
     try {
-      const { jobId } = await previewAndEnqueue(op, req.body, deps(), jobRunner, resolveTriggeredBy(req));
+      const { jobId } = await previewAndEnqueue(op, req.body, deps(req), jobRunner, resolveTriggeredBy(req));
       res.json({ jobId });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });

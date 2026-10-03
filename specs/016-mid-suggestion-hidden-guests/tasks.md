@@ -67,12 +67,12 @@ description: "Task list for MID suggestions that account for hidden guests"
 
 **Independent Test**: restricted install-app preview with a taken MID: error lacks `secret`; CLI still names it.
 
-- [ ] T014 [P] [US3] Write failing tests in test/lib/targets.test.ts for `checkVmidAvailable(ssh, inv, host, vmid, canSeeGuest?)` with a `FakeSSHClient` reporting the VMID live: no predicate → message contains `by 'secret'` (unchanged); predicate returning true → contains it; predicate returning false → `VMID 4002 on 'pve1' is already in use -- choose a different --mid` with no guest name
-- [ ] T015 [P] [US3] Write a failing route test in test/web/routes/provisioning.test.ts: group `family` (allow-list host `pve1`, guest `media`) previews `install-app` on `pve1` with the MID of hidden guest `secret` while the fake SSH client reports the VMID in use → 400 whose error does not contain `secret`; the same request as admin → error contains `secret`
-- [ ] T016 [US3] Add optional `canSeeGuest` parameter to `checkVmidAvailable` in src/lib/targets.ts (name omitted only when the predicate exists and returns false)
-- [ ] T017 [US3] Add `canSeeGuest?: (guestName: string) => boolean` to `OperationDeps` in src/operations/types.ts with a comment (web provisioning only; CLI/MCP omit it = full trust); add the same optional field to the deps parameter types of `runInstallApp` (src/commands/provisioning/install-app.ts) and `runMigrateGuest` (src/commands/provisioning/migrate-guest.ts) and pass `deps.canSeeGuest` to `checkVmidAvailable`
-- [ ] T018 [US3] In src/web/routes/provisioning.ts change `deps()` to `deps(req)` and set `canSeeGuest: (name) => isResourceAllowed(inventoryPath, groups, { type: 'guest', name })` from the caller's groups; update both preview and apply call sites
-- [ ] T019 [US3] Run `npm run typecheck`, `npm test`
+- [x] T014 [P] [US3] Write failing tests in test/lib/targets.test.ts for `checkVmidAvailable(ssh, inv, host, vmid, canSeeGuest?)` with a `FakeSSHClient` reporting the VMID live: no predicate → message contains `by 'secret'` (unchanged); predicate returning true → contains it; predicate returning false → `VMID 4002 on 'pve1' is already in use -- choose a different --mid` with no guest name
+- [x] T015 [P] [US3] Write a failing route test in test/web/routes/provisioning.test.ts: group `family` (allow-list host `pve1`, guest `media`) previews `install-app` on `pve1` with the MID of hidden guest `secret` while the fake SSH client reports the VMID in use → 400 whose error does not contain `secret`; the same request as admin → error contains `secret`
+- [x] T016 [US3] Add optional `canSeeGuest` parameter to `checkVmidAvailable` in src/lib/targets.ts (name omitted only when the predicate exists and returns false)
+- [x] T017 [US3] Add `canSeeGuest?: (guestName: string) => boolean` to `OperationDeps` in src/operations/types.ts with a comment (web provisioning only; CLI/MCP omit it = full trust); add the same optional field to the deps parameter types of `runInstallApp` (src/commands/provisioning/install-app.ts) and `runMigrateGuest` (src/commands/provisioning/migrate-guest.ts) and pass `deps.canSeeGuest` to `checkVmidAvailable`
+- [x] T018 [US3] In src/web/routes/provisioning.ts change `deps()` to `deps(req)` and set `canSeeGuest: (name) => isResourceAllowed(inventoryPath, groups, { type: 'guest', name })` from the caller's groups; update both preview and apply call sites
+- [x] T019 [US3] Run `npm run typecheck`, `npm test`
 
 ---
 

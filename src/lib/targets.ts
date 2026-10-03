@@ -205,13 +205,26 @@ export function stripCidr(ip: string): string {
 // collision instead of failing loudly -- see issue #53) and migrate-guest
 // (which needs the target host's derived VMID to genuinely be free before
 // restoring a backup onto it).
-export async function checkVmidAvailable(ssh: SSHClient, inv: Inventory, hostName: string, vmid: number): Promise<void> {
+//
+// `canSeeGuest` (issue #54) is the web UI's per-resource permission check:
+// when given and it returns false for the conflicting guest, the error uses
+// the same no-name wording as an untracked VMID, so a restricted caller
+// never learns the name of a guest their group is blocked from. Omitted
+// (CLI, MCP) means full operator trust and the guest is always named.
+export async function checkVmidAvailable(
+  ssh: SSHClient,
+  inv: Inventory,
+  hostName: string,
+  vmid: number,
+  canSeeGuest?: (guestName: string) => boolean
+): Promise<void> {
   const result = await runRemote(ssh, inv, hostName, `pct status ${vmid} >/dev/null 2>&1 || qm status ${vmid} >/dev/null 2>&1`);
   if (result.code !== 0) {
     return;
   }
   const existing = inv.guests.find((g) => g.host === hostName && g.vmid === vmid);
+  const nameable = existing && (!canSeeGuest || canSeeGuest(existing.name));
   throw new Error(
-    `VMID ${vmid} on '${hostName}' is already in use${existing ? ` by '${existing.name}'` : ''} -- choose a different --mid`
+    `VMID ${vmid} on '${hostName}' is already in use${nameable ? ` by '${existing.name}'` : ''} -- choose a different --mid`
   );
 }

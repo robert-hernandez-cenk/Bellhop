@@ -229,6 +229,41 @@ test('checkVmidAvailable throws generically when the vmid is in use but untracke
   );
 });
 
+// Issue #54 (US3): the web UI passes a canSeeGuest predicate so a VMID
+// collision with a guest the caller's group can't see is reported in the
+// same no-name wording as an untracked VMID.
+const hiddenGuestInventory: Inventory = {
+  ...inventory,
+  guests: [...inventory.guests, { name: 'secret', type: 'lxc', vmid: 4002, host: 'pve1' }],
+};
+
+test('checkVmidAvailable names the conflicting guest when no canSeeGuest predicate is given', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => checkVmidAvailable(ssh, hiddenGuestInventory, 'pve1', 4002),
+    /VMID 4002 on 'pve1' is already in use by 'secret' -- choose a different --mid/
+  );
+});
+
+test('checkVmidAvailable names the conflicting guest when canSeeGuest allows it', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => checkVmidAvailable(ssh, hiddenGuestInventory, 'pve1', 4002, (name) => name === 'secret'),
+    /VMID 4002 on 'pve1' is already in use by 'secret'/
+  );
+});
+
+test('checkVmidAvailable omits the conflicting guest name when canSeeGuest hides it', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  await assert.rejects(
+    () => checkVmidAvailable(ssh, hiddenGuestInventory, 'pve1', 4002, () => false),
+    (err: Error) => {
+      assert.equal(err.message, "VMID 4002 on 'pve1' is already in use -- choose a different --mid");
+      return true;
+    }
+  );
+});
+
 test('hostSshTarget maps a plain host to host/user with no port or identity file', () => {
   const host: HostEntry = { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' };
   // Undefined, not 0 or '' -- connectConfig() spreads `port` in only when

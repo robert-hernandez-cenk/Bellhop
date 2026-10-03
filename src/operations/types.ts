@@ -21,6 +21,10 @@ export interface OperationDeps {
   goBuilder?: GoBuilder;
   fetchImpl?: typeof fetch;
   tlsProbeSleepFn?: (ms: number) => Promise<void>;
+  // Web provisioning only (#54): the caller's per-resource guest permission,
+  // so a VMID-in-use error never names a guest their group can't see.
+  // The CLI and MCP server omit it -- full operator trust.
+  canSeeGuest?: (guestName: string) => boolean;
 }
 
 // One toolkit action with a dry-run preview and a real apply, shared by the
