@@ -50,7 +50,7 @@ No setup needed: no new dependencies or project structure.
 
 ## Phase 6: Polish
 
-- [ ] T009 [P] Update CLAUDE.md's issue #160 detection paragraph (the "Detection runs on one self-re-arming timer..." text in the install-app/update-app bullet) to describe issue #52: redraws count as silence (`src/web/jobs/output-activity.ts`), the candidate is the last meaningful line not ended by a newline, digits are significant, the transcript is bounded, and a stall pause clears itself on new meaningful output.
+- [x] T009 [P] Update CLAUDE.md's issue #160 detection paragraph (the "Detection runs on one self-re-arming timer..." text in the install-app/update-app bullet) to describe issue #52: redraws count as silence (`src/web/jobs/output-activity.ts`), the candidate is the last meaningful line not ended by a newline, digits are significant, the transcript is bounded, and a stall pause clears itself on new meaningful output.
 - [ ] T010 Run `npm run typecheck`, `npm test`, and `npm run web:build` in the worktree and record the results.
 
 ## Dependencies
