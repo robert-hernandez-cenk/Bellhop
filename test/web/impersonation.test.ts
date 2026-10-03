@@ -129,3 +129,33 @@ test('resolveActor returns undefined for the synthetic local operator', () => {
   } as unknown as Request;
   assert.equal(resolveActor(req), undefined);
 });
+
+// issue #58 (unit U1): resolveActor copies uid from the real identity, the
+// same real-user rule it already applies to username/email -- an admin
+// impersonating a group still grants as themselves, uid included.
+test('resolveActor copies uid from req.user when not impersonating', () => {
+  const req = {
+    user: { username: 'test-user', groups: ['bellhop-admins'], uid: 'uid-test-user' },
+  } as unknown as Request;
+  assert.deepEqual(resolveActor(req), { username: 'test-user', uid: 'uid-test-user' });
+});
+
+test('resolveActor copies uid from req.realUser while impersonating, not from the overlaid req.user', () => {
+  const req = {
+    user: {
+      username: 'bellhop-viewers-view',
+      groups: ['bellhop-viewers'],
+      impersonating: 'bellhop-viewers',
+    },
+    realUser: { username: 'admin', groups: ['bellhop-admins'], uid: 'uid-admin' },
+  } as unknown as Request;
+  assert.deepEqual(resolveActor(req), { username: 'admin', uid: 'uid-admin' });
+});
+
+test('resolveActor omits uid entirely when the real identity has none', () => {
+  const req = {
+    user: { username: 'test-user', groups: ['bellhop-admins'] },
+  } as unknown as Request;
+  const actor = resolveActor(req);
+  assert.ok(actor && !('uid' in actor), 'a real identity with no uid must round-trip without a uid key at all');
+});

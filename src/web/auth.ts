@@ -28,6 +28,12 @@ export interface AuthUser {
   // play (see authMode below). Drives the web UI's unauthenticated banner;
   // admin rights come from group membership like everyone else.
   localOperator?: boolean;
+  // The identity provider's stable user id (Authentik's X-authentik-uid,
+  // issue #58) -- used to match a guest's recorded creator across
+  // username renames (src/lib/permissions.ts's isGuestCreator) rather than
+  // by username alone. Absent for dev/test identities and the synthetic
+  // local operator, which have no such id.
+  uid?: string;
 }
 
 // Axis 1 of issue #123's design. The default is inferred rather than
@@ -83,10 +89,15 @@ export function resolveAuthUser(
   if (typeof username === 'string' && username.length > 0) {
     const email = headers['x-authentik-email'];
     const groupsHeader = headers['x-authentik-groups'];
+    const uid = headers['x-authentik-uid'];
     return {
       username,
       email: typeof email === 'string' ? email : undefined,
       groups: typeof groupsHeader === 'string' && groupsHeader.length > 0 ? groupsHeader.split('|') : [],
+      // A conditional spread, not `uid: ... ?? undefined`, so a request
+      // with no (or an empty) x-authentik-uid header round-trips without
+      // a uid key at all rather than one set to `undefined`.
+      ...(typeof uid === 'string' && uid.length > 0 ? { uid } : {}),
     };
   }
 
