@@ -325,6 +325,7 @@ export function ProvisioningForm() {
                 guests={guests}
                 values={values}
                 hasGuestField={cmd.fields.some((f) => f.kind === 'select-guest' || f.kind === 'select-guest-lxc')}
+                usedMids={usedMids}
               />
             )}
           </div>

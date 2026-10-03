@@ -54,10 +54,10 @@ description: "Task list for MID suggestions that account for hidden guests"
 
 **Independent Test**: restricted user types MID 2 on `pve1`: warning without a name; MID 3: names `media`.
 
-- [ ] T010 [P] [US2] Write failing tests in test/web-client/mid.test.ts for `midCollisionMessage(host, mid, usedMids, visibleGuests)`: `null` when the MID is free, `usedMids` undefined, or no host/scheme; `MID 3 is already used by media (vmid 4003) on pve1.` when a visible guest holds it; `MID 2 is already in use on pve1.` when it is occupied but no visible guest holds it
-- [ ] T011 [US2] Implement `midCollisionMessage` in web-client/src/lib/mid.ts
-- [ ] T012 [US2] Update web-client/src/components/MidInput.tsx to take `usedMids: number[] | undefined` and render `midCollisionMessage(...)` on blur (state holds the message string, cleared on change); update web-client/src/components/FieldInput.tsx to accept a `usedMids?: Record<string, number[]> | null` prop and pass the selected host's list; pass it from web-client/src/pages/ProvisioningForm.tsx
-- [ ] T013 [US2] Run `npm run typecheck`, `npm test`, `npm run web:build`
+- [x] T010 [P] [US2] Write failing tests in test/web-client/mid.test.ts for `midCollisionMessage(host, mid, usedMids, visibleGuests)`: `null` when the MID is free, `usedMids` undefined, or no host/scheme; `MID 3 is already used by media (vmid 4003) on pve1.` when a visible guest holds it; `MID 2 is already in use on pve1.` when it is occupied but no visible guest holds it
+- [x] T011 [US2] Implement `midCollisionMessage` in web-client/src/lib/mid.ts
+- [x] T012 [US2] Update web-client/src/components/MidInput.tsx to take `usedMids: number[] | undefined` and render `midCollisionMessage(...)` on blur (state holds the message string, cleared on change); update web-client/src/components/FieldInput.tsx to accept a `usedMids?: Record<string, number[]> | null` prop and pass the selected host's list; pass it from web-client/src/pages/ProvisioningForm.tsx
+- [x] T013 [US2] Run `npm run typecheck`, `npm test`, `npm run web:build`
 
 ---
 

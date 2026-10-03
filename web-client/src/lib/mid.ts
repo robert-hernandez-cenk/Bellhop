@@ -1,4 +1,4 @@
-import type { HostEntry } from '../api/types.ts';
+import type { HostEntry, GuestEntry } from '../api/types.ts';
 
 export const MID_MIN = 2;
 export const MID_MAX = 252;
@@ -30,4 +30,24 @@ export function nextAvailableMid(host: HostEntry | undefined, usedMids: number[]
 
 export function isMidUsed(usedMids: number[] | undefined, mid: number): boolean {
   return usedMids !== undefined && usedMids.includes(mid);
+}
+
+// The MID field's on-blur warning (issue #54). Occupancy comes from usedMids
+// (the full inventory), but a guest is only ever named when the signed-in
+// user can already see it in visibleGuests -- otherwise the warning says the
+// MID is taken without saying by what.
+export function midCollisionMessage(
+  host: HostEntry | undefined,
+  mid: string,
+  usedMids: number[] | undefined,
+  visibleGuests: GuestEntry[],
+): string | null {
+  if (!host || mid.trim() === '') return null;
+  const n = Number(mid);
+  const vmid = vmidForMid(host, n);
+  if (vmid === null || !isMidUsed(usedMids, n)) return null;
+  const holder = visibleGuests.find((g) => g.host === host.name && g.vmid === vmid);
+  return holder
+    ? `MID ${n} is already used by ${holder.name} (vmid ${holder.vmid}) on ${host.name}.`
+    : `MID ${n} is already in use on ${host.name}.`;
 }

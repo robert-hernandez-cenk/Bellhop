@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextAvailableMid, isMidUsed, MID_MIN, MID_MAX } from '../../web-client/src/lib/mid.ts';
-import type { HostEntry } from '../../web-client/src/api/types.ts';
+import { nextAvailableMid, isMidUsed, midCollisionMessage, MID_MIN, MID_MAX } from '../../web-client/src/lib/mid.ts';
+import type { HostEntry, GuestEntry } from '../../web-client/src/api/types.ts';
 
 const pve1 = {
   name: 'pve1',
@@ -32,4 +32,29 @@ test('isMidUsed is true only for an MID in a known occupied list', () => {
   assert.equal(isMidUsed([2, 3], 2), true);
   assert.equal(isMidUsed([2, 3], 4), false);
   assert.equal(isMidUsed(undefined, 2), false);
+});
+
+const media = { name: 'media', type: 'lxc', host: 'pve1', vmid: 4003 } as GuestEntry;
+
+test('midCollisionMessage names a visible guest holding the MID', () => {
+  assert.equal(
+    midCollisionMessage(pve1, '3', [2, 3], [media]),
+    'MID 3 is already used by media (vmid 4003) on pve1.',
+  );
+});
+
+test('midCollisionMessage warns without a name when no visible guest holds the occupied MID', () => {
+  assert.equal(midCollisionMessage(pve1, '2', [2, 3], [media]), 'MID 2 is already in use on pve1.');
+  // A guest on another host with the same vmid is not a match.
+  const elsewhere = { ...media, host: 'pve2' } as GuestEntry;
+  assert.equal(midCollisionMessage(pve1, '3', [3], [elsewhere]), 'MID 3 is already in use on pve1.');
+});
+
+test('midCollisionMessage is null when the MID is free or the answer is unknown', () => {
+  assert.equal(midCollisionMessage(pve1, '4', [2, 3], [media]), null);
+  assert.equal(midCollisionMessage(pve1, '3', undefined, [media]), null);
+  assert.equal(midCollisionMessage(undefined, '3', [3], [media]), null);
+  assert.equal(midCollisionMessage(noScheme, '3', [3], [media]), null);
+  assert.equal(midCollisionMessage(pve1, '', [0, 3], [media]), null);
+  assert.equal(midCollisionMessage(pve1, '3.5', [3], [media]), null);
 });
