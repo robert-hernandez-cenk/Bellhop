@@ -33,9 +33,11 @@ const CONTRACT: Record<string, string> = {
     'Paths that skip the login check, written exactly or ending in /*, such as an API another app calls. No effect unless the guest is gated with forward-auth and read-only proxy is off.',
   vpn: "Routes the guest's internet traffic through a VPN gateway guest, or through the LAN gateway when set to none. Changing it starts a job that reboots the guest.",
   app: "The community-scripts app this guest was installed from, recorded when Bellhop installed it. The link opens the app's community-scripts page, or its script in your custom script repository.",
+  'created by':
+    "The person who created this guest from Bellhop. They keep access to it even if their group's allow-list doesn't name it, unless a block-list does; blank for guests created another way.",
 };
 
-test('ADVANCED_FIELD_HELP equals the 15 contract entries verbatim', () => {
+test('ADVANCED_FIELD_HELP equals the 16 contract entries verbatim (15 from the contract doc plus "created by", issue #58)', () => {
   assert.deepEqual(ADVANCED_FIELD_HELP, CONTRACT);
 });
 

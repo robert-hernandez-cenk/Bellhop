@@ -85,9 +85,9 @@ description: "Task list for creator access to guests (#58)"
 
 ## Phase 5: User Story 3 — Admins can see who created a guest (P2)
 
-- [ ] T028 [P] [US3] Add a help entry for "Created by" in `web-client/src/lib/advanced-field-help.ts` (explains: the user who created this guest from Bellhop always keeps access to it, unless a block-list names it; blank for guests created elsewhere) and extend its pinning test if one asserts the label set.
-- [ ] T029 [US3] In `web-client/src/components/AdvancedGuestModal.tsx` General tab: render a read-only "Created by" row showing `guest.creator.username` with `FieldHelp`, only when `guest.creator` is present; add `creator?: { uid?: string; username: string }` to the client guest type. Keep `data-label`/mobile conventions of neighbouring read-only rows. Update `web-client/src/lib/advanced-modal.ts` (`renderedAdvancedFields`) if it enumerates rows.
-- [ ] T030 [US3] Give one demo guest a `creator` (example username) in `scripts/demo/demo-inventory.ts`; keep `test/scripts/demo/demo-inventory.test.ts` green.
+- [x] T028 [P] [US3] Add a help entry for "Created by" in `web-client/src/lib/advanced-field-help.ts` (explains: the user who created this guest from Bellhop always keeps access to it, unless a block-list names it; blank for guests created elsewhere) and extend its pinning test if one asserts the label set.
+- [x] T029 [US3] In `web-client/src/components/AdvancedGuestModal.tsx` General tab: render a read-only "Created by" row showing `guest.creator.username` with `FieldHelp`, only when `guest.creator` is present; add `creator?: { uid?: string; username: string }` to the client guest type. Keep `data-label`/mobile conventions of neighbouring read-only rows. Update `web-client/src/lib/advanced-modal.ts` (`renderedAdvancedFields`) if it enumerates rows.
+- [x] T030 [US3] Give one demo guest a `creator` (example username) in `scripts/demo/demo-inventory.ts`; keep `test/scripts/demo/demo-inventory.test.ts` green.
 - [ ] T031 [US3] `npm run web:build`; verify in a browser via `npm run demo` (127.0.0.1:3100) at desktop width and ≤640px that the row appears for the demo guest with a creator and not for others; kill the demo server by PID afterwards. Regenerate `docs/images/` with `npm run docs:screenshots` only if a screenshotted screen changed.
 
 **Checkpoint**: US3 complete.
