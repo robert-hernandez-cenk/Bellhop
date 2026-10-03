@@ -78,9 +78,9 @@ description: "Task list for MID suggestions that account for hidden guests"
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T020 Update CLAUDE.md "Web UI per-resource group permissions" bullet: MID suggestion/warning use the server's occupied-MID set (`GET /api/provisioning/used-mids`, numbers only), and web-triggered `checkVmidAvailable` errors omit guests the caller can't see; check docs/ for any page describing MID suggestion and update it if present
-- [ ] T021 Browser check per quickstart.md with a temp inventory and `npm run web:dev`: impersonate `family`, verify suggestion and both warning texts at desktop width and at ≤640px; kill the dev server tree by PID afterwards
-- [ ] T022 Final `npm run typecheck`, `npm test`, `npm run web:build`; review the full diff for real operational data (Principle I)
+- [x] T020 Update CLAUDE.md "Web UI per-resource group permissions" bullet: MID suggestion/warning use the server's occupied-MID set (`GET /api/provisioning/used-mids`, numbers only), and web-triggered `checkVmidAvailable` errors omit guests the caller can't see; check docs/ for any page describing MID suggestion and update it if present
+- [x] T021 Browser check per quickstart.md with a temp inventory and `npm run web:dev`: impersonate `family`, verify suggestion and both warning texts at desktop width and at ≤640px; kill the dev server tree by PID afterwards
+- [x] T022 Final `npm run typecheck`, `npm test`, `npm run web:build`; review the full diff for real operational data (Principle I)
 
 ---
 

@@ -51,7 +51,10 @@ labelled with its column name:
 
 Provisioning actions (create-lxc/create-vm/install-app/deploy-vpn-gateway/
 delete-guest/migrate-guest/attach-nfs-mount/migrate-nfs-mount) and
-maintenance actions (sync-inventory) run from forms instead of flags. The
+maintenance actions (sync-inventory) run from forms instead of flags. Forms
+with an MID field suggest the lowest MID free on the selected host, counting
+every guest on it, including guests your group is not allowed to see (their
+names are never shown). The
 Install App form's App field suggests community-scripts apps as you type,
 grouped by repository:
 
