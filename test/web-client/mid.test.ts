@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextAvailableMid, isMidUsed, midCollisionMessage, MID_MIN, MID_MAX } from '../../web-client/src/lib/mid.ts';
+import { nextAvailableMid, isMidUsed, midCollisionMessage, midFieldDefault, MID_MIN, MID_MAX } from '../../web-client/src/lib/mid.ts';
 import type { HostEntry, GuestEntry } from '../../web-client/src/api/types.ts';
 
 const pve1 = {
@@ -52,9 +52,35 @@ test('midCollisionMessage warns without a name when no visible guest holds the o
 
 test('midCollisionMessage is null when the MID is free or the answer is unknown', () => {
   assert.equal(midCollisionMessage(pve1, '4', [2, 3], [media]), null);
-  assert.equal(midCollisionMessage(pve1, '3', undefined, [media]), null);
+  assert.equal(midCollisionMessage(pve1, '2', undefined, [media]), null);
   assert.equal(midCollisionMessage(undefined, '3', [3], [media]), null);
   assert.equal(midCollisionMessage(noScheme, '3', [3], [media]), null);
   assert.equal(midCollisionMessage(pve1, '', [0, 3], [media]), null);
   assert.equal(midCollisionMessage(pve1, '3.5', [3], [media]), null);
+});
+
+// Code review: with the occupied list unknown (pending or failed), a
+// collision with a guest the user can see must still warn, as it did
+// before issue #54.
+test('midCollisionMessage still names a visible guest when the occupied list is unknown', () => {
+  assert.equal(
+    midCollisionMessage(pve1, '3', undefined, [media]),
+    'MID 3 is already used by media (vmid 4003) on pve1.'
+  );
+});
+
+test('midFieldDefault suggests the next free MID when no guest is selected', () => {
+  assert.equal(midFieldDefault(pve1, undefined, [2, 3]), '4');
+  assert.equal(midFieldDefault(pve1, undefined, undefined), '');
+  assert.equal(midFieldDefault(undefined, undefined, [2]), '');
+});
+
+test("midFieldDefault keeps a selected guest's MID unless it is taken on the target host", () => {
+  const guest = { name: 'media', type: 'lxc', vmid: 5003, host: 'pve2' } as GuestEntry;
+  assert.equal(midFieldDefault(pve1, guest, [2]), '3');
+  assert.equal(midFieldDefault(pve1, guest, [2, 3]), '4');
+  // Target host known but its occupied list isn't: don't guess.
+  assert.equal(midFieldDefault(pve1, guest, undefined), '');
+  // No target host chosen yet: the guest's own MID, as before.
+  assert.equal(midFieldDefault(undefined, guest, undefined), '3');
 });

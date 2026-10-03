@@ -7,7 +7,7 @@ import { AppCheckInput, type CheckStatus } from '../components/AppCheckInput';
 import { CheckStatusBadge } from '../components/CheckStatusBadge';
 import { PageDescription } from '../components/PageDescription';
 import { IconExternalLink } from '../components/icons';
-import { isMidUsed, nextAvailableMid } from '../lib/mid';
+import { midFieldDefault } from '../lib/mid';
 import { findConflicts } from '../components/SubdomainsInput';
 
 const composeVpnGatewayName = (vpn: string, identifier: string) =>
@@ -60,6 +60,29 @@ export function ProvisioningForm() {
         );
       });
   }, []);
+
+  // A host picked before used-mids finished loading left its mid field
+  // empty (setField had nothing to suggest from). Fill such fields once the
+  // occupied set arrives; a value already in the field is never replaced.
+  useEffect(() => {
+    if (!usedMids) return;
+    const current = commands.find((c) => c.id === id);
+    if (!current) return;
+    setValues((prev) => {
+      let next = prev;
+      for (const f of current.fields) {
+        if (f.kind !== 'mid' || prev[f.name]) continue;
+        const selectedHost = hosts.find((h) => h.name === prev[f.hostField ?? 'host']);
+        if (!selectedHost) continue;
+        const selectedGuest = guests.find((g) => g.name === prev.guest);
+        const value = midFieldDefault(selectedHost, selectedGuest, usedMids[selectedHost.name]);
+        if (value !== '') next = { ...next, [f.name]: value };
+      }
+      return next;
+    });
+    // Runs only when the occupied set arrives, not on every form edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usedMids]);
 
   useEffect(() => {
     setValues({});
@@ -114,24 +137,11 @@ export function ProvisioningForm() {
         if (hostFieldName !== name && name !== 'guest') continue;
         const selectedHost = hosts.find((h) => h.name === next[hostFieldName]);
         const selectedGuest = guests.find((g) => g.name === next.guest);
-        if (selectedGuest) {
-          const preferredMid = selectedGuest.vmid % 1000;
-          const hostUsedMids = selectedHost ? usedMids?.[selectedHost.name] : undefined;
-          const collides = selectedHost?.midScheme !== undefined && isMidUsed(hostUsedMids, preferredMid);
-          if (selectedHost?.midScheme !== undefined && hostUsedMids === undefined) {
-            // Target host known but its occupied set isn't (load failed or
-            // pending): don't guess (FR-008).
-            next[f.name] = '';
-          } else if (collides) {
-            const suggestedMid = nextAvailableMid(selectedHost, hostUsedMids);
-            next[f.name] = suggestedMid === null ? '' : String(suggestedMid);
-          } else {
-            next[f.name] = String(preferredMid);
-          }
-        } else {
-          const suggestedMid = nextAvailableMid(selectedHost, selectedHost ? usedMids?.[selectedHost.name] : undefined);
-          next[f.name] = suggestedMid === null ? '' : String(suggestedMid);
-        }
+        next[f.name] = midFieldDefault(
+          selectedHost,
+          selectedGuest,
+          selectedHost ? usedMids?.[selectedHost.name] : undefined
+        );
       }
       // Re-select each select-storage field's default whenever the host
       // field it's scoped to (its `hostField`, defaulting to 'host')

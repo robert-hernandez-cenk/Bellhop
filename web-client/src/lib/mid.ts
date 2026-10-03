@@ -45,9 +45,32 @@ export function midCollisionMessage(
   if (!host || mid.trim() === '') return null;
   const n = Number(mid);
   const vmid = vmidForMid(host, n);
-  if (vmid === null || !isMidUsed(usedMids, n)) return null;
+  if (vmid === null) return null;
   const holder = visibleGuests.find((g) => g.host === host.name && g.vmid === vmid);
+  // With usedMids unknown (pending or failed to load), a visible guest
+  // holding the MID still warns; only the hidden-guest case needs usedMids.
+  if (!isMidUsed(usedMids, n) && !holder) return null;
   return holder
     ? `MID ${n} is already used by ${holder.name} (vmid ${holder.vmid}) on ${host.name}.`
     : `MID ${n} is already in use on ${host.name}.`;
+}
+
+// The default a mid field gets for the selected target host (issue #54).
+// With a guest selected (migrate-guest), its own MID is kept unless it is
+// already taken on the target host; once the target host is known but its
+// occupied list isn't (pending or failed), nothing is guessed (FR-008).
+// Without a guest, it is the next free MID on the host, or '' if none.
+export function midFieldDefault(
+  host: HostEntry | undefined,
+  guest: GuestEntry | undefined,
+  usedMids: number[] | undefined,
+): string {
+  if (guest) {
+    const preferredMid = guest.vmid % 1000;
+    if (host?.midScheme === undefined) return String(preferredMid);
+    if (usedMids === undefined) return '';
+    if (!isMidUsed(usedMids, preferredMid)) return String(preferredMid);
+  }
+  const suggested = nextAvailableMid(host, usedMids);
+  return suggested === null ? '' : String(suggested);
 }
