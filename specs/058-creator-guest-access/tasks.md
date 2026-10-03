@@ -19,7 +19,7 @@ description: "Task list for creator access to guests (#58)"
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm baseline: `npm run typecheck` and `npm test` pass in the worktree before any change (record the pass count).
+- [x] T001 Confirm baseline: `npm run typecheck` and `npm test` pass in the worktree before any change (record the pass count).
 
 ---
 
@@ -111,8 +111,8 @@ description: "Task list for creator access to guests (#58)"
 - [x] T037 [P] Write `docs/permissions.md` (group allow-list/block-list model, intersection, admin bypass, creator access and its limits — block wins, impersonation ignores it, only web-UI creations, uid matching — and the backfill command) and link it from the README documentation index; keep `test/docs/links.test.ts` green and README ≤ 200 lines.
 - [x] T038 [P] Add `backfill-guest-creators` to `docs/commands.md` (dry run, `--map`, skip reasons).
 - [x] T039 [P] Update `CLAUDE.md`: the per-resource permissions bullet (creator lift, block wins, impersonation, `isGuestCreator`), the inventory guest-field list (`creator`, `created_by_uid`/`created_by_username`), the auth bullet (`X-authentik-uid` → `AuthUser.uid`), and the backfill command. Check `CONTRIBUTING.md` needs no change.
-- [ ] T040 Run `npm run typecheck`, `npm test`, `npm run web:build`; all pass. Review the full diff for real operational data (constitution workflow gate).
-- [ ] T041 Live, read-only: from the deployment checkout run `bellhop backfill-guest-creators` (dry run, with the operator's private `--map` pairs) and record the summary counts (no names) for the PR. Do **not** `--apply` without the user.
+- [x] T040 Run `npm run typecheck`, `npm test`, `npm run web:build`; all pass. Review the full diff for real operational data (constitution workflow gate).
+- [x] T041 Live, read-only: from the deployment checkout run `bellhop backfill-guest-creators` (dry run, with the operator's private `--map` pairs) and record the summary counts (no names) for the PR. Do **not** `--apply` without the user.
 
 ---
 
