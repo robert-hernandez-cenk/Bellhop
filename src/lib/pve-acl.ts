@@ -80,6 +80,11 @@ export function pveUserIdFor(realm: string, info: RealmInfo, actor: Actor): { us
 // Pre-creates the user when missing (an OpenID realm's autocreate only does
 // so on first login), then grants the role on the guest's own path
 // (research R3). Also the manual commands a failed grant's warning prints.
+// No `set -e` here: if `pveum user add` fails, the acl modify line below
+// still fails on its own (the user it names doesn't exist), so the
+// script's own exit status reports the failure either way -- there's no
+// case where the second line's success would mask the first line's
+// failure.
 export function buildGrantScript(userid: string, vmid: number, role: string): string {
   return [
     `pvesh get ${shellQuote(`/access/users/${userid}`)} >/dev/null 2>&1 || pveum user add ${shellQuote(userid)} --comment ${shellQuote(`Created by Bellhop for VM ${vmid}`)}`,
@@ -127,7 +132,7 @@ export async function grantCreatorAccess(
     const read = await runRemote(ssh, inventory, host, buildRealmReadCommand(realm));
     const parsed = read.code === 0 ? RealmInfoSchema.safeParse(safeJson(read.stdout)) : undefined;
     if (!parsed?.success) {
-      const detail = read.code !== 0 ? (read.stderr || read.stdout).trim() : 'unexpected output';
+      const detail = read.code !== 0 ? (read.stderr || read.stdout).trim() || 'no output' : 'unexpected output';
       logWarn(
         `Skipping Proxmox creator grant: couldn't read realm '${realm}' (exit ${read.code}): ${detail} -- check that pveUserRealm names an existing OpenID realm (bellhop set-config pveUserRealm <realm> --apply, or the web UI's Settings page)`
       );
@@ -223,7 +228,7 @@ export async function copyGuestAcls(
     const read = await runRemote(ssh, inventory, host, buildGuestAclReadCommand(oldVmid));
     const parsed = read.code === 0 ? z.array(AclEntrySchema).safeParse(safeJson(read.stdout)) : undefined;
     if (!parsed?.success) {
-      const detail = read.code !== 0 ? (read.stderr || read.stdout).trim() : 'unexpected output';
+      const detail = read.code !== 0 ? (read.stderr || read.stdout).trim() || 'no output' : 'unexpected output';
       logWarn(`Couldn't read the permissions on ${from} on ${host} (exit ${read.code}): ${detail} ${readFix}`);
       return 'failed';
     }

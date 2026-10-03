@@ -312,9 +312,10 @@ export async function runMigrateGuest(
   // Issue #53 US4: the destroy below removes every permission on the old
   // VMID, so copy them onto the new one first. Never throws -- a failure
   // only warns, with the manual commands.
+  logInfo(`Verified vmid ${mid.vmid} on ${opts.toHost} -- copying permissions from vmid ${guest.vmid} on ${guest.host}...`);
   await copyGuestAcls(ssh, inventory, guest.host, guest.vmid, mid.vmid);
 
-  logInfo(`Verified -- destroying original '${opts.guest}' (vmid ${guest.vmid}) on ${guest.host}...`);
+  logInfo(`Destroying original '${opts.guest}' (vmid ${guest.vmid}) on ${guest.host}...`);
   // No separate ACL cleanup: Proxmox's destroy itself removes the VMID's ACLs
   // and pool membership (remove_vm_access, verified on PVE 9.2.10 -- see
   // specs/016-pve-creator-acl/research.md R4).

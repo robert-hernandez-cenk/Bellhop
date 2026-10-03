@@ -2671,8 +2671,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   makes goes through `runRemote` against a `pve` host -- see
   `specs/016-pve-creator-acl/contracts/pve-acl.md` for its exports and
   exact message text. Without `pveUserRealm` set (see "Reading/writing
-  the inventory database" above), nothing here ever runs. `grantCreatorAccess`
-  is called from `create-vm`'s operation `apply()`
+  the inventory database" above), the creator grant (`grantCreatorAccess`)
+  is off entirely -- but `migrate-guest`'s permission copy
+  (`copyGuestAcls`, see below) runs unconditionally regardless of
+  `pveUserRealm`, since it copies whatever permissions already exist on a
+  guest's old VMID (a creator grant from this feature, or one an
+  administrator added by hand) rather than anything this setting gates.
+  `grantCreatorAccess` is called from `create-vm`'s operation `apply()`
   (`src/operations/provisioning.ts`) in a `finally` wrapped around
   `recordProvisionedGuest` -- deliberately, not sequenced after it:
   `runCreateVm` having succeeded means the VM already exists in Proxmox,

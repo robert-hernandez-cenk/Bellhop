@@ -179,6 +179,19 @@ test('grantCreatorAccess returns "skipped" when the realm read exits non-zero, n
   );
 });
 
+test('grantCreatorAccess returns "skipped" with "no output" when the realm read exits non-zero with empty stdout and stderr', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 255 }));
+  const inv = { ...grantInventory, pveUserRealm: 'nosuchrealm' };
+  const { text, result } = await withCapturedConsole(() => grantCreatorAccess(ssh, inv, 'pve1', 4005, alice));
+  assert.equal(result, 'skipped');
+  assert.ok(
+    text.includes(
+      `Skipping Proxmox creator grant: couldn't read realm 'nosuchrealm' (exit 255): no output -- check that pveUserRealm names an existing OpenID realm (bellhop set-config pveUserRealm <realm> --apply, or the web UI's Settings page)`
+    ),
+    text
+  );
+});
+
 test('grantCreatorAccess returns "skipped" when the realm read exits 0 but the output does not parse', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'not json', stderr: '', code: 0 }));
   const { text, result } = await withCapturedConsole(() => grantCreatorAccess(ssh, grantInventory, 'pve1', 4005, alice));
@@ -375,6 +388,14 @@ test('copyGuestAcls returns "failed" (never throws) when the read exits non-zero
   assert.match(text, /Couldn't read the permissions on \/vms\/4005 on pve1 \(exit 13\): permission denied/);
   assert.match(text, /pveum acl list/);
   assert.match(text, /\/vms\/5005 by hand/);
+});
+
+test('copyGuestAcls returns "failed" with "no output" when the read exits non-zero with empty stdout and stderr', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 13 }));
+  const { text, result } = await withCapturedConsole(() => copyGuestAcls(ssh, baseInventory, 'pve1', 4005, 5005));
+  assert.equal(result, 'failed');
+  assert.equal(ssh.history.length, 1);
+  assert.match(text, /Couldn't read the permissions on \/vms\/4005 on pve1 \(exit 13\): no output -- check pveum acl list/);
 });
 
 test('copyGuestAcls returns "failed" when the read output does not parse', async () => {

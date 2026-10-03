@@ -51,7 +51,7 @@ bellhop set-config pveUserRealm --unset --apply   # turns the feature back off
 
 | Setting | Unset means |
 |---|---|
-| `pveUserRealm` | The creator grant is off entirely — no Proxmox access command is ever sent |
+| `pveUserRealm` | The creator grant is off entirely — no grant command is ever sent. (The permission copy a migration performs — see below — is unaffected by this setting and always runs.) |
 | `pveCreatorRole` | `PVEVMAdmin` |
 
 Both are validated with the same rule in the CLI and the web UI, so an
