@@ -658,6 +658,63 @@ test('a repeat create-lxc apply with a different actor replaces the previously-r
   );
 });
 
+// issue #58, US2, spec scenario 3: "When X is deleted (leaves the
+// inventory), the creator record goes with it, and a different guest
+// later created under the same name does not inherit it." delete-guest's
+// own saveInventory filters the guest out of guests[] entirely (no
+// tombstone row), and create-lxc's upsertGuestEntry merges by (host, vmid)
+// -- never by name -- so a guest recreated under the same name at a fresh
+// vmid can never match the deleted row and inherit its creator.
+function depsWithWebLxc(): OperationDeps {
+  const inv: Inventory = {
+    ...inventory,
+    guests: [
+      ...inventory.guests,
+      { name: 'web-lxc', type: 'lxc', vmid: 4009, host: 'pve1', creator: { uid: 'uid-test-user', username: 'test-user' } },
+    ],
+  };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'opprov-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  return {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: structuredClone(inv),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+}
+
+test("deleting a guest removes its recorded creator, and a guest later created under the same name does not inherit it", async () => {
+  const d = depsWithWebLxc();
+  const deleteOp = PROVISIONING_OPERATIONS['delete-guest'];
+  const createOp = PROVISIONING_OPERATIONS['create-lxc'];
+
+  await deleteOp.apply(parseOperationInput(deleteOp, { guest: 'web-lxc' }), d);
+  let saved = loadInventory(d.inventoryPath);
+  assert.ok(!saved.guests.some((g) => g.name === 'web-lxc'), 'the deleted guest, and its creator record, must be gone');
+
+  // Re-created under the same name with no actor (a CLI/MCP-shaped apply) --
+  // must get no creator at all, never the deleted guest's.
+  await createOp.apply(parseOperationInput(createOp, { host: 'pve1', mid: 9, hostname: 'web-lxc', template: 'debian-12' }), d);
+  saved = loadInventory(d.inventoryPath);
+  let recreated = saved.guests.find((g) => g.name === 'web-lxc');
+  assert.ok(recreated, 'the guest must exist again under the same name');
+  assert.equal(recreated?.creator, undefined, "a no-actor apply must not resurrect the deleted guest's creator");
+
+  // Delete again and re-create with a *different* real actor -- must get
+  // that actor's own creator, never test-user's.
+  await deleteOp.apply(parseOperationInput(deleteOp, { guest: 'web-lxc' }), d);
+  d.actor = { username: 'other-user', uid: 'uid-other-user' };
+  await createOp.apply(parseOperationInput(createOp, { host: 'pve1', mid: 9, hostname: 'web-lxc', template: 'debian-12' }), d);
+  saved = loadInventory(d.inventoryPath);
+  recreated = saved.guests.find((g) => g.name === 'web-lxc');
+  assert.deepEqual(
+    recreated?.creator,
+    { username: 'other-user', uid: 'uid-other-user' },
+    "a different actor's apply must record their own creator, never the original test-user's"
+  );
+});
+
 test('deploy-vpn-gateway operation apply passes deps.actor through as the recorded creator', async () => {
   process.env.NORDVPN_ACCESS_TOKEN = 'my-token';
   const d = deps();
