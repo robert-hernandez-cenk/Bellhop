@@ -161,3 +161,39 @@ when there is one. Only the web UI has a signed-in person. MCP and CLI run
 with operator-level trust and no per-person identity, so they never grant.
 The MCP preview and job say so in one line when the realm is configured. This
 is one rule applied to different inputs, not a divergence.
+
+## R10 — What the built-in VM roles allow
+
+**Finding**: A read-only `pvesh get /access/roles/<role> --output-format
+json` against the live Proxmox VE 9.2.10 cluster returns each built-in
+role's exact privilege set. `PVEVMUser` has: `VM.Audit`, `VM.Backup`,
+`VM.Config.CDROM`, `VM.Config.Cloudinit`, `VM.Console`,
+`VM.GuestAgent.Audit`, `VM.GuestAgent.FileRead`,
+`VM.GuestAgent.FileSystemMgmt`, `VM.GuestAgent.FileWrite`,
+`VM.PowerMgmt`. `PVEVMAdmin` has everything `PVEVMUser` has, plus:
+`VM.Allocate`, `VM.Clone`, `VM.Config.CPU`, `VM.Config.Disk`,
+`VM.Config.HWType`, `VM.Config.Memory`, `VM.Config.Network`,
+`VM.Config.Options`, `VM.GuestAgent.Unrestricted`, `VM.Migrate`,
+`VM.Replicate`, `VM.Snapshot`, `VM.Snapshot.Rollback`.
+
+So `PVEVMUser` genuinely covers console access, power management,
+backups, and the guest agent's file-read/file-write/filesystem
+operations — more than "console and power management alone" might
+suggest — but it cannot reconfigure CPU/memory/disk/network/options,
+cannot snapshot, clone, or migrate the VM, and cannot allocate it
+(`VM.Allocate`, which also covers destroying it). `PVEVMAdmin` is the
+superset that can do all of that, scoped to its own `/vms/<vmid>` path.
+
+**Decision**: Document these two exact privilege lists in
+`docs/proxmox-access.md`'s "Choosing a role" section, labelled as
+Proxmox VE 9.2.10's own built-in role definitions (not hardcoded by
+Bellhop — it only grants whatever `pveCreatorRole` names) and pointing
+readers at `pveum role list` on their own host, since a different
+Proxmox release could attach different privileges to the same role
+names.
+
+**Alternatives considered**: Describing the roles only in general terms
+("full control" vs. "limited control") without the verified privilege
+lists (rejected: issue #53's docs review found this version actually
+wrong — it had invented specifics, like claiming `PVEVMUser` excludes
+backups and the guest agent, that the live check contradicts).
