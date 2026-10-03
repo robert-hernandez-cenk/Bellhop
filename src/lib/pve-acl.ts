@@ -162,6 +162,97 @@ export async function grantCreatorAccess(
   }
 }
 
+// One entry of `pvesh get /access/acl` (research R5).
+export const AclEntrySchema = z.object({
+  path: z.string(),
+  type: z.enum(['user', 'group', 'token']),
+  ugid: z.string(),
+  roleid: z.string(),
+  propagate: z.union([z.literal(0), z.literal(1)]),
+});
+export type AclEntry = z.infer<typeof AclEntrySchema>;
+
+// `pvesh get /access/acl` returns every permission in the cluster, other
+// people's user IDs included, and a job streams stdout into its log -- so the
+// host prints only the entries on exactly /vms/<vmid> (research R5). The
+// vmid goes into the perl program unquoted, so it must be a plain integer.
+export function buildGuestAclReadCommand(vmid: number): string {
+  if (!Number.isInteger(vmid) || vmid < 0) {
+    throw new Error(`buildGuestAclReadCommand needs a non-negative integer vmid, got: ${vmid}`);
+  }
+  return (
+    `set -o pipefail; pvesh get /access/acl --output-format json | ` +
+    `perl -MJSON::PP -e 'my $d = decode_json(join "", <STDIN>); print encode_json([grep { $_->{path} eq "/vms/${vmid}" } @$d]), "\\n"'`
+  );
+}
+
+// Filters again in Node, so a misbehaving host-side filter can't widen the
+// copy (research R5).
+export function aclsForVmid(entries: AclEntry[], vmid: number): AclEntry[] {
+  return entries.filter((e) => e.path === `/vms/${vmid}`);
+}
+
+const ACL_TYPE_FLAG: Record<AclEntry['type'], string> = { user: '--users', group: '--groups', token: '--tokens' };
+
+// Re-creates each entry on the new VMID. `set -e` stops at the first
+// failure. Also the manual commands a failed copy's warning prints.
+export function buildAclCopyScript(entries: AclEntry[], newVmid: number): string {
+  return [
+    'set -e',
+    ...entries.map(
+      (e) =>
+        `pveum acl modify ${shellQuote(`/vms/${newVmid}`)} ${ACL_TYPE_FLAG[e.type]} ${shellQuote(e.ugid)} --roles ${shellQuote(e.roleid)} --propagate ${e.propagate}`
+    ),
+  ].join('\n');
+}
+
+// Never throws and logs exactly one line, so a migration that has already
+// verified its new guest is never failed by a permission copy.
+export async function copyGuestAcls(
+  ssh: SSHClient,
+  inventory: Inventory,
+  host: string,
+  oldVmid: number,
+  newVmid: number
+): Promise<'copied' | 'none' | 'failed'> {
+  const from = `/vms/${oldVmid}`;
+  const to = `/vms/${newVmid}`;
+  const readFix = `-- check pveum acl list on ${host} and re-create any permissions on ${to} by hand`;
+  let script: string | undefined;
+  try {
+    const read = await runRemote(ssh, inventory, host, buildGuestAclReadCommand(oldVmid));
+    const parsed = read.code === 0 ? z.array(AclEntrySchema).safeParse(safeJson(read.stdout)) : undefined;
+    if (!parsed?.success) {
+      const detail = read.code !== 0 ? (read.stderr || read.stdout).trim() : 'unexpected output';
+      logWarn(`Couldn't read the permissions on ${from} on ${host} (exit ${read.code}): ${detail} ${readFix}`);
+      return 'failed';
+    }
+    const entries = aclsForVmid(parsed.data, oldVmid);
+    if (entries.length === 0) {
+      logInfo(`No permissions on ${from} to copy`);
+      return 'none';
+    }
+    script = buildAclCopyScript(entries, newVmid);
+    const result = await runRemote(ssh, inventory, host, script);
+    if (result.code !== 0) {
+      logWarn(
+        `Failed to copy permissions from ${from} to ${to} (exit ${result.code}): ${(result.stderr || result.stdout).trim()} -- run on ${host} by hand:\n${script}`
+      );
+      return 'failed';
+    }
+    logInfo(`Copied ${entries.length} permission(s) from ${from} to ${to}`);
+    return 'copied';
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (script) {
+      logWarn(`Failed to copy permissions from ${from} to ${to}: ${message} -- run on ${host} by hand:\n${script}`);
+    } else {
+      logWarn(`Couldn't read the permissions on ${from} on ${host}: ${message} ${readFix}`);
+    }
+    return 'failed';
+  }
+}
+
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text);

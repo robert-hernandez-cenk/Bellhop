@@ -129,13 +129,13 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ### Tests (write first, must fail)
 
-- [ ] T017 [P] [US4] Extend `test/lib/pve-acl.test.ts`:
+- [x] T017 [P] [US4] Extend `test/lib/pve-acl.test.ts`:
   - `buildGuestAclReadCommand` filters to exactly `/vms/<vmid>` on the host
   - `AclEntrySchema` parses `acl-list.json`
   - `aclsForVmid` keeps only the exact path, so `/vms/40050` and `/` are excluded
   - `buildAclCopyScript` maps user, group and token to `--users`, `--groups` and `--tokens`, keeps `--roles` and `--propagate 0|1`, and quotes every value
   - `copyGuestAcls` returns `copied` with a count line, `none`, or `failed` (on a read failure, a parse failure, or a copy-script failure), and never throws
-- [ ] T018 [P] [US4] Extend `test/commands/migrate-guest.test.ts`:
+- [x] T018 [P] [US4] Extend `test/commands/migrate-guest.test.ts`:
   - the ACL read and copy commands are sent after the running verification and before `<tool> destroy <old>`, for both `qm` and `pct`
   - an empty ACL list sends no copy
   - a copy failure warns and the migration still completes (destroy, cleanup, inventory save)
@@ -144,8 +144,8 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ### Implementation
 
-- [ ] T019 [US4] Add `AclEntrySchema`, `buildGuestAclReadCommand`, `aclsForVmid`, `buildAclCopyScript` and `copyGuestAcls` to `src/lib/pve-acl.ts` (makes T017 pass)
-- [ ] T020 [US4] In `src/commands/provisioning/migrate-guest.ts`:
+- [x] T019 [US4] Add `AclEntrySchema`, `buildGuestAclReadCommand`, `aclsForVmid`, `buildAclCopyScript` and `copyGuestAcls` to `src/lib/pve-acl.ts` (makes T017 pass)
+- [x] T020 [US4] In `src/commands/provisioning/migrate-guest.ts`:
   - after `waitForGuestRunning` and before the destroy log line, call `await copyGuestAcls(ssh, inventory, guest.host, guest.vmid, mid.vmid)`
   - add the `# then copy any ACLs on /vms/<old> to /vms/<new>` line to `sourceScript` before the destroy comment
   
@@ -159,7 +159,7 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 **Goal**: Confirm and record that no code is needed (research R4).
 
-- [ ] T021 [US5] Add a short comment above the destroy calls in `src/commands/provisioning/delete-guest.ts` and `src/commands/provisioning/migrate-guest.ts`. It notes that Proxmox's destroy removes the VMID's ACLs and pool membership itself (`remove_vm_access`, verified on PVE 9.2.10, see specs/016-pve-creator-acl/research.md R4), which is why there's no cleanup step
+- [x] T021 [US5] Add a short comment above the destroy calls in `src/commands/provisioning/delete-guest.ts` and `src/commands/provisioning/migrate-guest.ts`. It notes that Proxmox's destroy removes the VMID's ACLs and pool membership itself (`remove_vm_access`, verified on PVE 9.2.10, see specs/016-pve-creator-acl/research.md R4), which is why there's no cleanup step
 
 **Checkpoint**: Commit together with T022–T025 if trivial, otherwise `Record VMID ACL cleanup on destroy (#53, US5)`.
 
