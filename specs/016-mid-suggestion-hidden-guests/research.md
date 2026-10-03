@@ -67,7 +67,9 @@
 ## R7. Collision warning text
 
 - **Decision**: pure helper `midCollisionMessage(host, mid, usedMids, visibleGuests)` in
-  `web-client/src/lib/mid.ts`: `null` when free or unknown; if a visible guest holds the VMID,
+  `web-client/src/lib/mid.ts`: `null` when free (or when the occupied list is unknown and no
+  visible guest holds it -- code review: a visible holder still warns while the list is pending
+  or failed to load, as before #54); if a visible guest holds the VMID,
   today's text `MID <n> is already used by <name> (vmid <vmid>) on <host>.`; otherwise
   `MID <n> is already in use on <host>.`
 - **Rationale**: framework-free so it is tested under `test/web-client/` like `admin-nav.ts`.
