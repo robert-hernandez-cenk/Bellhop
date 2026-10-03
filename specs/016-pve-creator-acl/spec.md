@@ -136,7 +136,7 @@ by both with the same message.
 **Acceptance Scenarios**:
 
 1. **Given** an administrator on the Settings page, **When** they view it,
-   **Then** a "Proxmox access" group shows the realm and role fields with help
+   **Then** the Proxmox realm and creator role fields are shown with help
    text, regardless of which proxy driver is selected.
 2. **Given** a value containing characters Proxmox doesn't allow in a realm or
    role name, **When** it is submitted through either front end, **Then** it is
@@ -187,9 +187,10 @@ When a guest is deleted (or its original destroyed by a migration) and its
 VMID is later reused, the new guest does not inherit permissions granted on
 the old one.
 
-**Why this priority**: A safety property. Proxmox is expected to remove a
-VMID's permissions when the guest is destroyed, so this story may need no
-code — but that must be confirmed against a real Proxmox host first.
+**Why this priority**: A safety property. Proxmox removes a VMID's
+permissions whenever the guest is destroyed, with or without `--purge`
+(verified against a live Proxmox VE 9.2.10 host's source; research R4), so
+this story needs no code, only the recorded verification.
 
 **Independent Test**: On a real Proxmox host, create a throwaway VM, add a
 permission on it, destroy it the way Bellhop does, and inspect the
@@ -220,8 +221,9 @@ permission list.
   targets its own VMID.
 - A migration where the old VMID's permission list can't be read: treated as
   a copy failure (warning, migration continues).
-- The VM is created but recording it in inventory fails: the job already
-  fails today in that case, and the grant is not attempted.
+- The VM is created but a later step (recording it in inventory, or pushing
+  its subdomains live) fails: the job fails as it does today, but the grant
+  is still attempted, because the VM exists.
 
 ## Requirements *(mandatory)*
 
@@ -236,8 +238,8 @@ permission list.
 - **FR-003**: Both settings MUST be settable and clearable through `set-config`
   and through the web UI's Settings page, validated by one shared rule that
   accepts only characters Proxmox allows in a realm ID or role name.
-- **FR-004**: After a VM is successfully created and recorded through the web
-  UI, the system MUST attempt to grant the configured role on that VM to the
+- **FR-004**: After a VM is successfully created through the web UI (whether
+  or not later steps of the job succeed), the system MUST attempt to grant the configured role on that VM to the
   creating user's Proxmox account.
 - **FR-005**: The creating user MUST be the real signed-in person, unaffected
   by group impersonation. The synthetic local operator MUST never receive a
