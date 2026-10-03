@@ -684,3 +684,73 @@ test('a prompt that was not pre-scanned, printed under a running spinner, fires 
   finish();
   await promise;
 });
+
+test('a pre-scanned prompt printed onto the end of a spinner frame fires with the bare prompt as its text', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, _resume, origin, matchedIndex) =>
+      detected.push({ text, origin, matchedIndex }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  for (let i = 0; i < 20; i += 1) send(spinnerFrame(i));
+  // read -rp prints at the cursor, which sits at the end of the last frame.
+  send('   Would you like to add PhpMyAdmin? <y/N> ');
+  const armsBeforeFrames = delays.length;
+  for (let i = 20; i < 60; i += 1) send(spinnerFrame(i));
+  assert.equal(delays.length, armsBeforeFrames, 'spinner frames after the prompt must not re-arm a tier');
+
+  fireLatest();
+
+  assert.deepEqual(detected, [
+    { text: '   Would you like to add PhpMyAdmin? <y/N> ', origin: 'expected', matchedIndex: 0 },
+  ]);
+
+  finish();
+  await promise;
+});
+
+test('resume() still finds a prompt that printed during the pause after more than 16 KiB of output trimmed the transcript', async () => {
+  const detected: Array<{ text: string; origin: string; matchedIndex: number | null }> = [];
+  let resumeFn: (() => void) | undefined;
+  const { scheduleCheck, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    expectedPrompts: MARIADB_PROMPTS,
+    onPromptDetected: (text, _expected, _write, resume, origin, matchedIndex) => {
+      detected.push({ text, origin, matchedIndex });
+      resumeFn = resume;
+    },
+    scheduleCheck,
+  });
+  const flood = (from: number) => {
+    for (let i = from; i < from + 800; i += 1) send(`Unpacking package number ${i}\r\n`);
+  };
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  // Fill the transcript to its cap, so the first fire records an offset near
+  // 16 KiB.
+  flood(0);
+  send('   Would you like to add PhpMyAdmin? <y/N> ');
+  fireLatest();
+  assert.equal(detected.length, 1);
+
+  // While paused, more than 16 KiB arrives and then the next prompt. Without
+  // the trim adjustment, resume() would consume the full fired offset from
+  // the already-trimmed transcript and take the new prompt with it.
+  flood(1000);
+  send('   Enter the MariaDB root password: ');
+  resumeFn?.();
+  fireLatest();
+
+  assert.deepEqual(detected[1], { text: '   Enter the MariaDB root password: ', origin: 'expected', matchedIndex: 1 });
+
+  finish();
+  await promise;
+});

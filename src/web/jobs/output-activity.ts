@@ -133,9 +133,13 @@ export class OutputActivity {
   }
 
   private appendText(segment: string): boolean {
+    let active = false;
     if (this.pendingCarriageReturn) {
       this.pendingCarriageReturn = false;
-      this.commitLine('\r');
+      // A line still a prefix of a recent one while unfinished can turn out
+      // to be new once it ends; that commit adds to the transcript, so it has
+      // to count as activity too.
+      active = this.commitLine('\r');
     }
     // Bound the raw line too: a line that never ends and never becomes
     // meaningful would otherwise grow without limit. Its key is decided long
@@ -151,10 +155,39 @@ export class OutputActivity {
     // line, which is what makes a frame split across two chunks a redraw in
     // both halves.
     const key = lineKey(this.partial.replace(INCOMPLETE_ESCAPE_AT_END, ''));
-    if (key.length === 0 || this.recentKeys.some((recent) => recent.startsWith(key))) return false;
+    if (key.length === 0 || this.recentKeys.some((recent) => recent.startsWith(key))) return active;
     this.partialMeaningful = true;
-    this.text += this.partial;
+    this.text += this.newPart(key);
     return true;
+  }
+
+  // `read -rp` prints at the cursor, which sits at the end of the spinner's
+  // last frame, so the prompt usually arrives on the same line as
+  // `⠋ <status>`. Only the text after the repeated status is new; keeping
+  // the status would put it in front of the prompt the operator is shown.
+  // Returns the raw line from where it diverges from the longest recent line
+  // it extends (keeping the new part's own leading whitespace), or the whole
+  // raw line when it extends none.
+  //
+  // Only a line that starts with a glyph or other non-space decoration (a
+  // spinner frame) is cut this way. An ordinary line that merely begins with
+  // an earlier line's text -- `Unpacking 10` after `Unpacking 1` -- is
+  // genuinely new and keeps its whole text.
+  private newPart(key: string): string {
+    const decoration = LEADING_DECORATION.exec(this.partial.replace(ANSI_ESCAPE, ''))?.[0] ?? '';
+    if (!/\S/.test(decoration)) return this.partial;
+    let extended = '';
+    for (const recent of this.recentKeys) {
+      if (recent.length > extended.length && key.length > recent.length && key.startsWith(recent)) extended = recent;
+    }
+    if (extended.length === 0) return this.partial;
+    // Normalizing only removes or collapses characters, so the raw prefix
+    // matching `extended` is at least that long. The first raw prefix whose
+    // key equals it ends right after its last character.
+    for (let end = extended.length; end <= this.partial.length; end += 1) {
+      if (lineKey(this.partial.slice(0, end)) === extended) return this.partial.slice(end);
+    }
+    return this.partial;
   }
 
   private commitLine(ending: '\n' | '\r'): boolean {

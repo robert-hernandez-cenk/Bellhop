@@ -86,14 +86,6 @@ test('a prompt overwritten in place by the next spinner frame stays the candidat
   assert.equal(activity.length, afterPrompt + 1);
 });
 
-test('a prompt printed onto the end of a spinner frame is still candidate text containing the prompt', () => {
-  const activity = withSeenSpinner();
-  activity.push(frame(2));
-  assert.equal(activity.push('Would you like to add PhpMyAdmin? <y/N> '), true);
-  assert.equal(activity.push(frame(3)), false);
-  assert.ok(activity.candidate().endsWith('Would you like to add PhpMyAdmin? <y/N> '));
-});
-
 test('a line ended by \\r\\n is complete output: no candidate, but it is the last line', () => {
   const activity = new OutputActivity();
   activity.push('line\r\n');
@@ -169,4 +161,43 @@ test('lastLine is empty when nothing meaningful has arrived', () => {
   activity.push('\r⠋\r⠙');
   assert.equal(activity.lastLine(), '');
   assert.equal(activity.candidate(), '');
+});
+
+// Review fix: committing a pending `\r` line that turns out to be new must
+// count as activity. Repro: after a resume (keys forgotten) the pty echoes
+// the answer onto the end of the current frame, so the recent key becomes
+// `<status>n`; the next frame is a prefix of that while unfinished, then
+// commits as new on its `\r`.
+test('a frame that was a prefix of a recent line while unfinished, then commits as new on \r, is activity', () => {
+  const activity = new OutputActivity();
+  assert.equal(activity.push(`${frame(0)}n`), true);
+  assert.equal(activity.push(frame(1)), false, 'still a prefix of the echoed line while unfinished');
+  const before = activity.length;
+  assert.equal(activity.push(frame(2)), true, 'the committed frame is new, so the chunk is activity');
+  assert.ok(activity.length > before);
+});
+
+test('a prompt printed onto the end of a spinner frame becomes the bare prompt, spinner text dropped', () => {
+  const activity = withSeenSpinner();
+  activity.push(frame(2));
+  const prompt = '   Would you like to add PhpMyAdmin? <y/N> ';
+  assert.equal(activity.push(prompt), true);
+  assert.equal(activity.candidate(), prompt);
+  assert.equal(activity.push(frame(3)), false);
+  assert.equal(activity.candidate(), prompt);
+  assert.equal(activity.lastLine(), prompt);
+});
+
+test('a prompt arriving in the same chunk as its spinner frame is also stripped to the bare prompt', () => {
+  const activity = withSeenSpinner();
+  const prompt = '   Enter the MariaDB root password: ';
+  assert.equal(activity.push(`${frame(2)}${prompt}`), true);
+  assert.equal(activity.candidate(), prompt);
+});
+
+test('an ordinary line that starts with an earlier line\'s text keeps its whole text', () => {
+  const activity = new OutputActivity();
+  activity.push('Unpacking package number 1\r\n');
+  assert.equal(activity.push('Unpacking package number 10'), true);
+  assert.equal(activity.candidate(), 'Unpacking package number 10');
 });
