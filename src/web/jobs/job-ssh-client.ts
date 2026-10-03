@@ -94,6 +94,11 @@ export class JobSSHClient implements SSHClient {
   // activity at all. Replaced the raw output buffer in issue #52.
   private activity = new OutputActivity();
   private paused = false;
+  // Which tier fired the pause currently waiting, or undefined while not
+  // paused -- watchChunk reads this to decide whether new output is allowed
+  // to clear the pause on its own (issue #52 Unit 2, FR-012). Set in fire(),
+  // cleared in resume()/resetWatchState().
+  private pausedOrigin: PromptOrigin | undefined;
   private pendingCheck: { cancel: () => void } | undefined;
   private currentWrite: ((text: string) => void) | undefined;
   // activity.length at the moment fire() last paused watching -- resume()
@@ -174,6 +179,7 @@ export class JobSSHClient implements SSHClient {
   private resetWatchState(): void {
     this.activity = new OutputActivity();
     this.paused = false;
+    this.pausedOrigin = undefined;
     this.pendingCheck?.cancel();
     this.pendingCheck = undefined;
     this.tierIndex = 0;
@@ -193,7 +199,23 @@ export class JobSSHClient implements SSHClient {
   // responsible for restarting the watch once the operator has acted.
   private watchChunk(chunk: string): void {
     const meaningful = this.activity.push(chunk);
-    if (this.paused) return;
+    if (this.paused) {
+      // Only a stall pause clears itself on new meaningful output (FR-012,
+      // research R6, operator decision -- see the spec's Assumptions). An
+      // 'expected' or 'heuristic' pause is confident evidence of a real
+      // waiting question, so it stays paused until the operator actually
+      // answers or dismisses it, exactly as before issue #52. A stall is
+      // different: it exists purely as a backstop for "nothing matched and
+      // output simply stopped," so once meaningful output resumes there is
+      // nothing left to believe is still waiting on an answer, and leaving
+      // it paused would only block the operator's attention (and hold the
+      // abandon countdown running) on a job that is, in fact, still
+      // working. A redraw never clears it either way -- push() already
+      // returned false for one, so a spinner that keeps going through a
+      // stall pause cannot end it on its own.
+      if (this.pausedOrigin === 'stall' && meaningful) this.resume();
+      return;
+    }
     // New meaningful output means the process is not blocked -- rewind to
     // tier 0. A chunk that only redraws a recent line (a spinner frame) is
     // silence, not activity: before issue #52 every frame re-armed tier 0,
@@ -239,6 +261,7 @@ export class JobSSHClient implements SSHClient {
 
   private fire(text: string, origin: PromptOrigin, matchedIndex: number | null): void {
     this.paused = true;
+    this.pausedOrigin = origin;
     this.pendingCheck?.cancel();
     this.pendingCheck = undefined;
     // Remember how much of the transcript this detection already covers,
@@ -305,6 +328,7 @@ export class JobSSHClient implements SSHClient {
   //     going permanently quiet.
   private resume(): void {
     this.paused = false;
+    this.pausedOrigin = undefined;
     // consume() also forgets the recent lines, so a prompt the script
     // re-asks verbatim (after an invalid answer) counts as new output
     // rather than a redraw. Front trimming during the pause shifts the

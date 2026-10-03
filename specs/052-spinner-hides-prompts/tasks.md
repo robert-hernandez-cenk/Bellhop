@@ -38,15 +38,15 @@ No setup needed: no new dependencies or project structure.
 
 **Independent Test**: a meaningful line followed only by redraws reaches the stall tier showing that line; new output during a stall pause clears it.
 
-- [ ] T005 [US2] Add failing tests to test/web/jobs/job-ssh-client.test.ts: (a) `Configuring the database\n`, then spinner frames repeating a seen line, with all three tiers fired, gives one `stall` whose text is the last meaningful line; (b) during a stall pause, a new meaningful chunk calls `onPromptCleared` once and re-arms tier 0, while spinner-only chunks during the pause do not; (c) during an `expected` or `heuristic` pause, new meaningful output does NOT clear the pause.
-- [ ] T006 [US2] Implement the stall auto-clear in src/web/jobs/job-ssh-client.ts: record the origin of the current pause in `fire()`; in `watchChunk`, when paused with origin `stall` and `push()` returned true, call `this.resume()`. Comment why only stall pauses do this (operator decision, research R6).
-- [ ] T007 [US2] Add a JobRunner-level test in test/web/jobs/job-runner.test.ts showing that a stall pause cleared by new output returns the job to `running`, emits `prompt-cleared`, and does not cancel when the abandon timeout would have fired (use the runner's existing test overrides for the stall, abandon, and scheduler timing).
+- [x] T005 [US2] Add failing tests to test/web/jobs/job-ssh-client.test.ts: (a) `Configuring the database\n`, then spinner frames repeating a seen line, with all three tiers fired, gives one `stall` whose text is the last meaningful line; (b) during a stall pause, a new meaningful chunk calls `onPromptCleared` once and re-arms tier 0, while spinner-only chunks during the pause do not; (c) during an `expected` or `heuristic` pause, new meaningful output does NOT clear the pause.
+- [x] T006 [US2] Implement the stall auto-clear in src/web/jobs/job-ssh-client.ts: record the origin of the current pause in `fire()`; in `watchChunk`, when paused with origin `stall` and `push()` returned true, call `this.resume()`. Comment why only stall pauses do this (operator decision, research R6).
+- [x] T007 [US2] Add a JobRunner-level test in test/web/jobs/job-runner.test.ts showing that a stall pause cleared by new output returns the job to `running`, emits `prompt-cleared`, and does not cancel when the abandon timeout would have fired (use the runner's existing test overrides for the stall, abandon, and scheduler timing).
 
 **Checkpoint**: US2 tests pass.
 
 ## Phase 5: User Story 3 - Existing detection behaviour is unchanged (P3)
 
-- [ ] T008 [US3] Run the full test/web/jobs suite and MCP wait-for-job tests (`node --test test/web/jobs test/mcp`) and confirm no existing expectation changed; if any did, fix the implementation rather than the test, unless the spec says the behavior changes.
+- [x] T008 [US3] Run the full test/web/jobs suite and MCP wait-for-job tests (`node --test test/web/jobs test/mcp`) and confirm no existing expectation changed; if any did, fix the implementation rather than the test, unless the spec says the behavior changes.
 
 ## Phase 6: Polish
 

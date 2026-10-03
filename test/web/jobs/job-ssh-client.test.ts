@@ -754,3 +754,139 @@ test('resume() still finds a prompt that printed during the pause after more tha
   finish();
   await promise;
 });
+
+// Issue #52 Unit 2 (US2): the stall tier is the one backstop that exists
+// purely because nothing else recognised what's on screen, so once new
+// meaningful output arrives there is nothing left for it to be guarding
+// against -- FR-012, an explicit operator decision (spec Assumptions).
+// 'expected'/'heuristic' pauses are confident matches on an actual question
+// and must keep waiting for the operator regardless of what prints next.
+
+test('a meaningful line followed only by spinner redraws of it still reaches the stall tier, showing that line', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin) => detected.push({ text, origin }),
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('Configuring the database\n');
+  // Redraws of the same text the meaningful line already committed -- a
+  // spinner glyph in front is decoration FR-002 strips before comparing.
+  for (let i = 0; i < 30; i += 1) send(`\r\x1b[2K${SPINNER_GLYPHS[i % SPINNER_GLYPHS.length]} Configuring the database`);
+  fireLatest();
+  fireLatest();
+  fireLatest();
+
+  assert.deepEqual(delays, [2000, 28000, 270000]);
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].origin, 'stall');
+  assert.equal(detected[0].text, 'Configuring the database');
+
+  finish();
+  await promise;
+});
+
+test('a stall pause clears itself on new meaningful output -- calling onPromptCleared once and re-arming tier 0 -- but spinner-only redraws during the pause do not clear it', async () => {
+  const detected: Array<{ text: string; origin: string }> = [];
+  let clearedCount = 0;
+  const { scheduleCheck, delays, fireLatest } = tieredScheduler();
+  const { inner, send, finish } = streamingInner();
+  const client = new JobSSHClient(inner, () => {}, undefined, {
+    watchForPrompts: true,
+    onPromptDetected: (text, _expected, _write, _resume, origin) => detected.push({ text, origin }),
+    onPromptCleared: () => {
+      clearedCount += 1;
+    },
+    scheduleCheck,
+  });
+
+  const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+  send('Configuring the database\n');
+  fireLatest();
+  fireLatest();
+  fireLatest();
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].origin, 'stall');
+
+  const armsAtStall = delays.length;
+
+  // Spinner-only output while the stall pause is waiting must not clear it:
+  // push() already judged each of these a redraw, so watchChunk's
+  // meaningful flag is false and the auto-clear never even considers them.
+  for (let i = 0; i < 10; i += 1) send(`\r\x1b[2K${SPINNER_GLYPHS[i % SPINNER_GLYPHS.length]} Configuring the database`);
+  assert.equal(clearedCount, 0);
+  assert.equal(delays.length, armsAtStall, 'a redraw during a stall pause must not re-arm anything');
+
+  // Genuinely new output clears the pause and re-arms from tier 0.
+  send('Running migrations\n');
+  assert.equal(clearedCount, 1);
+  assert.equal(delays.length, armsAtStall + 1);
+  assert.equal(delays[delays.length - 1], 2000, 're-armed at tier 0');
+
+  finish();
+  await promise;
+});
+
+test('an expected or heuristic pause is NOT cleared by new meaningful output -- only a stall pause auto-clears', async () => {
+  // 'expected' pause.
+  {
+    const detected: Array<{ origin: string }> = [];
+    let clearedCount = 0;
+    const { scheduleCheck, fireLatest } = tieredScheduler();
+    const { inner, send, finish } = streamingInner();
+    const client = new JobSSHClient(inner, () => {}, undefined, {
+      watchForPrompts: true,
+      expectedPrompts: ['Enter the API token: '],
+      onPromptDetected: (_text, _expected, _write, _resume, origin) => detected.push({ origin }),
+      onPromptCleared: () => {
+        clearedCount += 1;
+      },
+      scheduleCheck,
+    });
+
+    const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    send('Enter the API token: ');
+    fireLatest();
+    assert.equal(detected.length, 1);
+    assert.equal(detected[0].origin, 'expected');
+
+    send('a brand new meaningful line\n');
+    assert.equal(clearedCount, 0, 'an expected-origin pause must not auto-clear on new output');
+
+    finish();
+    await promise;
+  }
+
+  // 'heuristic' pause.
+  {
+    const detected: Array<{ origin: string }> = [];
+    let clearedCount = 0;
+    const { scheduleCheck, fireLatest } = tieredScheduler();
+    const { inner, send, finish } = streamingInner();
+    const client = new JobSSHClient(inner, () => {}, undefined, {
+      watchForPrompts: true,
+      onPromptDetected: (_text, _expected, _write, _resume, origin) => detected.push({ origin }),
+      onPromptCleared: () => {
+        clearedCount += 1;
+      },
+      scheduleCheck,
+    });
+
+    const promise = client.exec({ host: 'pve1.local', user: 'root' }, 'bash install.sh');
+    send('Continue? (y/n) ');
+    fireLatest();
+    fireLatest();
+    assert.equal(detected.length, 1);
+    assert.equal(detected[0].origin, 'heuristic');
+
+    send('a brand new meaningful line\n');
+    assert.equal(clearedCount, 0, 'a heuristic-origin pause must not auto-clear on new output');
+
+    finish();
+    await promise;
+  }
+});
