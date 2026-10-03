@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory, HostEntry } from '../../src/lib/inventory.ts';
-import { resolveTarget, runRemote, selectTargets, resolveMid, stripCidr, checkVmidAvailable, hostSshTarget } from '../../src/lib/targets.ts';
+import { resolveTarget, runRemote, selectTargets, resolveMid, stripCidr, checkVmidAvailable, hostSshTarget, usedMidsByHost } from '../../src/lib/targets.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
 const inventory: Inventory = {
@@ -295,4 +295,38 @@ test('runRemote records no sshPort/sshIdentityFile keys for a host with neither 
   const ssh = new FakeSSHClient(() => ({ stdout: 'ok', stderr: '', code: 0 }));
   await runRemote(ssh, inventory, 'pve1', 'echo hi');
   assert.deepEqual(ssh.history[0], { sshTarget: 'pve1.local', sshUser: 'root', command: 'echo hi' });
+});
+
+// issue #54: the occupied-MID set the web form suggests from, computed from
+// the full inventory so a guest hidden from the caller still counts.
+const midInventory: Inventory = {
+  domain: 'example.com',
+  hosts: [
+    { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.1.1' } },
+    { name: 'pve2', ssh_target: 'pve2.local', ssh_user: 'root', midScheme: { vmidBase: 5000, ipPrefix: '192.168.2.', gateway: '192.168.2.1' } },
+    { name: 'pve3', ssh_target: 'pve3.local', ssh_user: 'root' },
+  ],
+  guests: [
+    { name: 'media', type: 'lxc', vmid: 4003, host: 'pve1' },
+    { name: 'secret', type: 'vm', vmid: 4002, host: 'pve1' },
+    { name: 'secret-twin', type: 'lxc', vmid: 4002, host: 'pve1' },
+    { name: 'hand-numbered', type: 'lxc', vmid: 105, host: 'pve1' },
+    { name: 'base-itself', type: 'lxc', vmid: 4000, host: 'pve1' },
+    { name: 'too-high', type: 'lxc', vmid: 4255, host: 'pve1' },
+    { name: 'top', type: 'lxc', vmid: 4254, host: 'pve1' },
+    { name: 'other', type: 'lxc', vmid: 4005, host: 'pve3' },
+  ],
+};
+
+test('usedMidsByHost returns in-range MIDs ascending and unique for each named host', () => {
+  assert.deepEqual(usedMidsByHost(midInventory, ['pve1']), { pve1: [2, 3, 254] });
+});
+
+test('usedMidsByHost maps a host with no in-range guests to []', () => {
+  assert.deepEqual(usedMidsByHost(midInventory, ['pve1', 'pve2']), { pve1: [2, 3, 254], pve2: [] });
+});
+
+test('usedMidsByHost omits hosts without a midScheme and hosts not named', () => {
+  assert.deepEqual(usedMidsByHost(midInventory, ['pve2', 'pve3']), { pve2: [] });
+  assert.deepEqual(usedMidsByHost(midInventory, []), {});
 });
