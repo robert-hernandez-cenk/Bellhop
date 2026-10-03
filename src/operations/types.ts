@@ -29,6 +29,10 @@ export interface OperationDeps {
   // operator, none of which carry a real signed-in identity to grant
   // Proxmox access to.
   actor?: Actor;
+  // Web provisioning only (#54): the caller's per-resource guest permission,
+  // so a VMID-in-use error never names a guest their group can't see.
+  // The CLI and MCP server omit it -- full operator trust.
+  canSeeGuest?: (guestName: string) => boolean;
 }
 
 // One toolkit action with a dry-run preview and a real apply, shared by the

@@ -205,7 +205,7 @@ export function buildInstallAppScript(
 
 export async function runInstallApp(
   opts: InstallAppOptions,
-  deps: { ssh: SSHClient; inventory: Inventory }
+  deps: { ssh: SSHClient; inventory: Inventory; canSeeGuest?: (guestName: string) => boolean }
 ): Promise<{ script: string; mid: ResolvedMid; applied: boolean; source: AppSource }> {
   if (!opts.app.includes('://') && !/^[a-z0-9-]+$/.test(opts.app)) {
     throw new Error(`--app must contain only lowercase letters, digits, and hyphens, got: ${opts.app}`);
@@ -237,7 +237,7 @@ export async function runInstallApp(
   if (notice) (notice.level === 'warn' ? logWarn : logInfo)(notice.message);
 
   const mid = resolveMid(deps.inventory, opts.host, opts.mid);
-  await checkVmidAvailable(deps.ssh, deps.inventory, opts.host, mid.vmid);
+  await checkVmidAvailable(deps.ssh, deps.inventory, opts.host, mid.vmid, deps.canSeeGuest);
   const storage = {
     template: opts.templateStorage || pickStorage(host, ['vztmpl']),
     container: opts.containerStorage || pickStorage(host, ['rootdir', 'images']),

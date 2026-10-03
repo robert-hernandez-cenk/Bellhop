@@ -2299,7 +2299,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   target host (`checkVmidAvailable`: `pct status <vmid> || qm status <vmid>`,
   since a VMID can already be occupied by either guest type), throwing a
   clear error naming the conflicting inventory guest (or a generic message
-  if the VMID is live but untracked) rather than letting community-scripts'
+  if the VMID is live but untracked, or -- on the web -- held by a guest the
+  caller isn't allowed to see, issue #54) rather than letting community-scripts'
   `build.func` silently reassign the VMID to a free one while keeping the
   now-stale IP baked into `var_net` (see issue #53) -- this runs on every
   call, dry-run included. `install-app` targets a `pve` host and
@@ -3141,6 +3142,18 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   blocking a host hides only that host's own inventory entry, never the
   guests running on it, which are controlled entirely by their own
   separate rules.
+  Because `GET /api/inventory` is filtered, nothing that must account for
+  *every* guest may be computed from it in the browser (issue #54): the
+  provisioning form's MID suggestion, migrate-guest's preferred-MID
+  collision check, and the MID field's collision warning all read
+  `GET /api/provisioning/used-mids` instead -- occupied MID numbers per
+  host the caller may see, from the unfiltered inventory, never guest
+  names. The warning names a guest only if it is in the caller's visible
+  list. Likewise `checkVmidAvailable` takes an optional `canSeeGuest`
+  predicate (`OperationDeps.canSeeGuest`, built per request by the web
+  provisioning routes from `isResourceAllowed`) and drops the occupying
+  guest's name from its error when the caller can't see it; the CLI and
+  MCP server pass none, so their errors still name it.
 - **Web UI admin user impersonation** (`src/web/impersonation.ts`,
   `src/web/routes/impersonation.ts` -- issue #101): once per-resource
   permissions exist (the bullet above), an admin can view/act on the app as

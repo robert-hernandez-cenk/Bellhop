@@ -165,6 +165,28 @@ export function resolveMid(inv: Inventory, hostName: string, mid: number): Resol
   };
 }
 
+// Per named host with a midScheme, the MIDs (resolveMid's 1-254 range)
+// occupied by any inventory guest on it, ascending and unique. Computed from
+// the full inventory on purpose (issue #54): the web form suggests MIDs from
+// this, and a guest hidden from a restricted caller still holds its MID.
+// Only MID numbers leave here -- never guest names or other detail.
+export function usedMidsByHost(inv: Inventory, hostNames: string[]): Record<string, number[]> {
+  const result: Record<string, number[]> = {};
+  for (const name of hostNames) {
+    const host = inv.hosts.find((h) => h.name === name);
+    const base = host?.midScheme?.vmidBase;
+    if (base === undefined) continue;
+    const mids = new Set<number>();
+    for (const g of inv.guests) {
+      if (g.host !== name) continue;
+      const mid = g.vmid - base;
+      if (mid >= 1 && mid <= 254) mids.add(mid);
+    }
+    result[name] = [...mids].sort((a, b) => a - b);
+  }
+  return result;
+}
+
 // mid.ip carries a /16 mask (e.g. "192.168.1.4/16") for use in --net0/
 // --ipconfig0; inventory stores bare IPs, and an operator-facing "ssh
 // root@<ip>" line needs one too, so callers strip it before writing to
@@ -183,13 +205,26 @@ export function stripCidr(ip: string): string {
 // collision instead of failing loudly -- see issue #53) and migrate-guest
 // (which needs the target host's derived VMID to genuinely be free before
 // restoring a backup onto it).
-export async function checkVmidAvailable(ssh: SSHClient, inv: Inventory, hostName: string, vmid: number): Promise<void> {
+//
+// `canSeeGuest` (issue #54) is the web UI's per-resource permission check:
+// when given and it returns false for the conflicting guest, the error uses
+// the same no-name wording as an untracked VMID, so a restricted caller
+// never learns the name of a guest their group is blocked from. Omitted
+// (CLI, MCP) means full operator trust and the guest is always named.
+export async function checkVmidAvailable(
+  ssh: SSHClient,
+  inv: Inventory,
+  hostName: string,
+  vmid: number,
+  canSeeGuest?: (guestName: string) => boolean
+): Promise<void> {
   const result = await runRemote(ssh, inv, hostName, `pct status ${vmid} >/dev/null 2>&1 || qm status ${vmid} >/dev/null 2>&1`);
   if (result.code !== 0) {
     return;
   }
   const existing = inv.guests.find((g) => g.host === hostName && g.vmid === vmid);
+  const nameable = existing && (!canSeeGuest || canSeeGuest(existing.name));
   throw new Error(
-    `VMID ${vmid} on '${hostName}' is already in use${existing ? ` by '${existing.name}'` : ''} -- choose a different --mid`
+    `VMID ${vmid} on '${hostName}' is already in use${nameable ? ` by '${existing.name}'` : ''} -- choose a different --mid`
   );
 }
