@@ -21,7 +21,7 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ## Phase 1: Setup
 
-- [ ] T001 Create captured, redacted Proxmox fixtures under `test/fixtures/proxmox/`. Start from the live shapes recorded in research.md R1–R5 and replace every identifying value with example values (emails `alice@example.com`/`bob@example.com`, realm `authentik`, VMIDs `4005`/`4105`). Keep field names, types, nesting and array lengths. Files:
+- [x] T001 Create captured, redacted Proxmox fixtures under `test/fixtures/proxmox/`. Start from the live shapes recorded in research.md R1–R5 and replace every identifying value with example values (emails `alice@example.com`/`bob@example.com`, realm `authentik`, VMIDs `4005`/`4105`). Keep field names, types, nesting and array lengths. Files:
   - `realm-openid-email.json`: `{"type":"openid","username-claim":"email"}`
   - `realm-pve.json`: `{"type":"pve","username-claim":null}`
   - `realm-missing.stderr.txt`: `domain 'nosuchrealm' does not exist` plus the following JSON::PP error line, verbatim
@@ -33,9 +33,9 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ## Phase 2: Foundational (blocking)
 
-- [ ] T002 Add failing schema tests for `pveUserRealm` (`^[A-Za-z][A-Za-z0-9._-]+$`, message `must start with a letter and contain only letters, digits, ., - and _`) and `pveCreatorRole` (`^[A-Za-z0-9._-]+$`, message `must contain only letters, digits, ., - and _`), both optional. Cover accept/reject and save/load/clear round-trip through `saveInventory`/`loadInventory`, in `test/lib/inventory.test.ts`
-- [ ] T003 Add both keys, with comments, to `SettingsSchema` in `src/lib/inventory.ts` so they join `SETTINGS_KEYS` (depends on T002)
-- [ ] T004 Add `actor?: { username: string; email?: string }` (the `Actor` type, exported from `src/lib/pve-acl.ts`) to `OperationDeps` in `src/operations/types.ts`, with a comment that only the web provisioning router sets it (research R6)
+- [x] T002 Add failing schema tests for `pveUserRealm` (`^[A-Za-z][A-Za-z0-9._-]+$`, message `must start with a letter and contain only letters, digits, ., - and _`) and `pveCreatorRole` (`^[A-Za-z0-9._-]+$`, message `must contain only letters, digits, ., - and _`), both optional. Cover accept/reject and save/load/clear round-trip through `saveInventory`/`loadInventory`, in `test/lib/inventory.test.ts`
+- [x] T003 Add both keys, with comments, to `SettingsSchema` in `src/lib/inventory.ts` so they join `SETTINGS_KEYS` (depends on T002)
+- [x] T004 Add `actor?: { username: string; email?: string }` (the `Actor` type, exported from `src/lib/pve-acl.ts`) to `OperationDeps` in `src/operations/types.ts`, with a comment that only the web provisioning router sets it (research R6)
 
 **Checkpoint**: Settings and the actor type exist, so stories can start.
 

@@ -1108,7 +1108,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the twelve settings keys', () => {
+test('SETTINGS_KEYS lists exactly the fourteen settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'backupStorage',
     'customScriptsBranch',
@@ -1121,6 +1121,8 @@ test('SETTINGS_KEYS lists exactly the twelve settings keys', () => {
     'proxyDriver',
     'proxyTlsCertificate',
     'proxyTlsKey',
+    'pveCreatorRole',
+    'pveUserRealm',
     'statusPagePath',
   ]);
 });
@@ -1265,6 +1267,62 @@ test('saveInventory/loadInventory round-trips proxyCertResolver and proxyApiUrl,
   assert.equal(reloaded.proxyApiUrl, 'http://192.0.2.5:8080');
   const db = new Database(dest, { readonly: true });
   const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyCertResolver'").get();
+  db.close();
+  assert.equal(row, undefined);
+});
+
+// issue #53: pveUserRealm/pveCreatorRole are the Proxmox-creator-grant
+// feature's two own settings (data-model.md), following the same
+// optional/independent-default pattern as proxyCertResolver/proxyApiUrl
+// above -- unset pveUserRealm means the grant is off, and unset
+// pveCreatorRole means DEFAULT_CREATOR_ROLE ('PVEVMAdmin').
+
+test('SettingsSchema accepts a pveUserRealm starting with a letter and made of letters, digits, ., - and _', () => {
+  assert.equal(SettingsSchema.safeParse({ pveUserRealm: 'authentik' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ pveUserRealm: 'a.b-c_2' }).success, true);
+});
+
+test('SettingsSchema rejects a pveUserRealm starting with a non-letter or containing an invalid character', () => {
+  const startsWithDigit = SettingsSchema.safeParse({ pveUserRealm: '1authentik' });
+  assert.equal(startsWithDigit.success, false);
+  assert.equal(
+    startsWithDigit.error?.issues[0]?.message,
+    'must start with a letter and contain only letters, digits, ., - and _'
+  );
+  assert.equal(SettingsSchema.safeParse({ pveUserRealm: 'auth entik' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ pveUserRealm: '' }).success, false);
+});
+
+test('SettingsSchema accepts a pveCreatorRole made of letters, digits, ., - and _', () => {
+  assert.equal(SettingsSchema.safeParse({ pveCreatorRole: 'PVEVMAdmin' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ pveCreatorRole: 'my.role-2_x' }).success, true);
+});
+
+test('SettingsSchema rejects a pveCreatorRole with an invalid character', () => {
+  const result = SettingsSchema.safeParse({ pveCreatorRole: 'my role' });
+  assert.equal(result.success, false);
+  assert.equal(result.error?.issues[0]?.message, 'must contain only letters, digits, ., - and _');
+  assert.equal(SettingsSchema.safeParse({ pveCreatorRole: '' }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips pveUserRealm and pveCreatorRole, and clearing one removes it from meta', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, {
+    ...FIXTURE_INVENTORY,
+    pveUserRealm: 'authentik',
+    pveCreatorRole: 'PVEVMAdmin',
+  });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.pveUserRealm, 'authentik');
+  assert.equal(loaded.pveCreatorRole, 'PVEVMAdmin');
+
+  saveInventory(dest, { ...loaded, pveUserRealm: undefined });
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.pveUserRealm, undefined);
+  assert.equal(reloaded.pveCreatorRole, 'PVEVMAdmin');
+  const db = new Database(dest, { readonly: true });
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'pveUserRealm'").get();
   db.close();
   assert.equal(row, undefined);
 });
