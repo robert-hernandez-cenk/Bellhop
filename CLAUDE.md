@@ -227,9 +227,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   community-scripts.org one (research R8 in
   `specs/003-custom-script-repo/research.md`); falls back to no link at
   all if the custom settings are later unset, since there's no repository
-  left to point at. `creator` (optional, issue #58, a `{ uid?, username }`
-  pair backed by two nullable `created_by_uid`/`created_by_username`
-  columns added via `ensureColumn`) records the real signed-in web-UI user
+  left to point at. `creator` (optional, issue #58, a `{ uid?, username, since? }`
+  record backed by three nullable `created_by_uid`/`created_by_username`/
+  `created_by_since` columns added via `ensureColumn`) records the real signed-in web-UI user
   who created the guest -- set by `create-lxc`/`create-vm`/`install-app`/
   `deploy-vpn-gateway`'s web apply paths via `creatorFromActor(deps.actor)`
   (never by the CLI or MCP server, which have no such actor), and
@@ -3189,12 +3189,25 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   request) so a job whose target is a guest the caller created is visible
   and controllable the same way the guest itself is, even though a job's
   `target` is just a name with no resource type to resolve a creator from
-  otherwise. The WS upgrade handler builds its caller/creators the same way,
+  otherwise. Two limits keep that job lift on the caller's own guest (#58
+  final review): `guestCreators` (now taking `hosts` too) omits any guest
+  whose name equals a host name, since the guest-creating commands record
+  the *host* as a job's target and a guest named like a host would
+  otherwise expose every job on that host (no `validateInventory` rule,
+  which could make a saved inventory unloadable); and `isJobVisible` now
+  takes the job row (`{ target, startedAt }`) and lifts only a job that
+  started at or after the creator's `since` (an ISO-8601 time on the
+  creator record, `created_by_since` column -- `creatorFromActor`'s clock,
+  injectable as `OperationDeps.now`, or the creating job's `startedAt` for
+  the backfill), so a guest re-created under a reused name never exposes
+  the old guest's jobs. A creator without `since`, or a job not yet
+  started, gets no job lift (fail closed); guest access itself never reads
+  `since`. The WS upgrade handler builds its caller/creators the same way,
   inline, since it bypasses Express middleware already (see "Web UI admin
   user impersonation" below). `recordProvisionedGuest`'s
   `create-lxc`/`create-vm`/`install-app` paths and `deploy-vpn-gateway`'s own
   operation (`src/operations/provisioning.ts`) set a new guest's `creator`
-  from `creatorFromActor(deps.actor)` -- `deps.actor` is already exactly
+  from `creatorFromActor(deps.actor, deps.now?.())` -- `deps.actor` is already exactly
   "the real, never-impersonated signed-in person, or `undefined` for
   MCP/CLI/the local operator" (issue #53's plumbing), so a guest created
   through any of those four paths by a real person gets a creator record
@@ -3207,10 +3220,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   unconditionally, the same way `subdomains`/`port`/`proxy`/`app` are
   preserved, and it is gone once the guest leaves the inventory (no
   separate cleanup needed -- it's a column on the `guests` row, not a
-  separate table). `EDIT_GUEST_SHAPE`'s zod object strips unknown keys, so
-  a `creator` field in a Dashboard PATCH or an MCP `edit_guest` call is
-  silently ignored rather than ever reaching `applyGuestEdits` (FR-009) --
-  no explicit rejection needed. The guest Advanced modal's General tab
+  separate table). A `creator` field in a Dashboard PATCH is ignored because
+  `applyGuestEdits` (`src/operations/edit-guest.ts`) copies only the fields
+  it names, and `creator` is not one of them; an MCP `edit_guest` call is
+  additionally protected because `EDIT_GUEST_SHAPE`'s zod object strips
+  unknown keys before the input reaches it (FR-009) -- no explicit
+  rejection needed. The guest Advanced modal's General tab
   shows a read-only "Created by" row with the recorded `creator.username`
   when present and no row at all otherwise; the uid itself is never shown.
   `backfill-guest-creators` (see its own bullet below) is the one-time
@@ -3240,9 +3255,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   by default like every other mutating command. It considers only job rows
   whose `command` is `create-lxc`/`create-vm`/`install-app`/
   `deploy-vpn-gateway`, whose `status` is `success`, and whose
-  `triggered_by_username` is non-null and isn't the literal `mcp` MCP jobs
-  are recorded under -- never a failed/cancelled/interrupted job, never one
-  with no recorded human triggerer. From each candidate's `args_json` (the
+  `triggered_by_username` is non-null and is neither the literal `mcp` MCP
+  jobs are recorded under nor the synthetic local operator's username
+  (`localOperatorUsername()`, `src/web/auth.ts` -- `WEB_UI_LOCAL_USER`,
+  default `local`, passed in as the run function's `localOperator` option)
+  -- never a failed/cancelled/interrupted job, never one with no recorded
+  human triggerer. Each recorded creator's `since` is the matched job's
+  `startedAt`, so its job lift covers that job and later ones only. From each candidate's `args_json` (the
   raw form input the job recorded, secrets already redacted) it reads
   `host`, `mid`, and the guest's name (`hostname` for create-lxc/
   install-app, `name` for create-vm/deploy-vpn-gateway), derives the VMID
@@ -3265,7 +3284,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   to solve (see "Web UI per-resource group permissions" above). Every run
   prints every guest it (would) update and every job it skipped with a
   reason, whether or not `--apply` was passed; exit code is always 0,
-  since a skip is informational, not a failure.
+  since a skip is informational, not a failure. `--apply` re-checks every
+  planned update against the inventory reloaded just before writing, and an
+  update dropped there (its guest gained a creator, or left the inventory)
+  moves from `updates` to `skipped` (`already-has-creator`/
+  `no-matching-guest`), so the report lists only what was actually written.
 - **Web UI admin user impersonation** (`src/web/impersonation.ts`,
   `src/web/routes/impersonation.ts` -- issue #101): once per-resource
   permissions exist (the bullet above), an admin can view/act on the app as

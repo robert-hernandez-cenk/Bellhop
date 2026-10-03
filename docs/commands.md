@@ -56,15 +56,20 @@ hand. Dry run by default, printing the plan and changing nothing;
 from the job's recorded machine ID, and guest name all agreeing with a
 guest currently in inventory — if several jobs match the same guest, the
 most recent successful one wins, and a guest that already has a recorded
-creator is never touched. A job's recorded login name is resolved against
-the identity provider's current user list to attach its stable identifier
-alongside the name; pass `--map <old>=<new>` (repeatable) when a job was
-recorded under a login name since renamed — without a mapping, that job is
+creator is never touched. The creator is recorded as of that job's start
+time, so it covers that job and later ones on the guest. A job's recorded
+login name is resolved against the identity provider's current user list
+to attach its stable identifier alongside the name; pass
+`--map <old>=<new>` (repeatable) when a job was recorded under a login name
+since renamed — without a mapping, that job is
 skipped and reported as `unknown-user`. Every skip is reported with a
 reason (`unknown-user`, `no-matching-guest`, `already-has-creator`,
 `unparseable-args`, or `superseded` by a newer matching job) so nothing is
-silently dropped. A job triggered by the MCP server, by the CLI, by no
-recorded user, or that didn't succeed is never used. Requires Authentik
+silently dropped; with `--apply`, a guest that gained a creator or left the
+inventory while the command ran is not written and is reported under the
+skips instead. A job triggered by the MCP server, by the CLI, by the local
+operator (the identity named by `WEB_UI_LOCAL_USER`, `local` by default), by
+no recorded user, or that didn't succeed is never used. Requires Authentik
 configured (`data/authentik.env`) — without it, it fails with the same
 "not configured" error the Users page gives, since a username-only record
 would reintroduce the rename problem the stable identifier exists to

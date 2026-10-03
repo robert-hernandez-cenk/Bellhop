@@ -41,6 +41,9 @@ const inventory: Inventory = {
   ],
 };
 
+// Injected clock (#58 final review): a recorded creator's `since` is this.
+const FIXED_NOW = '2026-05-06T07:08:09.000Z';
+
 function deps(): OperationDeps {
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'opprov-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
@@ -49,6 +52,7 @@ function deps(): OperationDeps {
     inventory: structuredClone(inventory),
     inventoryPath,
     authentik: new FakeAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient(),
+    now: () => new Date(FIXED_NOW),
   };
 }
 
@@ -566,7 +570,7 @@ test('create-lxc apply with deps.actor records the creator on the new guest', as
   const op = PROVISIONING_OPERATIONS['create-lxc'];
   await op.apply(parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' }), d);
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-lxc');
-  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user', since: FIXED_NOW });
 });
 
 test('create-lxc apply with no deps.actor (MCP/CLI) records no creator', async () => {
@@ -583,7 +587,7 @@ test('create-vm apply with deps.actor records the creator on the new guest', asy
   const op = PROVISIONING_OPERATIONS['create-vm'];
   await op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'new-vm' }), d);
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-vm');
-  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user', since: FIXED_NOW });
 });
 
 test('create-vm apply with no deps.actor (MCP/CLI) records no creator', async () => {
@@ -605,7 +609,7 @@ test('install-app apply with deps.actor records the creator on the new guest', a
     )
   );
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'new-app-lxc');
-  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user', since: FIXED_NOW });
 });
 
 test('install-app apply with no deps.actor (MCP/CLI) records no creator', async () => {
@@ -636,7 +640,7 @@ test('a repeat create-lxc apply with no actor keeps the creator recorded by an e
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
   assert.deepEqual(
     saved?.creator,
-    { username: 'test-user', uid: 'uid-test-user' },
+    { username: 'test-user', uid: 'uid-test-user', since: FIXED_NOW },
     'a repeat apply with no actor (e.g. MCP) must keep the previously-recorded creator'
   );
 });
@@ -653,7 +657,7 @@ test('a repeat create-lxc apply with a different actor replaces the previously-r
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005);
   assert.deepEqual(
     saved?.creator,
-    { username: 'other-user', uid: 'uid-other-user' },
+    { username: 'other-user', uid: 'uid-other-user', since: FIXED_NOW },
     'a repeat apply by a real signed-in actor must replace the previously-recorded creator'
   );
 });
@@ -681,6 +685,7 @@ function depsWithWebLxc(): OperationDeps {
     inventoryPath,
     authentik: new FakeAuthentikClient(),
     cloudflare: new UnconfiguredCloudflareClient(),
+    now: () => new Date(FIXED_NOW),
   };
 }
 
@@ -710,7 +715,7 @@ test("deleting a guest removes its recorded creator, and a guest later created u
   recreated = saved.guests.find((g) => g.name === 'web-lxc');
   assert.deepEqual(
     recreated?.creator,
-    { username: 'other-user', uid: 'uid-other-user' },
+    { username: 'other-user', uid: 'uid-other-user', since: FIXED_NOW },
     "a different actor's apply must record their own creator, never the original test-user's"
   );
 });
@@ -736,7 +741,7 @@ test('deploy-vpn-gateway operation apply passes deps.actor through as the record
     )
   );
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'nordvpn-gw-lxc');
-  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user', since: FIXED_NOW });
 });
 
 test('deploy-vpn-gateway operation apply with no deps.actor (MCP/CLI) records no creator', async () => {
@@ -760,4 +765,29 @@ test('deploy-vpn-gateway operation apply with no deps.actor (MCP/CLI) records no
   );
   const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'nordvpn-gw2-lxc');
   assert.equal(saved?.creator, undefined);
+});
+
+// Final review (#58), finding 2: `since` is when the creator was recorded --
+// a repeat apply with no actor keeps the original time, one with a new real
+// actor records the new one.
+test('a recorded creator carries since from the injected clock, kept on a no-actor repeat and replaced by a new actor', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['create-lxc'];
+  const input = () => parseOperationInput(op, { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12' });
+  const saved = () => loadInventory(d.inventoryPath).guests.find((g) => g.host === 'pve1' && g.vmid === 4005)?.creator;
+
+  d.now = () => new Date('2026-01-01T00:00:00.000Z');
+  d.actor = { username: 'test-user', uid: 'uid-test-user' };
+  await op.apply(input(), d);
+  assert.equal(saved()?.since, '2026-01-01T00:00:00.000Z');
+
+  d.now = () => new Date('2026-02-01T00:00:00.000Z');
+  d.actor = undefined;
+  await op.apply(input(), d);
+  assert.equal(saved()?.since, '2026-01-01T00:00:00.000Z', 'a no-actor repeat keeps the original since');
+
+  d.now = () => new Date('2026-03-01T00:00:00.000Z');
+  d.actor = { username: 'other-user', uid: 'uid-other-user' };
+  await op.apply(input(), d);
+  assert.deepEqual(saved(), { username: 'other-user', uid: 'uid-other-user', since: '2026-03-01T00:00:00.000Z' });
 });

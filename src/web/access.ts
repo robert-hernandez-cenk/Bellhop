@@ -31,10 +31,20 @@ function isCreatorOf(inventory: Pick<Inventory, 'guests'>, caller: AccessCaller,
 // Guest name -> recorded creator, for checks that only have a name to go on
 // (job visibility, src/web/routes/jobs.ts's isJobVisible). Built once per
 // request from the in-memory inventory.
-export function guestCreators(inventory: Pick<Inventory, 'guests'>): Map<string, GuestCreator> {
+//
+// A guest whose name is also a host name is left out (#58 final review): a
+// job's target is an untyped name and the guest-creating commands target a
+// *host*, so including it would let someone create a guest named like a host
+// they can't access and then see and control every job on that host. Its
+// creator still reaches the guest itself through isResourceAllowed/
+// filterInventoryForUser, which have a typed ref; only the name-keyed job
+// lift is withheld. Not a validateInventory rule, since that could make an
+// already-saved inventory unloadable.
+export function guestCreators(inventory: Pick<Inventory, 'guests' | 'hosts'>): Map<string, GuestCreator> {
+  const hostNames = new Set(inventory.hosts.map((h) => h.name));
   const result = new Map<string, GuestCreator>();
   for (const guest of inventory.guests) {
-    if (guest.creator) result.set(guest.name, guest.creator);
+    if (guest.creator && !hostNames.has(guest.name)) result.set(guest.name, guest.creator);
   }
   return result;
 }

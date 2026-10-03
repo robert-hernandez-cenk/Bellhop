@@ -5,7 +5,7 @@ import request from 'supertest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isAdmin, isResourceAllowed, filterInventoryForUser, requireResourceAccess } from '../../src/web/access.ts';
+import { isAdmin, isResourceAllowed, filterInventoryForUser, requireResourceAccess, guestCreators } from '../../src/web/access.ts';
 import { savePermissionGroup } from '../../src/lib/permissions.ts';
 import type { Inventory } from '../../src/lib/inventory.ts';
 
@@ -204,4 +204,21 @@ test('requireResourceAccess allows the creator and 403s another user in the same
   assert.equal(ok.status, 200);
   const denied = await request(app).post('/act').set('x-user', 'other-user').send({ guest: 'web-lxc' });
   assert.equal(denied.status, 403);
+});
+
+// Final review (#58), finding 1: a job target is an untyped name, so a guest
+// whose name equals a host name must never feed the job-visibility creator
+// lift -- guestCreators leaves it out entirely.
+test('guestCreators maps guest name to creator, excluding guests with no creator and any guest named like a host', () => {
+  const inventory: Inventory = {
+    ...creatorInventory,
+    guests: [
+      ...creatorInventory.guests,
+      { name: 'pve2', type: 'lxc', vmid: 4003, host: 'pve1', creator: { uid: 'uid-test-user', username: 'test-user' } },
+    ],
+  };
+  const creators = guestCreators(inventory);
+  assert.deepEqual([...creators.keys()], ['web-lxc']);
+  assert.deepEqual(creators.get('web-lxc'), { uid: 'uid-test-user', username: 'test-user' });
+  assert.equal(creators.has('pve2'), false);
 });

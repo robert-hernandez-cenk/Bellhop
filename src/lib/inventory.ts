@@ -215,6 +215,13 @@ export const HostEntrySchema = z.object({
 export const GuestCreatorSchema = z.object({
   uid: z.string().min(1).optional(),
   username: z.string().min(1),
+  // When this record was written (ISO-8601): the web apply's own clock, or
+  // the creating job's start time for backfill-guest-creators. Only jobs
+  // that started at or after it are lifted for the creator
+  // (src/web/routes/jobs.ts's isJobVisible), so a guest re-created under a
+  // reused name never exposes the old guest's job history. Absent means no
+  // job lift at all (fail closed); guest access itself never reads it.
+  since: z.string().min(1).optional(),
 });
 export type GuestCreator = z.infer<typeof GuestCreatorSchema>;
 
@@ -641,6 +648,7 @@ function openInventoryDb(path: string): Database.Database {
   ensureColumn(db, 'guests', 'app_source', 'app_source TEXT');
   ensureColumn(db, 'guests', 'created_by_uid', 'created_by_uid TEXT');
   ensureColumn(db, 'guests', 'created_by_username', 'created_by_username TEXT');
+  ensureColumn(db, 'guests', 'created_by_since', 'created_by_since TEXT');
   // Must run after the auth_group ensureColumn calls above -- it writes
   // into that column before dropping the one it read from.
   for (const table of ['hosts', 'guests', 'external_sites']) {
@@ -1001,6 +1009,7 @@ interface GuestRow {
   vpn: string | null;
   created_by_uid: string | null;
   created_by_username: string | null;
+  created_by_since: string | null;
   unauthenticated_paths_json: string | null;
 }
 
@@ -1090,13 +1099,19 @@ export function loadInventory(path: string): Inventory {
       appSource: (row.app_source ?? undefined) as 'custom' | undefined,
       vpnGateway: (row.vpn_gateway ?? undefined) as 'nordvpn' | 'pia' | undefined,
       vpn: row.vpn ?? undefined,
-      // `creator` present iff created_by_username is non-null; `uid` iff
-      // created_by_uid is non-null -- both are conditional spreads, not
-      // `creator: ... : undefined`/`uid: row.created_by_uid ?? undefined`,
-      // so a guest with no creator (or a creator with no uid) round-trips
-      // without that key at all rather than one set to `undefined`.
+      // `creator` present iff created_by_username is non-null; `uid`/`since`
+      // iff created_by_uid/created_by_since are non-null -- all conditional
+      // spreads, not `... : undefined`, so a guest with no creator (or a
+      // creator with no uid or since) round-trips without that key at all
+      // rather than one set to `undefined`.
       ...(row.created_by_username
-        ? { creator: { ...(row.created_by_uid ? { uid: row.created_by_uid } : {}), username: row.created_by_username } }
+        ? {
+            creator: {
+              ...(row.created_by_uid ? { uid: row.created_by_uid } : {}),
+              username: row.created_by_username,
+              ...(row.created_by_since ? { since: row.created_by_since } : {}),
+            },
+          }
         : {}),
       unauthenticatedPaths: row.unauthenticated_paths_json ? JSON.parse(row.unauthenticated_paths_json) : undefined,
     }));
@@ -1307,8 +1322,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, created_by_uid, created_by_username, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @created_by_uid, @created_by_username, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, created_by_uid, created_by_username, created_by_since, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, authentik, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @created_by_uid, @created_by_username, @created_by_since, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @authentik, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -1328,6 +1343,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           vpn: guest.vpn ?? null,
           created_by_uid: guest.creator?.uid ?? null,
           created_by_username: guest.creator?.username ?? null,
+          created_by_since: guest.creator?.since ?? null,
           auth_group: guest.authGroup ?? null,
           auth_mode: guest.authMode ?? null,
           oidc_redirect_uris_json: guest.oidcRedirectUris ? JSON.stringify(guest.oidcRedirectUris) : null,

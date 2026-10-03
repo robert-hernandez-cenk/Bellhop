@@ -71,14 +71,18 @@ function setup(guests: GuestEntry[] = DEFAULT_GUESTS) {
     jobStore.markFinished(id, { status, exitCode: status === 'success' ? 0 : 1 });
     return id;
   };
-  const run = (opts: { maps?: string[]; apply?: boolean } = {}, authentik = users()) => {
+  const run = (
+    opts: { maps?: string[]; apply?: boolean; localOperator?: string; inventory?: Inventory } = {},
+    authentik = users()
+  ) => {
     jobStore.interruptOrphaned('web', () => false);
     return runBackfillGuestCreators(
-      { maps: opts.maps ?? [], apply: opts.apply ?? false },
-      { inventory: loadInventory(inventoryPath), inventoryPath, jobStore, authentik }
+      { maps: opts.maps ?? [], apply: opts.apply ?? false, localOperator: opts.localOperator ?? 'local' },
+      { inventory: opts.inventory ?? loadInventory(inventoryPath), inventoryPath, jobStore, authentik }
     );
   };
-  return { inventoryPath, jobStore, addJob, run };
+  const startedAt = (id: number): string => jobStore.get(id)!.startedAt!;
+  return { inventoryPath, jobStore, addJob, run, startedAt };
 }
 
 const creatorOf = (inventoryPath: string, name: string) => loadInventory(inventoryPath).guests.find((g) => g.name === name)?.creator;
@@ -132,7 +136,7 @@ test('failed, cancelled, interrupted, mcp and user-less jobs are skipped silentl
 });
 
 test('an unknown login is skipped as unknown-user, and --map resolves it to the current user', async () => {
-  const { addJob, run, inventoryPath } = setup();
+  const { addJob, run, inventoryPath, startedAt } = setup();
   const id = addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' }, user: 'old-login' });
   const unmapped = await run();
   assert.deepEqual(unmapped.updates, []);
@@ -144,7 +148,7 @@ test('an unknown login is skipped as unknown-user, and --map resolves it to the 
   const mapped = await run({ maps: ['old-login=test-user'], apply: true });
   assert.deepEqual(mapped.skipped, []);
   assert.deepEqual(mapped.updates.map((u) => [u.guest, u.username, u.uid]), [['web-lxc', 'test-user', TEST_UID]]);
-  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { uid: TEST_UID, username: 'test-user' });
+  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { uid: TEST_UID, username: 'test-user', since: startedAt(id) });
 });
 
 test('a malformed --map throws naming the flag', async () => {
@@ -200,25 +204,32 @@ test('a dry run writes nothing', async () => {
   assert.equal(creatorOf(inventoryPath, 'web-lxc'), undefined);
 });
 
-test('--apply saves creator { uid, username } with the current Authentik username', async () => {
-  const { addJob, run, inventoryPath } = setup();
-  addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' } });
-  addJob({ command: 'create-vm', args: { host: 'pve2', mid: '7', name: 'demo-vm' }, user: 'admin' });
+test('--apply saves creator { uid, username, since } with the current Authentik username and the job start time', async () => {
+  const { addJob, run, inventoryPath, startedAt } = setup();
+  const lxcJob = addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' } });
+  const vmJob = addJob({ command: 'create-vm', args: { host: 'pve2', mid: '7', name: 'demo-vm' }, user: 'admin' });
   const report = await run({ apply: true });
   assert.equal(report.applied, true);
-  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { uid: TEST_UID, username: 'test-user' });
-  assert.deepEqual(creatorOf(inventoryPath, 'demo-vm'), { uid: ADMIN_UID, username: 'admin' });
+  assert.deepEqual(
+    report.updates.map((u) => [u.guest, u.since]).sort(),
+    [
+      ['demo-vm', startedAt(vmJob)],
+      ['web-lxc', startedAt(lxcJob)],
+    ]
+  );
+  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { uid: TEST_UID, username: 'test-user', since: startedAt(lxcJob) });
+  assert.deepEqual(creatorOf(inventoryPath, 'demo-vm'), { uid: ADMIN_UID, username: 'admin', since: startedAt(vmJob) });
 });
 
 test('a user with no uid is recorded by username only', async () => {
-  const { addJob, run, inventoryPath } = setup();
-  addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' } });
+  const { addJob, run, inventoryPath, startedAt } = setup();
+  const id = addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' } });
   const authentik = new FakeAuthentikClient({
     users: [{ id: '1', username: 'test-user', uid: '', email: 'test-user@example.com', isActive: true, groupIds: [] }],
   });
   const report = await run({ apply: true }, authentik);
   assert.equal(report.updates[0].uid, undefined);
-  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { username: 'test-user' });
+  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { username: 'test-user', since: startedAt(id) });
 });
 
 test('an unconfigured Authentik fails with the client message', async () => {
@@ -261,5 +272,72 @@ test('formatBackfillGuestCreators renders the contract output', () => {
       '  + web-lxc (pve1, vmid 4004): test-user  [job 12]',
       '  + demo-vm (pve2, vmid 5007): admin  [job 31]',
     ].join('\n')
+  );
+});
+
+// Final review (#58), finding 4: a job the synthetic local operator triggered
+// is no real person, so it is skipped silently exactly like an MCP job.
+test('jobs triggered by the local operator are skipped silently, under the default or a configured name', async () => {
+  const { addJob, run } = setup();
+  const args = { host: 'pve1', mid: '4', hostname: 'web-lxc' };
+  addJob({ command: 'create-lxc', args, user: 'local' });
+  const byDefault = await run();
+  assert.deepEqual(byDefault.updates, []);
+  assert.deepEqual(byDefault.skipped, []);
+
+  addJob({ command: 'create-vm', args: { host: 'pve2', mid: '7', name: 'demo-vm' }, user: 'operator' });
+  const configured = await run({ localOperator: 'operator' });
+  // 'operator' is skipped; 'local' is now an ordinary (unknown) login.
+  assert.deepEqual(configured.updates, []);
+  assert.deepEqual(configured.skipped.map((s) => s.reason), ['unknown-user']);
+  assert.match(configured.skipped[0].detail, /^local;/);
+});
+
+// Final review (#58), finding 5: --apply re-checks against a freshly reloaded
+// inventory, and an update dropped there is reported as skipped, not updated.
+test('--apply reports an update dropped by the reload re-check as already-has-creator', async () => {
+  const { addJob, run, inventoryPath } = setup();
+  const id = addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' } });
+  const stale = loadInventory(inventoryPath);
+  // A creator appears on disk between planning and writing.
+  const onDisk = loadInventory(inventoryPath);
+  saveInventory(inventoryPath, {
+    ...onDisk,
+    guests: onDisk.guests.map((g) => (g.name === 'web-lxc' ? { ...g, creator: { username: 'admin', uid: ADMIN_UID } } : g)),
+  });
+  const report = await run({ apply: true, inventory: stale });
+  assert.deepEqual(report.updates, []);
+  assert.deepEqual(report.skipped.map((s) => [s.jobId, s.reason, s.detail]), [[id, 'already-has-creator', 'web-lxc']]);
+  assert.deepEqual(creatorOf(inventoryPath, 'web-lxc'), { username: 'admin', uid: ADMIN_UID });
+});
+
+test('--apply reports an update dropped by the reload re-check as no-matching-guest when the guest is gone', async () => {
+  const { addJob, run, inventoryPath } = setup();
+  const id = addJob({ command: 'create-lxc', args: { host: 'pve1', mid: '4', hostname: 'web-lxc' } });
+  const stale = loadInventory(inventoryPath);
+  const onDisk = loadInventory(inventoryPath);
+  saveInventory(inventoryPath, { ...onDisk, guests: onDisk.guests.filter((g) => g.name !== 'web-lxc') });
+  const report = await run({ apply: true, inventory: stale });
+  assert.deepEqual(report.updates, []);
+  assert.deepEqual(report.skipped.map((s) => [s.jobId, s.reason, s.detail]), [[id, 'no-matching-guest', 'web-lxc on pve1, vmid 4004']]);
+  assert.equal(loadInventory(inventoryPath).guests.some((g) => g.name === 'web-lxc'), false);
+});
+
+// Final review (#58), finding 6: the newest successful job decides the guest
+// even when its user can't be resolved -- an older job by a known user never
+// fills in for it.
+test('a newer job by an unknown user wins the guest: no update, newer is unknown-user and older is superseded', async () => {
+  const { addJob, run } = setup();
+  const args = { host: 'pve1', mid: '4', hostname: 'web-lxc' };
+  const older = addJob({ command: 'create-lxc', args, user: 'test-user' });
+  const newer = addJob({ command: 'create-lxc', args, user: 'old-login' });
+  const report = await run();
+  assert.deepEqual(report.updates, []);
+  assert.deepEqual(
+    report.skipped.map((s) => [s.jobId, s.reason]),
+    [
+      [newer, 'unknown-user'],
+      [older, 'superseded'],
+    ]
   );
 });

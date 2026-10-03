@@ -28,6 +28,7 @@ import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/ne
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
 import type { AuthentikClient } from './lib/authentik-client.ts';
+import { localOperatorUsername } from './web/auth.ts';
 import { runAttachNfsMount } from './commands/provisioning/attach-nfs-mount.ts';
 import { runConfigureGuest } from './commands/provisioning/configure-guest.ts';
 import { runCreateLxc } from './commands/provisioning/create-lxc.ts';
@@ -193,7 +194,7 @@ program
       const jobStore = new JobStore(path.join(dataDir(), 'jobs.sqlite3'));
       try {
         const report = await runBackfillGuestCreators(
-          { maps: opts.map, apply: opts.apply ?? false },
+          { maps: opts.map, apply: opts.apply ?? false, localOperator: localOperatorUsername() },
           { inventory: loadInventory(invPath), inventoryPath: invPath, jobStore, authentik: buildAuthentikClient() }
         );
         console.log(formatBackfillGuestCreators(report));

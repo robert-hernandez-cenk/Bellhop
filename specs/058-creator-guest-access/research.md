@@ -146,3 +146,29 @@ the client with no route change. The uid is not shown.
 
 None introduced. The backfill's `--map` pairs are operator input, never
 defaults; real old/new login names are never committed.
+
+## R11 — Job visibility hardening (final review)
+
+**Decision 1**: `guestCreators` (`src/web/access.ts`) leaves out any guest
+whose name equals a host name, so the job lift never applies to such a name.
+The guest's own access (inventory, routes) is unchanged; only the name-keyed
+job lift is withheld. No `validateInventory` rule.
+
+**Rationale**: A job's `target` is an untyped name, and the guest-creating
+commands record the *host* as their target. Without the exclusion, a
+restricted user could create a guest named like a host they cannot access and
+then see and control every job on that host. A validation rule would close it
+too, but could make an already-saved inventory unloadable.
+
+**Decision 2**: The creator record gains an optional `since` (ISO-8601,
+`created_by_since` column): the web apply's clock when recorded, or the
+creating job's `startedAt` for the backfill. The job lift applies only to jobs
+that started at or after `since`; a creator without `since`, or a job with no
+`startedAt`, gets no job lift. Guest access itself never reads `since`.
+
+**Rationale**: Job history is keyed by name, so a guest re-created under a
+deleted guest's name would otherwise expose the old guest's jobs (their logs
+and controls) to the new guest's creator. Failing closed when `since` is
+missing keeps any record without a known time from widening job visibility.
+A queued job that has not started yet is likewise hidden from the lift until
+it starts.

@@ -34,6 +34,10 @@ export interface BackfillUpdate {
   // Absent when Authentik reported no uid for the user -- the creator is
   // then recorded by username alone.
   uid?: string;
+  // The creating job's start time, recorded as the creator's `since` so the
+  // job lift covers that job and later ones only. Absent if the job row has
+  // no start time (the creator then gets no job lift).
+  since?: string;
   jobId: number;
 }
 
@@ -54,6 +58,11 @@ export interface BackfillOptions {
   // Raw `--map old=new` values, in the order given.
   maps: string[];
   apply: boolean;
+  // The synthetic local operator's username (src/web/auth.ts's
+  // localOperatorUsername) -- its jobs are skipped silently like MCP's, since
+  // it is no real person. Passed in rather than read from the environment
+  // here, so tests can set it.
+  localOperator: string;
 }
 
 export interface BackfillDeps {
@@ -120,11 +129,18 @@ export async function runBackfillGuestCreators(opts: BackfillOptions, deps: Back
   const skipped: BackfillSkip[] = [];
   const skip = (job: JobRow, reason: BackfillSkipReason, detail: string) =>
     skipped.push({ jobId: job.id, command: job.command, reason, detail });
+  // Job id -> command, for an update the --apply re-check drops into skipped.
+  const jobCommand = new Map<number, string>();
 
   // Newest first (FR-012): the first job to match a guest wins it.
   const candidates = deps.jobStore
     .listSuccessfulByCommands(Object.keys(NAME_KEY))
-    .filter((job) => job.triggeredByUsername !== null && job.triggeredByUsername !== MCP_ACTOR);
+    .filter(
+      (job) =>
+        job.triggeredByUsername !== null &&
+        job.triggeredByUsername !== MCP_ACTOR &&
+        job.triggeredByUsername !== opts.localOperator
+    );
 
   for (const job of candidates) {
     const parsed = parseJobArgs(job, deps.inventory);
@@ -157,28 +173,51 @@ export async function runBackfillGuestCreators(opts: BackfillOptions, deps: Back
       skip(job, 'unknown-user', `${via}; pass --map ${recorded}=<current username>`);
       continue;
     }
+    jobCommand.set(job.id, job.command);
     updates.push({
       guest: target.name,
       host: target.host,
       vmid: target.vmid,
       username: user.username,
       ...(user.uid ? { uid: user.uid } : {}),
+      ...(job.startedAt ? { since: job.startedAt } : {}),
       jobId: job.id,
     });
   }
 
   if (opts.apply && updates.length > 0) {
     refreshInventory(deps.inventory, deps.inventoryPath);
-    const pending = new Map(updates.map((u) => [guestKey({ host: u.host, vmid: u.vmid, name: u.guest }), u]));
-    const guests = deps.inventory.guests.map((g) => {
-      const u = pending.get(guestKey(g));
-      // Re-checked against the freshly reloaded inventory: never overwrite a
-      // creator that appeared since planning (FR-014).
-      if (!u || g.creator) return g;
-      const creator: GuestCreator = { username: u.username, ...(u.uid ? { uid: u.uid } : {}) };
-      return { ...g, creator };
-    });
-    saveInventory(deps.inventoryPath, { ...deps.inventory, guests });
+    const current = new Map<string, GuestEntry>(deps.inventory.guests.map((g) => [guestKey(g), g]));
+    // Re-checked against the freshly reloaded inventory: never overwrite a
+    // creator that appeared since planning (FR-014), and never resurrect a
+    // guest that left the inventory meanwhile. A dropped update moves to
+    // `skipped`, so the report only ever lists what was actually written.
+    const written: BackfillUpdate[] = [];
+    for (const u of updates) {
+      const g = current.get(guestKey({ host: u.host, vmid: u.vmid, name: u.guest }));
+      const dropped = !g
+        ? { reason: 'no-matching-guest' as const, detail: `${u.guest} on ${u.host}, vmid ${u.vmid}` }
+        : g.creator
+          ? { reason: 'already-has-creator' as const, detail: u.guest }
+          : undefined;
+      if (dropped) skipped.push({ jobId: u.jobId, command: jobCommand.get(u.jobId)!, ...dropped });
+      else written.push(u);
+    }
+    if (written.length > 0) {
+      const pending = new Map(written.map((u) => [guestKey({ host: u.host, vmid: u.vmid, name: u.guest }), u]));
+      const guests = deps.inventory.guests.map((g) => {
+        const u = pending.get(guestKey(g));
+        if (!u) return g;
+        const creator: GuestCreator = {
+          username: u.username,
+          ...(u.uid ? { uid: u.uid } : {}),
+          ...(u.since ? { since: u.since } : {}),
+        };
+        return { ...g, creator };
+      });
+      saveInventory(deps.inventoryPath, { ...deps.inventory, guests });
+    }
+    return { updates: written, skipped, applied: true };
   }
 
   return { updates, skipped, applied: opts.apply };

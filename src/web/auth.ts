@@ -60,14 +60,20 @@ export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {
   throw new Error(`WEB_UI_AUTH_MODE must be one of auto, authentik, none -- got: ${raw}`);
 }
 
+// The local operator's username: WEB_UI_LOCAL_USER, else 'local'. Exported for
+// backfill-guest-creators, which must recognize (and skip) its jobs.
+export function localOperatorUsername(env: NodeJS.ProcessEnv = process.env): string {
+  const name = env.WEB_UI_LOCAL_USER;
+  return name !== undefined && name !== '' ? name : 'local';
+}
+
 // The synthetic identity used when there is no identity provider. It is put
 // *in* the configured admin group rather than special-cased as an admin, so
 // isAdminUser and every per-resource permission check keep working with no
 // awareness of this mode at all.
 function localOperator(env: NodeJS.ProcessEnv): AuthUser {
-  const name = env.WEB_UI_LOCAL_USER;
   return {
-    username: name !== undefined && name !== '' ? name : 'local',
+    username: localOperatorUsername(env),
     groups: [authentikConfig(env).adminGroup],
     localOperator: true,
   };

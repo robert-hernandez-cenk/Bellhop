@@ -268,14 +268,14 @@ test('runDeployVpnGateway apply records the given creator on the new gateway gue
       apply: true,
       connectPollAttempts: 1,
       connectPollDelayMs: 0,
-      creator: { username: 'test-user', uid: 'uid-test-user' },
+      creator: { username: 'test-user', uid: 'uid-test-user', since: '2026-05-06T07:08:09.000Z' },
     },
     { ssh, inventory: { ...inventory, guests: [] }, inventoryPath: invPath, goBuilder: new FakeGoBuilder(), fetchImpl: fakeFetch() }
   );
 
   assert.equal(result.applied, true);
   const saved = loadInventory(invPath).guests.find((g) => g.name === 'nordvpn-creator-gw-lxc');
-  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user' });
+  assert.deepEqual(saved?.creator, { username: 'test-user', uid: 'uid-test-user', since: '2026-05-06T07:08:09.000Z' });
 });
 
 test('runDeployVpnGateway apply records no creator when none is given (CLI)', async () => {

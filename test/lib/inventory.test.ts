@@ -250,6 +250,36 @@ test('GuestCreatorSchema rejects an empty username, with or without a uid', () =
   assert.equal(GuestCreatorSchema.safeParse({ uid: '', username: 'x' }).success, false);
   assert.equal(GuestCreatorSchema.safeParse({ username: 'test-user' }).success, true);
   assert.equal(GuestCreatorSchema.safeParse({ uid: 'uid-test-user', username: 'test-user' }).success, true);
+  assert.equal(GuestCreatorSchema.safeParse({ username: 'test-user', since: '' }).success, false);
+});
+
+// Final review (#58), finding 2: `since` records when the creator was
+// recorded, so the job lift never reaches a reused name's older jobs.
+test('saveInventory/loadInventory round-trips a creator `since`, and omits the key when absent', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      {
+        name: 'web-lxc',
+        type: 'lxc',
+        vmid: 4020,
+        host: 'pve1',
+        creator: { uid: 'uid-test-user', username: 'test-user', since: '2026-01-02T03:04:05.000Z' },
+      },
+      { name: 'demo-vm', type: 'vm', vmid: 4021, host: 'pve1', creator: { username: 'other-user' } },
+    ],
+  };
+  const dest = path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-test-')), 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  assert.deepEqual(loaded.guests.find((g) => g.name === 'web-lxc')?.creator, {
+    uid: 'uid-test-user',
+    username: 'test-user',
+    since: '2026-01-02T03:04:05.000Z',
+  });
+  const noSince = loaded.guests.find((g) => g.name === 'demo-vm')?.creator;
+  assert.ok(noSince && !('since' in noSince), 'a creator with no since must round-trip without a since key at all');
 });
 
 test('saveInventory/loadInventory round-trips insecureBackendTls: false (not just true/unset) for hosts, guests, and external_sites', () => {
@@ -935,14 +965,17 @@ test('opening a pre-existing database without the created_by_uid/created_by_user
 
   const updated: Inventory = {
     ...inv,
-    guests: inv.guests.map((g) => ({ ...g, creator: { uid: 'uid-test-user', username: 'test-user' } })),
+    guests: inv.guests.map((g) => ({
+      ...g,
+      creator: { uid: 'uid-test-user', username: 'test-user', since: '2026-01-02T03:04:05.000Z' },
+    })),
   };
   saveInventory(dest, updated);
   const reloaded = loadInventory(dest);
   assert.deepEqual(
     reloaded.guests[0].creator,
-    { uid: 'uid-test-user', username: 'test-user' },
-    'the migrated created_by_uid/created_by_username columns must actually be writable/readable'
+    { uid: 'uid-test-user', username: 'test-user', since: '2026-01-02T03:04:05.000Z' },
+    'the migrated created_by_uid/created_by_username/created_by_since columns must actually be writable/readable'
   );
 });
 

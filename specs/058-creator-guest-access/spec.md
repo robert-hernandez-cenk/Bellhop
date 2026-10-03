@@ -192,7 +192,9 @@ apply it and confirm the matching guests now carry their creators.
 - **FR-006**: FR-004 MUST apply everywhere guest access is decided: the
   inventory and guest-status views, every guest-scoped action and route check,
   and job visibility and control (list, view, live log stream, cancel, answer,
-  dismiss) for jobs whose target is that guest.
+  dismiss) for jobs whose target is that guest, for jobs that started at or
+  after the creator was recorded; never for a target name that is also a host
+  name.
 - **FR-007**: While an admin is impersonating a group, creator access MUST be
   ignored for every check.
 - **FR-008**: A guest's creator record MUST survive inventory sync, repeat
@@ -224,7 +226,9 @@ apply it and confirm the matching guests now carry their creators.
 ### Key Entities
 
 - **Guest creator record**: attached to one guest; holds the creator's stable
-  identity-provider user identifier (optional) and login name as recorded.
+  identity-provider user identifier (optional), login name as recorded, and
+  the time the record was written (optional; without it the creator gets no
+  job visibility).
   Lives and dies with the guest's inventory entry.
 - **Caller identity**: the signed-in person on a request — login name, groups,
   and (when the identity provider supplies it) a stable user identifier;

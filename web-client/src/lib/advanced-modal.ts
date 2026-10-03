@@ -43,7 +43,7 @@ const ACCESS_FIELD_LABELS: Record<AccessField, AdvancedFieldLabel> = {
 // (src/lib/inventory.ts's GuestCreatorSchema) -- undefined for a guest
 // created another way (issue #58).
 export interface GeneralTabInput {
-  creator?: { uid?: string; username: string };
+  creator?: { uid?: string; username: string; since?: string };
 }
 
 export function renderedAdvancedFields(

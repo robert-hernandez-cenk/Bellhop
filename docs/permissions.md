@@ -66,6 +66,15 @@ them, creator or not. This mirrors the ordinary intersection rule above —
 one restrictive group rule can only narrow access, and creator access never
 overrides an explicit block.
 
+**Jobs on the guest.** The creator also sees, and can cancel or answer, the
+jobs that target their guest — but only jobs that started once the creator
+was recorded. If a guest is deleted and a new one is later created under the
+same name, the new guest's creator does not see the old guest's jobs. A guest
+whose name is the same as a host's name gets no job access this way at all,
+since jobs that create guests are recorded against the host: the creator
+still sees the guest itself, but jobs on that name follow the group rules
+alone.
+
 **Impersonation ignores it.** While an admin is viewing the app as an
 impersonated group, creator access is switched off entirely, even for a
 guest that admin themselves created — the impersonated view must show
@@ -85,7 +94,9 @@ dev/test identity, for example).
 inventory entry: it survives `sync-inventory`, a repeat write of the same
 guest, and `migrate-guest` (which only rewrites host/VMID/IP), and it is
 gone once the guest leaves the inventory — a different guest later created
-under the same name never inherits it. It cannot be set, changed, or
+under the same name never inherits it, nor the jobs that ran on the old one.
+The record notes when it was written; that time is what limits the jobs the
+creator sees. It cannot be set, changed, or
 cleared through the Dashboard's guest edit or the MCP server's `edit_guest`
 tool; any attempt to send a creator field there is ignored.
 

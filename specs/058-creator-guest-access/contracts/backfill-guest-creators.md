@@ -16,11 +16,16 @@ bellhop backfill-guest-creators [--map <old=new>]... [--apply]
 
 A job row is a candidate when `command` is one of `create-lxc`, `create-vm`,
 `install-app`, `deploy-vpn-gateway`, `status` is `success`, and
-`triggered_by_username` is non-null and not `mcp`.
+`triggered_by_username` is non-null, not `mcp`, and not the local operator's
+username (`WEB_UI_LOCAL_USER`, default `local`) -- neither is a real person.
 
 Guest name: `hostname` (create-lxc, install-app) or `name` (create-vm,
 deploy-vpn-gateway) from `args_json`; host: `host`; VMID: `resolveMid(inventory,
 host, Number(mid)).vmid`.
+
+Each recorded creator is `{ uid?, username, since }`, `since` being the
+creating job's `startedAt`: the creator's job lift then covers that job and
+later ones only.
 
 ## Output (dry run, example values)
 
@@ -36,4 +41,7 @@ Dry run -- re-run with --apply to write these.
 ```
 
 With `--apply`, the first line reads `Recorded creators for N guest(s):` and the
-trailer is omitted. Exit code 0 either way; skips are informational.
+trailer is omitted. `--apply` re-checks each update against the inventory as
+reloaded just before writing; one whose guest has gained a creator or left the
+inventory meanwhile is not written and is listed under the skips
+(`already-has-creator` or `no-matching-guest`) instead. Exit code 0 either way; skips are informational.

@@ -1217,22 +1217,37 @@ test('completeUtf8Length excludes only a torn trailing multi-byte character, nev
 // issue #58 (US1): a job whose target is a guest the caller created is
 // visible and controllable under an allow-list group that doesn't list it.
 // app-users names only host pve1; web-lxc was created by test-user.
+// `since` predates every job these tests start, so the job lift applies
+// (it only covers jobs that started at or after the creator was recorded).
+const EARLY_SINCE = '2000-01-01T00:00:00.000Z';
 const creatorInventory: Inventory = {
   domain: 'example.com',
   hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
-  guests: [{ name: 'web-lxc', type: 'lxc', vmid: 4005, host: 'pve1', creator: { uid: 'uid-test-user', username: 'test-user' } }],
+  guests: [
+    {
+      name: 'web-lxc',
+      type: 'lxc',
+      vmid: 4005,
+      host: 'pve1',
+      creator: { uid: 'uid-test-user', username: 'test-user', since: EARLY_SINCE },
+    },
+  ],
 };
 
-function creatorFixture(impersonationStore: ImpersonationStore = new Map()) {
+function creatorFixture(
+  impersonationStore: ImpersonationStore = new Map(),
+  opts: { inventory?: Inventory; target?: string } = {}
+) {
+  const fixtureInventory = opts.inventory ?? creatorInventory;
   const jobStore = new JobStore(':memory:');
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
-  saveInventory(inventoryPath, creatorInventory);
+  saveInventory(inventoryPath, fixtureInventory);
   savePermissionGroup(inventoryPath, 'app-users', { mode: 'allow-list', resources: [{ type: 'host', name: 'pve1' }] });
   // A fresh copy: buildApp's /api reload mutates this object in place.
-  const inv: Inventory = structuredClone(creatorInventory);
+  const inv: Inventory = structuredClone(fixtureInventory);
   const app = buildApp({
     inventory: inv,
     baseSsh: ssh,
@@ -1250,7 +1265,7 @@ function creatorFixture(impersonationStore: ImpersonationStore = new Map()) {
   const id = jobRunner.enqueue({
     command: 'guest-power',
     category: 'maintenance',
-    target: 'web-lxc',
+    target: opts.target ?? 'web-lxc',
     argsJson: '{}',
     run: async () => {
       await gate;
@@ -1358,6 +1373,148 @@ test('WS /ws/jobs/:id refuses an admin creator who is impersonating app-users', 
     assert.equal(outcome, 'refused');
   } finally {
     server.close();
+    await settle();
+  }
+});
+
+// Final review (#58), finding 1: a job's target is an untyped name, and the
+// guest-creating commands target a *host*. A restricted user who creates a
+// guest named like a host they cannot access must not see that host's jobs.
+// app-users lists only host pve1; test-user created a guest named 'pve2',
+// which is also a real host here.
+const hostNamedGuestInventory: Inventory = {
+  domain: 'example.com',
+  hosts: [
+    { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' },
+    { name: 'pve2', ssh_target: 'pve2.local', ssh_user: 'root' },
+  ],
+  guests: [
+    {
+      name: 'pve2',
+      type: 'lxc',
+      vmid: 4006,
+      host: 'pve1',
+      creator: { uid: 'uid-test-user', username: 'test-user', since: EARLY_SINCE },
+    },
+  ],
+};
+
+const JOB_ROUTES = (id: number) =>
+  [
+    ['get', `/api/jobs/${id}`],
+    ['post', `/api/jobs/${id}/answer`],
+    ['post', `/api/jobs/${id}/dismiss-prompt`],
+    ['post', `/api/jobs/${id}/cancel`],
+  ] as const;
+
+test("jobs: a guest named like a host gives its creator no access to that host's jobs (list, get, cancel, answer, dismiss)", async () => {
+  const { app, jobStore, id, settle } = creatorFixture(new Map(), { inventory: hostNamedGuestInventory, target: 'pve2' });
+  try {
+    const list = await asUser(request(app).get('/api/jobs'), 'test-user', 'app-users', 'uid-test-user');
+    assert.deepEqual(list.body, []);
+    for (const [method, url] of JOB_ROUTES(id)) {
+      const res = await asUser(request(app)[method](url), 'test-user', 'app-users', 'uid-test-user');
+      assert.equal(res.status, 404, `${method} ${url}`);
+    }
+    assert.notEqual(jobStore.get(id)?.status, 'cancelled');
+  } finally {
+    await settle();
+  }
+});
+
+test('WS /ws/jobs/:id refuses the creator of a guest named like a host for a job targeting that host', async () => {
+  const { jobStore, jobLog, jobRunner, inventoryPath, inv, id, settle } = creatorFixture(new Map(), {
+    inventory: hostNamedGuestInventory,
+    target: 'pve2',
+  });
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), undefined, inv);
+  try {
+    const outcome = await connect(
+      port,
+      { 'x-authentik-username': 'test-user', 'x-authentik-groups': 'app-users', 'x-authentik-uid': 'uid-test-user' },
+      id
+    );
+    assert.equal(outcome, 'refused');
+  } finally {
+    server.close();
+    await settle();
+  }
+});
+
+// Final review (#58), finding 2: a creator record carries `since`, and the
+// job lift only covers jobs that started at or after it -- so reusing a
+// deleted guest's name never exposes the old guest's job history.
+function withCreatorSince(since: string | undefined): Inventory {
+  const inv = structuredClone(creatorInventory);
+  const creator = { uid: 'uid-test-user', username: 'test-user', ...(since ? { since } : {}) };
+  inv.guests = [{ ...inv.guests[0], creator }];
+  return inv;
+}
+
+const LATE_SINCE = '2999-01-01T00:00:00.000Z';
+
+test('jobs: a job that started before the creator was recorded (a reused name) stays hidden', async () => {
+  const { app, id, settle } = creatorFixture(new Map(), { inventory: withCreatorSince(LATE_SINCE) });
+  try {
+    const list = await asUser(request(app).get('/api/jobs'), 'test-user', 'app-users', 'uid-test-user');
+    assert.deepEqual(list.body, []);
+    for (const [method, url] of JOB_ROUTES(id)) {
+      const res = await asUser(request(app)[method](url), 'test-user', 'app-users', 'uid-test-user');
+      assert.equal(res.status, 404, `${method} ${url}`);
+    }
+  } finally {
+    await settle();
+  }
+});
+
+test('WS /ws/jobs/:id refuses a job that started before the creator was recorded', async () => {
+  const { jobStore, jobLog, jobRunner, inventoryPath, inv, id, settle } = creatorFixture(new Map(), {
+    inventory: withCreatorSince(LATE_SINCE),
+  });
+  const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), undefined, inv);
+  try {
+    const outcome = await connect(
+      port,
+      { 'x-authentik-username': 'test-user', 'x-authentik-groups': 'app-users', 'x-authentik-uid': 'uid-test-user' },
+      id
+    );
+    assert.equal(outcome, 'refused');
+  } finally {
+    server.close();
+    await settle();
+  }
+});
+
+test('jobs: a job that started at the moment the creator was recorded, or later, is visible', async () => {
+  const { app, jobStore, inventoryPath, id, settle } = creatorFixture(new Map(), { inventory: withCreatorSince(LATE_SINCE) });
+  try {
+    await waitFor(() => jobStore.get(id)?.startedAt != null);
+    // Re-record the creator at exactly the job's start: "at or after" holds.
+    // Every /api request reloads the inventory from disk.
+    saveInventory(inventoryPath, withCreatorSince(jobStore.get(id)!.startedAt!));
+    const list = await asUser(request(app).get('/api/jobs'), 'test-user', 'app-users', 'uid-test-user');
+    assert.deepEqual(list.body.map((j: any) => j.id), [id]);
+    const detail = await asUser(request(app).get(`/api/jobs/${id}`), 'test-user', 'app-users', 'uid-test-user');
+    assert.equal(detail.status, 200);
+  } finally {
+    await settle();
+  }
+});
+
+test('jobs: a creator recorded without `since` still sees the guest but gets no job lift', async () => {
+  const { app, id, settle } = creatorFixture(new Map(), { inventory: withCreatorSince(undefined) });
+  try {
+    const inventoryRes = await asUser(request(app).get('/api/inventory'), 'test-user', 'app-users', 'uid-test-user');
+    assert.equal(inventoryRes.status, 200);
+    assert.ok(inventoryRes.body.guests.some((g: any) => g.name === 'web-lxc'), 'the creator still sees the guest itself');
+
+    const list = await asUser(request(app).get('/api/jobs'), 'test-user', 'app-users', 'uid-test-user');
+    assert.deepEqual(list.body, []);
+    for (const [method, url] of JOB_ROUTES(id)) {
+      const res = await asUser(request(app)[method](url), 'test-user', 'app-users', 'uid-test-user');
+      assert.equal(res.status, 404, `${method} ${url}`);
+    }
+  } finally {
     await settle();
   }
 });

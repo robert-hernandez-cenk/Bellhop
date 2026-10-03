@@ -26,9 +26,12 @@ import { reqStr, optStr, reqInt, optInt, flag, portStr } from './fields.ts';
 // `uid: actor.uid`, so an actor with no uid (a dev/test identity) records a
 // creator with no `uid` key rather than one holding `undefined` -- this
 // repo's tests compare with node:assert/strict, where the two differ.
-export function creatorFromActor(actor: Actor | undefined): GuestCreator | undefined {
+// `since` is when this record is written (`now`, deps.now in an apply so
+// tests can pin it): the job lift in src/web/routes/jobs.ts only covers
+// jobs that started at or after it (#58 final review).
+export function creatorFromActor(actor: Actor | undefined, now: Date = new Date()): GuestCreator | undefined {
   if (!actor) return undefined;
-  return { username: actor.username, ...(actor.uid ? { uid: actor.uid } : {}) };
+  return { username: actor.username, ...(actor.uid ? { uid: actor.uid } : {}), since: now.toISOString() };
 }
 
 function upsertGuestEntry(guests: GuestEntry[], entry: GuestEntry): GuestEntry[] {
@@ -173,7 +176,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
         ip: stripCidr(result.mid.ip),
         subdomains: parseSubdomains(i.subdomains),
         insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
-        creator: creatorFromActor(deps.actor),
+        creator: creatorFromActor(deps.actor, deps.now?.()),
       });
     },
   },
@@ -214,7 +217,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
           ip: stripCidr(result.mid.ip),
           subdomains: parseSubdomains(i.subdomains),
           insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
-          creator: creatorFromActor(deps.actor),
+          creator: creatorFromActor(deps.actor, deps.now?.()),
         });
       } finally {
         await grantCreatorAccess(deps.ssh, deps.inventory, i.host, result.mid.vmid, deps.actor);
@@ -262,7 +265,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
         app: appSlugFor(i.app),
         appSource: i.appSource?.kind === 'custom' ? 'custom' : undefined,
         insecureBackendTls: i.insecureBackendTls === true ? true : undefined,
-        creator: creatorFromActor(deps.actor),
+        creator: creatorFromActor(deps.actor, deps.now?.()),
       });
     },
   },
@@ -301,7 +304,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
       return [text, result.createCommand].filter(Boolean).join('\n');
     },
     apply: async (i, deps) => {
-      await runDeployVpnGateway({ ...(i as any), apply: true, creator: creatorFromActor(deps.actor) }, deps);
+      await runDeployVpnGateway({ ...(i as any), apply: true, creator: creatorFromActor(deps.actor, deps.now?.()) }, deps);
     },
   },
   'configure-guest': {
