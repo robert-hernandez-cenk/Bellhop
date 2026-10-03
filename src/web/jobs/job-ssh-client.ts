@@ -1,5 +1,10 @@
 import type { ExecResult, SSHClient, SshTarget } from '../../lib/ssh-client.ts';
 import { compilePromptHints, matchExpectedPrompt } from './prompt-matcher.ts';
+import { OutputActivity } from './output-activity.ts';
+
+// Moved to output-activity.ts (issue #52); re-exported for existing importers
+// such as src/mcp/elicitation.ts.
+export { ANSI_ESCAPE } from './output-activity.ts';
 
 // Which of the three detection tiers produced a pause. 'expected' means the
 // trailing output matched one of the app script's own pre-scanned `read -p`
@@ -40,15 +45,6 @@ export interface JobSSHClientOptions {
 
 const QUESTION_MARK = /\?\s*:?\s*$/;
 const YES_NO_HINT = /[(<[]\s*y\s*\/\s*n\s*[)>\]]/i;
-// Same escape-sequence pattern useJobStream.ts's stripAnsi() strips for
-// display (duplicated, not shared -- web-client is a fully separate build,
-// see CLAUDE.md's "sortInventoryForFile" precedent for this pattern).
-// Community-scripts' whiptail-based build.func emits real color/cursor
-// control codes even over a non-interactive-looking pty, so a raw prompt
-// buffer needs this stripped before either matching against it or handing
-// it to the operator as promptText.
-export const ANSI_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][A-Za-z0-9]|[78]|[@-Z\\^_])/g;
-const TRAILING_TAIL_CHARS = 200;
 
 // Three cumulative silence thresholds, checked by one self-re-arming timer.
 //
@@ -69,7 +65,7 @@ const DEFAULT_SILENCE_MS = 30_000;
 const DEFAULT_STALL_MS = 5 * 60 * 1000;
 
 // 'expected' tests the pre-scanned hints only; 'all' adds the two heuristics;
-// 'stall' escalates whatever is in the buffer unconditionally.
+// 'stall' escalates the last meaningful output unconditionally.
 type TierMode = 'expected' | 'all' | 'stall';
 interface Tier {
   // Delay from the previous tier, not from the last chunk -- the tiers are
@@ -93,19 +89,26 @@ export class JobSSHClient implements SSHClient {
   private onPromptCleared?: () => void;
   private scheduleCheck: (fn: () => void, ms: number) => { cancel: () => void };
 
-  private buffer = '';
+  // The meaningful output seen so far, with spinner redraws filtered out --
+  // what every tier tests, and what decides whether a chunk counts as
+  // activity at all. Replaced the raw output buffer in issue #52.
+  private activity = new OutputActivity();
   private paused = false;
   private pendingCheck: { cancel: () => void } | undefined;
   private currentWrite: ((text: string) => void) | undefined;
-  // buffer.length at the moment fire() last paused watching -- resume()
-  // slices the buffer down to this point rather than blanking it outright,
-  // so output that arrived *during* the pause (see watchChunk) survives
-  // into the next detection cycle instead of being discarded along with
-  // the already-reported prompt text ahead of it. Issue #160 Finding 1.
+  // activity.length at the moment fire() last paused watching -- resume()
+  // consumes the transcript up to this point rather than blanking it
+  // outright, so output that arrived *during* the pause (see watchChunk)
+  // survives into the next detection cycle instead of being discarded
+  // along with the already-reported prompt text ahead of it. Issue #160
+  // Finding 1. trimmedAtFire records activity.trimmedBy at the same moment,
+  // since the transcript is bounded and may lose its front during a long
+  // pause, which shifts every offset into it (issue #52).
   private firedAtLength = 0;
+  private trimmedAtFire = 0;
   // The text of the most recent fire(), regardless of origin -- the
   // fallback stallText() reaches for when resume() leaves nothing new in
-  // the buffer, so a re-escalation to the stall tier never renders an
+  // the transcript, so a re-escalation to the stall tier never renders an
   // empty banner. See stallText() and resume(). Issue #160 Finding 1.
   private lastFiredText: string | undefined;
 
@@ -165,33 +168,37 @@ export class JobSSHClient implements SSHClient {
 
   // A single JobSSHClient instance is reused across every exec() call an
   // install-app job makes (the vmid pre-check, the install script itself,
-  // an optional NFS-attach follow-up) -- clears any leftover buffered text
-  // or paused state from a previous call before a new one starts, so a
-  // second exec() never inherits stale detection state from the first.
+  // an optional NFS-attach follow-up) -- clears any leftover output, recent
+  // lines, or paused state from a previous call before a new one starts, so
+  // a second exec() never inherits stale detection state from the first.
   private resetWatchState(): void {
-    this.buffer = '';
+    this.activity = new OutputActivity();
     this.paused = false;
     this.pendingCheck?.cancel();
     this.pendingCheck = undefined;
     this.tierIndex = 0;
     this.currentWrite = undefined;
     this.firedAtLength = 0;
+    this.trimmedAtFire = 0;
     this.lastFiredText = undefined;
   }
 
-  // Output keeps accumulating into the buffer even while paused (Finding 1):
-  // the process the operator is watching doesn't stop running just because
-  // detection is paused, and a real prompt that prints while an earlier,
-  // unrelated pause is still awaiting a dismiss/answer must not be silently
-  // dropped -- resume() is what surfaces it. What paused does suppress is
-  // arming/re-arming a tier: firing a second detection on top of a pause
-  // already awaiting the operator would be confusing, and resume() is
+  // Output keeps accumulating into the transcript even while paused (Finding
+  // 1): the process the operator is watching doesn't stop running just
+  // because detection is paused, and a real prompt that prints while an
+  // earlier, unrelated pause is still awaiting a dismiss/answer must not be
+  // silently dropped -- resume() is what surfaces it. What paused does
+  // suppress is arming/re-arming a tier: firing a second detection on top of
+  // a pause already awaiting the operator would be confusing, and resume() is
   // responsible for restarting the watch once the operator has acted.
   private watchChunk(chunk: string): void {
-    this.buffer += chunk;
+    const meaningful = this.activity.push(chunk);
     if (this.paused) return;
-    // Any new output means the process is not blocked -- rewind to tier 0.
-    this.armTier(0);
+    // New meaningful output means the process is not blocked -- rewind to
+    // tier 0. A chunk that only redraws a recent line (a spinner frame) is
+    // silence, not activity: before issue #52 every frame re-armed tier 0,
+    // so a spinner that never stopped kept every tier from ever running.
+    if (meaningful) this.armTier(0);
   }
 
   private armTier(index: number): void {
@@ -211,9 +218,9 @@ export class JobSSHClient implements SSHClient {
     const trailing = this.trailingText();
     // Checked at every tier so a hint match always outranks a heuristic or
     // stall verdict. In practice this only ever fires at tier 0: trailingText()
-    // is a pure function of this.buffer, and any buffer change rearms at tier
-    // 0 (see watchChunk), so a hint that misses here sees identical text at
-    // tiers 1/2 and cannot match there either.
+    // is a pure function of the meaningful transcript, and any meaningful
+    // change rearms at tier 0 (see watchChunk), so a hint that misses here
+    // sees identical text at tiers 1/2 and cannot match there either.
     const matchedIndex = matchExpectedPrompt(trailing, this.compiledPrompts);
     if (matchedIndex !== null) {
       this.fire(trailing, 'expected', matchedIndex);
@@ -234,12 +241,13 @@ export class JobSSHClient implements SSHClient {
     this.paused = true;
     this.pendingCheck?.cancel();
     this.pendingCheck = undefined;
-    // Remember how much of the buffer this detection already covers, and
-    // what it said, so resume() can drop the now-stale prefix without
+    // Remember how much of the transcript this detection already covers,
+    // and what it said, so resume() can drop the now-stale prefix without
     // losing output that arrives during the pause, and stallText() has
     // something to fall back to if nothing new ever does. Issue #160
     // Finding 1.
-    this.firedAtLength = this.buffer.length;
+    this.firedAtLength = this.activity.length;
+    this.trimmedAtFire = this.activity.trimmedBy;
     this.lastFiredText = text;
     const write = this.currentWrite ?? (() => {});
     this.onPromptDetected?.(text, this.expectedPrompts, write, () => this.resume(), origin, matchedIndex);
@@ -247,18 +255,15 @@ export class JobSSHClient implements SSHClient {
 
   // A stall is the one origin whose text is not itself prompt-shaped, so the
   // trailing partial line is often empty (output that ended with a newline and
-  // then stopped). Falling back to the last non-empty line is what makes the
-  // escalation banner say something useful instead of nothing.
+  // then stopped). Falling back to the last non-empty meaningful line is what
+  // makes the escalation banner say something useful instead of nothing --
+  // and, since redraws never enter the transcript, never a spinner frame.
   private stallText(): string {
     const trailing = this.trailingText();
     if (trailing.trim().length > 0) return trailing;
-    const clean = this.buffer.replace(ANSI_ESCAPE, '');
-    const lines = clean.split(/[\r\n]+/).filter((line) => line.trim().length > 0);
-    const last = lines[lines.length - 1];
-    if (last !== undefined) {
-      return last.length > TRAILING_TAIL_CHARS ? last.slice(-TRAILING_TAIL_CHARS) : last;
-    }
-    // Nothing at all has arrived since resume() last trimmed the buffer --
+    const last = this.activity.lastLine();
+    if (last.length > 0) return last;
+    // Nothing at all has arrived since resume() last consumed the transcript --
     // without this fallback, a dismissed/answered prompt that is never
     // followed by further output would eventually re-escalate to the stall
     // tier with an empty banner, exactly the outcome this tier exists to
@@ -270,18 +275,12 @@ export class JobSSHClient implements SSHClient {
     return '';
   }
 
+  // The most recent meaningful line, ANSI-stripped, unless a newline ended
+  // it. A line ended by a bare \r still counts: a `read -p` prompt prints no
+  // ending, and the next spinner frame's \r is what "overwrites" it while the
+  // process is in fact blocked on it (issue #52). See OutputActivity.
   private trailingText(): string {
-    // Strip ANSI escapes before finding the line boundary and testing --
-    // a pty's colorized/cursor-controlled output (see Finding 1) can carry
-    // escape sequences right after the visible prompt text that would
-    // otherwise defeat the trailing-`?` match or land in the operator-
-    // facing promptText verbatim. A bare \r (a redrawn-in-place progress
-    // line, common in build.func output) is treated as a line boundary the
-    // same way useJobStream.ts's splitLines() already does for display.
-    const clean = this.buffer.replace(ANSI_ESCAPE, '');
-    const lastBoundary = Math.max(clean.lastIndexOf('\n'), clean.lastIndexOf('\r'));
-    const tail = lastBoundary === -1 ? clean : clean.slice(lastBoundary + 1);
-    return tail.length > TRAILING_TAIL_CHARS ? tail.slice(-TRAILING_TAIL_CHARS) : tail;
+    return this.activity.candidate();
   }
 
   // Clears paused state and resumes watching -- called both when an answer
@@ -290,7 +289,7 @@ export class JobSSHClient implements SSHClient {
   // whether something was written to the channel first.
   //
   // Two things this deliberately does NOT do (Finding 1, issue #160):
-  //   - It does not blank the buffer outright. Slicing off only the
+  //   - It does not blank the transcript outright. Consuming only the
   //     already-fired prefix (firedAtLength) keeps whatever arrived during
   //     the pause -- e.g. a real prompt that printed while an unrelated
   //     false positive was still awaiting a dismiss -- visible to the next
@@ -306,8 +305,14 @@ export class JobSSHClient implements SSHClient {
   //     going permanently quiet.
   private resume(): void {
     this.paused = false;
-    this.buffer = this.buffer.slice(this.firedAtLength);
+    // consume() also forgets the recent lines, so a prompt the script
+    // re-asks verbatim (after an invalid answer) counts as new output
+    // rather than a redraw. Front trimming during the pause shifts the
+    // fired offset left by however much was trimmed.
+    const trimmedSinceFire = this.activity.trimmedBy - this.trimmedAtFire;
+    this.activity.consume(Math.max(0, this.firedAtLength - trimmedSinceFire));
     this.firedAtLength = 0;
+    this.trimmedAtFire = 0;
     this.armTier(0);
     this.onPromptCleared?.();
   }
