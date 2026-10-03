@@ -83,13 +83,13 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ### Tests (write first, must fail)
 
-- [ ] T011 [P] [US2] Extend `test/lib/pve-acl.test.ts`:
+- [x] T011 [P] [US2] Extend `test/lib/pve-acl.test.ts`:
   - `pveUserIdFor` skips with the exact contract messages for a non-OpenID realm (`realm-pve.json`), a `subject` claim, a null or missing claim, the email claim with no email, and a username or email containing whitespace, `:` or `/`
   - `grantCreatorAccess` returns and logs `off`, `no-actor`, and `skipped` (missing realm: exit 255 with `realm-missing.stderr.txt`, or unparseable output)
   - `grantCreatorAccess` returns `failed` when the grant script exits non-zero (stderr from `user-missing.stderr.txt`-style output), and the warning contains stderr and the full script
   - no path throws, including when `ssh.exec` itself rejects
   - capture log output with the repo's existing console-capture helper
-- [ ] T012 [P] [US2] Extend `test/operations/provisioning.test.ts`:
+- [x] T012 [P] [US2] Extend `test/operations/provisioning.test.ts`:
   - with the realm unset, a create-vm apply sends no realm or grant command and logs the "off" line once
   - with no `actor` (the MCP path), it logs the no-actor line and sends no grant
   - a failing grant script leaves the apply resolved (the job succeeds) and the guest recorded in inventory
@@ -97,7 +97,7 @@ description: "Task list for Proxmox access for VM creators (#53)"
 
 ### Implementation
 
-- [ ] T013 [US2] Complete `pveUserIdFor`'s skip branches and `grantCreatorAccess`'s off, no-actor, skipped and failed handling in `src/lib/pve-acl.ts`, using the exact messages in `contracts/pve-acl.md`. Wrap the remote calls so a rejected `exec` becomes `failed` (makes T011 and T012 pass)
+- [x] T013 [US2] Complete `pveUserIdFor`'s skip branches and `grantCreatorAccess`'s off, no-actor, skipped and failed handling in `src/lib/pve-acl.ts`, using the exact messages in `contracts/pve-acl.md`. Wrap the remote calls so a rejected `exec` becomes `failed` (makes T011 and T012 pass)
 
 **Checkpoint**: Commit `Never fail a VM creation over the creator grant (#53, US2)`.
 

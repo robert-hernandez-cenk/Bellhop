@@ -70,8 +70,11 @@ export async function copyGuestAcls(
 - Unsupported claim: `Skipping Proxmox creator grant: realm '<realm>' names users by '<claim|subject (default)>' -- set its username claim to 'username' or 'email' in Proxmox (Datacenter > Permissions > Realms)`
 - No email: `Skipping Proxmox creator grant: realm '<realm>' names users by email, but no email is known for '<username>'`
 - Unsafe ID: `Skipping Proxmox creator grant: '<name>' can't be part of a Proxmox user ID (contains whitespace, ':' or '/')`
+- Realm read failed (non-zero exit, or exit 0 with output that fails `RealmInfoSchema`, `<stderr>` then reading `unexpected output`): `Skipping Proxmox creator grant: couldn't read realm '<realm>' (exit <n>): <stderr> -- check that pveUserRealm names an existing OpenID realm (bellhop set-config pveUserRealm <realm> --apply, or the web UI's Settings page)`
+- Realm read failed (the remote call itself threw, e.g. `ssh.exec` rejected -- no exit code to report): `Skipping Proxmox creator grant: couldn't read realm '<realm>': <error message> -- check that pveUserRealm names an existing OpenID realm (bellhop set-config pveUserRealm <realm> --apply, or the web UI's Settings page)`
 - Granted: `Granted <role> on VM <vmid> to <userid>`
-- Failed: `Failed to grant <role> on VM <vmid> to <userid> (exit <n>): <stderr> -- run on <host> by hand:\n<script>`
+- Failed (grant script exited non-zero): `Failed to grant <role> on VM <vmid> to <userid> (exit <n>): <stderr> -- run on <host> by hand:\n<script>`
+- Failed (the remote call itself threw -- no exit code to invent): `Failed to grant <role> on VM <vmid> to <userid>: <error message> -- run on <host> by hand:\n<script>`
 
 ## Settings contract
 

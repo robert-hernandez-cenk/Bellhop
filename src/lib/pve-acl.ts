@@ -128,7 +128,9 @@ export async function grantCreatorAccess(
     const parsed = read.code === 0 ? RealmInfoSchema.safeParse(safeJson(read.stdout)) : undefined;
     if (!parsed?.success) {
       const detail = read.code !== 0 ? (read.stderr || read.stdout).trim() : 'unexpected output';
-      logWarn(`Skipping Proxmox creator grant: couldn't read realm '${realm}' (exit ${read.code}): ${detail}`);
+      logWarn(
+        `Skipping Proxmox creator grant: couldn't read realm '${realm}' (exit ${read.code}): ${detail} -- check that pveUserRealm names an existing OpenID realm (bellhop set-config pveUserRealm <realm> --apply, or the web UI's Settings page)`
+      );
       return 'skipped';
     }
     const id = pveUserIdFor(realm, parsed.data, actor);
@@ -150,10 +152,12 @@ export async function grantCreatorAccess(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (script && userid) {
-      logWarn(`Failed to grant ${role} on VM ${vmid} to ${userid} (exit 1): ${message} -- run on ${host} by hand:\n${script}`);
+      logWarn(`Failed to grant ${role} on VM ${vmid} to ${userid}: ${message} -- run on ${host} by hand:\n${script}`);
       return 'failed';
     }
-    logWarn(`Skipping Proxmox creator grant: couldn't read realm '${realm}': ${message}`);
+    logWarn(
+      `Skipping Proxmox creator grant: couldn't read realm '${realm}': ${message} -- check that pveUserRealm names an existing OpenID realm (bellhop set-config pveUserRealm <realm> --apply, or the web UI's Settings page)`
+    );
     return 'skipped';
   }
 }

@@ -481,3 +481,78 @@ test('create-vm apply still grants when recording the guest fails, and the job e
   );
   assert.equal(d.ssh.history.at(-1)?.command, ALICE_GRANT_SCRIPT('PVEVMAdmin'));
 });
+
+// --- issue #53, US2: the creator grant never breaks VM creation (T012) ---
+
+test('create-vm apply with the realm unset sends no realm/grant command and logs the off line once', async () => {
+  const d = deps();
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  const { text } = await withCapturedConsole(() =>
+    op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm' }), d)
+  );
+  const offLines = text.split('\n').filter((line) => line.includes('Proxmox creator grant is off'));
+  assert.equal(offLines.length, 1);
+  const history = (d.ssh as FakeSSHClient).history;
+  assert.ok(!history.some((c) => c.command.includes('/access/domains/') || c.command.includes('pveum')));
+});
+
+test('create-vm apply with a realm set but no actor (the MCP path) logs the no-actor line and sends no grant command', async () => {
+  const d = grantDeps({ ...inventory, pveUserRealm: 'authentik' });
+  d.actor = undefined;
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  const { text } = await withCapturedConsole(() =>
+    op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm' }), d)
+  );
+  assert.match(text, /No Proxmox creator grant for VM 4006: no signed-in user \(only web UI jobs carry one\)/);
+  assert.ok(!d.ssh.history.some((c) => c.command.includes('/access/domains/') || c.command.includes('pveum')));
+});
+
+const userMissingStderrForGrant = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'proxmox', 'user-missing.stderr.txt'),
+  'utf8'
+).trim();
+
+test('create-vm apply leaves the job resolved and the guest recorded even when the grant script fails', async () => {
+  const d = grantDeps({ ...inventory, pveUserRealm: 'authentik' });
+  d.ssh = new FakeSSHClient((_t, _u, command) => {
+    if (command.includes('/access/domains/')) return { stdout: realmFixture, stderr: '', code: 0 };
+    if (command.includes('pveum')) return { stdout: '', stderr: userMissingStderrForGrant, code: 2 };
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  const op = PROVISIONING_OPERATIONS['create-vm'];
+  const { text } = await withCapturedConsole(() =>
+    op.apply(parseOperationInput(op, { host: 'pve1', mid: 6, name: 'alice-vm' }), d)
+  );
+  assert.match(text, /Failed to grant PVEVMAdmin on VM 4006 to alice@example\.com@authentik \(exit 2\)/);
+  const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'alice-vm');
+  assert.ok(saved, 'the guest must still be recorded in inventory despite the grant failure');
+});
+
+test('create-lxc and install-app apply send no realm/grant command even with the realm set (FR-016)', async () => {
+  const lxcDeps = grantDeps({ ...inventory, pveUserRealm: 'authentik' });
+  lxcDeps.ssh = new FakeSSHClient(defaultResponder);
+  const lxcOp = PROVISIONING_OPERATIONS['create-lxc'];
+  await withCapturedConsole(() =>
+    lxcOp.apply(
+      parseOperationInput(lxcOp, { host: 'pve1', mid: 7, hostname: 'no-grant-lxc', template: 'debian-12' }),
+      lxcDeps
+    )
+  );
+  assert.ok(!lxcDeps.ssh.history.some((c) => c.command.includes('/access/domains/') || c.command.includes('pveum')));
+
+  const appDeps = grantDeps({ ...inventory, pveUserRealm: 'authentik' });
+  appDeps.ssh = new FakeSSHClient(defaultResponder);
+  const appOp = PROVISIONING_OPERATIONS['install-app'];
+  await withCapturedConsole(() =>
+    appOp.apply(
+      parseOperationInput(appOp, {
+        app: 'https://example.com/myapp-install.sh',
+        host: 'pve1',
+        mid: 7,
+        hostname: 'url-app-lxc',
+      }),
+      appDeps
+    )
+  );
+  assert.ok(!appDeps.ssh.history.some((c) => c.command.includes('/access/domains/') || c.command.includes('pveum')));
+});
