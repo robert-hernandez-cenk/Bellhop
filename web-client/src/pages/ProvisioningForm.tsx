@@ -7,7 +7,7 @@ import { AppCheckInput, type CheckStatus } from '../components/AppCheckInput';
 import { CheckStatusBadge } from '../components/CheckStatusBadge';
 import { PageDescription } from '../components/PageDescription';
 import { IconExternalLink } from '../components/icons';
-import { nextAvailableMid, vmidForMid } from '../lib/mid';
+import { midFieldDefault } from '../lib/mid';
 import { findConflicts } from '../components/SubdomainsInput';
 
 const composeVpnGatewayName = (vpn: string, identifier: string) =>
@@ -19,6 +19,12 @@ export function ProvisioningForm() {
   const [commands, setCommands] = useState<ProvisioningCommandDef[]>([]);
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [guests, setGuests] = useState<GuestEntry[]>([]);
+  // Occupied MIDs per visible host, from the full inventory (issue #54) --
+  // null until loaded, and left null if the load fails (see usedMidsError).
+  const [usedMids, setUsedMids] = useState<Record<string, number[]> | null>(null);
+  // Kept apart from `error` so switching commands (which clears `error`)
+  // doesn't hide a load failure that still affects every MID field.
+  const [usedMidsError, setUsedMidsError] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   // Field names whose current value came from applyAppDefaults, not the
   // operator typing/selecting it -- lets a later app change clear exactly
@@ -43,7 +49,40 @@ export function ProvisioningForm() {
       setHosts(data.hosts);
       setGuests(data.guests);
     });
+    // No fallback to the (permission-filtered) guest list on failure: that
+    // is exactly the bug in issue #54. MID fields stay empty instead, and
+    // the apply-time VMID check still protects the user.
+    apiGet<{ usedMids: Record<string, number[]> }>('/provisioning/used-mids')
+      .then((data) => setUsedMids(data.usedMids))
+      .catch((err) => {
+        setUsedMidsError(
+          `Could not load the MIDs already in use, so no MID is suggested -- enter one yourself: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   }, []);
+
+  // A host picked before used-mids finished loading left its mid field
+  // empty (setField had nothing to suggest from). Fill such fields once the
+  // occupied set arrives; a value already in the field is never replaced.
+  useEffect(() => {
+    if (!usedMids) return;
+    const current = commands.find((c) => c.id === id);
+    if (!current) return;
+    setValues((prev) => {
+      let next = prev;
+      for (const f of current.fields) {
+        if (f.kind !== 'mid' || prev[f.name]) continue;
+        const selectedHost = hosts.find((h) => h.name === prev[f.hostField ?? 'host']);
+        if (!selectedHost) continue;
+        const selectedGuest = guests.find((g) => g.name === prev.guest);
+        const value = midFieldDefault(selectedHost, selectedGuest, usedMids[selectedHost.name]);
+        if (value !== '') next = { ...next, [f.name]: value };
+      }
+      return next;
+    });
+    // Runs only when the occupied set arrives, not on every form edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usedMids]);
 
   useEffect(() => {
     setValues({});
@@ -87,29 +126,22 @@ export function ProvisioningForm() {
       // known, fall back to the next fully-available mid on that host
       // instead of a value that's just going to bounce off
       // checkVmidAvailable at apply time.
+      //
+      // Both the suggestion and that collision check use usedMids, the
+      // server's occupied-MID set, not the `guests` list (issue #54):
+      // `guests` is filtered by the user's group permissions, so a guest
+      // hidden from them would otherwise look like a free MID.
       for (const f of cmd.fields) {
         if (f.kind !== 'mid') continue;
         const hostFieldName = f.hostField ?? 'host';
         if (hostFieldName !== name && name !== 'guest') continue;
         const selectedHost = hosts.find((h) => h.name === next[hostFieldName]);
         const selectedGuest = guests.find((g) => g.name === next.guest);
-        if (selectedGuest) {
-          const preferredMid = selectedGuest.vmid % 1000;
-          const preferredVmid = vmidForMid(selectedHost, preferredMid);
-          const collides =
-            selectedHost !== undefined &&
-            preferredVmid !== null &&
-            guests.some((g) => g.host === selectedHost.name && g.vmid === preferredVmid);
-          if (collides) {
-            const suggestedMid = nextAvailableMid(selectedHost, guests);
-            next[f.name] = suggestedMid === null ? '' : String(suggestedMid);
-          } else {
-            next[f.name] = String(preferredMid);
-          }
-        } else {
-          const suggestedMid = nextAvailableMid(selectedHost, guests);
-          next[f.name] = suggestedMid === null ? '' : String(suggestedMid);
-        }
+        next[f.name] = midFieldDefault(
+          selectedHost,
+          selectedGuest,
+          selectedHost ? usedMids?.[selectedHost.name] : undefined
+        );
       }
       // Re-select each select-storage field's default whenever the host
       // field it's scoped to (its `hostField`, defaulting to 'host')
@@ -245,6 +277,9 @@ export function ProvisioningForm() {
       <h2>{cmd.label}</h2>
       <PageDescription>{cmd.description}</PageDescription>
       {cmd.warning && <div className="warning-banner">{cmd.warning}</div>}
+      {usedMidsError && cmd.fields.some((f) => f.kind === 'mid') && (
+        <div className="warning-banner">{usedMidsError}</div>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -300,6 +335,7 @@ export function ProvisioningForm() {
                 guests={guests}
                 values={values}
                 hasGuestField={cmd.fields.some((f) => f.kind === 'select-guest' || f.kind === 'select-guest-lxc')}
+                usedMids={usedMids}
               />
             )}
           </div>

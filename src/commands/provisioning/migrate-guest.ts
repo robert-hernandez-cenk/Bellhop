@@ -124,7 +124,7 @@ async function waitForGuestRunning(
 
 export async function runMigrateGuest(
   opts: MigrateGuestOptions,
-  deps: { ssh: SSHClient; inventory: Inventory; inventoryPath: string; sleepFn?: (ms: number) => Promise<void> }
+  deps: { ssh: SSHClient; inventory: Inventory; inventoryPath: string; sleepFn?: (ms: number) => Promise<void>; canSeeGuest?: (guestName: string) => boolean }
 ): Promise<MigrateGuestResult> {
   const { ssh, inventory } = deps;
 
@@ -195,7 +195,7 @@ export async function runMigrateGuest(
     );
   }
 
-  await checkVmidAvailable(ssh, inventory, opts.toHost, mid.vmid);
+  await checkVmidAvailable(ssh, inventory, opts.toHost, mid.vmid, deps.canSeeGuest);
 
   const tool = guest.type === 'lxc' ? 'pct' : 'qm';
   const targetStorage = opts.storage || pickStorage(toHostEntry, guest.type === 'lxc' ? ['rootdir', 'images'] : ['images']);

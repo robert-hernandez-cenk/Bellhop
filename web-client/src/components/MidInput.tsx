@@ -1,25 +1,20 @@
 import { useState } from 'react';
 import type { HostEntry, GuestEntry } from '../api/types';
-import { MID_MIN, MID_MAX, vmidForMid } from '../lib/mid';
+import { MID_MIN, MID_MAX, midCollisionMessage } from '../lib/mid';
 
 interface Props {
   value: string;
   onChange: (value: string) => void;
   host: HostEntry | undefined;
+  // Visible guests, used only to name the holder of an occupied MID.
   guests: GuestEntry[];
+  // The host's occupied MIDs from the full inventory (issue #54), so a MID
+  // held by a guest this user can't see still warns; undefined while unknown.
+  usedMids: number[] | undefined;
 }
 
-export function MidInput({ value, onChange, host, guests }: Props) {
-  const [collision, setCollision] = useState<GuestEntry | null>(null);
-
-  const checkCollision = () => {
-    const vmid = vmidForMid(host, Number(value));
-    if (vmid === null) {
-      setCollision(null);
-      return;
-    }
-    setCollision(guests.find((g) => g.host === host!.name && g.vmid === vmid) ?? null);
-  };
+export function MidInput({ value, onChange, host, guests, usedMids }: Props) {
+  const [collision, setCollision] = useState<string | null>(null);
 
   return (
     <>
@@ -33,13 +28,9 @@ export function MidInput({ value, onChange, host, guests }: Props) {
           onChange(e.target.value);
           setCollision(null);
         }}
-        onBlur={checkCollision}
+        onBlur={() => setCollision(midCollisionMessage(host, value, usedMids, guests))}
       />
-      {collision && (
-        <div className="warning-banner">
-          MID {value} is already used by {collision.name} (vmid {collision.vmid}) on {host!.name}.
-        </div>
-      )}
+      {collision && <div className="warning-banner">{collision}</div>}
     </>
   );
 }

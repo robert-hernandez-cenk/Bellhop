@@ -1668,3 +1668,108 @@ test('POST /api/provisioning/:id/preview 404s for an inherited prototype key lik
     assert.equal(res.status, 404, `${action} should 404`);
   }
 });
+
+// issue #54: the occupied-MID set behind the form's MID suggestion counts
+// every inventory guest, including ones the caller can't see, but reveals
+// only MID numbers and only for hosts the caller can see.
+function usedMidsApp() {
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [
+      { name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.1.1' } },
+      { name: 'pve2', ssh_target: 'pve2.local', ssh_user: 'root', midScheme: { vmidBase: 5000, ipPrefix: '192.168.2.', gateway: '192.168.2.1' } },
+      { name: 'pve3', ssh_target: 'pve3.local', ssh_user: 'root' },
+    ],
+    guests: [
+      { name: 'secret', type: 'lxc', vmid: 4002, host: 'pve1' },
+      { name: 'media', type: 'lxc', vmid: 4003, host: 'pve1' },
+      { name: 'other', type: 'lxc', vmid: 5007, host: 'pve2' },
+    ],
+  };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, inventory);
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+}
+
+test('GET /api/provisioning/used-mids gives an admin every host with a midScheme', async () => {
+  const app = usedMidsApp();
+  const res = await asAdmin(request(app).get('/api/provisioning/used-mids'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { usedMids: { pve1: [2, 3], pve2: [7] } });
+});
+
+test('GET /api/provisioning/used-mids counts hidden guests for a restricted group but omits hidden hosts and names', async () => {
+  const app = usedMidsApp();
+  await asAdmin(request(app).put('/api/permissions/family')).send({
+    mode: 'allow-list',
+    resources: [
+      { type: 'host', name: 'pve1' },
+      { type: 'guest', name: 'media' },
+    ],
+  });
+
+  const res = await request(app)
+    .get('/api/provisioning/used-mids')
+    .set('x-authentik-username', 'kid')
+    .set('x-authentik-groups', 'family');
+  assert.equal(res.status, 200);
+  assert.deepEqual(Object.keys(res.body), ['usedMids']);
+  assert.deepEqual(res.body, { usedMids: { pve1: [2, 3] } });
+  assert.ok(!JSON.stringify(res.body).includes('secret'));
+  assert.ok(!JSON.stringify(res.body).includes('media'));
+});
+
+// issue #54 (US3): a VMID-in-use error names the conflicting guest only to a
+// caller allowed to see it; a restricted group gets the untracked-VMID wording.
+test('POST /api/provisioning/install-app/preview omits a hidden conflicting guest from the VMID-in-use error', async () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [
+      {
+        name: 'pve1',
+        ssh_target: 'pve1.local',
+        ssh_user: 'root',
+        midScheme: { vmidBase: 4000, ipPrefix: '192.168.1.', gateway: '192.168.1.1' },
+        storages: [
+          { name: 'local', type: 'dir', content: ['vztmpl'], active: true },
+          { name: 'local-lvm', type: 'lvmthin', content: ['rootdir', 'images'], active: true },
+        ],
+      },
+    ],
+    guests: [
+      { name: 'secret', type: 'lxc', vmid: 4002, host: 'pve1' },
+      { name: 'media', type: 'lxc', vmid: 4003, host: 'pve1' },
+    ],
+  };
+  const { app } = isolatedApp(inv, (_t, _u, c) => {
+    if (c === 'pct status 4002 >/dev/null 2>&1 || qm status 4002 >/dev/null 2>&1') {
+      return { stdout: 'status: running', stderr: '', code: 0 };
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  await asAdmin(request(app).put('/api/permissions/family')).send({
+    mode: 'allow-list',
+    resources: [
+      { type: 'host', name: 'pve1' },
+      { type: 'guest', name: 'media' },
+    ],
+  });
+  const body = { app: 'plex', host: 'pve1', mid: 2, hostname: 'plex-new' };
+
+  const restricted = await request(app)
+    .post('/api/provisioning/install-app/preview')
+    .set('x-authentik-username', 'kid')
+    .set('x-authentik-groups', 'family')
+    .send(body);
+  assert.equal(restricted.status, 400);
+  assert.equal(restricted.body.error, "VMID 4002 on 'pve1' is already in use -- choose a different --mid");
+  assert.ok(!restricted.body.error.includes('secret'));
+
+  const admin = await asAdmin(request(app).post('/api/provisioning/install-app/preview')).send(body);
+  assert.equal(admin.status, 400);
+  assert.match(admin.body.error, /VMID 4002 on 'pve1' is already in use by 'secret'/);
+});

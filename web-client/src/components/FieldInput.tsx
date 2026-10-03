@@ -12,9 +12,12 @@ interface Props {
   guests: GuestEntry[];
   values: Record<string, string>;
   hasGuestField: boolean;
+  // Per-host occupied MIDs from GET /provisioning/used-mids (issue #54);
+  // null/absent while unknown.
+  usedMids?: Record<string, number[]> | null;
 }
 
-export function FieldInput({ field, value, onChange, hosts, guests, values, hasGuestField }: Props) {
+export function FieldInput({ field, value, onChange, hosts, guests, values, hasGuestField, usedMids }: Props) {
   switch (field.kind) {
     case 'select-host':
       // migrate-guest's Target Host deliberately still offers the guest's
@@ -141,15 +144,18 @@ export function FieldInput({ field, value, onChange, hosts, guests, values, hasG
           onChange={(e) => onChange(e.target.value)}
         />
       );
-    case 'mid':
+    case 'mid': {
+      const midHost = hosts.find((h) => h.name === values[field.hostField ?? 'host']);
       return (
         <MidInput
           value={value}
           onChange={onChange}
-          host={hosts.find((h) => h.name === values[field.hostField ?? 'host'])}
+          host={midHost}
           guests={guests}
+          usedMids={midHost ? usedMids?.[midHost.name] : undefined}
         />
       );
+    }
     case 'subdomains':
       return <SubdomainsInput value={value} onChange={onChange} hosts={hosts} guests={guests} />;
     case 'checkbox':
