@@ -373,7 +373,12 @@ export const SettingsSchema = z.object({
   // default since research.md's live Traefik instance was configured with a
   // resolver of that name. The character class matches Traefik's own
   // resolver-name rules and can never break the rendered YAML or a route's
-  // rule string, so there's nothing further to validate.
+  // rule string, so there's nothing further to validate. 'none' is reserved
+  // (issue #51, User Story 3): every rendered router gets an empty tls: {}
+  // instead of naming a resolver, so Traefik serves whatever
+  // default/static-config certificate applies rather than requesting one
+  // through a resolver named 'none' -- see NO_CERT_RESOLVER in
+  // src/lib/proxy/drivers/traefik.ts.
   proxyCertResolver: z
     .string()
     .regex(/^[A-Za-z0-9_-]+$/, 'must contain only letters, digits, - and _')

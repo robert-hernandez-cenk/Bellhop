@@ -90,11 +90,11 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 
 ### Tests for User Story 3
 
-- [ ] T021 [P] [US3] In `test/lib/proxy/drivers/traefik.test.ts`: with `proxyCertResolver: 'none'`, every router (main, exempt, outpost) has `tls: {}`; with a named or unset resolver output is unchanged
+- [x] T021 [P] [US3] In `test/lib/proxy/drivers/traefik.test.ts`: with `proxyCertResolver: 'none'`, every router (main, exempt, outpost) has `tls: {}`; with a named or unset resolver output is unchanged
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] In `src/lib/proxy/drivers/traefik.ts` (or `routes.ts` beside `DEFAULT_CERT_RESOLVER`): export `NO_CERT_RESOLVER = 'none'` and render `tls: {}` at all three router sites when `ctx.certResolver === NO_CERT_RESOLVER`; update the `proxyCertResolver` comment in `src/lib/inventory.ts` to say `none` is reserved
+- [x] T022 [US3] In `src/lib/proxy/drivers/traefik.ts` (or `routes.ts` beside `DEFAULT_CERT_RESOLVER`): export `NO_CERT_RESOLVER = 'none'` and render `tls: {}` at all three router sites when `ctx.certResolver === NO_CERT_RESOLVER`; update the `proxyCertResolver` comment in `src/lib/inventory.ts` to say `none` is reserved
 
 **Checkpoint**: US3 complete.
 
