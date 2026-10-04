@@ -94,10 +94,10 @@ next request's `isAdminUser` uses it; with `AUTHENTIK_ADMIN_GROUP` set, the API 
 
 ## Phase 6: User Story 3 -- authenticated GitHub requests (P2)
 
-- [ ] T030 [P] [US3] Tests in test/lib/github.test.ts: `githubApiHeaders()` adds `Authorization: Bearer <token>` iff `githubApiToken` is set (store or `GITHUB_API_TOKEN`), always sends `User-Agent: bellhop`, merges extra headers; `githubUnauthorizedError` names `githubApiToken` and the Settings page and never the token
-- [ ] T031 [US3] Create src/lib/github.ts
-- [ ] T032 [P] [US3] Tests in test/lib/app-source.test.ts, test/lib/app-update-check.test.ts, test/lib/script-catalog.test.ts: every `api.github.com` request (pin, compare, release latest/tag/list, contents listing) carries the header iff the token is set; `raw.githubusercontent.com` requests never do; a 401 produces the named error
-- [ ] T033 [US3] Use `githubApiHeaders`/`githubUnauthorizedError` in src/lib/app-source.ts (`resolveHeadSha`, `compareBranch`), src/lib/app-update-check.ts (`githubGet` and its 401 handling), src/lib/script-catalog.ts (`fetchRepoSlugs`)
+- [X] T030 [P] [US3] Tests in test/lib/github.test.ts: `githubApiHeaders()` adds `Authorization: Bearer <token>` iff `githubApiToken` is set (store or `GITHUB_API_TOKEN`), always sends `User-Agent: bellhop`, merges extra headers; `githubUnauthorizedError` names `githubApiToken` and the Settings page and never the token
+- [X] T031 [US3] Create src/lib/github.ts
+- [X] T032 [P] [US3] Tests in test/lib/app-source.test.ts, test/lib/app-update-check.test.ts, test/lib/script-catalog.test.ts: every `api.github.com` request (pin, compare, release latest/tag/list, contents listing) carries the header iff the token is set; `raw.githubusercontent.com` requests never do; a 401 produces the named error
+- [X] T033 [US3] Use `githubApiHeaders`/`githubUnauthorizedError` in src/lib/app-source.ts (`resolveHeadSha`, `compareBranch`), src/lib/app-update-check.ts (`githubGet` and its 401 handling), src/lib/script-catalog.ts (`fetchRepoSlugs`)
 
 ---
 
