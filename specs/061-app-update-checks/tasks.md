@@ -171,9 +171,9 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
   - `README.md` main-commands table, if it lists maintenance commands, keeping the README at most 200 lines.
   - `CLAUDE.md`: an architecture bullet for the tasks framework, the check's tools.func mirroring, the tables, the re-check, and the unauthenticated-GitHub single-operator assumption.
   - `CONTRIBUTING.md` only if a restated convention changed.
-- [ ] T030 Run `npm run typecheck`, `npm test`, and `npm run web:build`, and fix any failures.
-- [ ] T031 Browser-verify `/update` and `/tasks` on the demo instance at desktop width and at a 640px or narrower viewport (no horizontal scroll, cards, light and dark themes). Regenerate affected `docs/images/` with `npm run docs:screenshots`, and inspect them for example-only values.
-- [ ] T032 Run the quickstart.md automated section and record manual real-infrastructure steps as unverified for the PR if they can't be run.
+- [x] T030 Run `npm run typecheck`, `npm test`, and `npm run web:build`, and fix any failures.
+- [x] T031 Browser-verify `/update` and `/tasks` on the demo instance at desktop width and at a 640px or narrower viewport (no horizontal scroll, cards, light and dark themes). Regenerate affected `docs/images/` with `npm run docs:screenshots`, and inspect them for example-only values.
+- [x] T032 Run the quickstart.md automated section and record manual real-infrastructure steps as unverified for the PR if they can't be run.
 
 ---
 
