@@ -357,10 +357,12 @@ function shadowsFrom([stable, dev]: [UpstreamPresence, UpstreamPresence]): Shado
   return shadows;
 }
 
-// The single entry point install-app/update-app, checkAppUrl and
-// previewAndEnqueue call to decide where an --app value actually comes
-// from. Resolves at most once per call -- no caching here; previewAndEnqueue
-// is what resolves once per operation rather than once per fetch site.
+// The shared tail of resolving a bare slug once a custom repository is
+// configured and its branch has already been pinned/compared (research R4):
+// shared by resolveAppSource's own one-shot call below and by
+// createAppSourceResolver's per-slug resolution, so the two can never drift
+// apart on what "changed on the branch" / "fork-only" / "absent everywhere"
+// actually means.
 //
 // Issue #15 (research R6): with a custom repository configured, only the
 // apps the branch actually changes come from the fork --
@@ -370,20 +372,13 @@ function shadowsFrom([stable, dev]: [UpstreamPresence, UpstreamPresence]): Shado
 //   3. otherwise, the fork has it at the pinned commit -> the fork
 //      (fork-only, nowhere else to get it);
 //   4. otherwise -> upstream, which then fails the same way feature-off does.
-// The only rate-limited requests are the head-SHA pin and the compare
-// (spec SC-006); every probe is a raw-content request.
-export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: typeof fetch): Promise<AppSource> {
-  // A pasted full script URL is used verbatim, exactly like
-  // resolveAppUrl/resolveDevAppUrl already treat it -- no custom-repository
-  // involvement, and therefore no network access needed to decide that.
-  if (app.includes('://')) return { kind: 'url', shadows: [] };
-
-  const slug = app.toLowerCase();
-  const source = customScriptSource(inv);
-  if (!source) return { kind: 'upstream', slug, shadows: [] };
-
-  const sha = await resolveHeadSha(source, fetchImpl);
-  const comparison = await compareBranch(source, sha, fetchImpl);
+async function resolveCustomSlug(
+  slug: string,
+  source: CustomScriptSource,
+  sha: string,
+  comparison: BranchComparison,
+  fetchImpl: typeof fetch
+): Promise<AppSource> {
   const prefix = `Custom script repository ${source.label}:`;
   const scriptsBaseUrl = `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${sha}`;
   const ctUrl = `${scriptsBaseUrl}/ct/${slug}.sh`;
@@ -404,6 +399,89 @@ export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: t
   if (response.status === 404) return { kind: 'upstream', slug, shadows: [] };
   if (!response.ok) throw new Error(`${prefix} GitHub returned ${response.status}${ERROR_SUFFIX}`);
   return { kind: 'custom', slug, custom, ctUrl, scriptsBaseUrl, shadows: [], changed: false, conflict: false };
+}
+
+// The single entry point install-app/update-app, checkAppUrl and
+// previewAndEnqueue call to decide where an --app value actually comes
+// from. Resolves at most once per call -- no caching here; previewAndEnqueue
+// is what resolves once per operation rather than once per fetch site. For
+// resolving many slugs against the same inventory in one run (research R4,
+// e.g. check-app-updates), use createAppSourceResolver below instead, which
+// shares the two rate-limited calls below across every slug.
+export async function resolveAppSource(app: string, inv: Inventory, fetchImpl: typeof fetch): Promise<AppSource> {
+  // A pasted full script URL is used verbatim, exactly like
+  // resolveAppUrl/resolveDevAppUrl already treat it -- no custom-repository
+  // involvement, and therefore no network access needed to decide that.
+  if (app.includes('://')) return { kind: 'url', shadows: [] };
+
+  const slug = app.toLowerCase();
+  const source = customScriptSource(inv);
+  if (!source) return { kind: 'upstream', slug, shadows: [] };
+
+  const sha = await resolveHeadSha(source, fetchImpl);
+  const comparison = await compareBranch(source, sha, fetchImpl);
+  return resolveCustomSlug(slug, source, sha, comparison, fetchImpl);
+}
+
+// The result of pinning a configured custom branch's head commit and
+// comparing it against upstream (research R4) -- the two rate-limited
+// requests createAppSourceResolver shares across every slug a run resolves.
+interface BranchState {
+  source: CustomScriptSource;
+  sha: string;
+  comparison: BranchComparison;
+}
+
+// Builds a per-run resolver function for resolving many `--app` slugs
+// against the same inventory without exhausting GitHub's unauthenticated
+// rate limit (research R4, issue #61's check-app-updates). Unlike
+// resolveAppSource's one-shot call, which pins and compares the configured
+// branch fresh on every invocation, the function this returns:
+//
+//   - runs resolveHeadSha/compareBranch **once per resolver**, lazily on the
+//     first slug that actually needs a custom-repository resolution (a
+//     pasted URL, or every slug when no custom repository is configured,
+//     never triggers it at all) -- every later slug reuses that one cached
+//     promise rather than re-pinning/re-comparing;
+//   - memoizes each slug's own resolution (the per-slug shadow probes,
+//     conflict check, and fork-ct fetch resolveCustomSlug makes) so calling
+//     it twice with the same `app` value reuses the first call's result
+//     rather than repeating those requests.
+//
+// A failed head-SHA or compare call poisons the single shared promise, so
+// every slug already waiting on it, and every slug resolved afterward,
+// rejects with that same error -- there is no per-slug retry of either
+// call, matching the single-poisoned-cache-entry precedent
+// fetchLatestRelease's ReleaseCache already sets (research R3).
+export function createAppSourceResolver(inv: Inventory, fetchImpl: typeof fetch): (app: string) => Promise<AppSource> {
+  let branchState: Promise<BranchState> | undefined;
+  const cache = new Map<string, Promise<AppSource>>();
+
+  async function resolveOne(app: string): Promise<AppSource> {
+    if (app.includes('://')) return { kind: 'url', shadows: [] };
+
+    const slug = app.toLowerCase();
+    const source = customScriptSource(inv);
+    if (!source) return { kind: 'upstream', slug, shadows: [] };
+
+    if (!branchState) {
+      branchState = (async () => {
+        const sha = await resolveHeadSha(source, fetchImpl);
+        const comparison = await compareBranch(source, sha, fetchImpl);
+        return { source, sha, comparison };
+      })();
+    }
+    const { sha, comparison } = await branchState;
+    return resolveCustomSlug(slug, source, sha, comparison, fetchImpl);
+  }
+
+  return (app: string): Promise<AppSource> => {
+    const cached = cache.get(app);
+    if (cached) return cached;
+    const promise = resolveOne(app);
+    cache.set(app, promise);
+    return promise;
+  };
 }
 
 // The one line runInstallApp/runUpdateApp emit before anything else about

@@ -33,20 +33,20 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
   - `fetchLatestRelease`, with a stubbed fetch serving the T001 fixtures: `/latest` used when there's no pin or prefix; fallback to `?per_page=100` on a non-200 `/latest`; drafts and pre-releases skipped; prefix filter; pinned version tried via `/releases/tags/<pin>` and must exist; 403/429 → `GitHub API rate limit reached; the next scheduled check will retry`; other status → message names the repo and status; the `ReleaseCache` issues one request per `repo|pin|prefix` across repeated calls.
   - `buildInstalledVersionScript(name)`: emits exactly the POSIX script in research R6.
 - [x] T003 Implement `src/lib/app-update-check.ts` to pass T002, with zod schemas for the release JSON (`tag_name`, `draft`, `prerelease`), a 15s `AbortSignal.timeout`, and the `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28` headers.
-- [ ] T004 [P] Write `test/lib/app-update-store.test.ts`:
+- [x] T004 [P] Write `test/lib/app-update-store.test.ts`:
   - Temp db in a `mkdtempSync` directory.
   - `replaceAppUpdateResults` deletes rows absent from the new set.
   - `upsertAppUpdateResult` replaces one row.
   - `loadAppUpdateResults` round-trips every field and orders by guest.
   - The `status` CHECK rejects other values.
   - `saveInventory` on the same file leaves the table intact.
-- [ ] T005 Implement `src/lib/app-update-store.ts` per data-model.md's `app_update_status` table, via `openDb`, with status "CHECK IN (`update-available`, `up-to-date`, `unsupported`, `not-checked`, `error`)".
-- [ ] T006 [P] Add tests to `test/lib/app-source.test.ts` for `createAppSourceResolver`:
+- [x] T005 Implement `src/lib/app-update-store.ts` per data-model.md's `app_update_status` table, via `openDb`, with status "CHECK IN (`update-available`, `up-to-date`, `unsupported`, `not-checked`, `error`)".
+- [x] T006 [P] Add tests to `test/lib/app-source.test.ts` for `createAppSourceResolver`:
   - With custom settings, resolving three slugs makes exactly one head-SHA request and one compare request.
   - The same slug twice is memoized.
   - With no custom settings, no network.
   - Existing `resolveAppSource` tests still pass unchanged.
-- [ ] T007 Implement `createAppSourceResolver(inventory, fetchImpl)` in `src/lib/app-source.ts`, refactoring `resolveAppSource` onto the shared internals (research R4) without changing its behavior.
+- [x] T007 Implement `createAppSourceResolver(inventory, fetchImpl)` in `src/lib/app-source.ts`, refactoring `resolveAppSource` onto the shared internals (research R4) without changing its behavior.
 - [ ] T008 Write `test/commands/check-app-updates.test.ts`, using `FakeSSHClient`, a temp inventory, and a stubbed fetch:
   - Only `lxc` guests with `app` are checked.
   - A stopped guest (from the `pvesh` status responder) → `not-checked` "Guest is stopped", with no `pct exec` to it.
