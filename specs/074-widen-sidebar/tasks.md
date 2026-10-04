@@ -42,8 +42,8 @@ None.
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T006 Regenerate the docs screenshots with `npm run docs:screenshots` into `docs/images/` and check each by eye for the wider sidebar and example-only values (constitution Principle I)
-- [ ] T007 Run `npm run typecheck`, `npm test`, and `npm run web:build`; all pass
+- [x] T006 Regenerate the docs screenshots with `npm run docs:screenshots` into `docs/images/` and check each by eye for the wider sidebar and example-only values (constitution Principle I)
+- [x] T007 Run `npm run typecheck`, `npm test`, and `npm run web:build`; all pass
 
 ## Dependencies & Execution Order
 
