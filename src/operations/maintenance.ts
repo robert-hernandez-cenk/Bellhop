@@ -100,9 +100,25 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
       // has nothing to check).
       if (result.result?.code === 0) {
         const guestEntry = deps.inventory.guests.find((g) => g.name === i.guest);
-        if (guestEntry?.type === 'lxc' && guestEntry.app) {
+        if (guestEntry?.type === 'lxc' && guestEntry.app && i.app !== guestEntry.app) {
+          // The script just run was for a different app than the one
+          // recorded, so a re-check would describe the wrong app.
+          logInfo(
+            `Skipped the app-update re-check for ${i.guest}: update-app ran '${i.app}', but the guest's recorded app is '${guestEntry.app}'`
+          );
+        } else if (guestEntry?.type === 'lxc' && guestEntry.app) {
+          // The source previewAndEnqueue already pinned for this job: the
+          // re-check reads the exact script just run, with no second
+          // (rate-limited) resolution of a custom branch.
+          const pinned = i.appSource;
           try {
-            const r = await checkOneGuest(i.guest, { ssh: deps.ssh, inventory: deps.inventory, fetchImpl: deps.fetchImpl, now: deps.now });
+            const r = await checkOneGuest(i.guest, {
+              ssh: deps.ssh,
+              inventory: deps.inventory,
+              fetchImpl: deps.fetchImpl,
+              now: deps.now,
+              ...(pinned ? { resolver: async () => pinned } : {}),
+            });
             upsertAppUpdateResult(deps.inventoryPath, r);
             logInfo(`Refreshed app-update status: ${formatCheckAppUpdates({ results: [r], saved: true })}`);
           } catch (err) {

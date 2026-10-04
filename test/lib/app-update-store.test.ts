@@ -81,7 +81,6 @@ test('loadAppUpdateResults leaves optional fields undefined, not null, when abse
   assert.equal(loaded.latestVersion, undefined);
   assert.equal(loaded.repo, undefined);
   assert.equal(loaded.message, 'Guest is stopped');
-  assert.ok(!('installedVersion' in loaded) === false || loaded.installedVersion === undefined);
 });
 
 test('replaceAppUpdateResults deletes rows absent from the new set', () => {

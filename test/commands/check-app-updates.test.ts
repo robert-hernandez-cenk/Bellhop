@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { saveInventory, type Inventory, type GuestEntry, type HostEntry } from '../../src/lib/inventory.ts';
-import { loadAppUpdateResults } from '../../src/lib/app-update-store.ts';
+import { loadAppUpdateResults, replaceAppUpdateResults } from '../../src/lib/app-update-store.ts';
 import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE } from '../../src/lib/app-source.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import {
@@ -502,4 +502,156 @@ test('formatCheckAppUpdates matches the contract line layout', () => {
     'db-lxc      postgres    not checked       Guest is stopped',
   ].join('\n');
   assert.equal(formatCheckAppUpdates(result), expected);
+});
+
+// --- cancellation (final review) ---
+
+function cancelInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [PVE1],
+    guests: [
+      guest({ name: 'media', host: 'pve1', vmid: 101, app: 'homepage' }),
+      guest({ name: 'web-lxc', host: 'pve1', vmid: 102, app: 'homepage' }),
+    ],
+  };
+}
+
+// The store reads unset optional columns back as undefined keys; drop them
+// so a row compares equal to the literal it was saved from.
+function storedRows(dbPath: string): unknown[] {
+  return JSON.parse(JSON.stringify(loadAppUpdateResults(dbPath)));
+}
+
+const PREVIOUS_ROW = {
+  guest: 'media',
+  app: 'homepage',
+  status: 'up-to-date' as const,
+  installedVersion: '1.1.0',
+  repo: 'gethomepage/homepage',
+  checkedAt: '2026-10-02T04:00:00.000Z',
+};
+
+test('a run cancelled mid-check throws and leaves the saved results untouched', async () => {
+  const inventory = cancelInventory();
+  const dbPath = tempDbPath();
+  saveInventory(dbPath, inventory);
+  replaceAppUpdateResults(dbPath, [PREVIOUS_ROW]);
+  const controller = new AbortController();
+  // Mirrors JobSSHClient after a cancel: the in-flight exec and every later
+  // one reject with 'Job cancelled'.
+  const ssh = new FakeSSHClient((_t, _u, command) => {
+    if (command.includes('/lxc ')) return { stdout: pveshList([{ vmid: 101, status: 'running' }, { vmid: 102, status: 'running' }]), stderr: '', code: 0 };
+    if (command.includes('/qemu ')) return { stdout: pveshList([]), stderr: '', code: 0 };
+    if (command.includes('pct exec')) {
+      controller.abort();
+      throw new Error('Job cancelled');
+    }
+    throw new Error(`unexpected ssh command: ${command}`);
+  });
+  const fetchImpl = routedFetch({
+    [ctUrl('homepage')]: ok(HOMEPAGE_SCRIPT),
+    [releasesLatestUrl('gethomepage/homepage')]: ok(RELEASES_LATEST),
+  });
+
+  await assert.rejects(
+    runCheckAppUpdates({ apply: true }, { ssh, inventory, inventoryPath: dbPath, fetchImpl, signal: controller.signal }),
+    /cancelled/
+  );
+  assert.deepEqual(storedRows(dbPath), [PREVIOUS_ROW]);
+});
+
+test('an already-cancelled run contacts no guest and saves nothing', async () => {
+  const inventory = cancelInventory();
+  const dbPath = tempDbPath();
+  saveInventory(dbPath, inventory);
+  replaceAppUpdateResults(dbPath, [PREVIOUS_ROW]);
+  const controller = new AbortController();
+  controller.abort();
+  const ssh = new FakeSSHClient(() => {
+    throw new Error('no ssh expected');
+  });
+
+  await assert.rejects(
+    runCheckAppUpdates({ apply: true }, { ssh, inventory, inventoryPath: dbPath, fetchImpl: routedFetch({}), signal: controller.signal }),
+    /cancelled/
+  );
+  assert.equal(ssh.history.length, 0);
+  assert.deepEqual(storedRows(dbPath), [PREVIOUS_ROW]);
+});
+
+test('a --guest run cancelled mid-check does not upsert its error row', async () => {
+  const inventory = cancelInventory();
+  const dbPath = tempDbPath();
+  saveInventory(dbPath, inventory);
+  replaceAppUpdateResults(dbPath, [PREVIOUS_ROW]);
+  const controller = new AbortController();
+  const ssh = new FakeSSHClient(() => {
+    controller.abort();
+    throw new Error('Job cancelled');
+  });
+  const fetchImpl = routedFetch({ [ctUrl('homepage')]: ok(HOMEPAGE_SCRIPT) });
+
+  await assert.rejects(
+    runCheckAppUpdates({ guest: 'media', apply: true }, { ssh, inventory, inventoryPath: dbPath, fetchImpl, signal: controller.signal }),
+    /cancelled/
+  );
+  assert.deepEqual(storedRows(dbPath), [PREVIOUS_ROW]);
+});
+
+// --- concurrency (final review) ---
+
+test('a full run checks at most four guests at once, results still sorted by guest', async () => {
+  const names = ['g6', 'g5', 'g4', 'g3', 'g2', 'g1'];
+  const inventory: Inventory = {
+    domain: 'example.com',
+    hosts: [PVE1],
+    guests: names.map((name, i) => guest({ name, host: 'pve1', vmid: 201 + i, app: 'homepage' })),
+  };
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const gate: (() => void)[] = [];
+  // Version reads park on `gate` until the test releases them, so the
+  // number parked at once is exactly the number of guests in flight.
+  const ssh = {
+    async exec(_target: unknown, command: string) {
+      if (command.includes('/lxc ')) {
+        return { stdout: pveshList(names.map((_n, i) => ({ vmid: 201 + i, status: 'running' }))), stderr: '', code: 0 };
+      }
+      if (command.includes('/qemu ')) return { stdout: pveshList([]), stderr: '', code: 0 };
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise<void>((resolve) => gate.push(resolve));
+      inFlight--;
+      return { stdout: '1.1.0\n', stderr: '', code: 0 };
+    },
+  } as unknown as FakeSSHClient;
+  const releaseCalls: string[] = [];
+  const fetchImpl = routedFetch(
+    {
+      [ctUrl('homepage')]: ok(HOMEPAGE_SCRIPT),
+      [releasesLatestUrl('gethomepage/homepage')]: ok(RELEASES_LATEST),
+    },
+    releaseCalls
+  );
+
+  let done = false;
+  const run = runCheckAppUpdates({}, { ssh, inventory, inventoryPath: tempDbPath(), fetchImpl }).finally(() => {
+    done = true;
+  });
+  const settle = async () => {
+    for (let i = 0; i < 50; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  let rounds = 0;
+  while (!done && rounds++ < 20) {
+    await settle();
+    if (rounds === 1) assert.equal(inFlight, 4, 'four guests in flight before any finishes');
+    gate.splice(0).forEach((release) => release());
+  }
+  const result = await run;
+  assert.equal(maxInFlight, 4);
+  assert.deepEqual(result.results.map((r) => r.guest), ['g1', 'g2', 'g3', 'g4', 'g5', 'g6']);
+  assert.ok(result.results.every((r) => r.status === 'up-to-date'));
+  assert.equal(releaseCalls.filter((u) => u === ctUrl('homepage')).length, 1);
+  assert.equal(releaseCalls.filter((u) => u === releasesLatestUrl('gethomepage/homepage')).length, 1);
 });

@@ -287,3 +287,84 @@ test('update-app apply still resolves, logging a warning, when the post-apply re
   }
   assert.ok(warnings.some((l) => l.includes('media')), 'a failed re-check must be logged via logWarn, naming the guest');
 });
+
+// Final review: the re-check only makes sense when update-app ran the app
+// the guest actually has recorded -- otherwise the result would describe a
+// different app than the one the badge belongs to.
+test('update-app apply skips the re-check, logging one info line, when the app differs from the recorded one', async () => {
+  const inv = appUpdateInventory();
+  const inventoryPath = tempAppUpdateDbPath();
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg: string) => lines.push(String(msg));
+  try {
+    await op.apply(parseOperationInput(op, { guest: 'media', app: 'jellyfin' }), {
+      ssh,
+      inventory: inv,
+      inventoryPath,
+      authentik: new FakeAuthentikClient(),
+      cloudflare: new UnconfiguredCloudflareClient(),
+      fetchImpl: routedFetch({}),
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(loadAppUpdateResults(inventoryPath), []);
+  assert.ok(!ssh.history.some((c) => c.command.includes('HOME:-/root')), 'no installed-version read for a different app');
+  const skipLines = lines.filter((l) => l.includes('Skipped the app-update re-check'));
+  assert.equal(skipLines.length, 1);
+  assert.match(skipLines[0], /media.*jellyfin.*homepage/);
+});
+
+// Final review: the job already pinned the exact source it installed from
+// (previewAndEnqueue's appSource), so the re-check reads that same script
+// instead of resolving the custom branch again (two more rate-limited
+// GitHub calls, and possibly a newer commit).
+test('update-app apply re-checks against the pinned appSource without resolving it again', async () => {
+  const inv: Inventory = {
+    ...appUpdateInventory(),
+    customScriptsRepo: 'example-owner/ProxmoxVED',
+    customScriptsBranch: 'my-branch',
+  };
+  const inventoryPath = tempAppUpdateDbPath();
+  const ssh = new FakeSSHClient((_t, _u, command) => {
+    if (command.includes('HOME:-/root')) return { stdout: '1.0.0\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  const pinnedCtUrl = 'https://raw.githubusercontent.com/example-owner/ProxmoxVED/0123456789abcdef0123456789abcdef01234567/ct/homepage.sh';
+  const calls: string[] = [];
+  const routes = routedFetch({
+    [pinnedCtUrl]: ok(HOMEPAGE_SCRIPT),
+    [releasesLatestUrl('gethomepage/homepage')]: ok(RELEASES_LATEST),
+  });
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    calls.push(String(url));
+    return routes(url as string, init);
+  }) as unknown as typeof fetch;
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  const input = parseOperationInput(op, { guest: 'media', app: 'homepage' });
+  input.appSource = {
+    kind: 'custom',
+    slug: 'homepage',
+    ctUrl: pinnedCtUrl,
+    scriptsBaseUrl: 'https://raw.githubusercontent.com/example-owner/ProxmoxVED/0123456789abcdef0123456789abcdef01234567',
+    shadows: [],
+    changed: true,
+  };
+  await op.apply(input, {
+    ssh,
+    inventory: inv,
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+    fetchImpl,
+  });
+
+  const [result] = loadAppUpdateResults(inventoryPath);
+  assert.equal(result.status, 'update-available');
+  assert.equal(result.latestVersion, '1.1.0');
+  assert.ok(!calls.some((u) => u.includes('api.github.com/repos/example-owner')), `no branch resolution expected, got: ${calls.join(', ')}`);
+  assert.ok(calls.includes(pinnedCtUrl));
+});

@@ -73,6 +73,22 @@ fi
   });
 });
 
+test('parseReleaseCheck stops at a trailing shell comment', () => {
+  const script = `check_for_gh_release "foo" "owner/foo" # track stable\n`;
+  assert.deepEqual(parseReleaseCheck(script, 'foo'), {
+    ok: true,
+    check: { name: 'foo', repo: 'owner/foo' },
+  });
+});
+
+test('parseReleaseCheck keeps a # inside a bare word (not a comment in sh)', () => {
+  const script = `check_for_gh_release foo owner/foo v1#2\n`;
+  assert.deepEqual(parseReleaseCheck(script, 'foo'), {
+    ok: true,
+    check: { name: 'foo', repo: 'owner/foo', pin: 'v1#2' },
+  });
+});
+
 test('parseReleaseCheck accepts single-quoted and bare arguments', () => {
   const script = `check_for_gh_release 'MyApp' owner/myapp; then`;
   assert.deepEqual(parseReleaseCheck(script, 'myapp'), {

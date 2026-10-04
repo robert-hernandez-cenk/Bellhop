@@ -77,9 +77,10 @@ export function parseReleaseCheck(script: string, slug: string): ParseReleaseChe
 // Tokenizes the shell words following a `check_for_gh_release` call,
 // starting right after the function name. Accepts double-quoted,
 // single-quoted, and bare words, and stops (without consuming) at `;`,
-// `then`, `&&`, `||`, a newline, or end of string (research R2) -- so a
-// call guarded by `[[ -d x ]] && if check_for_gh_release ...; then` is read
-// the same as a bare `check_for_gh_release ...` call.
+// `then`, `&&`, `||`, a comment-starting `#`, a newline, or end of string
+// (research R2) -- so a call guarded by
+// `[[ -d x ]] && if check_for_gh_release ...; then` is read the same as a
+// bare `check_for_gh_release ...` call.
 function tokenizeCallArgs(script: string, start: number): string[] {
   const args: string[] = [];
   let i = start;
@@ -89,6 +90,11 @@ function tokenizeCallArgs(script: string, start: number): string[] {
     if (i >= len || script[i] === '\n' || script[i] === ';') break;
     if (script.startsWith('&&', i) || script.startsWith('||', i)) break;
     if (script.startsWith('then', i) && isWordBoundaryAfter(script, i + 4)) break;
+    // An unquoted `#` starting a word begins a comment in sh, ending the
+    // command line -- `check_for_gh_release "a" "o/a" # note` has two args.
+    // A `#` inside a word (`v1#2`) is ordinary text, so only this position
+    // counts.
+    if (script[i] === '#') break;
 
     const ch = script[i];
     if (ch === '"' || ch === "'") {

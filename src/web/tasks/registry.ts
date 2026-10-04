@@ -12,6 +12,8 @@ export interface TaskRunContext {
   inventoryPath: string;
   fetchImpl?: typeof fetch;
   now: () => Date;
+  // The job's cancellation signal (JobDefinition.run's second argument).
+  signal?: AbortSignal;
 }
 
 // One scheduled task (FR-001). `command` is the job's command name in Job
@@ -41,7 +43,7 @@ export const TASKS: readonly TaskDefinition[] = [
       // the job only fails on something unexpected.
       const result = await runCheckAppUpdates(
         { apply: true },
-        { ssh: ctx.ssh, inventory: ctx.inventory, inventoryPath: ctx.inventoryPath, fetchImpl: ctx.fetchImpl, now: ctx.now }
+        { ssh: ctx.ssh, inventory: ctx.inventory, inventoryPath: ctx.inventoryPath, fetchImpl: ctx.fetchImpl, now: ctx.now, signal: ctx.signal }
       );
       const lines = formatCheckAppUpdates(result);
       console.log(lines === '' ? 'No LXC guests with a community-scripts app recorded -- nothing to check.' : lines);

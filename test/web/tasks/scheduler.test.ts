@@ -324,7 +324,8 @@ test('updateSchedule saves, returns the recomputed view, and keeps the run colum
   const view = scheduler.updateSchedule(TASK_ID, { timeOfDay: '18:30' });
   assert.equal(view.timeOfDay, '18:30');
   assert.equal(view.enabled, true);
-  assert.equal(view.nextRun, new Date(2026, 9, 3, 18, 30).toISOString());
+  // Today already ran at 04:00, so today's 18:30 slot is skipped (research R8).
+  assert.equal(view.nextRun, new Date(2026, 9, 4, 18, 30).toISOString());
   assert.equal(view.lastRun!.jobId, 1);
   const disabled = scheduler.updateSchedule(TASK_ID, { enabled: false });
   assert.equal(disabled.timeOfDay, '18:30');
@@ -344,10 +345,145 @@ test('moving the time earlier on a day that already ran does not trigger another
   scheduler.updateSchedule(TASK_ID, { timeOfDay: '08:00' });
   scheduler.tick();
   assert.equal(jobs.defs.length, 0);
-  // ...while moving it later than the last run (and past now) does.
+  // ...and neither does moving it later than the last run (and past now):
+  // today already had its run (research R8's same-day rule).
   scheduler.updateSchedule(TASK_ID, { timeOfDay: '09:30' });
   scheduler.tick();
+  assert.equal(jobs.defs.length, 0);
+});
+
+// --- one run per local calendar day (final review RULING, research R8) ---
+
+test('ran at 04:00, time moved to 06:00 at 05:00 -> no run at 06:00 today, one at 06:00 tomorrow', () => {
+  const { scheduler, jobs, ticker, setNow } = setup(new Date(2026, 9, 2, 12, 0));
+  // Today's 04:00 run.
+  setNow(new Date(2026, 9, 3, 4, 0));
+  scheduler.start();
   assert.equal(jobs.defs.length, 1);
+  jobs.statuses.set(100, 'success');
+  setNow(new Date(2026, 9, 3, 5, 0));
+  const view = scheduler.updateSchedule(TASK_ID, { timeOfDay: '06:00' });
+  assert.equal(view.nextRun, new Date(2026, 9, 4, 6, 0).toISOString());
+  setNow(new Date(2026, 9, 3, 6, 0));
+  ticker.fire();
+  setNow(new Date(2026, 9, 3, 23, 59));
+  ticker.fire();
+  assert.equal(jobs.defs.length, 1);
+  setNow(new Date(2026, 9, 4, 5, 59));
+  ticker.fire();
+  assert.equal(jobs.defs.length, 1);
+  setNow(new Date(2026, 9, 4, 6, 0));
+  ticker.fire();
+  assert.equal(jobs.defs.length, 2);
+});
+
+test('Run now at 03:00 with a 04:00 schedule -> no 04:00 run that day', () => {
+  const { scheduler, jobs, ticker, dbPath, setNow } = setup(new Date(2026, 9, 3, 3, 0));
+  recordTaskRun(dbPath, TASK_ID, { startedAt: new Date(2026, 9, 2, 4, 0).toISOString(), jobId: 1 }, '04:00');
+  jobs.statuses.set(1, 'success');
+  scheduler.start();
+  assert.equal(jobs.defs.length, 0);
+  assert.deepEqual(scheduler.startRun(TASK_ID, { triggeredByUsername: 'admin' }), { jobId: 100 });
+  jobs.statuses.set(100, 'success');
+  assert.equal(scheduler.getTask(TASK_ID).nextRun, new Date(2026, 9, 4, 4, 0).toISOString());
+  setNow(new Date(2026, 9, 3, 4, 0));
+  ticker.fire();
+  assert.equal(jobs.defs.length, 1);
+  setNow(new Date(2026, 9, 4, 4, 0));
+  ticker.fire();
+  assert.equal(jobs.defs.length, 2);
+});
+
+test('a multi-day outage still catches up with exactly one run', () => {
+  const { scheduler, jobs, ticker, dbPath, setNow } = setup(new Date(2026, 9, 5, 10, 0));
+  recordTaskRun(dbPath, TASK_ID, { startedAt: new Date(2026, 9, 2, 4, 0).toISOString(), jobId: 1 }, '04:00');
+  jobs.statuses.set(1, 'success');
+  scheduler.start();
+  assert.equal(jobs.defs.length, 1);
+  jobs.statuses.set(100, 'success');
+  setNow(new Date(2026, 9, 5, 10, 1));
+  ticker.fire();
+  setNow(new Date(2026, 9, 5, 23, 59));
+  ticker.fire();
+  assert.equal(jobs.defs.length, 1);
+});
+
+// --- a failed run record (final review) ---
+
+test('a run whose DB record fails to save is not started again by later ticks', () => {
+  const dbPath = tempDbPath();
+  const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
+  saveInventory(dbPath, inventory);
+  const jobs = new FakeJobs();
+  const ticker = new ManualTicker();
+  let current = new Date(2026, 9, 3, 10, 0);
+  let recordCalls = 0;
+  const scheduler = new TaskScheduler({
+    inventory,
+    inventoryPath: dbPath,
+    jobRunner: jobs.runner,
+    jobStore: jobs.store,
+    now: () => current,
+    ticker,
+    recordRun: () => {
+      recordCalls++;
+      throw new Error('database is locked');
+    },
+  });
+  const warnings: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => warnings.push(args.join(' '));
+  try {
+    scheduler.start();
+    assert.equal(jobs.defs.length, 1);
+    assert.equal(recordCalls, 1);
+    assert.match(warnings.join('\n'), /could not record the run of check-app-updates \(job 100\): database is locked/);
+    // Still running: the in-memory record makes it active.
+    current = new Date(2026, 9, 3, 10, 1);
+    ticker.fire();
+    assert.equal(jobs.defs.length, 1);
+    assert.deepEqual(scheduler.startRun(TASK_ID, { triggeredByUsername: 'admin' }), { alreadyRunning: 100 });
+    // Finished: the in-memory start time means today already ran.
+    jobs.statuses.set(100, 'success');
+    current = new Date(2026, 9, 3, 10, 2);
+    ticker.fire();
+    assert.equal(jobs.defs.length, 1);
+    assert.equal(scheduler.getTask(TASK_ID).lastRun!.jobId, 100);
+  } finally {
+    console.error = original;
+  }
+});
+
+test('startRun hands the job signal to the task run', async () => {
+  const dbPath = tempDbPath();
+  const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
+  saveInventory(dbPath, inventory);
+  const jobs = new FakeJobs();
+  let seen: AbortSignal | undefined;
+  const scheduler = new TaskScheduler({
+    inventory,
+    inventoryPath: dbPath,
+    jobRunner: jobs.runner,
+    jobStore: jobs.store,
+    now: () => new Date(2026, 9, 3, 10, 0),
+    ticker: new ManualTicker(),
+    tasks: [
+      {
+        id: 'probe',
+        label: 'Probe',
+        description: 'Test task',
+        defaultTime: '04:00',
+        command: 'probe',
+        run: async (ctx) => {
+          seen = ctx.signal;
+        },
+      },
+    ],
+  });
+  scheduler.startRun('probe', {});
+  const controller = new AbortController();
+  await jobs.defs[0].run(new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })), controller.signal);
+  assert.equal(seen, controller.signal);
 });
 
 test('unknown task ids throw UnknownTaskError with the contract message', () => {

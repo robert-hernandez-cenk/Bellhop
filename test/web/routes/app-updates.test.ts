@@ -226,3 +226,18 @@ test('GET /api/app-updates includes a guest\'s result for its creator even thoug
   assert.equal(other.status, 200);
   assert.deepEqual(other.body.results, []);
 });
+
+// Final review: a guest repurposed to a different app since the last check
+// must not show the old app's result -- the stored row's `app` no longer
+// matches what the inventory says is installed.
+test('GET /api/app-updates drops a row whose app no longer matches the guest\'s recorded app', async () => {
+  const { app, inventoryPath } = testApp();
+  replaceAppUpdateResults(inventoryPath, [
+    { guest: 'media', app: 'old-app', status: 'update-available', installedVersion: '1.0.0', latestVersion: '2.0.0', checkedAt: '2026-10-03T04:00:41.000Z' },
+    { guest: 'web-lxc', app: 'homepage', status: 'up-to-date', installedVersion: '2.0.0', checkedAt: '2026-10-03T04:00:42.000Z' },
+  ]);
+
+  const res = await asAdmin(request(app).get('/api/app-updates'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.results.map((r: AppUpdateResult) => r.guest), ['web-lxc']);
+});

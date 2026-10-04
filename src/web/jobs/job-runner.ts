@@ -42,7 +42,11 @@ export interface JobDefinition {
   // fields for what these mean.
   triggeredByUsername?: string;
   triggeredByImpersonating?: string;
-  run: (ssh: SSHClient) => Promise<void>;
+  // `signal` aborts when the job is cancelled. Most jobs never need it --
+  // the SSH client they're handed already rejects every exec once it fires
+  // -- but a job that turns per-target failures into results (the
+  // check-app-updates task) reads it to stop instead of carrying on.
+  run: (ssh: SSHClient, signal: AbortSignal) => Promise<void>;
 }
 
 export interface JobRunnerOptions {
@@ -326,7 +330,7 @@ export class JobRunner {
             stallMs: this.promptStallMs,
             scheduleCheck: this.promptScheduleCheck,
           });
-          await def.run(jobSsh);
+          await def.run(jobSsh, controller.signal);
         },
         (line) => emitChunk(line, 'stdout')
       );

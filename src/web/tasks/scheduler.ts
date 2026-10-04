@@ -41,6 +41,23 @@ export function nextSlot(after: Date, hhmm: string): Date {
   return today.getTime() > after.getTime() ? today : slotOn(after, hhmm, 1);
 }
 
+// True when `a` falls on an earlier local calendar day than `b`.
+function isEarlierLocalDay(a: Date, b: Date): boolean {
+  const day = (d: Date) => d.getFullYear() * 10_000 + d.getMonth() * 100 + d.getDate();
+  return day(a) < day(b);
+}
+
+// Whether a slot is still owed a run, given when the last run (scheduled or
+// Run now) started. Two rules, both required (research R8): the slot came
+// after the last start, and the last start was on an earlier local calendar
+// day than the slot. The second is what keeps the schedule to one run per
+// day when the time is moved later after today's run already happened, or
+// when Run now ran shortly before today's slot.
+export function slotIsDue(slot: Date, lastRunStartedAt: Date | null): boolean {
+  if (!lastRunStartedAt) return true;
+  return slot.getTime() > lastRunStartedAt.getTime() && isEarlierLocalDay(lastRunStartedAt, slot);
+}
+
 // --- scheduler ---
 
 const ACTIVE_STATUSES: readonly JobStatus[] = ['queued', 'running', 'awaiting_input'];
@@ -106,6 +123,17 @@ export interface TaskSchedulerDeps {
   ticker?: Ticker;
   tickMs?: number;
   fetchImpl?: typeof fetch;
+  // Test hook: replaces the task_schedules write startRun makes after
+  // enqueueing, so a test can make it throw.
+  recordRun?: typeof recordTaskRun;
+}
+
+// The last run this process started for one task. Consulted alongside the
+// task_schedules row, so a run whose DB record failed to save still counts
+// as started -- otherwise every tick would enqueue a duplicate.
+interface StartedRun {
+  startedAt: string;
+  jobId: number;
 }
 
 // Only src/web/server.ts constructs one (FR-006) -- the MCP server and CLI
@@ -117,10 +145,15 @@ export class TaskScheduler {
   private readonly now: () => Date;
   private readonly ticker: Ticker;
   private readonly tickMs: number;
+  private readonly recordRun: typeof recordTaskRun;
+  private readonly startedRuns = new Map<string, StartedRun>();
+  private deps: TaskSchedulerDeps;
   private handle: unknown;
   private started = false;
 
-  constructor(private deps: TaskSchedulerDeps) {
+  constructor(deps: TaskSchedulerDeps) {
+    this.deps = deps;
+    this.recordRun = deps.recordRun ?? recordTaskRun;
     this.tasks = deps.tasks ?? TASKS;
     this.now = deps.now ?? (() => new Date());
     this.ticker = deps.ticker ?? realTicker;
@@ -146,8 +179,8 @@ export class TaskScheduler {
     this.handle = undefined;
   }
 
-  // Starts every enabled task whose most recent slot has passed with no run
-  // started since, unless one is still active. Runs from a timer callback,
+  // Starts every enabled task whose most recent slot is still due (see
+  // slotIsDue), unless a run is still active. Runs from a timer callback,
   // where a throw would be an uncaughtException -- so nothing escapes; a
   // failure is logged and the next tick tries again.
   tick(): void {
@@ -164,7 +197,8 @@ export class TaskScheduler {
         const schedule = schedules.get(task.id)!;
         if (!schedule.enabled) continue;
         const slot = mostRecentSlot(now, schedule.timeOfDay);
-        if (schedule.lastRunStartedAt && new Date(schedule.lastRunStartedAt).getTime() >= slot.getTime()) continue;
+        const last = schedule.lastRunStartedAt ? new Date(schedule.lastRunStartedAt) : null;
+        if (!slotIsDue(slot, last)) continue;
         this.startRun(task.id, { triggeredByUsername: 'scheduler' });
       } catch (err) {
         logWarn(`Task scheduler failed to start ${task.id}: ${errMsg(err)}`);
@@ -176,7 +210,9 @@ export class TaskScheduler {
   // the last recorded run is still active, otherwise enqueues the job and
   // records it in the same synchronous call, so no second start can slip in
   // between. Runs regardless of `enabled` -- disabling only stops the
-  // schedule, not a manual run.
+  // schedule, not a manual run. The in-memory record is set before the DB
+  // write, so a failed write is only logged: this process still knows the
+  // run started and won't enqueue it again.
   startRun(taskId: string, attribution: TaskAttribution): StartRunResult {
     const task = this.findTask(taskId);
     const schedule = this.loadSchedules().get(task.id)!;
@@ -192,9 +228,15 @@ export class TaskScheduler {
       argsJson: '{}',
       triggeredByUsername: attribution.triggeredByUsername,
       triggeredByImpersonating: attribution.triggeredByImpersonating,
-      run: (ssh) => task.run({ ssh, inventory, inventoryPath, fetchImpl, now }),
+      run: (ssh, signal) => task.run({ ssh, inventory, inventoryPath, fetchImpl, now, signal }),
     });
-    recordTaskRun(inventoryPath, task.id, { startedAt: this.now().toISOString(), jobId }, task.defaultTime);
+    const run = { startedAt: this.now().toISOString(), jobId };
+    this.startedRuns.set(task.id, run);
+    try {
+      this.recordRun(inventoryPath, task.id, run, task.defaultTime);
+    } catch (err) {
+      logWarn(`Task scheduler could not record the run of ${task.id} (job ${jobId}): ${errMsg(err)}`);
+    }
     return { jobId };
   }
 
@@ -230,8 +272,18 @@ export class TaskScheduler {
     return task;
   }
 
+  // The DB rows, each overlaid with this process's own record of the task's
+  // last start when that one is newer (a failed recordRun, see startRun).
   private loadSchedules(): Map<string, TaskSchedule> {
-    return loadTaskSchedules(this.deps.inventoryPath, this.tasks);
+    const schedules = loadTaskSchedules(this.deps.inventoryPath, this.tasks);
+    for (const [taskId, run] of this.startedRuns) {
+      const schedule = schedules.get(taskId);
+      if (!schedule) continue;
+      if (schedule.lastRunStartedAt === null || run.startedAt > schedule.lastRunStartedAt) {
+        schedules.set(taskId, { ...schedule, lastRunStartedAt: run.startedAt, lastJobId: run.jobId });
+      }
+    }
+    return schedules;
   }
 
   // "Active" is the last recorded job's live row status. A job row that no
@@ -255,7 +307,10 @@ export class TaskScheduler {
       const now = this.now();
       const last = schedule.lastRunStartedAt ? new Date(schedule.lastRunStartedAt) : null;
       const after = last && last.getTime() > now.getTime() ? last : now;
-      nextRun = nextSlot(after, schedule.timeOfDay).toISOString();
+      let next = nextSlot(after, schedule.timeOfDay);
+      // A slot on the same day as the last run is skipped (slotIsDue).
+      while (!slotIsDue(next, last)) next = nextSlot(next, schedule.timeOfDay);
+      nextRun = next.toISOString();
     }
     return {
       id: task.id,

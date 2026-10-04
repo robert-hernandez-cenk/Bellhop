@@ -61,8 +61,12 @@ function rawFetchFailureMessage(url: string, res: RawFetchResult): string {
 // the same order buildUpdateAppScript's generated curl uses.
 async function fetchScriptUncached(app: string, source: AppSource, fetchImpl: typeof fetch): Promise<ScriptFetchResult> {
   if (source.kind === 'custom') {
-    const res = await fetchRaw(source.ctUrl!, fetchImpl);
-    return res.ok ? { ok: true, script: res.body! } : { ok: false, error: rawFetchFailureMessage(source.ctUrl!, res) };
+    // resolveAppSource always sets ctUrl for a custom source; this guards
+    // the type, not a case that should happen.
+    const url = source.ctUrl;
+    if (!url) throw new Error(`The custom script source for '${app}' has no ct/${app}.sh URL`);
+    const res = await fetchRaw(url, fetchImpl);
+    return res.ok ? { ok: true, script: res.body! } : { ok: false, error: rawFetchFailureMessage(url, res) };
   }
 
   const slug = source.slug ?? app;
@@ -241,11 +245,45 @@ export interface RunCheckAppUpdatesDeps {
   inventoryPath: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  // The scheduled task's job signal. Once it fires, the run stops and saves
+  // nothing (see throwIfCancelled). The CLI passes none.
+  signal?: AbortSignal;
 }
 
 export interface RunCheckAppUpdatesResult {
   results: AppUpdateResult[];
   saved: boolean;
+}
+
+// How many guests a full run checks at once. Small and fixed: enough that a
+// slow guest or GitHub response doesn't serialize the whole run, few enough
+// to stay gentle on the hosts. The release/script/source caches are
+// promise-based, so guests checked side by side still share one request.
+export const CHECK_CONCURRENCY = 4;
+
+// A cancelled job's SSH client rejects every exec, and checkOneGuest turns
+// that rejection into an ordinary per-guest `error` result. Saving those
+// would overwrite every good row with "Job cancelled", so the run checks
+// the signal itself and throws instead -- JobRunner then marks the job
+// cancelled.
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('check-app-updates was cancelled; no results were saved');
+}
+
+// Runs fn over items with at most `limit` in flight, results in input
+// order. A rejection rejects the whole call; the other workers stop taking
+// new items once fn itself throws for them (here, via throwIfCancelled).
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 // `--guest <name>`: skips the status query entirely (research R5) and
@@ -282,7 +320,9 @@ export async function runCheckAppUpdates(
       throw new Error(`${opts.guest} has no community-scripts app recorded -- nothing to check`);
     }
 
+    throwIfCancelled(deps.signal);
     const result = await checkOneGuest(opts.guest, ctx);
+    throwIfCancelled(deps.signal);
     if (opts.apply) {
       upsertAppUpdateResult(deps.inventoryPath, result);
     }
@@ -290,22 +330,28 @@ export async function runCheckAppUpdates(
   }
 
   const eligible = deps.inventory.guests.filter((g) => g.type === 'lxc' && g.app);
+  throwIfCancelled(deps.signal);
   const { statuses } = await getGuestStatuses(deps.ssh, deps.inventory);
 
-  const results: AppUpdateResult[] = [];
-  for (const guest of eligible) {
+  const results = await mapWithConcurrency(eligible, CHECK_CONCURRENCY, async (guest): Promise<AppUpdateResult> => {
+    throwIfCancelled(deps.signal);
     if (statuses[guest.name] === 'stopped') {
-      results.push({ guest: guest.name, app: guest.app!, status: 'not-checked', message: 'Guest is stopped', checkedAt: now().toISOString() });
-      continue;
+      return { guest: guest.name, app: guest.app!, status: 'not-checked', message: 'Guest is stopped', checkedAt: now().toISOString() };
     }
+    let result: AppUpdateResult;
     try {
-      results.push(await checkOneGuest(guest.name, ctx));
+      result = await checkOneGuest(guest.name, ctx);
     } catch (err) {
-      results.push({ guest: guest.name, app: guest.app!, status: 'error', message: errMsg(err), checkedAt: now().toISOString() });
+      throwIfCancelled(deps.signal);
+      result = { guest: guest.name, app: guest.app!, status: 'error', message: errMsg(err), checkedAt: now().toISOString() };
     }
-  }
+    // An exec aborted mid-check comes back as an ordinary error result.
+    throwIfCancelled(deps.signal);
+    return result;
+  });
   results.sort((a, b) => a.guest.localeCompare(b.guest));
 
+  throwIfCancelled(deps.signal);
   if (opts.apply) {
     replaceAppUpdateResults(deps.inventoryPath, results);
   }
