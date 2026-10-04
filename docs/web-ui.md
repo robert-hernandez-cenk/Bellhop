@@ -94,7 +94,10 @@ now" to start it immediately. A scheduled or manual run shows up in Job
 History like any other job, attributed to "scheduler" or to the admin who
 ran it. Only the web service runs tasks on a schedule — the CLI and MCP
 server never do; a task missed because the service was down runs once,
-shortly after it starts back up.
+shortly after it starts back up. A task runs on its schedule at most once
+per calendar day: after a run (scheduled or "Run now"), moving the time
+later that same day takes effect from the next day. Stopping a run from
+Job History saves none of its results.
 
 Changes that touch
 subdomains (a new guest's Subdomains field, editing an existing guest's

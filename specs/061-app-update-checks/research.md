@@ -82,14 +82,17 @@ Exit 0: the trimmed first line of stdout is the installed version. Exit 3: `erro
 **Decision**: `TaskScheduler` gets an injected `now()` and `setInterval`-style ticker (default 60 s), and also ticks once right after `start()` so a missed run starts within seconds (SC-003). For each enabled task:
 
 - `slot = mostRecentSlot(now, 'HH:MM')`: today at HH:MM local, or yesterday's if today's hasn't come yet. It is built with `new Date(y, m, d, hh, mm)`. JS local-time normalization moves a nonexistent DST hour forward, and an ambiguous hour resolves to one instant, so each calendar day yields exactly one slot.
-- Start a run when `lastRunStartedAt` is unset or earlier than `slot`, and no run of that task is active.
+- Start a run when `lastRunStartedAt` is unset, or when it is earlier than `slot` **and** falls on an earlier local calendar day than `slot` (`slotIsDue`), and no run of that task is active. The last start counts whatever started it, scheduled run or Run now.
+- The calendar-day rule keeps the schedule to one run per day. Without it, moving the time later after today's run (ran at 04:00, moved to 06:00 at 05:00) would run again at 06:00, and a Run now at 03:00 would be followed by the 04:00 run. With it, both wait for the next day's slot. A catch-up after an outage still runs once, since the last start is on an earlier day than the missed slot.
 - A brand-new install has no `lastRunStartedAt`, so it runs at its first tick. That is intentional: it gives results right after deploying this feature.
 
 "Active" means the last recorded job id's row in `JobStore` is `queued`, `running`, or `awaiting_input`. `reconcileOrphanedJobs()` already marks a previous process's rows interrupted before the scheduler starts, so a crash never leaves a task permanently "active".
 
-`startRun(taskId, triggeredBy)` records `lastRunStartedAt = now` and `lastJobId` in the same call that enqueues the job. Both the schedule and "Run now" go through it, so FR-004 holds for both. `nextRun` is the next slot after `max(now, lastRunStartedAt)`.
+`startRun(taskId, triggeredBy)` records `lastRunStartedAt = now` and `lastJobId` in the same call that enqueues the job. Both the schedule and "Run now" go through it, so FR-004 holds for both. The scheduler also keeps the last start and job id per task in memory, set right after the enqueue and consulted alongside the database row. If the database write fails, it is logged with `logWarn` and the in-memory record still stops later ticks from enqueuing a duplicate in this process. `nextRun` is the first slot after `max(now, lastRunStartedAt)` that is on a later calendar day than `lastRunStartedAt`.
 
-Changing the time does not reset `lastRunStartedAt`. Moving the time earlier on a day that has already run therefore doesn't trigger an extra run, while moving it later than the last run does.
+Changing the time does not reset `lastRunStartedAt`. Moving the time on a day that has already run, earlier or later, therefore doesn't trigger an extra run that day; the new time takes effect the next day.
+
+A cancelled run stops and saves nothing. `JobDefinition.run` receives the job's `AbortSignal` as a second argument, the scheduler passes it to the task as `TaskRunContext.signal`, and `runCheckAppUpdates` checks it between guests and before saving. Without that check, a cancelled run's aborted SSH calls would come back as per-guest errors and overwrite every saved result.
 
 **Alternatives considered**: `setTimeout` to the exact next slot. Rejected because of drift across sleep/DST and harder testing. Cron libraries were rejected as a new dependency for one daily time.
 
@@ -106,7 +109,7 @@ Only `src/web/server.ts` constructs and starts the scheduler. The MCP server and
 
 ## R10. Re-check after an app update
 
-**Decision**: In the `update-app` operation's `apply` (`src/operations/maintenance.ts`, used by web and MCP), after `runUpdateApp` returns `result.code === 0`, call `checkOneGuest(guest, deps)` and upsert the result. Any thrown error becomes `logWarn` and the job still succeeds (FR-022). A non-zero exit skips the re-check, leaving the old result (US4 scenario 2).
+**Decision**: In the `update-app` operation's `apply` (`src/operations/maintenance.ts`, used by web and MCP), after `runUpdateApp` returns `result.result?.code === 0`, call `checkOneGuest(guest, deps)` and upsert the result. The re-check runs only when the update's `app` matches the guest's recorded `app`; otherwise it logs one info line and skips. When the job pinned an `appSource`, the re-check uses it as its resolver, so it reads the exact script just run with no second resolution of a custom branch. Any thrown error becomes `logWarn` and the job still succeeds (FR-022). A non-zero exit skips the re-check, leaving the old result (US4 scenario 2).
 
 Note: today `update-app`'s apply does not fail the job on a non-zero script exit. Changing that is out of scope and listed as a follow-up. The re-check is gated on the exit code directly.
 

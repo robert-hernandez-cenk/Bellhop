@@ -2741,11 +2741,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `nextSlot` build each day's slot with the local-time `new Date(y, m, d,
   hh, mm)` constructor, so a DST jump or fold still yields exactly one
   slot per calendar day with nothing extra to special-case. The catch-up
-  rule is simple: start a run when the task is enabled and its most
-  recent slot is later than `lastRunStartedAt` (or there's never been a
-  run at all -- a fresh install runs every task on its first tick, giving
-  results right away rather than waiting until tomorrow's slot), unless a
-  run is already active. "Active" means the schedule's last recorded job
+  rule (`slotIsDue`): start a run when the task is enabled and its most
+  recent slot is later than `lastRunStartedAt` *and* on a later local
+  calendar day than it (or there's never been a run at all -- a fresh
+  install runs every task on its first tick, giving results right away
+  rather than waiting until tomorrow's slot), unless a run is already
+  active. The calendar-day half is a final-review ruling: any run started
+  on a day, scheduled or Run now, uses up that day, so moving the time
+  later after today's run, or a Run now just before today's slot, waits
+  for tomorrow's slot instead of running twice; a catch-up after an outage
+  still runs exactly once. "Active" means the schedule's last recorded job
   id is still `queued`/`running`/`awaiting_input` in `JobStore` --
   `reconcileOrphanedJobs()` already marked a previous process's stuck rows
   interrupted before the scheduler ever starts, so a crash can't wedge a
@@ -2753,7 +2758,16 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   path both the schedule and the Tasks page's "Run now" button go through
   (FR-004): it enqueues the job and records `lastRunStartedAt`/`lastJobId`
   in the same synchronous call, so nothing can slip a second start in
-  between. A task's run is an ordinary **targetless** job (`target:
+  between. It also keeps that last start/job id per task in memory, set
+  right after the enqueue and overlaid on the database row by every read,
+  so a failed `task_schedules` write (only `logWarn`ed) can't make every
+  later tick enqueue a duplicate within the same process. A cancelled run
+  stops and saves nothing: `JobDefinition.run` receives the job's
+  `AbortSignal` as its second argument, the scheduler hands it to the
+  task as `TaskRunContext.signal`, and `runCheckAppUpdates` checks it
+  between guests and before saving -- otherwise the cancel's aborted SSH
+  calls would come back as per-guest errors and overwrite every saved
+  result. A task's run is an ordinary **targetless** job (`target:
   undefined`, admin-only in Job History, same as any other fleet-wide
   job) attributed to `triggeredByUsername: 'scheduler'` for a scheduled
   run or `resolveTriggeredBy(req)` for a manual one -- there is no
@@ -2767,8 +2781,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   task's own `defaultTime`, enabled, never run (FR-002), so a fresh
   install needs no seeding and a task removed from the registry leaves no
   cleanup to do. Changing the time of day never resets
-  `last_run_started_at`, so moving it earlier on a day that already ran
-  can't trigger a second run that day. `src/web/routes/tasks.ts` is a thin
+  `last_run_started_at`, so moving it, earlier or later, on a day that
+  already ran can't trigger a second run that day. `src/web/routes/tasks.ts` is a thin
   admin-only (`requireAdminGroup`) adapter over the scheduler's own
   `listTasks`/`updateSchedule`/`startRun`, answering 503 in any process
   with no scheduler wired (every test that doesn't care) rather than
@@ -2824,7 +2838,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   record just doesn't exist yet. A `ReleaseCache`/script cache, both
   scoped to one run (or one single-guest check) and shared via
   `CheckAppUpdatesContext`, mean two guests running the same app query
-  GitHub and fetch the script exactly once between them (FR-017) -- this,
+  GitHub and fetch the script exactly once between them (FR-017), even
+  though a full run checks up to `CHECK_CONCURRENCY` (4) guests at once:
+  every cache holds promises, so a request already in flight is shared --
+  this,
   plus one run a day, is what keeps a homelab-sized inventory under
   GitHub's unauthenticated 60-requests-per-hour limit (SC-005); a
   **single-operator assumption** this feature adds deliberately, same
@@ -2846,18 +2863,25 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   every other result alone. `GET /api/app-updates`
   (`src/web/routes/app-updates.ts`) reads every row and drops one whose
   guest isn't currently an eligible `lxc`+`app` guest in the live
-  inventory, or that `isResourceAllowed` denies the caller -- the same
-  per-resource rule every other inventory-reading route already applies,
+  inventory, whose stored `app` no longer matches the guest's recorded
+  `app` (a repurposed guest never shows the old app's result), or whose
+  guest the caller can't see -- visibility comes from one
+  `filterInventoryForUser` call per request, the same per-resource rule
+  `/inventory` applies,
   so a restricted user never sees a check result for a guest they're
   blocked from (FR-026) even though the route itself needs no admin gate.
-  After a successful web/MCP `update-app` apply (`result.code === 0`,
+  After a successful web/MCP `update-app` apply (`result.result?.code === 0`,
   `src/operations/maintenance.ts`), the same job calls `checkOneGuest` for
   that one guest and upserts its result before the job finishes, so the
   Update page's badge never claims an update is still available
   immediately after one was just applied (US4/FR-022) -- a failed
   re-check is only `logWarn`ed and never fails the already-successful
   update job, and a non-zero script exit skips the re-check entirely,
-  leaving whatever was last recorded alone. The CLI's own `check-app-updates
+  leaving whatever was last recorded alone. The re-check only runs when
+  the update's `app` matches the guest's recorded `app` (one info line
+  otherwise), and it resolves through the job's already-pinned
+  `appSource` when there is one, so it reads the exact script just run
+  rather than resolving a custom branch a second time. The CLI's own `check-app-updates
   [--guest <name>] [--apply]` (`src/cli.ts`) is the manual/debugging path
   (`contracts/cli.md`): one line per guest sorted by name, exit code 0
   even when individual guests report `error` (those are results, not

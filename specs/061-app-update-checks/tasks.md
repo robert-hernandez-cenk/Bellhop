@@ -14,7 +14,7 @@ description: "Task list for daily app update checks (#61)"
 
 ## Format: `[ID] [P?] [Story] Description`
 
-Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\issue-61-app-update-checks`.
+Paths are relative to the repository root.
 
 ---
 

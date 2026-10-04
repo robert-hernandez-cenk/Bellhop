@@ -49,4 +49,4 @@ Reads: `loadAppUpdateResults(dbPath)` returns every row ordered by guest. The AP
 
 ## TaskDefinition (`src/web/tasks/registry.ts`)
 
-`{ id: 'check-app-updates', label: 'App update check', description, defaultTime: '04:00', command: 'check-app-updates', run: (ctx: TaskRunContext) => Promise<void> }`. `TaskRunContext` carries `{ ssh, inventory, inventoryPath, fetchImpl?, now }`.
+`{ id: 'check-app-updates', label: 'App update check', description, defaultTime: '04:00', command: 'check-app-updates', run: (ctx: TaskRunContext) => Promise<void> }`. `TaskRunContext` carries `{ ssh, inventory, inventoryPath, fetchImpl?, now, signal? }`; `signal` is the job's cancellation signal, so a cancelled run can stop without saving.

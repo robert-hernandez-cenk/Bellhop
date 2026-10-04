@@ -115,7 +115,7 @@ An operator runs `bellhop check-app-updates` (optionally `--guest <name>`) to se
 - **App installed from a configured custom script repository**: the release check is read from that repository's version of the script.
 - **Guest removed from inventory, converted to a VM, or app cleared**: its saved result is removed on the next full run and is never shown.
 - **Inventory changes while a run is in progress**: the run uses the guest list as it was when the run started.
-- **Clock changes such as daylight-saving shifts**: a scheduled time is evaluated in server local time. A day never gets more than one scheduled run, and a missing or repeated local hour does not cause a skipped day.
+- **Clock changes such as daylight-saving shifts**: a scheduled time is evaluated in server local time. A day never gets more than one scheduled run, and a missing or repeated local hour does not cause a skipped day. "A day" is a local calendar day: once a run has started on a day (scheduled or Run now), no scheduled run starts again until the next day's slot, even if the time is moved later that same day.
 - **The service restarts during a run**: the interrupted job is marked interrupted like any other job. The next scheduled slot (or a manual run) runs it again.
 
 ## Requirements *(mandatory)*
@@ -126,7 +126,7 @@ An operator runs `bellhop check-app-updates` (optionally `--guest <name>`) to se
 
 - **FR-001**: The web service MUST support scheduled tasks. A task has an identifier, a human-readable name and description, a time of day, an enabled flag, and the work it performs.
 - **FR-002**: Each task's time of day and enabled flag MUST persist across service restarts. A task that has never been configured MUST use its built-in default time (04:00 for the app update check) and be enabled.
-- **FR-003**: The web service MUST start a task's run when the task is enabled, its most recent scheduled time has passed, and it has not been started since that time. This MUST also start a run missed while the service was down, once, after startup.
+- **FR-003**: The web service MUST start a task's run when the task is enabled, its most recent scheduled time has passed, and it has not been started since that time or earlier on that same local calendar day. This MUST also start a run missed while the service was down, once, after startup.
 - **FR-004**: A task MUST NOT have two runs in progress at once, whether started by the schedule or by hand.
 - **FR-005**: Every task run MUST be recorded as a job, with a log, a final status, and a visible trigger: "scheduler" for scheduled runs, or the admin's identity for manual runs. It MUST appear in Job History like any other job.
 - **FR-006**: Only the web service MUST run tasks on a schedule. The MCP server and CLI never start scheduled runs.
