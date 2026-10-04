@@ -3067,8 +3067,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   layout — there is no intermediate tablet breakpoint. Below it, `Sidebar`
   becomes an off-canvas drawer (fixed, translated off-screen, toggled by a
   hamburger button, closes on backdrop tap or nav-link click) instead of
-  the static 200px column used above it. Every `.data-table` (Dashboard's
-  Hosts/Bridges/Storage/Guests tables, JobHistory's Jobs table) switches to
+  the static 220px column used above it, whose nav links never wrap --
+  they truncate with an ellipsis instead (issue #74). Every `.data-table`
+  (Dashboard's Hosts/Bridges/Storage/Guests tables, JobHistory's Jobs table) switches to
   a card layout below the breakpoint — `table`/`tbody`/`tr`/`td` become
   `display: block`, and each `<td>` carries a `data-label="…"` attribute
   matching its column header, shown via CSS `::before` since `<thead>` is
