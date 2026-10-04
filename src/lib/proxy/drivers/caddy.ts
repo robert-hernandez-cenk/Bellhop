@@ -1,4 +1,6 @@
+import type { Inventory } from '../../inventory.ts';
 import type { ProxyContext, ProxyRoute } from '../routes.ts';
+import { caddyTlsMode } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
 
@@ -113,15 +115,21 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
 // Also the Caddyfile convert-caddyfile (issue #26) reads by default.
 export const CADDYFILE_DEFAULT_PATH = '/etc/caddy/Caddyfile';
 
+// issue #51, User Story 4 (contract "Cloudflare prune decision"): both Caddy
+// drivers (file-based and admin-API) obtain a certificate via Cloudflare
+// DNS-01 only in the 'cloudflare' caddyTls mode (unset defaults to it) -- the
+// other three modes never touch Cloudflare's DNS at all, so
+// prune-acme-challenges has nothing to clean up after them. Exported so
+// caddy-api.ts's own capabilities object reads the exact same rule rather
+// than keeping a second copy that could drift from this one.
+export function caddyAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
+  return caddyTlsMode(inventory) === 'cloudflare';
+}
+
 export const caddyDriver = fileDriver({
   id: 'caddy',
   label: 'Caddy',
-  // acmeDns01ViaCloudflare is still a fixed true regardless of the
-  // inventory handed in -- issue #51's own follow-up task makes this
-  // mode-aware (false once proxyCaddyTls is anything but unset/'cloudflare');
-  // this foundational task only changes the capability's type to a
-  // function and preserves today's behavior.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true },
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare },
   defaultConfigPath: CADDYFILE_DEFAULT_PATH,
   // The Caddy package's default document root -- what render-status-page's
   // caddy.example.com block already serves via file_server (see CLAUDE.md's

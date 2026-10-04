@@ -16,14 +16,15 @@ export interface DriverCapabilities {
   // ACME DNS-01 through Cloudflare -- a function rather than a fixed
   // boolean (issue #51) since Caddy's proxyCaddyTls and Traefik's
   // proxyCertResolver can each opt a deployment out of Cloudflare without
-  // switching drivers. prune-acme-challenges (src/web/proxy-sync.ts) calls
-  // this with the live inventory before ever touching Cloudflare: a
-  // driver/mode combination that never touches Cloudflare DNS leaves
-  // nothing behind for it to clean up. Every driver that ships today
-  // still returns a fixed value regardless of its argument (the real
-  // mode-aware logic is issue #51's own follow-up task) -- the function
-  // wrapper exists so that logic has somewhere to go without changing this
-  // contract again.
+  // switching drivers: both Caddy drivers return true only in the
+  // 'cloudflare' caddyTls mode (caddyAcmeDns01ViaCloudflare,
+  // src/lib/proxy/drivers/caddy.ts) and Traefik returns true for any named
+  // resolver but false for the reserved 'none' (src/lib/proxy/drivers/
+  // traefik.ts); every other driver always returns false, since it never
+  // touches Cloudflare's DNS at all. prune-acme-challenges
+  // (src/web/proxy-sync.ts) calls this with the live inventory before ever
+  // touching Cloudflare: a driver/mode combination that never touches
+  // Cloudflare DNS leaves nothing behind for it to clean up.
   acmeDns01ViaCloudflare: (inventory: Inventory) => boolean;
 }
 

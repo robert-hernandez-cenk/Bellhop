@@ -2,6 +2,7 @@ import type { DriverDeps, ProxyPlan, ReverseProxyDriver } from '../driver.ts';
 import type { ProxyContext, ProxyRoute } from '../routes.ts';
 import { formatCaddyPreview, formatConflictError, planCaddyConfig, type CaddyConfigPlan } from '../caddy-json.ts';
 import { readCaddyConfig, writeCaddyConfig } from '../caddy-admin.ts';
+import { caddyAcmeDns01ViaCloudflare } from './caddy.ts';
 
 // The payload plan() hands apply(): the reconciled configuration plus the
 // Etag it was computed from, so apply() writes exactly what was previewed
@@ -23,16 +24,13 @@ interface CaddyApiPayload {
 export const caddyApiDriver: ReverseProxyDriver = {
   id: 'caddy-api',
   label: 'Caddy (admin API)',
-  // Same as the file-based driver: Caddy enforces forward-auth itself and,
-  // in the default 'cloudflare' TLS mode, issues its own certificates
-  // through Cloudflare DNS-01, so stale _acme-challenge records keep being
-  // pruned after Dashboard edits.
-  // acmeDns01ViaCloudflare is still a fixed true regardless of the
-  // inventory handed in -- issue #51's own follow-up task makes this
-  // mode-aware (false once proxyCaddyTls is anything but unset/'cloudflare');
-  // this foundational task only changes the capability's type to a
-  // function and preserves today's behavior.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true },
+  // Same as the file-based driver: Caddy enforces forward-auth itself, and
+  // caddyAcmeDns01ViaCloudflare (shared with drivers/caddy.ts, so neither
+  // copy can drift from the other) reports true only in the 'cloudflare'
+  // caddyTls mode (unset defaults to it) -- the other three modes never
+  // touch Cloudflare's DNS, so prune-acme-challenges has nothing to clean up
+  // after them.
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare },
   // No config file: driverDeps() resolves configPath to null, and the
   // Settings page hides Proxy config path for it.
   defaultConfigPath: null,

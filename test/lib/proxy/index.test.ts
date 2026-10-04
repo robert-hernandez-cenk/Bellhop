@@ -185,6 +185,50 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
   assert.equal(noneDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), false);
 });
 
+// issue #51, User Story 4, T023 (contract "Cloudflare prune decision"): each
+// driver's acmeDns01ViaCloudflare now actually reads the inventory handed to
+// it rather than returning a fixed value regardless of mode.
+test('caddyDriver/caddyApiDriver.capabilities.acmeDns01ViaCloudflare: true for unset/cloudflare, false for letsencrypt/internal/files', () => {
+  for (const driver of [caddyDriver, caddyApiDriver]) {
+    assert.equal(driver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true, `${driver.id}: unset`);
+    assert.equal(
+      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCaddyTls: 'cloudflare' })),
+      true,
+      `${driver.id}: cloudflare`
+    );
+    for (const mode of ['letsencrypt', 'internal', 'files'] as const) {
+      assert.equal(
+        driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCaddyTls: mode })),
+        false,
+        `${driver.id}: ${mode}`
+      );
+    }
+  }
+});
+
+test("traefikDriver.capabilities.acmeDns01ViaCloudflare: true for unset/a named resolver, false only for 'none'", () => {
+  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true);
+  assert.equal(
+    traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCertResolver: 'my-resolver' })),
+    true
+  );
+  assert.equal(
+    traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCertResolver: 'none' })),
+    false
+  );
+});
+
+test('nginx/nginx-proxy-manager/haproxy/none drivers: acmeDns01ViaCloudflare is always false, regardless of inventory', () => {
+  for (const driver of [nginxDriver, nginxProxyManagerDriver, haproxyDriver, noneDriver]) {
+    assert.equal(driver.capabilities.acmeDns01ViaCloudflare(baseInventory()), false, driver.id);
+    assert.equal(
+      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCaddyTls: 'cloudflare', proxyCertResolver: 'cloudflare' })),
+      false,
+      driver.id
+    );
+  }
+});
+
 test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
   const ssh = new FakeSSHClient(defaultResponder);
   const deps = { ssh, inventory: baseInventory(), proxyHost: 'pve1', configPath: '/etc/caddy/Caddyfile' };

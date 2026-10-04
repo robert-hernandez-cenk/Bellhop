@@ -106,12 +106,12 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 
 ### Tests for User Story 4
 
-- [ ] T023 [P] [US4] In `test/lib/proxy/index.test.ts` (or `driver.test.ts`): `caddyDriver`/`caddyApiDriver.capabilities.acmeDns01ViaCloudflare(inv)` is true for unset/`cloudflare` and false for the other three modes; `traefikDriver`'s is false only for resolver `none`; the other four drivers always false
-- [ ] T024 [P] [US4] In `test/web/proxy-sync.test.ts`: Caddy with `proxyCaddyTls: 'internal'` skips the prune with the driver skip message and never calls Cloudflare; Caddy unset still prunes; Traefik with `none` skips; update any assertion on the skip message text to the contract's new wording
+- [x] T023 [P] [US4] In `test/lib/proxy/index.test.ts` (or `driver.test.ts`): `caddyDriver`/`caddyApiDriver.capabilities.acmeDns01ViaCloudflare(inv)` is true for unset/`cloudflare` and false for the other three modes; `traefikDriver`'s is false only for resolver `none`; the other four drivers always false
+- [x] T024 [P] [US4] In `test/web/proxy-sync.test.ts`: Caddy with `proxyCaddyTls: 'internal'` skips the prune with the driver skip message and never calls Cloudflare; Caddy unset still prunes; Traefik with `none` skips; update any assertion on the skip message text to the contract's new wording
 
 ### Implementation for User Story 4
 
-- [ ] T025 [US4] Implement the real capability functions in `src/lib/proxy/drivers/caddy.ts`, `caddy-api.ts`, `traefik.ts` (contract "Cloudflare prune decision"), and in `src/web/proxy-sync.ts` call `driver.capabilities.acmeDns01ViaCloudflare(inventory)` and change `pruneAcmeDriverSkipMessage` to "is not configured to use ACME DNS-01 via Cloudflare"; update the comments there and in `src/lib/proxy/index.ts` that describe a fixed capability
+- [x] T025 [US4] Implement the real capability functions in `src/lib/proxy/drivers/caddy.ts`, `caddy-api.ts`, `traefik.ts` (contract "Cloudflare prune decision"), and in `src/web/proxy-sync.ts` call `driver.capabilities.acmeDns01ViaCloudflare(inventory)` and change `pruneAcmeDriverSkipMessage` to "is not configured to use ACME DNS-01 via Cloudflare"; update the comments there and in `src/lib/proxy/index.ts` that describe a fixed capability
 
 **Checkpoint**: US4 complete.
 
