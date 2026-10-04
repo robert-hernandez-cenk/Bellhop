@@ -9,6 +9,7 @@ import type { GoBuilder } from '../lib/go-build.ts';
 import type { JobStore } from './jobs/job-store.ts';
 import type { JobLog } from './jobs/job-log.ts';
 import type { JobRunner } from './jobs/job-runner.ts';
+import type { TaskScheduler } from './tasks/scheduler.ts';
 import { requireAuth } from './auth.ts';
 import { applyImpersonation, type ImpersonationStore } from './impersonation.ts';
 import { dashboardRoutes } from './routes/dashboard.ts';
@@ -55,6 +56,10 @@ export interface AppDeps {
   // (server.ts never passes it), so probeInsecureBackendTls falls back to
   // its own real setTimeout-based sleep exactly as it always has.
   tlsProbeSleepFn?: (ms: number) => Promise<void>;
+  // The daily-task scheduler (issue #61). server.ts always passes the one
+  // it started; optional so tests that don't care need no changes, and the
+  // /api/tasks routes answer 503 when it's absent.
+  taskScheduler?: TaskScheduler;
 }
 
 export function buildApp(deps: AppDeps): express.Express {

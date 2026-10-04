@@ -95,14 +95,14 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
 
 **Independent Test**: with an injected clock, advancing past 04:00 starts exactly one job triggered by `scheduler`.
 
-- [ ] T016 [P] [US2] Write `test/lib/task-schedules.test.ts`:
+- [x] T016 [P] [US2] Write `test/lib/task-schedules.test.ts`:
   - A missing row reads as `{ timeOfDay: default, enabled: true, lastRunStartedAt: null, lastJobId: null }`.
   - `saveTaskSchedule` upserts `time_of_day`/`enabled` without touching the run columns.
   - `recordTaskRun` upserts the run columns and keeps the schedule.
   - `time_of_day` must match "`^([01]\d|2[0-3]):[0-5]\d$`".
   - Rows for unknown task ids are ignored.
-- [ ] T017 [US2] Implement `src/lib/task-schedules.ts` per data-model.md's `task_schedules` table, via `openDb`.
-- [ ] T018 [P] [US2] Write `test/web/tasks/scheduler.test.ts`, with an injected `now`, a manual ticker, a temp db, and a fake `JobRunner`/`JobStore`:
+- [x] T017 [US2] Implement `src/lib/task-schedules.ts` per data-model.md's `task_schedules` table, via `openDb`.
+- [x] T018 [P] [US2] Write `test/web/tasks/scheduler.test.ts`, with an injected `now`, a manual ticker, a temp db, and a fake `JobRunner`/`JobStore`:
   - `mostRecentSlot`/`nextSlot` for before and after the time of day.
   - DST spring-forward and fall-back days each yield one slot. Use a TZ-independent assertion style, i.e. compute expectations with the same local `Date` constructor.
   - First tick on a fresh db starts a run.
@@ -115,8 +115,8 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
   - `startRun` records `lastRunStartedAt` and `lastJobId`.
   - The enqueued job has `command: 'check-app-updates'`, `target` undefined, and `triggeredByUsername: 'scheduler'`.
   - `stop()` clears the ticker.
-- [ ] T019 [US2] Implement `src/web/tasks/registry.ts` (`TaskDefinition`, `TASKS` with `check-app-updates`, default `04:00`). Its `run` refreshes inventory, calls `runCheckAppUpdates({ apply: true }, ...)` with the job's ssh, and logs `formatCheckAppUpdates`. Also implement `src/web/tasks/scheduler.ts` (`TaskScheduler`: `start`, `stop`, `tick`, `startRun(taskId, attribution)` returning `{ jobId } | { alreadyRunning: jobId }`, and `listTasks()` returning the TaskView shape from data-model.md).
-- [ ] T020 [US2] Construct and `start()` the scheduler in `src/web/server.ts` after `jobRunner.reconcileOrphanedJobs()`, and stop it on shutdown. Add an optional `taskScheduler` to `AppDeps` in `src/web/app.ts`. Confirm `src/mcp/server.ts` and `src/cli.ts` never construct one.
+- [x] T019 [US2] Implement `src/web/tasks/registry.ts` (`TaskDefinition`, `TASKS` with `check-app-updates`, default `04:00`). Its `run` refreshes inventory, calls `runCheckAppUpdates({ apply: true }, ...)` with the job's ssh, and logs `formatCheckAppUpdates`. Also implement `src/web/tasks/scheduler.ts` (`TaskScheduler`: `start`, `stop`, `tick`, `startRun(taskId, attribution)` returning `{ jobId } | { alreadyRunning: jobId }`, and `listTasks()` returning the TaskView shape from data-model.md).
+- [x] T020 [US2] Construct and `start()` the scheduler in `src/web/server.ts` after `jobRunner.reconcileOrphanedJobs()`, and stop it on shutdown. Add an optional `taskScheduler` to `AppDeps` in `src/web/app.ts`. Confirm `src/mcp/server.ts` and `src/cli.ts` never construct one.
 
 **Checkpoint**: results refresh daily with no operator action.
 
