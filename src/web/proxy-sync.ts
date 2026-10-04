@@ -70,7 +70,7 @@ export function pruneAcmeDriverSkipMessage(driverId: string): string {
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
   const driver = getDriver(inventory);
-  if (!driver.capabilities.acmeDns01ViaCloudflare) {
+  if (!driver.capabilities.acmeDns01ViaCloudflare(inventory)) {
     logInfo(pruneAcmeDriverSkipMessage(driver.id));
     return;
   }

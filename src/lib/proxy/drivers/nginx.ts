@@ -92,7 +92,10 @@ export const nginxDriver = fileDriver({
   // R1), so it has no ACME DNS-01-via-Cloudflare capability of its own --
   // the shared certificate every server block references (ctx.tls) is
   // provisioned by the operator (certbot or similar) outside this toolkit.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+  // Always false, unaffected by any inventory setting -- the function
+  // wrapper here exists only to satisfy the updated DriverCapabilities
+  // type (issue #51).
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
   defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf',
   // The Debian/Ubuntu nginx package's default document root -- the same
   // platform this driver already assumes for its upstream CA bundle path --

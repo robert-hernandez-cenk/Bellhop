@@ -86,7 +86,12 @@ export const CADDYFILE_DEFAULT_PATH = '/etc/caddy/Caddyfile';
 export const caddyDriver = fileDriver({
   id: 'caddy',
   label: 'Caddy',
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+  // acmeDns01ViaCloudflare is still a fixed true regardless of the
+  // inventory handed in -- issue #51's own follow-up task makes this
+  // mode-aware (false once proxyCaddyTls is anything but unset/'cloudflare');
+  // this foundational task only changes the capability's type to a
+  // function and preserves today's behavior.
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true },
   defaultConfigPath: CADDYFILE_DEFAULT_PATH,
   // The Caddy package's default document root -- what render-status-page's
   // caddy.example.com block already serves via file_server (see CLAUDE.md's

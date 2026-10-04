@@ -12,7 +12,19 @@ export type ProxyAuthMode = 'forward' | 'oidc';
 
 export interface DriverCapabilities {
   authModes: ProxyAuthMode[];
-  acmeDns01ViaCloudflare: boolean;
+  // Whether the active driver, for this inventory, issues certificates via
+  // ACME DNS-01 through Cloudflare -- a function rather than a fixed
+  // boolean (issue #51) since Caddy's proxyCaddyTls and Traefik's
+  // proxyCertResolver can each opt a deployment out of Cloudflare without
+  // switching drivers. prune-acme-challenges (src/web/proxy-sync.ts) calls
+  // this with the live inventory before ever touching Cloudflare: a
+  // driver/mode combination that never touches Cloudflare DNS leaves
+  // nothing behind for it to clean up. Every driver that ships today
+  // still returns a fixed value regardless of its argument (the real
+  // mode-aware logic is issue #51's own follow-up task) -- the function
+  // wrapper exists so that logic has somewhere to go without changing this
+  // contract again.
+  acmeDns01ViaCloudflare: (inventory: Inventory) => boolean;
 }
 
 export interface DriverDeps {
@@ -76,6 +88,15 @@ export interface ReverseProxyDriver {
   // driver that sets this. Absent = false (most drivers validate locally
   // on the proxy host instead, e.g. `caddy validate`/`nginx -t`).
   usesApiUrl?: boolean;
+  // true = this driver reads the proxyCaddyTls setting (issue #51, the two
+  // Caddy drivers only, which can issue a certificate four different ways
+  // -- Cloudflare DNS-01, a public Let's Encrypt HTTP/TLS-ALPN challenge,
+  // Caddy's own internal CA, or a shared certificate/key file pair -- where
+  // every other driver either always obtains its own certificate one fixed
+  // way or shares ctx.tls/proxyCertResolver instead. The Settings page
+  // shows the Caddy TLS dropdown only for a driver that sets this. Absent
+  // = false.
+  usesCaddyTls?: boolean;
   // One sentence the Settings page appends to the Proxy config path help
   // for this driver -- how it treats that file (the whole file vs. a
   // managed section of it). Absent = nothing appended.

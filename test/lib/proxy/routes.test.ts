@@ -7,6 +7,8 @@ import {
   buildProxyContext,
   buildRouteForEntry,
   DEFAULT_CERT_RESOLVER,
+  DEFAULT_CADDY_TLS,
+  caddyTlsMode,
   type ProxyRoute,
 } from '../../../src/lib/proxy/routes.ts';
 
@@ -286,6 +288,7 @@ test('buildProxyContext: returns the outpost address and port when an authentik 
       externalPort: 443,
       tls: DEFAULT_TLS,
       certResolver: 'cloudflare',
+      caddyTls: 'cloudflare',
     });
   });
 });
@@ -297,7 +300,7 @@ test('buildProxyContext: omits outpost when no authentik entry has an ip', () =>
     guests: [],
   };
   const ctx = buildProxyContext(inv);
-  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS, certResolver: 'cloudflare' });
+  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS, certResolver: 'cloudflare', caddyTls: 'cloudflare' });
   assert.ok(!('outpost' in ctx));
 });
 
@@ -370,6 +373,44 @@ test('buildProxyContext: certResolver uses the configured proxyCertResolver when
     proxyCertResolver: 'my-resolver',
   };
   assert.equal(buildProxyContext(inv).certResolver, 'my-resolver');
+});
+
+// issue #51: caddyTls is the Caddy drivers' own setting, inert for every
+// other driver -- same "always present, defaults independently" precedent
+// as tls/certResolver above.
+
+test('buildProxyContext: caddyTls defaults to DEFAULT_CADDY_TLS when proxyCaddyTls is unset', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  assert.equal(buildProxyContext(inv).caddyTls, DEFAULT_CADDY_TLS);
+  assert.equal(DEFAULT_CADDY_TLS, 'cloudflare');
+});
+
+test('buildProxyContext: caddyTls uses the configured proxyCaddyTls when set', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+    proxyCaddyTls: 'internal',
+  };
+  assert.equal(buildProxyContext(inv).caddyTls, 'internal');
+});
+
+test('caddyTlsMode: matches buildProxyContext(inv).caddyTls for every mode, including unset', () => {
+  const base: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  assert.equal(caddyTlsMode(base), buildProxyContext(base).caddyTls);
+  for (const mode of ['cloudflare', 'letsencrypt', 'internal', 'files'] as const) {
+    const inv: Inventory = { ...base, proxyCaddyTls: mode };
+    assert.equal(caddyTlsMode(inv), mode);
+    assert.equal(caddyTlsMode(inv), buildProxyContext(inv).caddyTls);
+  }
 });
 
 // Sanity check that the exported ProxyRoute type shape lines up with what

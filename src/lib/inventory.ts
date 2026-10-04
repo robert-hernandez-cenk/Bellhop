@@ -5,7 +5,7 @@ import { openDb } from './sqlite.ts';
 import { authentikConfig } from './authentik-config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
 // module -- importing index.ts here would cycle back into this file.
-import { PROXY_DRIVER_IDS } from './proxy/ids.ts';
+import { PROXY_DRIVER_IDS, CADDY_TLS_MODES } from './proxy/ids.ts';
 
 export const BridgeEntrySchema = z.object({
   name: z.string().min(1),
@@ -347,6 +347,15 @@ export const SettingsSchema = z.object({
   // Overrides the active driver's own defaultConfigPath (issue #10) -- unset
   // means driverDeps() falls back to that default.
   proxyConfigPath: z.string().regex(/^\//, 'must be an absolute path').optional(),
+  // Which of the four ways the two Caddy drivers (caddy, caddy-api) obtain a
+  // certificate for a site (issue #51) -- unset means the original, only
+  // behavior before this setting existed: DNS-01 via Cloudflare
+  // (CADDY_TLS_MODES's 'cloudflare', src/lib/proxy/ids.ts; see that file for
+  // what each of the other three modes means). Inert for every other
+  // driver. Validated against CADDY_TLS_MODES rather than a bespoke enum
+  // here so the schema and ProxyContext.caddyTls (src/lib/proxy/routes.ts)
+  // can never disagree about which modes exist.
+  proxyCaddyTls: z.enum(CADDY_TLS_MODES).optional(),
   // The certificate/key pair every nginx driver server block shares (issue
   // #30, research R1/R2) -- nginx cannot obtain its own certificates the
   // way Caddy does, so one shared pair keeps a new subdomain's sync from

@@ -499,7 +499,11 @@ export const traefikDriver = fileDriver({
   // own certificate resolver (ctx.certResolver) can be configured for
   // Cloudflare DNS-01 in the operator's own static configuration, which is
   // what prune-acme-challenges exists to clean up stray records from.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+  // Still a fixed true regardless of the inventory handed in -- issue #51's
+  // own follow-up task makes this mode-aware (false once proxyCertResolver
+  // is 'none'); this foundational task only changes the capability's type
+  // to a function and preserves today's behavior.
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true },
   defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
   // Traefik has no static-file server of its own (research.md R11) -- an
   // operator who wants a status page serves it elsewhere.

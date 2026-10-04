@@ -291,7 +291,11 @@ test('planNpmSync picks the qualifying certificate with the latest expires_on fo
 test('nginxProxyManagerDriver metadata matches the contract', () => {
   assert.equal(nginxProxyManagerDriver.id, 'nginx-proxy-manager');
   assert.equal(nginxProxyManagerDriver.label, 'Nginx Proxy Manager');
-  assert.deepEqual(nginxProxyManagerDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false });
+  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
+  // by its return value for a sample inventory rather than by deepEqual on
+  // the whole capabilities object (which would compare function identity).
+  assert.deepEqual(nginxProxyManagerDriver.capabilities.authModes, ['forward', 'oidc']);
+  assert.equal(nginxProxyManagerDriver.capabilities.acmeDns01ViaCloudflare(inv([])), false);
   assert.equal(nginxProxyManagerDriver.defaultConfigPath, null);
   assert.equal(nginxProxyManagerDriver.statusPage, null);
   assert.equal(nginxProxyManagerDriver.usesSharedCertificate, undefined);

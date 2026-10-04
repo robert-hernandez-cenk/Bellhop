@@ -193,7 +193,11 @@ test('render returns exactly one owned FileSpec at configPath', () => {
 test('nginxDriver declares its id, default config path, and capabilities', () => {
   assert.equal(nginxDriver.id, 'nginx');
   assert.equal(nginxDriver.defaultConfigPath, '/etc/nginx/conf.d/bellhop.conf');
-  assert.deepEqual(nginxDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false });
+  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
+  // by its return value for a sample inventory rather than by deepEqual on
+  // the whole capabilities object (which would compare function identity).
+  assert.deepEqual(nginxDriver.capabilities.authModes, ['forward', 'oidc']);
+  assert.equal(nginxDriver.capabilities.acmeDns01ViaCloudflare(inv()), false);
 });
 
 // --- User Story 2: forward-gated routes -------------------------------------

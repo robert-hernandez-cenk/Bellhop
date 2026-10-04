@@ -38,6 +38,7 @@ function ctx(overrides: Partial<ProxyContext> = {}): ProxyContext {
       keyPath: '/etc/letsencrypt/live/example.com/privkey.pem',
     },
     certResolver: 'cloudflare',
+    caddyTls: 'cloudflare',
     ...overrides,
   };
 }

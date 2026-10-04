@@ -37,7 +37,7 @@ function fakeDriver(id: string): ReverseProxyDriver {
   return {
     id: id as ProxyDriverId,
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {
@@ -113,7 +113,11 @@ test('driverDeps resolves configPath to the Traefik driver default when proxyCon
 test('Traefik driver metadata: label, capabilities, default config path, status page, and cert-resolver/api-url hints', () => {
   assert.equal(traefikDriver.id, 'traefik');
   assert.equal(traefikDriver.label, 'Traefik');
-  assert.deepEqual(traefikDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true });
+  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
+  // by its return value for a sample inventory rather than by deepEqual on
+  // the whole capabilities object (which would compare function identity).
+  assert.deepEqual(traefikDriver.capabilities.authModes, ['forward', 'oidc']);
+  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true);
   assert.equal(traefikDriver.defaultConfigPath, '/etc/traefik/dynamic/bellhop.yml');
   assert.equal(traefikDriver.statusPage, null);
   assert.equal(traefikDriver.usesCertResolver, true);
@@ -177,7 +181,8 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
   assert.equal(noneDriver.label, 'No proxy');
   assert.equal(noneDriver.defaultConfigPath, null);
   assert.equal(noneDriver.statusPage, null);
-  assert.deepEqual(noneDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false });
+  assert.deepEqual(noneDriver.capabilities.authModes, ['forward', 'oidc']);
+  assert.equal(noneDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), false);
 });
 
 test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
@@ -189,6 +194,7 @@ test('None driver: plan() previews the fixed message, apply() is a no-op with no
       externalPort: 443,
       tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' },
       certResolver: 'cloudflare',
+      caddyTls: 'cloudflare',
     },
     deps
   );
@@ -300,7 +306,7 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
   const testDriver = fileDriver({
     id: 'test-only-driver-t040' as ProxyDriverId,
     label: 'Test-only driver',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
     defaultConfigPath: '/etc/test-only/test.conf',
     // This test exercises runRenderStatusPage below, which throws for any
     // driver whose statusPage is null (issue #33), so this

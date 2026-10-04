@@ -24,7 +24,12 @@ export const caddyApiDriver: ReverseProxyDriver = {
   // Same as the file-based driver: Caddy enforces forward-auth itself and
   // issues its own certificates through Cloudflare DNS-01, so stale
   // _acme-challenge records keep being pruned after Dashboard edits.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+  // acmeDns01ViaCloudflare is still a fixed true regardless of the
+  // inventory handed in -- issue #51's own follow-up task makes this
+  // mode-aware (false once proxyCaddyTls is anything but unset/'cloudflare');
+  // this foundational task only changes the capability's type to a
+  // function and preserves today's behavior.
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true },
   // No config file: driverDeps() resolves configPath to null, and the
   // Settings page hides Proxy config path for it.
   defaultConfigPath: null,

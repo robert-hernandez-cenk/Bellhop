@@ -191,7 +191,7 @@ function managedDriverWithoutStatusPage(id: string) {
   return fileDriver({
     id: id as ProxyDriverId,
     label: 'Managed, no status page',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
     defaultConfigPath: '/etc/test-only/test.conf',
     statusPage: null,
     render: () => [],
