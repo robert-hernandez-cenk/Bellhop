@@ -2,15 +2,22 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiPatch } from '../api/client';
 import type { SettingsResponse, SettingsValues } from '../api/types';
 import { PageDescription } from '../components/PageDescription';
-import { proxyHostText, LAN_GATEWAYS_EMPTY_TEXT, proxyDriverOptions, proxyFieldView } from '../lib/settings-display';
+import {
+  proxyHostText,
+  LAN_GATEWAYS_EMPTY_TEXT,
+  proxyDriverOptions,
+  proxyFieldView,
+  caddyTlsOptions,
+} from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
 
 // Each field names what breaks while it is unset, so the page explains its
 // own consequences rather than assuming the reader knows which command
-// consumes which value. `placeholder` is unused for `proxyDriver`, which
-// renders as a <select> instead of an <input> (issue #33) -- kept optional
-// rather than adding a second, near-identical field-def shape.
+// consumes which value. `placeholder` is unused for `proxyDriver`/
+// `proxyCaddyTls`, which render as a <select> instead of an <input>
+// (issue #33, issue #51) -- kept optional rather than adding a second,
+// near-identical field-def shape.
 const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help: string }> = [
   {
     key: 'nfsServer',
@@ -48,16 +55,22 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help
     help: "Overrides the active driver's own default config path. Unset: that default.",
   },
   {
+    key: 'proxyCaddyTls',
+    label: 'Caddy TLS',
+    help:
+      "How the Caddy drivers obtain a certificate for each site. cloudflare: DNS-01 through Cloudflare, needs a Caddy build with caddy-dns/cloudflare. letsencrypt: Caddy's automatic HTTPS over a public HTTP/TLS-ALPN challenge, needs ports 80/443 reachable from the internet. internal: Caddy's own internal CA -- self-signed, trust its root certificate on your clients. files: the shared certificate/key pair named by the Proxy TLS certificate/key fields below. Unset: cloudflare.",
+  },
+  {
     key: 'proxyTlsCertificate',
     label: 'Proxy TLS certificate',
     placeholder: '/etc/letsencrypt/live/example.com/fullchain.pem',
-    help: "Absolute path on the proxy host to the TLS certificate the nginx driver serves for every site. Unset: certbot's own path for the inventory domain.",
+    help: "Absolute path on the proxy host to the TLS certificate the nginx driver serves for every site, or a Caddy driver in 'files' Caddy TLS mode. Unset: certbot's own path for the inventory domain.",
   },
   {
     key: 'proxyTlsKey',
     label: 'Proxy TLS key',
     placeholder: '/etc/letsencrypt/live/example.com/privkey.pem',
-    help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site. Unset: certbot's own path for the inventory domain.",
+    help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site, or a Caddy driver in 'files' Caddy TLS mode. Unset: certbot's own path for the inventory domain.",
   },
   {
     key: 'proxyCertResolver',
@@ -153,7 +166,13 @@ export function SettingsPage() {
   // loaded yet, in which case every field still renders with its static
   // FIELDS text, same as before this feature existed.
   const selectedDriver = drafts.proxyDriver || data?.defaultProxyDriver;
-  const view = data && selectedDriver ? proxyFieldView(selectedDriver, data.proxyDrivers) : null;
+  // issue #51: same resolution rule as selectedDriver above, for whichever
+  // Caddy TLS mode is currently shown -- passed to proxyFieldView so
+  // showTlsFields can tell a Caddy driver in 'files' mode from one in any
+  // other mode.
+  const selectedCaddyTls = drafts.proxyCaddyTls || data?.defaultCaddyTls;
+  const view =
+    data && selectedDriver ? proxyFieldView(selectedDriver, data.proxyDrivers, selectedCaddyTls) : null;
 
   // Hiding a field is display-only: it is simply left out of this list, so
   // its draft/stored value and its Save/Clear behavior are completely
@@ -162,9 +181,11 @@ export function SettingsPage() {
   const visibleFields = FIELDS.filter((field) => {
     if (field.key === 'proxyConfigPath') return !view || view.showConfigPath;
     if (field.key === 'statusPagePath') return !view || view.showStatusPagePath;
-    // Before `data` loads there is no driver list to consult, and the TLS
-    // fields mean something for nginx alone -- so unlike the two fields
-    // above they stay hidden until a view says the selected driver uses them.
+    // Before `data` loads there is no driver list to consult, and the Caddy
+    // TLS dropdown and TLS fields mean something for specific drivers
+    // only -- so unlike the two fields above they stay hidden until a view
+    // says the selected driver uses them.
+    if (field.key === 'proxyCaddyTls') return view?.showCaddyTlsField ?? false;
     if (field.key === 'proxyTlsCertificate' || field.key === 'proxyTlsKey') return view?.showTlsFields ?? false;
     // Same "hidden until loaded" rule as the TLS fields above -- these two
     // mean something for Traefik alone (issue #35).
@@ -180,8 +201,8 @@ export function SettingsPage() {
         Inventory-wide values a few commands read. Every one of them is optional -- each field
         below says what happens while it is unset. The same values can be set from the CLI with{' '}
         <code>bellhop set-config &lt;key&gt; &lt;value&gt; --apply</code>. Proxy config path,
-        Status page path, the Proxy TLS fields, and the Proxy cert resolver/API URL fields only
-        appear when the selected Proxy driver actually uses them.
+        Status page path, Caddy TLS, the Proxy TLS fields, and the Proxy cert resolver/API URL
+        fields only appear when the selected Proxy driver actually uses them.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
       <div className="settings-fields">
@@ -214,6 +235,23 @@ export function SettingsPage() {
                       </option>
                     ))}
                 </select>
+              ) : field.key === 'proxyCaddyTls' ? (
+                // Same "always a <select>, disabled with no options until
+                // loaded" rule as proxyDriver above (issue #51).
+                <select
+                  id={`setting-${field.key}`}
+                  className="field-input"
+                  value={selectedCaddyTls ?? ''}
+                  disabled={!data}
+                  onChange={(e) => setDrafts({ ...drafts, proxyCaddyTls: e.target.value })}
+                >
+                  {data &&
+                    caddyTlsOptions(data.caddyTlsModes, data.defaultCaddyTls).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
               ) : (
                 <input
                   id={`setting-${field.key}`}
@@ -229,7 +267,10 @@ export function SettingsPage() {
                 <button
                   type="button"
                   className="button"
-                  disabled={savingKey === field.key || (field.key === 'proxyDriver' && !data)}
+                  disabled={
+                    savingKey === field.key ||
+                    ((field.key === 'proxyDriver' || field.key === 'proxyCaddyTls') && !data)
+                  }
                   onClick={() => save(field.key, drafts[field.key] === '' ? null : drafts[field.key])}
                 >
                   {savingKey === field.key ? 'Saving...' : 'Save'}

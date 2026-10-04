@@ -31,6 +31,17 @@ export function proxyDriverOptions(
   }));
 }
 
+// The Settings page's Caddy TLS <select> options (issue #51), same
+// "only the default mode gets ' (default)'" convention as
+// proxyDriverOptions above -- `modes` is the server's own caddyTlsModes
+// list (its order), `defaultMode` its defaultCaddyTls.
+export function caddyTlsOptions(modes: string[], defaultMode: string): Array<{ value: string; label: string }> {
+  return modes.map((mode) => ({
+    value: mode,
+    label: mode === defaultMode ? `${mode} (default)` : mode,
+  }));
+}
+
 // What the Settings page's Proxy config path/Status page path fields show
 // for whichever driver is currently selected in the (possibly unsaved)
 // dropdown -- issue #33's US3. `selectedId` is the caller's already-resolved
@@ -56,10 +67,17 @@ export interface ProxyFieldView {
   configPathHelp?: string;
   showStatusPagePath: boolean;
   statusPagePlaceholder?: string;
-  // Proxy TLS certificate/key (issue #30): shown only for a managed driver
-  // whose metadata says it serves the shared certificate those settings
-  // name (usesSharedCertificate) -- never an id comparison here.
+  // Proxy TLS certificate/key: shown for a managed driver whose metadata
+  // says it serves the shared certificate those settings name
+  // (usesSharedCertificate, nginx -- issue #30), or for a driver whose
+  // metadata says it reads proxyCaddyTls (usesCaddyTls, the two Caddy
+  // drivers -- issue #51) while its *shown* Caddy TLS mode is 'files' --
+  // never an id comparison here.
   showTlsFields: boolean;
+  // Caddy TLS dropdown (issue #51): shown only for a driver whose metadata
+  // says it reads proxyCaddyTls (usesCaddyTls) -- independent of which mode
+  // is currently shown, unlike showTlsFields above.
+  showCaddyTlsField: boolean;
   // Proxy cert resolver/API URL (issue #35): shown only for a managed
   // driver whose metadata says it reads proxyCertResolver/proxyApiUrl
   // (usesCertResolver/usesApiUrl) -- Traefik today, same "metadata, never
@@ -68,13 +86,25 @@ export interface ProxyFieldView {
   showApiUrlField: boolean;
 }
 
-export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): ProxyFieldView {
+// `caddyTls` is the shown (possibly unsaved) Caddy TLS value -- resolved by
+// the caller the same way `selectedId` already is
+// (`drafts.proxyCaddyTls || data.defaultCaddyTls`). Defaulted to
+// 'cloudflare' (DEFAULT_CADDY_TLS's value, duplicated rather than imported
+// since web-client has no imports from src/ -- see CLAUDE.md's
+// "sortInventoryForFile" precedent) so a caller that doesn't care about
+// Caddy TLS (every driver but the two Caddy ones) doesn't have to pass it.
+export function proxyFieldView(
+  selectedId: string,
+  drivers: ProxyDriverInfo[],
+  caddyTls: string = 'cloudflare',
+): ProxyFieldView {
   const driver = drivers.find((d) => d.id === selectedId);
   if (!driver || !driver.managesProxy) {
     return {
       showConfigPath: false,
       showStatusPagePath: false,
       showTlsFields: false,
+      showCaddyTlsField: false,
       showCertResolverField: false,
       showApiUrlField: false,
     };
@@ -82,7 +112,8 @@ export function proxyFieldView(selectedId: string, drivers: ProxyDriverInfo[]): 
   const shared = {
     showStatusPagePath: driver.suggestedStatusPagePath !== null,
     statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
-    showTlsFields: driver.usesSharedCertificate,
+    showTlsFields: driver.usesSharedCertificate || (driver.usesCaddyTls && caddyTls === 'files'),
+    showCaddyTlsField: driver.usesCaddyTls,
     showCertResolverField: driver.usesCertResolver,
     showApiUrlField: driver.usesApiUrl,
   };

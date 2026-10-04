@@ -70,14 +70,14 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] In `test/web/routes/settings.test.ts`: GET/PATCH responses carry `caddyTlsModes: ['cloudflare','letsencrypt','internal','files']`, `defaultCaddyTls: 'cloudflare'`, and `proxyDrivers[].usesCaddyTls` (true only for `caddy`/`caddy-api`); PATCH `proxyCaddyTls: 'bogus'` → 400 with the same zod message `set-config` gives; PATCH `null` clears it
-- [ ] T016 [P] [US2] In `test/web-client/settings-display.test.ts`: `proxyFieldView` gains a Caddy TLS argument; `showCaddyTlsField` true only for a `usesCaddyTls` driver; `showTlsFields` true for `usesSharedCertificate`, or `usesCaddyTls` with mode `files`, false for Caddy in any other mode and for Traefik; a `caddyTlsOptions(modes, defaultMode)` helper labels only the default `cloudflare (default)`
+- [x] T015 [P] [US2] In `test/web/routes/settings.test.ts`: GET/PATCH responses carry `caddyTlsModes: ['cloudflare','letsencrypt','internal','files']`, `defaultCaddyTls: 'cloudflare'`, and `proxyDrivers[].usesCaddyTls` (true only for `caddy`/`caddy-api`); PATCH `proxyCaddyTls: 'bogus'` → 400 with the same zod message `set-config` gives; PATCH `null` clears it
+- [x] T016 [P] [US2] In `test/web-client/settings-display.test.ts`: `proxyFieldView` gains a Caddy TLS argument; `showCaddyTlsField` true only for a `usesCaddyTls` driver; `showTlsFields` true for `usesSharedCertificate`, or `usesCaddyTls` with mode `files`, false for Caddy in any other mode and for Traefik; a `caddyTlsOptions(modes, defaultMode)` helper labels only the default `cloudflare (default)`
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] In `src/web/routes/settings.ts`: add `usesCaddyTls` to `proxyDriversInfo()` and `caddyTlsModes`/`defaultCaddyTls` to `settingsResponse()`
-- [ ] T018 [US2] In `web-client/src/api/types.ts` and `web-client/src/lib/settings-display.ts`: add the response fields, `caddyTlsOptions`, `showCaddyTlsField`, and the new `showTlsFields` rule
-- [ ] T019 [US2] In `web-client/src/pages/SettingsPage.tsx`: add a `proxyCaddyTls` FIELDS entry (label "Caddy TLS", help naming the four modes and what each needs) rendered as a `<select>` like `proxyDriver` (disabled until loaded), shown per `showCaddyTlsField`; pass `drafts.proxyCaddyTls || data.defaultCaddyTls` to `proxyFieldView`; certificate/key fields' help mentions Caddy `files` mode; hiding never edits stored values
+- [x] T017 [US2] In `src/web/routes/settings.ts`: add `usesCaddyTls` to `proxyDriversInfo()` and `caddyTlsModes`/`defaultCaddyTls` to `settingsResponse()`
+- [x] T018 [US2] In `web-client/src/api/types.ts` and `web-client/src/lib/settings-display.ts`: add the response fields, `caddyTlsOptions`, `showCaddyTlsField`, and the new `showTlsFields` rule
+- [x] T019 [US2] In `web-client/src/pages/SettingsPage.tsx`: add a `proxyCaddyTls` FIELDS entry (label "Caddy TLS", help naming the four modes and what each needs) rendered as a `<select>` like `proxyDriver` (disabled until loaded), shown per `showCaddyTlsField`; pass `drafts.proxyCaddyTls || data.defaultCaddyTls` to `proxyFieldView`; certificate/key fields' help mentions Caddy `files` mode; hiding never edits stored values
 - [ ] T020 [US2] Run `npm run typecheck`, `npm test`, `npm run web:build`; verify the Settings page in a browser at desktop width and at ≤640px via `npm run demo` (quickstart §4)
 
 **Checkpoint**: US2 complete.

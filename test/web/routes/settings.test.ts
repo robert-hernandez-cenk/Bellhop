@@ -237,19 +237,25 @@ const HAPROXY_CONFIG_PATH_NOTE =
 const TRAEFIK_CONFIG_PATH_NOTE =
   "Traefik's file provider must watch this file's directory. The whole file is replaced on every apply, and a file Bellhop didn't generate is refused.";
 
+// issue #51 (T015): usesCaddyTls is true only for the two Caddy drivers --
+// every other driver either always obtains its own certificate one fixed
+// way or reads ctx.tls/certResolver instead, so proxyCaddyTls is inert for
+// it and the Settings page's Caddy TLS dropdown never shows.
+const PROXY_DRIVERS_WITH_CADDY_TLS = [
+  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, configPathNote: CADDY_CONFIG_PATH_NOTE },
+  { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, configPathNote: null },
+  { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: NGINX_CONFIG_PATH_NOTE },
+  { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null },
+  { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
+  { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: true, usesApiUrl: true, usesCaddyTls: false, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
+  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null },
+];
+
 test('GET /api/settings includes proxyDrivers and defaultProxyDriver', async () => {
   const { app } = testApp();
   const res = await asAdmin(request(app).get('/api/settings'));
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
-    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
-    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, usesCertResolver: false, usesApiUrl: false, configPathNote: NGINX_CONFIG_PATH_NOTE },
-    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
-    { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
-    { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: true, usesApiUrl: true, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
-  ]);
+  assert.deepEqual(res.body.proxyDrivers, PROXY_DRIVERS_WITH_CADDY_TLS);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
 });
 
@@ -257,16 +263,51 @@ test('PATCH /api/settings response also includes proxyDrivers and defaultProxyDr
   const { app } = testApp();
   const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body.proxyDrivers, [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: CADDY_CONFIG_PATH_NOTE },
-    { id: 'caddy-api', label: 'Caddy (admin API)', defaultConfigPath: null, suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
-    { id: 'nginx', label: 'nginx', defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf', suggestedStatusPagePath: '/var/www/html/index.html', managesProxy: true, usesSharedCertificate: true, usesCertResolver: false, usesApiUrl: false, configPathNote: NGINX_CONFIG_PATH_NOTE },
-    { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
-    { id: 'haproxy', label: 'HAProxy', defaultConfigPath: '/etc/haproxy/bellhop.cfg', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: HAPROXY_CONFIG_PATH_NOTE },
-    { id: 'traefik', label: 'Traefik', defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml', suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: true, usesApiUrl: true, configPathNote: TRAEFIK_CONFIG_PATH_NOTE },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, configPathNote: null },
-  ]);
+  assert.deepEqual(res.body.proxyDrivers, PROXY_DRIVERS_WITH_CADDY_TLS);
   assert.equal(res.body.defaultProxyDriver, 'caddy');
+});
+
+// issue #51 (T015): caddyTlsModes/defaultCaddyTls accompany proxyDrivers on
+// both GET and PATCH, the same "shared by settingsResponse()" guarantee
+// proxyDrivers/defaultProxyDriver already have.
+test('GET /api/settings includes caddyTlsModes and defaultCaddyTls', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.caddyTlsModes, ['cloudflare', 'letsencrypt', 'internal', 'files']);
+  assert.equal(res.body.defaultCaddyTls, 'cloudflare');
+});
+
+test('PATCH /api/settings response also includes caddyTlsModes and defaultCaddyTls', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.caddyTlsModes, ['cloudflare', 'letsencrypt', 'internal', 'files']);
+  assert.equal(res.body.defaultCaddyTls, 'cloudflare');
+});
+
+test('PATCH /api/settings writes proxyCaddyTls', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyCaddyTls: 'internal' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyCaddyTls, 'internal');
+  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, 'internal');
+});
+
+test('PATCH /api/settings rejects a proxyCaddyTls value outside the four modes, with the same message set-config produces', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyCaddyTls: 'bogus' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /^proxyCaddyTls: /);
+  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, undefined);
+});
+
+test('PATCH /api/settings clears proxyCaddyTls sent as null', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), proxyCaddyTls: 'files' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ proxyCaddyTls: null });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.proxyCaddyTls, undefined);
+  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, undefined);
 });
 
 test('PATCH /api/settings accepts proxyDriver caddy-api', async () => {
