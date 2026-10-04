@@ -228,10 +228,25 @@ function statusError(repo: string, status: number): Error {
   return new Error(`GitHub API returned ${status} fetching releases for ${repo}`);
 }
 
-function pickLatestFromList(releases: Release[], repo: string, prefix: string | undefined): LatestRelease {
+// Fetches and parses the paginated release list, throwing `statusError` on
+// anything but 200 -- shared by the unpinned fallback path and the pinned
+// fallback path below, so both report a list-fetch failure (rate limit or
+// otherwise) the exact same way, naming the status rather than ever saying
+// "not found" for a failure that was never about matching a tag at all.
+async function fetchReleaseList(repo: string, fetchImpl: typeof fetch): Promise<Release[]> {
+  const res = await githubGet(`/repos/${repo}/releases?per_page=100`, fetchImpl);
+  if (res.status !== 200) throw statusError(repo, res.status);
+  return ReleaseListSchema.parse(await res.json());
+}
+
+function filterCandidates(releases: Release[], prefix: string | undefined): Release[] {
   let candidates = releases.filter((r) => !r.draft && !r.prerelease);
   if (prefix) candidates = candidates.filter((r) => r.tag_name.startsWith(prefix));
-  const first = candidates[0];
+  return candidates;
+}
+
+function pickLatestFromList(releases: Release[], repo: string, prefix: string | undefined): LatestRelease {
+  const first = filterCandidates(releases, prefix)[0];
   if (!first) {
     throw new Error(
       prefix ? `No stable release matching prefix '${prefix}' found for ${repo}` : `No stable release found for ${repo}`
@@ -240,19 +255,46 @@ function pickLatestFromList(releases: Release[], repo: string, prefix: string | 
   return toLatestRelease(first);
 }
 
+// Fix round 1 (FR-017 ruling): mirrors upstream tools.func's own pipeline,
+// which always re-derives its candidate tags from a fetched list rather
+// than trusting a single direct hit blindly -- the direct /releases/tags/
+// lookup above is only ever a shortcut for the common case, never the
+// final word. Filters for drafts/pre-releases and the prefix (if given),
+// then matches the pin against the remaining tags after v-normalizing
+// both sides, since a pin like "3.2.4" must still match a tag "v3.2.4".
+async function matchPinnedReleaseFromList(
+  repo: string,
+  pin: string,
+  prefix: string | undefined,
+  fetchImpl: typeof fetch
+): Promise<LatestRelease> {
+  const releases = await fetchReleaseList(repo, fetchImpl);
+  const pinNormalized = normalizeVersion(pin);
+  const match = filterCandidates(releases, prefix).find((r) => normalizeVersion(r.tag_name) === pinNormalized);
+  if (!match) throw new Error(`Pinned version '${pin}' not found for ${repo}`);
+  return toLatestRelease(match);
+}
+
 async function fetchLatestReleaseUncached(
   repo: string,
   opts: { pin?: string; prefix?: string },
   fetchImpl: typeof fetch
 ): Promise<LatestRelease> {
-  // Pinned versions are tried directly against the tag they name, and must
-  // exist there -- a pin is an operator/upstream-script decision to hold a
-  // specific release, not "whatever happens to be newest" (research R1/R3).
+  // Pinned versions are tried directly against the tag they name first --
+  // the common, efficient case. Anything other than a clean, non-draft,
+  // non-pre-release 200 there (a 404, a 500, or a 200 that turns out to be
+  // a draft/pre-release) falls back to matching the pin against the full
+  // release list instead of treating a single direct miss as final
+  // (research R1/R3, fix round 1). 403/429 is the one exception: it's
+  // rate-limited either path, so it throws immediately with no fallback.
   if (opts.pin) {
     const res = await githubGet(`/repos/${repo}/releases/tags/${encodeURIComponent(opts.pin)}`, fetchImpl);
-    if (res.status === 200) return toLatestRelease(ReleaseSchema.parse(await res.json()));
     if (res.status === 403 || res.status === 429) throw new Error(GITHUB_RATE_LIMIT_MESSAGE);
-    throw new Error(`Pinned version '${opts.pin}' not found for ${repo} (GitHub API returned ${res.status})`);
+    if (res.status === 200) {
+      const release = ReleaseSchema.parse(await res.json());
+      if (!release.draft && !release.prerelease) return toLatestRelease(release);
+    }
+    return matchPinnedReleaseFromList(repo, opts.pin, opts.prefix, fetchImpl);
   }
 
   // No pin and no prefix: /latest is the efficient path and is used as-is
@@ -267,9 +309,7 @@ async function fetchLatestReleaseUncached(
     // 404s) falls through to the paginated list below.
   }
 
-  const listRes = await githubGet(`/repos/${repo}/releases?per_page=100`, fetchImpl);
-  if (listRes.status !== 200) throw statusError(repo, listRes.status);
-  const releases = ReleaseListSchema.parse(await listRes.json());
+  const releases = await fetchReleaseList(repo, fetchImpl);
   return pickLatestFromList(releases, repo, opts.prefix);
 }
 

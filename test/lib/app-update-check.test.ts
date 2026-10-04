@@ -212,7 +212,7 @@ test('fetchLatestRelease filters the paginated list by tag prefix, skipping /lat
   });
 });
 
-test('fetchLatestRelease resolves a pinned version via /releases/tags/<pin>', async () => {
+test('fetchLatestRelease resolves a pinned version directly via /releases/tags/<pin>', async () => {
   const fetchImpl = fakeFetch({
     'https://api.github.com/repos/chmln/sd/releases/tags/v1.0.0': () =>
       new Response(JSON.stringify({ tag_name: 'v1.0.0', draft: false, prerelease: false }), { status: 200 }),
@@ -223,11 +223,124 @@ test('fetchLatestRelease resolves a pinned version via /releases/tags/<pin>', as
   });
 });
 
-test('fetchLatestRelease throws when a pinned version does not exist upstream', async () => {
+// Fix round 1 (FR-017 ruling): a /releases/tags/<pin> response other than
+// 200/403/429 falls back to the paginated list, mirroring upstream
+// tools.func's own pipeline rather than treating "not found" as the final
+// answer -- the pin ("3.2.4") and the matching list tag ("v3.2.4") are
+// compared after v-normalizing both sides.
+test('fetchLatestRelease falls back to the paginated list when the direct tag lookup 404s, matching by normalized tag', async () => {
+  const list = JSON.stringify([
+    { tag_name: 'v3.2.4', draft: false, prerelease: false },
+    { tag_name: 'v3.2.3', draft: false, prerelease: false },
+  ]);
+  const fetchImpl = fakeFetch({
+    'https://api.github.com/repos/immich-app/immich/releases/tags/3.2.4': () => new Response('', { status: 404 }),
+    'https://api.github.com/repos/immich-app/immich/releases?per_page=100': () => new Response(list, { status: 200 }),
+  });
+  assert.deepEqual(await fetchLatestRelease('immich-app/immich', { pin: '3.2.4' }, fetchImpl), {
+    tag: 'v3.2.4',
+    version: '3.2.4',
+  });
+});
+
+// The list fallback also applies the prefix filter, same as the unpinned
+// path. The pin itself carries the prefix text (as a real pinned tag would
+// -- normalizeVersion only ever strips a bare leading `v` + digit, never a
+// prefix), so an `other-`-prefixed tag sharing the same numeric suffix is
+// never a false match.
+test('fetchLatestRelease falls back to the paginated list for a pin with a tag prefix too', async () => {
+  const list = JSON.stringify([
+    { tag_name: 'web-v1.5.0', draft: false, prerelease: false },
+    { tag_name: 'other-v1.5.0', draft: false, prerelease: false },
+  ]);
+  const fetchImpl = fakeFetch({
+    'https://api.github.com/repos/example/app/releases/tags/web-v1.5.0': () => new Response('', { status: 404 }),
+    'https://api.github.com/repos/example/app/releases?per_page=100': () => new Response(list, { status: 200 }),
+  });
+  assert.deepEqual(await fetchLatestRelease('example/app', { pin: 'web-v1.5.0', prefix: 'web-v' }, fetchImpl), {
+    tag: 'web-v1.5.0',
+    version: 'web-v1.5.0',
+  });
+});
+
+// A draft or pre-release at the direct tag never counts as a match -- it
+// falls through to the list path exactly like a non-200 would. The list's
+// matching tag is counted via a handler spy, since the pin and the list
+// entry share the same tag text and so would produce the same *value*
+// whether or not the fallback actually ran -- the spy is what proves the
+// list endpoint was really hit rather than the direct 200 being accepted.
+test('fetchLatestRelease falls back to the list when the directly-tagged pin is itself a pre-release', async () => {
+  const list = JSON.stringify([{ tag_name: 'v1.0.0', draft: false, prerelease: false }]);
+  let listCalls = 0;
+  const fetchImpl = fakeFetch({
+    'https://api.github.com/repos/example/app/releases/tags/v1.0.0': () =>
+      new Response(JSON.stringify({ tag_name: 'v1.0.0', draft: false, prerelease: true }), { status: 200 }),
+    'https://api.github.com/repos/example/app/releases?per_page=100': () => {
+      listCalls += 1;
+      return new Response(list, { status: 200 });
+    },
+  });
+  assert.deepEqual(await fetchLatestRelease('example/app', { pin: 'v1.0.0' }, fetchImpl), {
+    tag: 'v1.0.0',
+    version: '1.0.0',
+  });
+  assert.equal(listCalls, 1);
+});
+
+test('fetchLatestRelease falls back to the list when the directly-tagged pin is a draft', async () => {
+  const list = JSON.stringify([{ tag_name: 'v1.0.0', draft: false, prerelease: false }]);
+  let listCalls = 0;
+  const fetchImpl = fakeFetch({
+    'https://api.github.com/repos/example/app/releases/tags/v1.0.0': () =>
+      new Response(JSON.stringify({ tag_name: 'v1.0.0', draft: true, prerelease: false }), { status: 200 }),
+    'https://api.github.com/repos/example/app/releases?per_page=100': () => {
+      listCalls += 1;
+      return new Response(list, { status: 200 });
+    },
+  });
+  assert.deepEqual(await fetchLatestRelease('example/app', { pin: 'v1.0.0' }, fetchImpl), {
+    tag: 'v1.0.0',
+    version: '1.0.0',
+  });
+  assert.equal(listCalls, 1);
+});
+
+test('fetchLatestRelease throws naming the pin and repo when no tag in the fallback list matches', async () => {
   const fetchImpl = fakeFetch({
     'https://api.github.com/repos/chmln/sd/releases/tags/v9.9.9': () => new Response('{"message":"Not Found"}', { status: 404 }),
+    'https://api.github.com/repos/chmln/sd/releases?per_page=100': () => new Response(RELEASES_LIST, { status: 200 }),
   });
-  await assert.rejects(() => fetchLatestRelease('chmln/sd', { pin: 'v9.9.9' }, fetchImpl), /chmln\/sd/);
+  await assert.rejects(() => fetchLatestRelease('chmln/sd', { pin: 'v9.9.9' }, fetchImpl), (err: unknown) => {
+    const message = String((err as Error).message);
+    assert.match(message, /chmln\/sd/);
+    assert.match(message, /v9\.9\.9/);
+    return true;
+  });
+});
+
+// A non-404 failure fetching the fallback list (e.g. a 500) is a GitHub API
+// failure, not a "not found" -- the wording must say so.
+test('fetchLatestRelease names the HTTP status, not "not found", when the pin-fallback list fetch itself fails', async () => {
+  const fetchImpl = fakeFetch({
+    'https://api.github.com/repos/chmln/sd/releases/tags/v9.9.9': () => new Response('', { status: 404 }),
+    'https://api.github.com/repos/chmln/sd/releases?per_page=100': () => new Response('', { status: 500 }),
+  });
+  await assert.rejects(() => fetchLatestRelease('chmln/sd', { pin: 'v9.9.9' }, fetchImpl), (err: unknown) => {
+    const message = String((err as Error).message);
+    assert.match(message, /500/);
+    assert.doesNotMatch(message, /not found/);
+    return true;
+  });
+});
+
+test('fetchLatestRelease reports a 403 on the direct tag lookup as a rate-limit error with no fallback', async () => {
+  const fetchImpl = fakeFetch({
+    'https://api.github.com/repos/chmln/sd/releases/tags/v1.0.0': () => new Response('', { status: 403 }),
+  });
+  await assert.rejects(
+    () => fetchLatestRelease('chmln/sd', { pin: 'v1.0.0' }, fetchImpl),
+    new RegExp(GITHUB_RATE_LIMIT_MESSAGE)
+  );
 });
 
 test('fetchLatestRelease reports a 403 on /latest as a rate-limit error with no fallback', async () => {

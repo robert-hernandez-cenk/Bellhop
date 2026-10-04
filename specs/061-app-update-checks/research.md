@@ -10,8 +10,8 @@ The upstream function (abridged):
 
 - `app_lc = lowercase(name) with spaces removed`, and the current-version file is `$HOME/.<app_lc>`.
 - If that file is missing and exactly one `/opt/*_version.txt` exists, that file is used. (Upstream also migrates the file; Bellhop only reads.)
-- It fetches `GET https://api.github.com/repos/<owner/repo>/releases/latest`. When there is no pin and no prefix and that returns 200, the result is used. Otherwise it fetches `GET .../releases?per_page=100`. Pinned versions first try `.../releases/tags/<pin>`.
-- Drafts and pre-releases are dropped, tags are filtered by an optional prefix, and the first remaining tag is "latest".
+- It fetches `GET https://api.github.com/repos/<owner/repo>/releases/latest`. When there is no pin and no prefix and that returns 200, the result is used. Otherwise it fetches `GET .../releases?per_page=100`. Pinned versions first try `.../releases/tags/<pin>` directly; a response other than 200/403/429 there -- including a 200 that turns out to be a draft or pre-release -- falls back to the same paginated list, matching the pin against the list's tags after v-normalizing both sides (FR-017 ruling, fix round 1: the brief's original "must exist at the direct tag" wording undershot what upstream actually does, which always re-derives its candidate tags from a fetched list rather than trusting one direct hit blindly).
+- Drafts and pre-releases are dropped, tags are filtered by an optional prefix, and the first remaining tag is "latest" (unpinned) or the one matching the pin (pinned, via the list fallback above).
 - A leading `v` is stripped only when followed by a digit (`v1.2` → `1.2`, `vault-1` unchanged), for both tags and the installed version.
 - If pinned: update available exactly when `installed != pin`. Unpinned: when `installed` is empty or `!= latest`. This is an inequality, not a semver ordering.
 
@@ -36,7 +36,7 @@ The upstream function (abridged):
 
 **Decision**: `fetchLatestRelease(repo, { pin, prefix }, fetchImpl)` follows R1's request order. A `ReleaseCache` (a Map keyed by `repo|pin|prefix`, holding a promise) is shared across one run, so each repository is queried once (FR-017). Requests carry `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28`, and time out after 15 seconds. Responses are zod-validated (`tag_name`, `draft`, `prerelease`). There is no token.
 
-Status 403 or 429 becomes the error "GitHub API rate limit reached; the next scheduled check will retry". Other failures name the HTTP status and repository. A failure poisons only that cache entry, so every guest using that repository gets the same error (FR-019).
+Status 403 or 429 (from either the direct tag lookup or a paginated list fetch) becomes the error "GitHub API rate limit reached; the next scheduled check will retry", with no fallback -- it's rate-limited either path. Other failures name the HTTP status and repository, including a failed fallback-list fetch in the pinned path (fix round 1: that wording must never say "not found", since the list itself was never reached). Only once the fallback list loads successfully and still has no tag matching the pin does the pinned path say "Pinned version '<pin>' not found for <repo>". A failure poisons only that cache entry, so every guest using that repository gets the same error (FR-019).
 
 **Rationale**: A daily run with about one request per distinct repository stays well under 60 per hour for a homelab (SC-005). A token setting is listed as a follow-up.
 
