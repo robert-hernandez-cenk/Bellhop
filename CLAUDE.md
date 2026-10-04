@@ -3091,7 +3091,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   label and pinned by a test against the modal source, and are shown via
   `FieldHelp` (`web-client/src/components/FieldHelp.tsx`), a reusable ⓘ
   disclosure used instead of a hover-only `title` since `title` never shows
-  on touch.
+  on touch. `FieldHelp` takes a `placement` prop (`'row'`, the default,
+  used by the Advanced modal — the explanation spans the form row and
+  scrolls into view inside the modal) or `'anchored'` (issue #75, used by
+  the Update page's `AppUpdateBadge`): a `position: fixed` popover placed
+  beside the ⓘ marker by the pure `web-client/src/lib/popover-position.ts`
+  (`placePopover`/`popoverMaxWidth`), sized to its text up to
+  `min(320px, 100vw - 32px)`, clamped inside the viewport, flipped above
+  the marker when there's no room below, re-placed on scroll/resize, and
+  never `scrollIntoView`d — the badge has no positioned ancestor, so a
+  row-mode popover laid out against `<body>` and its scroll-into-view made
+  the page jump. A fixed popover assumes none of its ancestors sets a
+  `transform`/`filter`, either of which would make it fixed to that
+  ancestor instead of the viewport.
 - **Web UI inventory reload** (`refreshInventory` in `src/lib/inventory.ts`,
   wired into `src/web/app.ts`'s `buildApp`): the web service loads
   `inventory` once at startup (`src/web/server.ts`), but every `/api`

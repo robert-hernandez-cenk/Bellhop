@@ -45,7 +45,7 @@ dependencies installed.
   - re-run that positioning on window `scroll` (capture, passive) and `resize`, throttled through `requestAnimationFrame`, and clean up the listeners and any pending frame on close and on unmount
   - row mode must render exactly as before
 - [x] T006 [US1] Pass `placement="anchored"` from `web-client/src/components/AppUpdateBadge.tsx` and update its header comment to say why.
-- [ ] T007 [US1] Run `npm run typecheck`, `npm test` and `npm run web:build`. Then browser-verify quickstart.md steps 2–3 on the demo instance: desktop and 390 px wide, light and dark themes. Record scroll position and height before and after opening.
+- [x] T007 [US1] Run `npm run typecheck`, `npm test` and `npm run web:build`. Then browser-verify quickstart.md steps 2–3 on the demo instance: desktop and 390 px wide, light and dark themes. Record scroll position and height before and after opening.
 
 ## Phase 4: User Story 2 - Advanced modal explanations unchanged (P2)
 
@@ -53,13 +53,13 @@ dependencies installed.
 
 **Independent test**: quickstart.md step 4.
 
-- [ ] T008 [US2] Browser-verify quickstart.md step 4: the Advanced modal at desktop and at a short phone viewport. Explanations span their row, and a bottom row's explanation scrolls into view inside the modal.
+- [x] T008 [US2] Browser-verify quickstart.md step 4: the Advanced modal at desktop and at a short phone viewport. Explanations span their row, and a bottom row's explanation scrolls into view inside the modal.
 
 ## Phase 5: Polish & cross-cutting
 
-- [ ] T009 [P] Update the badge paragraph in `docs/web-ui.md` to say the explanation opens beside the badge, without moving the page.
-- [ ] T010 [P] Update the FieldHelp sentence in `CLAUDE.md` (the "Web UI responsiveness/theming" bullet) to describe `placement` (`'row'` default for the Advanced modal, `'anchored'` fixed-position next to the ⓘ for the Update page's badge) and the `web-client/src/lib/popover-position.ts` module.
-- [ ] T011 Check whether `docs/images/` holds an Update-page screenshot that changes (the popover is closed in screenshots, so expect none). Regenerate only if it changed.
+- [x] T009 [P] Update the badge paragraph in `docs/web-ui.md` to say the explanation opens beside the badge, without moving the page.
+- [x] T010 [P] Update the FieldHelp sentence in `CLAUDE.md` (the "Web UI responsiveness/theming" bullet) to describe `placement` (`'row'` default for the Advanced modal, `'anchored'` fixed-position next to the ⓘ for the Update page's badge) and the `web-client/src/lib/popover-position.ts` module.
+- [x] T011 Check whether `docs/images/` holds an Update-page screenshot that changes (the popover is closed in screenshots, so expect none). Regenerate only if it changed. — no change: the screenshot never opens a popover.
 
 ## Dependencies
 
