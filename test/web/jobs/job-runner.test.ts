@@ -292,6 +292,136 @@ test('a second enqueue while one job is running is queued, not run concurrently'
   store.close();
 });
 
+// Issue #78 US2 (T001): JobRunner now keeps jobs one at a time via its own
+// queue, independent of withCapturedConsole's own serialization (which will
+// stop serializing anything once #78's US3 lands). A test-controlled gate,
+// not delay(), proves B genuinely waits for A rather than merely losing a
+// race.
+test('a second enqueue while a job runs stays queued until released, then both run and succeed (#78 US2)', async () => {
+  const { store, dir, runner } = makeRunner();
+  let releaseA!: () => void;
+  const gateA = new Promise<void>((resolve) => {
+    releaseA = resolve;
+  });
+  let bRunCalled = false;
+
+  const aId = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await gateA;
+    },
+  });
+  await waitForStatus(runner, aId, 'running');
+
+  const bId = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      bRunCalled = true;
+    },
+  });
+
+  assert.equal(store.get(bId)?.status, 'queued');
+  assert.equal(bRunCalled, false);
+
+  releaseA();
+  await waitForFinished(runner, bId);
+
+  assert.equal(store.get(aId)?.status, 'success');
+  assert.equal(store.get(bId)?.status, 'success');
+  assert.equal(bRunCalled, true);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// Issue #78 US2 (T002): a job cancelled while still queued behind a running
+// one never runs and does not hold up the job queued after it.
+test('a cancelled queued job never runs and does not hold up the next queued job (#78 US2)', async () => {
+  const { store, log, dir, runner } = makeRunner();
+  let releaseA!: () => void;
+  const gateA = new Promise<void>((resolve) => {
+    releaseA = resolve;
+  });
+  let bRunCalled = false;
+  let cRunCalled = false;
+
+  const aId = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await gateA;
+    },
+  });
+  await waitForStatus(runner, aId, 'running');
+
+  const bId = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      bRunCalled = true;
+    },
+  });
+  const cId = runner.enqueue({
+    command: 'c',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      cRunCalled = true;
+    },
+  });
+
+  assert.equal(runner.cancel(bId), true);
+  releaseA();
+
+  await waitForFinished(runner, bId);
+  assert.equal(store.get(bId)?.status, 'cancelled');
+  assert.equal(bRunCalled, false);
+  assert.match(log.read(store.get(bId)!.logFile), /Job cancelled by operator/);
+
+  await waitForFinished(runner, cId);
+  assert.equal(store.get(cId)?.status, 'success');
+  assert.equal(cRunCalled, true);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// Issue #78 US2 (T003/FR-005): a job that throws ends failed, and that must
+// not stop the job queued after it from starting and succeeding.
+test('a job whose run throws ends failed, and the job queued after it still starts and succeeds (#78 US2, FR-005)', async () => {
+  const { store, dir, runner } = makeRunner();
+  let secondRan = false;
+
+  const firstId = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      throw new Error('boom');
+    },
+  });
+  const secondId = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      secondRan = true;
+    },
+  });
+
+  await waitForFinished(runner, secondId);
+
+  assert.equal(store.get(firstId)?.status, 'failed');
+  assert.equal(store.get(secondId)?.status, 'success');
+  assert.equal(secondRan, true);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
 test('a watchForPrompts job pauses on a detected prompt, marks awaiting_input, and resumes once answered', async () => {
   const store = new JobStore(':memory:');
   const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));

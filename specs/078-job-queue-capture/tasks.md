@@ -29,14 +29,14 @@ Already done in Stage 1: worktree, `npm install`, baseline `npm run typecheck` a
 
 ### Tests for User Story 2
 
-- [ ] T001 [US2] In `test/web/jobs/job-runner.test.ts`, add a test: job A's `run` awaits a test-controlled gate promise; job B is enqueued while A runs. Assert B's row is `queued` and B's `run` has not been called; resolve the gate; assert B then runs and both end `success`. Use a gate, not `delay`.
-- [ ] T002 [US2] In `test/web/jobs/job-runner.test.ts`, add a test: A blocks on a gate, B and C are queued, B is cancelled while queued. Assert B ends `cancelled` with its `run` never called and its log contains "Job cancelled by operator"; release A; assert C runs and ends `success` (a cancelled queued job does not hold up the next one).
-- [ ] T003 [US2] In `test/web/jobs/job-runner.test.ts`, add a test that a job whose `run` throws ends `failed` and the job queued after it still starts and ends `success` (FR-005).
+- [x] T001 [US2] In `test/web/jobs/job-runner.test.ts`, add a test: job A's `run` awaits a test-controlled gate promise; job B is enqueued while A runs. Assert B's row is `queued` and B's `run` has not been called; resolve the gate; assert B then runs and both end `success`. Use a gate, not `delay`.
+- [x] T002 [US2] In `test/web/jobs/job-runner.test.ts`, add a test: A blocks on a gate, B and C are queued, B is cancelled while queued. Assert B ends `cancelled` with its `run` never called and its log contains "Job cancelled by operator"; release A; assert C runs and ends `success` (a cancelled queued job does not hold up the next one).
+- [x] T003 [US2] In `test/web/jobs/job-runner.test.ts`, add a test that a job whose `run` throws ends `failed` and the job queued after it still starts and ends `success` (FR-005).
 
 ### Implementation for User Story 2
 
-- [ ] T005 [US2] In `src/web/jobs/job-runner.ts`, add `private queue: Promise<void> = Promise.resolve()` and change `enqueue` to `this.queue = this.queue.then(() => this.execute(id, logFile, def, controller)).catch(() => {})` (replacing `void this.execute(...)`), with a comment saying this is what keeps jobs one at a time per runner (FR-003) now that console capture no longer serializes anything. Keep the `controllers.set`/`ensureControlPoller` calls in `enqueue` before the chain link so cancel and the poller work while queued.
-- [ ] T006 [US2] In `src/web/jobs/job-runner.ts` `execute()`, move the `if (controller.signal.aborted) throw new Error('Job cancelled')` check out of the `withCapturedConsole` callback to the top of the `try`, before `withCapturedConsole` is called, and reword its comment: a job cancelled while waiting its turn in this runner's queue is skipped without being marked `running`. T001-T003 pass.
+- [x] T005 [US2] In `src/web/jobs/job-runner.ts`, add `private queue: Promise<void> = Promise.resolve()` and change `enqueue` to `this.queue = this.queue.then(() => this.execute(id, logFile, def, controller)).catch(() => {})` (replacing `void this.execute(...)`), with a comment saying this is what keeps jobs one at a time per runner (FR-003) now that console capture no longer serializes anything. Keep the `controllers.set`/`ensureControlPoller` calls in `enqueue` before the chain link so cancel and the poller work while queued.
+- [x] T006 [US2] In `src/web/jobs/job-runner.ts` `execute()`, move the `if (controller.signal.aborted) throw new Error('Job cancelled')` check out of the `withCapturedConsole` callback to the top of the `try`, before `withCapturedConsole` is called, and reword its comment: a job cancelled while waiting its turn in this runner's queue is skipped without being marked `running`. T001-T003 pass.
 
 **Checkpoint**: Commit `Run jobs one at a time through JobRunner's own queue (#78, US2)`.
 

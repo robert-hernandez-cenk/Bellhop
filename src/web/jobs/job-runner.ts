@@ -82,6 +82,14 @@ export class JobRunner {
   // execute()'s finally, so a stale id can never be "cancelled" after the
   // fact.
   private controllers = new Map<number, AbortController>();
+  // Keeps jobs running one at a time, per runner (FR-003) -- each enqueue
+  // chains its execute() call onto this promise, so the next job never
+  // starts until the previous one's execute() has settled, independent of
+  // withCapturedConsole's own serialization (which no longer serializes
+  // anything, see src/web/console-capture.ts). The web service and each MCP
+  // server already have separate runners in separate processes, so this is
+  // the same "one at a time" scope production always had.
+  private queue: Promise<void> = Promise.resolve();
   private pendingPrompts = new Map<number, { write: (text: string) => void; resume: () => void }>();
   private abandonTimers = new Map<number, NodeJS.Timeout>();
   private abandonPromptMs: number;
@@ -125,7 +133,13 @@ export class JobRunner {
     const controller = new AbortController();
     this.controllers.set(id, controller);
     this.ensureControlPoller();
-    void this.execute(id, logFile, def, controller);
+    // Chained onto the queue rather than fired directly (void this.execute(...))
+    // -- this is what keeps jobs one at a time per runner now that console
+    // capture no longer serializes anything on its own (FR-003). execute()
+    // already turns every failure into a stored job status and never
+    // rejects in practice, but the .catch(() => {}) guards the chain itself
+    // so a future change there can't silently break every job queued after it.
+    this.queue = this.queue.then(() => this.execute(id, logFile, def, controller)).catch(() => {});
     return id;
   }
 
@@ -311,13 +325,13 @@ export class JobRunner {
     };
 
     try {
+      // A job can be cancelled while it's still waiting its turn in this
+      // runner's own queue (see the `queue` field and enqueue() above) --
+      // skip it entirely rather than starting work that's already been
+      // called off, and before it's ever marked running.
+      if (controller.signal.aborted) throw new Error('Job cancelled');
       await withCapturedConsole(
         async () => {
-          // A job can be cancelled while it's still waiting its turn in
-          // withCapturedConsole's serializing chain (only one job actually
-          // runs at a time) -- skip it entirely rather than starting work
-          // that's already been called off.
-          if (controller.signal.aborted) throw new Error('Job cancelled');
           this.store.markRunning(id);
           this.events.emit('status', { jobId: id, status: 'running' });
           const jobSsh = new JobSSHClient(this.baseSsh, (chunk, stream) => emitChunk(chunk, stream), controller.signal, {
