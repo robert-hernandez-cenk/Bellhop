@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { logInfo } from '../../../src/lib/log.ts';
+import { withCapturedConsole } from '../../../src/web/console-capture.ts';
 import type { ExecResult, SSHClient, SshTarget } from '../../../src/lib/ssh-client.ts';
 import Database from 'better-sqlite3';
 
@@ -293,8 +294,8 @@ test('a second enqueue while one job is running is queued, not run concurrently'
 });
 
 // Issue #78 US2 (T001): JobRunner now keeps jobs one at a time via its own
-// queue, independent of withCapturedConsole's own serialization (which will
-// stop serializing anything once #78's US3 lands). A test-controlled gate,
+// queue, independent of withCapturedConsole (which no longer serializes
+// anything since #78's US3). A test-controlled gate,
 // not delay(), proves B genuinely waits for A rather than merely losing a
 // race.
 test('a second enqueue while a job runs stays queued until released, then both run and succeed (#78 US2)', async () => {
@@ -817,8 +818,9 @@ test('enqueue stamps the runner owner on each job, defaulting to web (#16)', asy
   const mcpRunner = new JobRunner(store, log, ssh, { owner: 'mcp:42' });
   const a = webRunner.enqueue({ command: 'x', category: 'maintenance', argsJson: '{}', run: async () => {} });
   const b = mcpRunner.enqueue({ command: 'y', category: 'maintenance', argsJson: '{}', run: async () => {} });
-  await waitForFinished(webRunner, a);
-  await waitForFinished(mcpRunner, b);
+  // Both waiters are registered before either is awaited: the two runners
+  // run concurrently (#78), so b can finish while a is still being awaited.
+  await Promise.all([waitForFinished(webRunner, a), waitForFinished(mcpRunner, b)]);
   assert.equal(store.get(a)?.owner, 'web');
   assert.equal(store.get(b)?.owner, 'mcp:42');
   rmSync(dir, { recursive: true, force: true });
@@ -1226,4 +1228,109 @@ test('execute() finally closes a control request left pending when its job finis
   store.close();
   rmSync(dir, { recursive: true, force: true });
   rmSync(logDir, { recursive: true, force: true });
+});
+
+// Test-controlled gate (constitution Principle III) for the #78 tests below.
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+test('two separate JobRunners do not serialize against each other (#78)', { timeout: 5000 }, async () => {
+  const one = makeRunner();
+  const two = makeRunner();
+  const release = gate();
+  const id1 = one.runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      console.log('runner one waiting');
+      await release.promise;
+    },
+  });
+  await waitForStatus(one.runner, id1, 'running');
+
+  const id2 = two.runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      console.log('runner two ran');
+    },
+  });
+  await waitForFinished(two.runner, id2);
+  assert.equal(two.store.get(id2)!.status, 'success');
+  assert.equal(one.store.get(id1)!.status, 'running');
+
+  release.open();
+  await waitForFinished(one.runner, id1);
+  assert.equal(one.store.get(id1)!.status, 'success');
+  assert.match(one.log.read(one.store.get(id1)!.logFile), /runner one waiting/);
+  assert.doesNotMatch(one.log.read(one.store.get(id1)!.logFile), /runner two ran/);
+  assert.match(two.log.read(two.store.get(id2)!.logFile), /runner two ran/);
+  for (const r of [one, two]) {
+    rmSync(r.dir, { recursive: true, force: true });
+    r.store.close();
+  }
+});
+
+test('a job\'s SSH and EventEmitter callback lines stay in its log while a preview captures concurrently (#78)', { timeout: 5000 }, async () => {
+  const { EventEmitter } = await import('node:events');
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new FakeSSHClient((_target, _user, command) => {
+    console.log(`responder saw ${command}`);
+    return { stdout: 'remote output', stderr: '', code: 0 };
+  });
+  const runner = new JobRunner(store, log, ssh);
+
+  const jobStarted = gate();
+  const previewLogged = gate();
+  const jobLineLogged = gate();
+
+  const id = runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async (jobSsh) => {
+      jobStarted.open();
+      await previewLogged.promise;
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
+      const emitter = new EventEmitter();
+      emitter.on('done', () => {
+        console.log('job emitter line');
+        jobLineLogged.open();
+      });
+      await new Promise<void>((resolve) =>
+        setImmediate(() => {
+          emitter.emit('done');
+          resolve();
+        })
+      );
+    },
+  });
+
+  const preview = withCapturedConsole(async () => {
+    await jobStarted.promise;
+    console.log('preview line');
+    previewLogged.open();
+    await jobLineLogged.promise;
+    console.log('preview after');
+  });
+
+  const [{ text }] = await Promise.all([preview, waitForFinished(runner, id)]);
+  const row = store.get(id)!;
+  assert.equal(row.status, 'success');
+  const jobLog = log.read(row.logFile);
+  assert.match(jobLog, /job emitter line/);
+  assert.match(jobLog, /responder saw apt-get update/);
+  assert.doesNotMatch(jobLog, /preview line|preview after/);
+  assert.equal(text, 'preview line\npreview after');
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
 });
