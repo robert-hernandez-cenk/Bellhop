@@ -5,7 +5,8 @@ type ConfigKey = MovedSettingKey | SecretSettingKey;
 type ConfigSource = 'environment' | 'settings' | 'none';
 
 useConfigStore(inventoryPath: string | null): void   // register once per entry point; null resets (tests)
-configValue(key: ConfigKey, env?: NodeJS.ProcessEnv): { value?: string; source: ConfigSource }
+configValue(key: ConfigKey, env?: NodeJS.ProcessEnv): { value?: string; source: ConfigSource }   // registered store
+configValueAt(inventoryPath: string, key: ConfigKey, env?): { value?: string; source: ConfigSource }   // explicit store
 invalidateConfigSnapshot(): void                     // web /api middleware + every in-process write
 writeSecret(inventoryPath: string, key: SecretSettingKey, value: string): void
 clearSecret(inventoryPath: string, key: SecretSettingKey): void
@@ -24,6 +25,10 @@ Consumers (all read at point of use, never cached beyond the snapshot):
 | `buildNpmClient()` | `npmApiUrl`, `npmApiEmail`, `npmApiPassword` |
 | `githubApiHeaders()` | `githubApiToken` |
 | #158 migration (inside `openInventoryDb`) | `authentikGroupLadder` via `effectiveValue` |
+
+The snapshot cache is keyed by database path, so `configValue` (registered path) and
+`configValueAt` (explicit path) never mix databases. Routes that already hold an `inventoryPath`
+(`/api/settings`) use `configValueAt`.
 
 Errors name the key and its env var, never a value.
 
