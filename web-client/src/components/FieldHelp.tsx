@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef } from 'react';
 import type { FocusEvent, PointerEvent as ReactPointerEvent } from 'react';
+import { placePopover, popoverMaxWidth } from '../lib/popover-position';
 
 // Generic field-label + info-marker disclosure (issue #34). Deliberately has
 // no import of any help-text map -- the caller (AdvancedGuestModal today,
@@ -23,14 +24,20 @@ interface FieldHelpProps {
   onHover(open: boolean): void;
   onToggle(): void;
   onClose(): void;
+  // 'row' (the default, the Advanced modal's form rows): the explanation
+  // spans the row beneath the label. 'anchored' (issue #75, the Update
+  // page's app-update badge): it opens beside the ⓘ marker, sized to its
+  // text, and never moves the page -- see the positioning effect below.
+  placement?: 'row' | 'anchored';
 }
 
 // How long a mouse may be outside the field (the ⓘ button, its label and
 // its popover) before a hover-opened explanation closes. Covers the small
-// gap between the button and the popover, which sits under the whole row.
+// gap between the button and the popover, which sits under the whole row
+// (or, anchored, just beside the marker).
 const HOVER_OUT_DELAY_MS = 150;
 
-export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClose }: FieldHelpProps) {
+export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClose, placement = 'row' }: FieldHelpProps) {
   const id = useId();
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -87,10 +94,55 @@ export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClos
 
   // Bring a newly opened explanation into view. The Advanced modal scrolls
   // on short (phone) viewports, so a bottom row's explanation can otherwise
-  // open below the visible area.
+  // open below the visible area. Row placement only: an anchored
+  // explanation is placed inside the viewport already, and scrolling to it
+  // is exactly the page jump issue #75 removed.
   useEffect(() => {
-    if (open) popoverRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [open]);
+    if (open && placement === 'row') popoverRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [open, placement]);
+
+  // Anchored placement (issue #75): the popover is position: fixed, so its
+  // top/left are viewport coordinates set here from the button's current
+  // rectangle. maxWidth goes on first, so the measured size is the one it
+  // will actually render at. A layout effect, so the first paint is already
+  // in place rather than flashing at the corner. Scroll (capture phase, to
+  // catch any scrolling ancestor, not just the window) and resize re-run it,
+  // at most once per animation frame. The popover stays a DOM child of the
+  // wrapper, so the hover and outside-click containment checks above work
+  // unchanged.
+  useLayoutEffect(() => {
+    if (!open || placement !== 'anchored') return;
+    function position() {
+      const button = buttonRef.current;
+      const popover = popoverRef.current;
+      if (!button || !popover) return;
+      const { clientWidth, clientHeight } = document.documentElement;
+      popover.style.maxWidth = `${popoverMaxWidth(clientWidth)}px`;
+      const size = { width: popover.offsetWidth, height: popover.offsetHeight };
+      const { top, left } = placePopover(button.getBoundingClientRect(), size, {
+        width: clientWidth,
+        height: clientHeight,
+      });
+      popover.style.top = `${top}px`;
+      popover.style.left = `${left}px`;
+    }
+    position();
+    let frame: number | null = null;
+    function schedule() {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        position();
+      });
+    }
+    window.addEventListener('scroll', schedule, { capture: true, passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', schedule, { capture: true });
+      window.removeEventListener('resize', schedule);
+    };
+  }, [open, placement]);
 
   // A pinned explanation closes once focus leaves both the button and the
   // popover -- shared by the button's and the popover's own onBlur below,
@@ -151,7 +203,7 @@ export function FieldHelp({ field, text, open, pinned, onHover, onToggle, onClos
       <div
         id={id}
         ref={popoverRef}
-        className="field-help-popover"
+        className={placement === 'anchored' ? 'field-help-popover field-help-popover-anchored' : 'field-help-popover'}
         tabIndex={-1}
         hidden={!open}
         onBlur={handleBlur}
