@@ -5,6 +5,7 @@ import type { HostEntry, GuestEntry, GuestStatusResponse, CustomScripts, AppUpda
 import { ExternalLink } from '../components/ExternalLink';
 import { PageDescription } from '../components/PageDescription';
 import { AppUpdateBadge } from '../components/AppUpdateBadge';
+import { appUpdatesUnavailableText } from '../lib/app-update-display';
 import { IconPackage, IconUpdate } from '../components/icons';
 import { proxyUrl, communityScriptsUrl, communityScriptsLinkLabel, sortGuestsForDisplay } from '../lib/guest-display';
 
@@ -19,6 +20,9 @@ export function UpdatePage() {
   const [appUpdates, setAppUpdates] = useState<Record<string, AppUpdateResult>>({});
   const [triggering, setTriggering] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error`, which the update buttons clear: without this
+  // banner, a failed load would look exactly like "no updates available".
+  const [appUpdatesError, setAppUpdatesError] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string; customScripts: CustomScripts | null }>(
@@ -35,9 +39,13 @@ export function UpdatePage() {
         setError(`Guest status unavailable for: ${data.failures.join(', ')}`);
       }
     });
-    apiGet<{ results: AppUpdateResult[] }>('/app-updates').then((data) => {
-      setAppUpdates(Object.fromEntries(data.results.map((r) => [r.guest, r])));
-    });
+    apiGet<{ results: AppUpdateResult[] }>('/app-updates')
+      .then((data) => {
+        setAppUpdates(Object.fromEntries(data.results.map((r) => [r.guest, r])));
+      })
+      .catch((err) => {
+        setAppUpdatesError(appUpdatesUnavailableText(err));
+      });
   }, []);
 
   // update-all never updates a VM (issue #2), so a VM gets no OS-packages
@@ -94,6 +102,7 @@ export function UpdatePage() {
         app name, and its update button stands out when an update is waiting.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
+      {appUpdatesError && <div className="warning-banner">{appUpdatesError}</div>}
 
       <h3>Hosts</h3>
       <div className="update-card-grid">

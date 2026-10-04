@@ -69,3 +69,9 @@ export function appUpdateView(result: AppUpdateResult, formatTime: (iso: string)
     }
   }
 }
+
+// The Update page's banner when GET /api/app-updates itself fails. Shown so
+// the missing badges aren't read as "no updates available".
+export function appUpdatesUnavailableText(err: unknown): string {
+  return `Update check results unavailable: ${err instanceof Error ? err.message : String(err)}`;
+}

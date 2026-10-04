@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appUpdateView } from '../../web-client/src/lib/app-update-display.ts';
+import { appUpdateView, appUpdatesUnavailableText } from '../../web-client/src/lib/app-update-display.ts';
 import type { AppUpdateResult } from '../../web-client/src/api/types.ts';
 
 // formatTime is injected (research R11) so this stays framework-free and
@@ -84,4 +84,9 @@ test('appUpdateView: every rendered view\'s details includes "Checked <time>"', 
     assert.ok(view);
     assert.ok(view!.details.includes('Checked @2026-10-03T04:00:41.000Z'), `expected a Checked time for status ${r.status}`);
   }
+});
+
+test('appUpdatesUnavailableText names the failure for the Update page banner', () => {
+  assert.equal(appUpdatesUnavailableText(new Error('HTTP 500')), 'Update check results unavailable: HTTP 500');
+  assert.equal(appUpdatesUnavailableText('offline'), 'Update check results unavailable: offline');
 });
