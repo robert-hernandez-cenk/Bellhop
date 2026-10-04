@@ -12,7 +12,7 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { savePermissionGroup } from '../../src/lib/permissions.ts';
-import { resolveActor, type ImpersonationStore } from '../../src/web/impersonation.ts';
+import { applyImpersonation, resolveActor, type ImpersonationStore } from '../../src/web/impersonation.ts';
 import type { Request } from 'express';
 
 const inventory: Inventory = {
@@ -158,4 +158,27 @@ test('resolveActor omits uid entirely when the real identity has none', () => {
   } as unknown as Request;
   const actor = resolveActor(req);
   assert.ok(actor && !('uid' in actor), 'a real identity with no uid must round-trip without a uid key at all');
+});
+
+// --- viaForwardAuth survives the overlay (issue #64) ---
+
+test('applyImpersonation keeps viaForwardAuth on both the overlaid req.user and req.realUser', () => {
+  const req = {
+    user: { username: 'admin', groups: ['bellhop-admins'], viaForwardAuth: true as const },
+  } as unknown as Request; // only the fields applyImpersonation reads
+  let nextCalled = false;
+  applyImpersonation(new Map([['admin', 'bellhop-viewers']]))(req, {} as never, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, true);
+  assert.equal(req.user?.impersonating, 'bellhop-viewers');
+  assert.equal(req.user?.viaForwardAuth, true);
+  assert.equal(req.realUser?.viaForwardAuth, true);
+});
+
+test('whoami does not expose viaForwardAuth', async () => {
+  const app = testApp(new Map(), newInventoryPath());
+  const res = await request(app).get('/api/whoami').set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  assert.equal(res.status, 200);
+  assert.equal('viaForwardAuth' in res.body, false);
 });

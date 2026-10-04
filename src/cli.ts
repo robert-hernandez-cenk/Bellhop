@@ -2,7 +2,6 @@ import { Command } from 'commander';
 import path from 'node:path';
 import { stringify } from 'yaml';
 import dotenv from 'dotenv';
-import { authentikConfig, authentikConfigured } from './lib/authentik-config.ts';
 import { logError, logInfo } from './lib/log.ts';
 import { Ssh2SSHClient } from './lib/ssh-client.ts';
 import { loadInventory, saveInventory, SETTINGS_KEYS } from './lib/inventory.ts';
@@ -27,8 +26,7 @@ import { runOidcCredentials, formatOidcCredentials } from './commands/networking
 import { runAdoptOidcClient, formatAdoptOidcClient } from './commands/networking/adopt-oidc-client.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
-import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
-import type { AuthentikClient } from './lib/authentik-client.ts';
+import { buildAuthentikClient } from './lib/authentik-client.ts';
 import { localOperatorUsername } from './web/auth.ts';
 import { runAttachNfsMount } from './commands/provisioning/attach-nfs-mount.ts';
 import { runConfigureGuest } from './commands/provisioning/configure-guest.ts';
@@ -68,17 +66,6 @@ export function fstabPath(): string | undefined {
 
 export function nfsServer(): string | undefined {
   return process.env.NFS_SERVER;
-}
-
-// Mirrors src/web/server.ts's buildAuthentikClient(). Both AUTHENTIK_API_URL
-// and AUTHENTIK_API_TOKEN come either from the operator's own shell or from
-// data/authentik.env, loaded above. Delegates the configured/not-configured
-// decision to authentikConfigured() so it lives in exactly one place -- the
-// non-null assertions below are safe because authentikConfigured() already
-// checked both vars against the same process.env this file reads.
-export function buildAuthentikClient(): AuthentikClient {
-  if (!authentikConfigured()) return new UnconfiguredAuthentikClient();
-  return new RealAuthentikClient(process.env.AUTHENTIK_API_URL!, process.env.AUTHENTIK_API_TOKEN!, authentikConfig());
 }
 
 export function parsePositiveInt(value: string, flag: string): number {

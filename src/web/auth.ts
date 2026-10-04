@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { authentikConfig } from '../lib/authentik-config.ts';
+import { configValue } from '../lib/config.ts';
 import { UNCONFIGURED_MESSAGE } from '../lib/authentik-client.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
 
@@ -34,6 +35,11 @@ export interface AuthUser {
   // by username alone. Absent for dev/test identities and the synthetic
   // local operator, which have no such id.
   uid?: string;
+  // Set only when the identity came from Authentik forward-auth headers
+  // (issue #64) -- never for the dev user or the local operator. The
+  // Settings page refuses to switch webUiAuthMode to 'authentik' from a
+  // request without it, since every later request would then be rejected.
+  viaForwardAuth?: true;
 }
 
 // Axis 1 of issue #123's design. The default is inferred rather than
@@ -53,9 +59,14 @@ export interface AuthUser {
 // docs/authentik.md.
 export type AuthMode = 'auto' | 'authentik' | 'none';
 
+//
+// Read through the config accessor (issue #64): WEB_UI_AUTH_MODE wins, then
+// the stored webUiAuthMode setting. A stored value was already validated by
+// the accessor, so the check below only ever rejects the environment
+// variable -- echoing it, as before, since it is the operator's own value.
 export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {
-  const raw = env.WEB_UI_AUTH_MODE;
-  if (raw === undefined || raw === '') return 'auto';
+  const raw = configValue('webUiAuthMode', env).value;
+  if (raw === undefined) return 'auto';
   if (raw === 'auto' || raw === 'authentik' || raw === 'none') return raw;
   throw new Error(`WEB_UI_AUTH_MODE must be one of auto, authentik, none -- got: ${raw}`);
 }
@@ -104,6 +115,7 @@ export function resolveAuthUser(
       // with no (or an empty) x-authentik-uid header round-trips without
       // a uid key at all rather than one set to `undefined`.
       ...(typeof uid === 'string' && uid.length > 0 ? { uid } : {}),
+      viaForwardAuth: true,
     };
   }
 

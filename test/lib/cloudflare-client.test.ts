@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -10,6 +10,8 @@ import {
   CLOUDFLARE_UNCONFIGURED_MESSAGE,
   CLOUDFLARE_REQUEST_TIMEOUT_MS,
 } from '../../src/lib/cloudflare-client.ts';
+import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
+import { writeSecret, clearSecret } from '../../src/lib/config.ts';
 
 const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'cloudflare');
 function fixture(name: string): any {
@@ -164,4 +166,42 @@ test('RealCloudflareClient treats a 200 with success:false as an error', async (
 test('RealCloudflareClient reports a non-JSON error body by status alone', async () => {
   const impl = (async () => new Response('<html>bad gateway</html>', { status: 502 })) as typeof fetch;
   await assert.rejects(new RealCloudflareClient('t', impl).findZoneId('example.com'), /Cloudflare API 502:/);
+});
+
+// -- Issue #64: buildCloudflareClient is live --------------------------------
+
+afterEach(() => resetConfigStore());
+
+test('buildCloudflareClient follows a token stored or cleared after it was built, with no rebuild', async () => {
+  const saved = process.env.CLOUDFLARE_DNS_API_TOKEN;
+  delete process.env.CLOUDFLARE_DNS_API_TOKEN;
+  const original = globalThis.fetch;
+  const authorizations: Array<string | undefined> = [];
+  globalThis.fetch = (async (_input: string | URL | Request, init: RequestInit = {}) => {
+    authorizations.push(((init.headers ?? {}) as Record<string, string>).Authorization);
+    return new Response(JSON.stringify({ success: true, result: [], errors: [] }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const dbPath = tempConfigStore();
+    const client = buildCloudflareClient();
+    assert.equal(client.isConfigured(), false);
+
+    writeSecret(dbPath, 'cloudflareDnsApiToken', 'example-cf-token');
+    assert.equal(client.isConfigured(), true);
+    assert.equal(await client.findZoneId('example.com'), undefined);
+    assert.deepEqual(authorizations, ['Bearer example-cf-token']);
+
+    clearSecret(dbPath, 'cloudflareDnsApiToken');
+    assert.equal(client.isConfigured(), false);
+  } finally {
+    globalThis.fetch = original;
+    if (saved === undefined) delete process.env.CLOUDFLARE_DNS_API_TOKEN;
+    else process.env.CLOUDFLARE_DNS_API_TOKEN = saved;
+  }
+});
+
+test('buildCloudflareClient(env): an env token overrides the stored one', () => {
+  tempConfigStore({}, { cloudflareDnsApiToken: 'example-stored-token' });
+  assert.equal(buildCloudflareClient({}).isConfigured(), true);
+  assert.equal(buildCloudflareClient({ CLOUDFLARE_DNS_API_TOKEN: 'example-env-token' }).isConfigured(), true);
 });
