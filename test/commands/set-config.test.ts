@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { runSetConfig } from '../../src/commands/maintenance/set-config.ts';
+import { captureWarnings } from '../support/capture-warnings.ts';
 
 const FIXTURE: Inventory = {
   domain: 'example.com',
@@ -288,4 +289,43 @@ test('runSetConfig rejects a pveCreatorRole with an invalid character', () => {
     /pveCreatorRole: must contain only letters, digits, \., - and _/
   );
   assert.equal(loadInventory(inventoryPath).pveCreatorRole, undefined);
+});
+
+// -- Issue #64 US5: a key pinned by the CLI's own environment ---------------
+
+test('runSetConfig still stores a key its env var pins, with the contract warning', async () => {
+  const saved = process.env.AUTHENTIK_OUTPOST_NAME;
+  process.env.AUTHENTIK_OUTPOST_NAME = 'example env outpost';
+  try {
+    const inventoryPath = tempInventoryPath();
+    const { result, warnings } = await captureWarnings(async () =>
+      runSetConfig({ key: 'authentikOutpostName', value: 'stored outpost', apply: true }, { inventoryPath })
+    );
+    assert.equal(result.applied, true);
+    assert.equal(loadInventory(inventoryPath).authentikOutpostName, 'stored outpost');
+    assert.equal(warnings.length, 1);
+    assert.match(
+      warnings[0],
+      /AUTHENTIK_OUTPOST_NAME is set in this environment and overrides the stored authentikOutpostName$/
+    );
+  } finally {
+    if (saved === undefined) delete process.env.AUTHENTIK_OUTPOST_NAME;
+    else process.env.AUTHENTIK_OUTPOST_NAME = saved;
+  }
+});
+
+test('runSetConfig does not warn when the env var is unset or empty, or the key has none', async () => {
+  const saved = process.env.AUTHENTIK_OUTPOST_NAME;
+  process.env.AUTHENTIK_OUTPOST_NAME = '';
+  try {
+    const inventoryPath = tempInventoryPath();
+    const { warnings } = await captureWarnings(async () => {
+      runSetConfig({ key: 'authentikOutpostName', value: 'stored outpost', apply: true }, { inventoryPath });
+      runSetConfig({ key: 'dnsServer', value: '10.0.0.53', apply: true }, { inventoryPath });
+    });
+    assert.deepEqual(warnings, []);
+  } finally {
+    if (saved === undefined) delete process.env.AUTHENTIK_OUTPOST_NAME;
+    else process.env.AUTHENTIK_OUTPOST_NAME = saved;
+  }
 });

@@ -13,6 +13,9 @@ import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
 import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
+import { SETTINGS_KEYS } from '../../../src/lib/inventory.ts';
+import { SECRET_SETTINGS_KEYS } from '../../../src/lib/settings-defs.ts';
+import { envPinnedError } from '../../../src/web/routes/settings.ts';
 
 function baseInventory(): Inventory {
   return {
@@ -448,4 +451,136 @@ test('PATCH /api/settings rejects a pveCreatorRole with an invalid character, wi
   assert.equal(res.status, 400);
   assert.match(res.body.error, /pveCreatorRole: must contain only letters, digits, \., - and _/);
   assert.equal(loadInventory(inventoryPath).pveCreatorRole, undefined);
+});
+
+// -- Issue #64 US5: sources, environment, env-pinned refusal -----------------
+
+// Sets environment variables for one test and restores them afterwards.
+async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const saved: Record<string, string | undefined> = {};
+  for (const [name, value] of Object.entries(vars)) {
+    saved[name] = process.env[name];
+    process.env[name] = value;
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+test('GET /api/settings reports a source for every non-secret key, and none for secrets', async () => {
+  await withEnv({ AUTHENTIK_OUTPOST_NAME: 'example env outpost' }, async () => {
+    const { app } = testApp({ ...baseInventory(), nfsServer: '10.0.0.5', authentikAdminGroup: 'bellhop-admins' });
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(Object.keys(res.body.sources).sort(), [...SETTINGS_KEYS].sort());
+    for (const key of SECRET_SETTINGS_KEYS) assert.ok(!(key in res.body.sources), `${key} must not be in sources`);
+    assert.equal(res.body.sources.nfsServer, 'settings');
+    assert.equal(res.body.sources.dnsServer, 'none');
+    assert.equal(res.body.sources.authentikAdminGroup, 'settings');
+    assert.equal(res.body.sources.authentikOutpostName, 'environment');
+    assert.equal(res.body.sources.npmApiUrl, 'none');
+  });
+});
+
+test('GET /api/settings lists env-pinned keys, with a value only for non-secret ones', async () => {
+  await withEnv(
+    { AUTHENTIK_OUTPOST_NAME: 'example env outpost', GITHUB_API_TOKEN: 'example-GITHUB-SECRET-MARKER' },
+    async () => {
+      const { app } = testApp();
+      const res = await asAdmin(request(app).get('/api/settings'));
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.environment.authentikOutpostName, {
+        variable: 'AUTHENTIK_OUTPOST_NAME',
+        value: 'example env outpost',
+      });
+      assert.deepEqual(res.body.environment.githubApiToken, { variable: 'GITHUB_API_TOKEN' });
+      assert.ok(!('nfsServer' in res.body.environment), 'a key with no env var is never pinned');
+      assert.ok(!('authentikAdminGroup' in res.body.environment), 'an unset variable does not pin');
+      assert.ok(!JSON.stringify(res.body).includes('GITHUB-SECRET-MARKER'), 'a secret value never appears');
+    }
+  );
+});
+
+test('an empty environment variable does not pin its key', async () => {
+  await withEnv({ AUTHENTIK_OUTPOST_NAME: '' }, async () => {
+    const { app } = testApp();
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.equal(res.body.sources.authentikOutpostName, 'none');
+    assert.ok(!('authentikOutpostName' in res.body.environment));
+  });
+});
+
+test('PATCH /api/settings refuses an env-pinned key with 400 naming the variable, and writes nothing', async () => {
+  await withEnv({ AUTHENTIK_OUTPOST_NAME: 'example env outpost' }, async () => {
+    const { app, inventoryPath } = testApp();
+    const res = await asAdmin(request(app).patch('/api/settings')).send({
+      nfsServer: '10.0.0.5',
+      authentikOutpostName: 'stored outpost',
+    });
+    assert.equal(res.status, 400);
+    assert.equal(
+      res.body.error,
+      'authentikOutpostName is set by the environment variable AUTHENTIK_OUTPOST_NAME -- unset AUTHENTIK_OUTPOST_NAME (or remove it from data/authentik.env) to manage it here'
+    );
+    const onDisk = loadInventory(inventoryPath);
+    assert.equal(onDisk.authentikOutpostName, undefined);
+    assert.equal(onDisk.nfsServer, undefined, 'the other key in the same request is not written either');
+  });
+});
+
+test('PATCH /api/settings refuses clearing an env-pinned key too', async () => {
+  await withEnv({ NPM_API_URL: 'http://198.51.100.5:81' }, async () => {
+    const { app, inventoryPath } = testApp({ ...baseInventory(), npmApiUrl: 'http://198.51.100.6:81' });
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ npmApiUrl: null });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /^npmApiUrl is set by the environment variable NPM_API_URL -- .*data\/nginx-proxy-manager\.env/);
+    assert.equal(loadInventory(inventoryPath).npmApiUrl, 'http://198.51.100.6:81');
+  });
+});
+
+test('PATCH /api/settings writes a moved key that is not env-pinned', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ authentikOutpostName: 'stored outpost' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.sources.authentikOutpostName, 'settings');
+  assert.equal(loadInventory(inventoryPath).authentikOutpostName, 'stored outpost');
+});
+
+test('envPinnedError names each key\'s own env file, and omits the file for a key that has none', () => {
+  assert.equal(
+    envPinnedError('webUiAuthMode'),
+    'webUiAuthMode is set by the environment variable WEB_UI_AUTH_MODE -- unset WEB_UI_AUTH_MODE (or remove it from data/authentik.env) to manage it here'
+  );
+  assert.match(envPinnedError('cloudflareDnsApiToken'), /remove it from data\/cloudflare-api\.env/);
+  assert.equal(
+    envPinnedError('githubApiToken'),
+    'githubApiToken is set by the environment variable GITHUB_API_TOKEN -- unset GITHUB_API_TOKEN to manage it here'
+  );
+});
+
+test('an admin impersonating a non-admin group gets 403 on GET and PATCH /api/settings', async () => {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, baseInventory());
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const app = buildApp({
+    inventory: baseInventory(),
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner: new JobRunner(jobStore, jobLog, ssh),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    impersonationStore: new Map([['admin', 'family']]),
+  });
+  assert.equal((await asAdmin(request(app).get('/api/settings'))).status, 403);
+  const patch = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
+  assert.equal(patch.status, 403);
+  assert.equal(loadInventory(inventoryPath).nfsServer, undefined);
 });

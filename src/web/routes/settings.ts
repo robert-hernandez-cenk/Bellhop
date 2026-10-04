@@ -15,6 +15,55 @@ import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
 import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
 import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
+import { configValueAt, type ConfigSource } from '../../lib/config.ts';
+import { SETTING_DEFS, type ConfigKey } from '../../lib/settings-defs.ts';
+
+// The keys an environment variable can override (issue #64): every moved
+// setting and every secret. Any other SETTINGS_KEYS entry lives only in the
+// store.
+function isConfigKey(key: string): key is ConfigKey {
+  return Object.hasOwn(SETTING_DEFS, key);
+}
+
+// The 400 a web write gets for a key its environment variable pins
+// (contracts/settings-api.md). Exported for its test: the no-file form only
+// applies to githubApiToken, a secret the PATCH route doesn't accept yet.
+export function envPinnedError(key: ConfigKey): string {
+  const { envVar, envFile } = SETTING_DEFS[key];
+  const where = envFile === undefined ? '' : ` (or remove it from data/${envFile})`;
+  return `${key} is set by the environment variable ${envVar} -- unset ${envVar}${where} to manage it here`;
+}
+
+// Where each non-secret setting's effective value comes from. A key with no
+// environment variable can only be 'settings' or 'none'. Read through
+// configValueAt with this route's own inventoryPath (never the registered
+// store), so the answer always matches the database these routes write.
+function settingSources(inv: Inventory, inventoryPath: string): Record<string, ConfigSource> {
+  const sources: Record<string, ConfigSource> = {};
+  for (const key of SETTINGS_KEYS) {
+    sources[key] = isConfigKey(key)
+      ? configValueAt(inventoryPath, key).source
+      : inv[key] !== undefined
+        ? 'settings'
+        : 'none';
+  }
+  return sources;
+}
+
+// Every key whose environment variable is currently set (non-empty), so the
+// page can show it read-only. A non-secret entry carries the effective value
+// it is pinned to; a secret entry never does -- its value must not reach any
+// response (contracts/settings-api.md).
+function environmentPins(inventoryPath: string): Record<string, { variable: string; value?: string }> {
+  const pins: Record<string, { variable: string; value?: string }> = {};
+  for (const key of Object.keys(SETTING_DEFS) as ConfigKey[]) {
+    const def = SETTING_DEFS[key];
+    const effective = configValueAt(inventoryPath, key);
+    if (effective.source !== 'environment') continue;
+    pins[key] = def.secret ? { variable: def.envVar } : { variable: def.envVar, value: effective.value };
+  }
+  return pins;
+}
 
 function currentSettings(inv: Inventory): Settings {
   const settings: Settings = {};
@@ -65,7 +114,7 @@ function proxyDriversInfo() {
 // return the current settings/derived values plus the static driver list/
 // default, the last two being the same on every call regardless of what, if
 // anything, was just written.
-function settingsResponse(inv: Inventory) {
+function settingsResponse(inv: Inventory, inventoryPath: string) {
   return {
     settings: currentSettings(inv),
     derived: derivedValues(inv),
@@ -78,6 +127,11 @@ function settingsResponse(inv: Inventory) {
     // TLS dropdown is populated from this rather than a hardcoded list.
     caddyTlsModes: [...CADDY_TLS_MODES],
     defaultCaddyTls: DEFAULT_CADDY_TLS,
+    // Issue #64: `settings` above stays the *stored* values (what the inputs
+    // edit); these say where each effective value comes from, and which keys
+    // an environment variable currently pins.
+    sources: settingSources(inv, inventoryPath),
+    environment: environmentPins(inventoryPath),
   };
 }
 
@@ -86,7 +140,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
   router.use(requireAdminGroup);
 
   router.get('/', (_req, res) => {
-    res.json(settingsResponse(inventory));
+    res.json(settingsResponse(inventory, inventoryPath));
   });
 
   router.patch('/', (req, res) => {
@@ -118,6 +172,18 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       assignSetting(updates, key, value);
     }
 
+    // A key its environment variable pins (issue #64, research R9) would be
+    // stored but never take effect, so the page refuses it -- clearing
+    // included -- rather than appear to save. Nothing in the request is
+    // written. The CLI's set-config stores and warns instead: its
+    // environment is not necessarily the service's.
+    for (const key of Object.keys(body)) {
+      if (isConfigKey(key) && configValueAt(inventoryPath, key).source === 'environment') {
+        res.status(400).json({ error: envPinnedError(key) });
+        return;
+      }
+    }
+
     try {
       // Partial<Settings> rather than Record<string, ...> so this spread
       // still produces something assignable to Inventory. An explicitly
@@ -136,7 +202,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // Reflect the write in the shared in-memory object immediately rather
     // than waiting for the next request's reload middleware.
     refreshInventory(inventory, inventoryPath);
-    res.json(settingsResponse(inventory));
+    res.json(settingsResponse(inventory, inventoryPath));
   });
 
   return router;

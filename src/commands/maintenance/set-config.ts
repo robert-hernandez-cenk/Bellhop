@@ -7,6 +7,9 @@ import {
   type Settings,
 } from '../../lib/inventory.ts';
 import { confirmOrDryRun } from '../../lib/dry-run.ts';
+import { effectiveValue } from '../../lib/config.ts';
+import { logWarn } from '../../lib/log.ts';
+import { SETTING_DEFS, type ConfigKey } from '../../lib/settings-defs.ts';
 
 export interface SetConfigOptions {
   key: string;
@@ -41,6 +44,18 @@ export function runSetConfig(
     const parsed = SettingsSchema.safeParse({ [key]: value });
     if (!parsed.success) {
       throw new Error(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('\n'));
+    }
+  }
+
+  // Unlike the web Settings page, which refuses a key its environment
+  // variable pins, the CLI stores it anyway (issue #64, research R9): this
+  // shell's environment is not necessarily the web service's. It warns,
+  // though, since in this process the stored value won't take effect.
+  if (Object.hasOwn(SETTING_DEFS, key)) {
+    const configKey = key as ConfigKey; // safe: the hasOwn check proves key is a SETTING_DEFS key
+    if (effectiveValue(configKey, undefined, process.env).source === 'environment') {
+      const { envVar } = SETTING_DEFS[configKey];
+      logWarn(`${envVar} is set in this environment and overrides the stored ${key}`);
     }
   }
 

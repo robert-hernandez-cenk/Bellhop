@@ -28,12 +28,26 @@ const EXPECTED: Record<string, [string, string, boolean]> = {
   githubApiToken: ['GITHUB_API_TOKEN', 'github', true],
 };
 
+// The data/ file each variable lived in before #64 -- named in the Settings
+// page's env-pinned refusal. githubApiToken is new and never had one.
+function expectedEnvFile(envVar: string): string | undefined {
+  if (envVar.startsWith('AUTHENTIK_') || envVar === 'WEB_UI_AUTH_MODE') return 'authentik.env';
+  if (envVar === 'CLOUDFLARE_DNS_API_TOKEN') return 'cloudflare-api.env';
+  if (envVar.startsWith('NPM_API_')) return 'nginx-proxy-manager.env';
+  return undefined;
+}
+
 const MOVED_NON_SECRET = Object.keys(EXPECTED).filter((k) => !EXPECTED[k][2]);
 
-test('SETTING_DEFS carries exactly the env var, group and secret flag from data-model.md', () => {
+test('SETTING_DEFS carries exactly the env var, group, secret flag and env file from data-model.md', () => {
   assert.deepEqual(Object.keys(SETTING_DEFS).sort(), Object.keys(EXPECTED).sort());
   for (const [key, [envVar, group, secret]] of Object.entries(EXPECTED)) {
-    assert.deepEqual(SETTING_DEFS[key as keyof typeof SETTING_DEFS], { envVar, group, secret }, key);
+    const envFile = expectedEnvFile(envVar);
+    assert.deepEqual(
+      SETTING_DEFS[key as keyof typeof SETTING_DEFS],
+      envFile === undefined ? { envVar, group, secret } : { envVar, group, secret, envFile },
+      key
+    );
   }
 });
 

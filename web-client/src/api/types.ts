@@ -337,7 +337,15 @@ export interface SettingsResponse {
   // "independent of inventory" shape as proxyDrivers/defaultProxyDriver.
   caddyTlsModes: string[];
   defaultCaddyTls: string;
+  // Issue #64: where each non-secret setting's effective value comes from
+  // (`settings` above holds only the stored values), and every key an
+  // environment variable currently pins -- shown read-only. A pinned secret
+  // carries only its variable name, never a value.
+  sources: Record<string, SettingSource>;
+  environment: Record<string, { variable: string; value?: string }>;
 }
+
+export type SettingSource = 'environment' | 'settings' | 'none';
 
 // Mirrors src/lib/app-update-store.ts's AppUpdateResult/AppUpdateStatus and
 // GET /api/app-updates (contracts/http-api.md) -- issue #61's daily

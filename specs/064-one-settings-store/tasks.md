@@ -58,10 +58,10 @@ next request's `isAdminUser` uses it; with `AUTHENTIK_ADMIN_GROUP` set, the API 
 - [X] T014 [P] [US1] Tests in test/lib/npm-client.test.ts: `buildNpmClient` reads `npmApiUrl`/`npmApiEmail`/`npmApiPassword` through the accessor; errors name the settings and the Settings page via `settingFix`, never a value, and no longer mention `data/nginx-proxy-manager.env`
 - [X] T015 [US1] Change src/lib/npm-client.ts (`resolveBaseUrl`, `buildNpmClient`, `NPM_UNCONFIGURED_MESSAGE`) accordingly
 - [X] T016 [US1] Invalidate the config snapshot at the start of every `/api` request in src/web/app.ts (next to `refreshInventory`); test in test/web/app.test.ts that a value written to the DB between two requests is used by the second
-- [ ] T017 [P] [US5] Tests in test/web/routes/settings.test.ts: GET returns `sources` for every non-secret key and `environment` entries (`variable`, plus `value` for non-secret only) per contracts/settings-api.md; PATCH of an env-pinned key -> 400 naming the variable, nothing written; non-admin and impersonating admin still 403 on GET/PATCH
-- [ ] T018 [US5] Implement `sources`/`environment` and the env-pinned refusal in src/web/routes/settings.ts; add `web-client/src/api/types.ts` fields
-- [ ] T019 [P] [US5] Tests in test/commands/set-config.test.ts: a key whose env var is set in the CLI's environment is still stored, with the contract's warning
-- [ ] T020 [US5] Implement the warning in src/commands/maintenance/set-config.ts
+- [X] T017 [P] [US5] Tests in test/web/routes/settings.test.ts: GET returns `sources` for every non-secret key and `environment` entries (`variable`, plus `value` for non-secret only) per contracts/settings-api.md; PATCH of an env-pinned key -> 400 naming the variable, nothing written; non-admin and impersonating admin still 403 on GET/PATCH
+- [X] T018 [US5] Implement `sources`/`environment` and the env-pinned refusal in src/web/routes/settings.ts; add `web-client/src/api/types.ts` fields
+- [X] T019 [P] [US5] Tests in test/commands/set-config.test.ts: a key whose env var is set in the CLI's environment is still stored, with the contract's warning
+- [X] T020 [US5] Implement the warning in src/commands/maintenance/set-config.ts
 
 **Checkpoint**: US1/US5 complete for non-secret keys.
 

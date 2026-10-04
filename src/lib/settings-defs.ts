@@ -94,24 +94,30 @@ export interface SettingDef {
   envVar: string;
   group: SettingGroup;
   secret: boolean;
+  // The data/ file that set the variable before #64, named in the Settings
+  // page's env-pinned refusal so an operator knows where to remove it.
+  // Absent for githubApiToken, which is new and never had a file.
+  envFile?: EnvFile;
 }
 
+export type EnvFile = 'authentik.env' | 'cloudflare-api.env' | 'nginx-proxy-manager.env';
+
 export const SETTING_DEFS: Record<ConfigKey, SettingDef> = {
-  authentikApiUrl: { envVar: 'AUTHENTIK_API_URL', group: 'authentik', secret: false },
-  authentikApiToken: { envVar: 'AUTHENTIK_API_TOKEN', group: 'authentik', secret: true },
-  authentikAdminGroup: { envVar: 'AUTHENTIK_ADMIN_GROUP', group: 'authentik', secret: false },
-  authentikBuiltinAdminGroup: { envVar: 'AUTHENTIK_BUILTIN_ADMIN_GROUP', group: 'authentik', secret: false },
-  authentikGroupLadder: { envVar: 'AUTHENTIK_GROUP_LADDER', group: 'authentik', secret: false },
-  authentikOutpostName: { envVar: 'AUTHENTIK_OUTPOST_NAME', group: 'authentik', secret: false },
-  authentikOutpostPort: { envVar: 'AUTHENTIK_OUTPOST_PORT', group: 'authentik', secret: false },
-  authentikAuthorizationFlowSlug: { envVar: 'AUTHENTIK_AUTHORIZATION_FLOW_SLUG', group: 'authentik', secret: false },
-  authentikInvalidationFlowSlug: { envVar: 'AUTHENTIK_INVALIDATION_FLOW_SLUG', group: 'authentik', secret: false },
-  authentikOidcSigningKeyName: { envVar: 'AUTHENTIK_OIDC_SIGNING_KEY_NAME', group: 'authentik', secret: false },
-  webUiAuthMode: { envVar: 'WEB_UI_AUTH_MODE', group: 'general', secret: false },
-  cloudflareDnsApiToken: { envVar: 'CLOUDFLARE_DNS_API_TOKEN', group: 'cloudflare', secret: true },
-  npmApiUrl: { envVar: 'NPM_API_URL', group: 'nginx-proxy-manager', secret: false },
-  npmApiEmail: { envVar: 'NPM_API_EMAIL', group: 'nginx-proxy-manager', secret: false },
-  npmApiPassword: { envVar: 'NPM_API_PASSWORD', group: 'nginx-proxy-manager', secret: true },
+  authentikApiUrl: { envVar: 'AUTHENTIK_API_URL', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikApiToken: { envVar: 'AUTHENTIK_API_TOKEN', group: 'authentik', secret: true, envFile: 'authentik.env' },
+  authentikAdminGroup: { envVar: 'AUTHENTIK_ADMIN_GROUP', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikBuiltinAdminGroup: { envVar: 'AUTHENTIK_BUILTIN_ADMIN_GROUP', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikGroupLadder: { envVar: 'AUTHENTIK_GROUP_LADDER', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikOutpostName: { envVar: 'AUTHENTIK_OUTPOST_NAME', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikOutpostPort: { envVar: 'AUTHENTIK_OUTPOST_PORT', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikAuthorizationFlowSlug: { envVar: 'AUTHENTIK_AUTHORIZATION_FLOW_SLUG', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikInvalidationFlowSlug: { envVar: 'AUTHENTIK_INVALIDATION_FLOW_SLUG', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  authentikOidcSigningKeyName: { envVar: 'AUTHENTIK_OIDC_SIGNING_KEY_NAME', group: 'authentik', secret: false, envFile: 'authentik.env' },
+  webUiAuthMode: { envVar: 'WEB_UI_AUTH_MODE', group: 'general', secret: false, envFile: 'authentik.env' },
+  cloudflareDnsApiToken: { envVar: 'CLOUDFLARE_DNS_API_TOKEN', group: 'cloudflare', secret: true, envFile: 'cloudflare-api.env' },
+  npmApiUrl: { envVar: 'NPM_API_URL', group: 'nginx-proxy-manager', secret: false, envFile: 'nginx-proxy-manager.env' },
+  npmApiEmail: { envVar: 'NPM_API_EMAIL', group: 'nginx-proxy-manager', secret: false, envFile: 'nginx-proxy-manager.env' },
+  npmApiPassword: { envVar: 'NPM_API_PASSWORD', group: 'nginx-proxy-manager', secret: true, envFile: 'nginx-proxy-manager.env' },
   githubApiToken: { envVar: 'GITHUB_API_TOKEN', group: 'github', secret: true },
 };
 
