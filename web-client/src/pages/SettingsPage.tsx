@@ -367,6 +367,9 @@ export function SettingsPage() {
     // mean something for Traefik alone (issue #35).
     if (key === 'proxyCertResolver') return view?.showCertResolverField ?? false;
     if (key === 'proxyApiUrl') return view?.showApiUrlField ?? false;
+    // Same "hidden until loaded" rule again -- these three mean something
+    // for Nginx Proxy Manager alone (issue #73).
+    if (key === 'npmApiUrl' || key === 'npmApiEmail' || key === 'npmApiPassword') return view?.showNpmApiFields ?? false;
     return true;
   };
 

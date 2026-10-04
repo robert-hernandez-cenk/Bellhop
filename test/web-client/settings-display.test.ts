@@ -242,6 +242,34 @@ test('proxyFieldView hides the cert resolver and API URL fields for an unmanaged
   assert.equal(unknown.showApiUrlField, false);
 });
 
+// issue #73 (US1): Nginx Proxy Manager's entry exactly as GET /api/settings
+// serves it -- the only driver with usesNpmApi set, no config file, and no
+// status page.
+const NGINX_PROXY_MANAGER = {
+  id: 'nginx-proxy-manager',
+  label: 'Nginx Proxy Manager',
+  defaultConfigPath: null,
+  suggestedStatusPagePath: null,
+  managesProxy: true,
+  usesSharedCertificate: false,
+  usesCertResolver: false,
+  usesApiUrl: false,
+  usesCaddyTls: false,
+  usesNpmApi: true,
+  configPathNote: null,
+};
+
+test('proxyFieldView for Nginx Proxy Manager shows only the Nginx Proxy Manager fields', () => {
+  const view = proxyFieldView('nginx-proxy-manager', [...DRIVERS, NGINX, HAPROXY, TRAEFIK, NGINX_PROXY_MANAGER], 'cloudflare');
+  assert.equal(view.showNpmApiFields, true);
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showTlsFields, false);
+  assert.equal(view.showCaddyTlsField, false);
+  assert.equal(view.showCertResolverField, false);
+  assert.equal(view.showApiUrlField, false);
+});
+
 // issue #51 (T016): proxyFieldView's third argument is the shown Caddy TLS
 // value (draft, else stored, else default), resolved by the caller the same
 // way selectedId already is. showCaddyTlsField is true only for a driver
@@ -293,11 +321,12 @@ test('caddyTlsOptions suffixes whichever mode is passed as the default', () => {
   ]);
 });
 
-// Issue #64: the Settings page groups every setting by integration.
-test('SETTINGS_TABS lists the six integration tabs in order', () => {
+// Issue #64: the Settings page groups every setting by integration. Issue
+// #73 drops the Nginx Proxy Manager tab -- its three fields move to Proxy.
+test('SETTINGS_TABS lists the five integration tabs in order, with no Nginx Proxy Manager tab', () => {
   assert.deepEqual(
     SETTINGS_TABS.map((t) => t.label),
-    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'Nginx Proxy Manager', 'GitHub'],
+    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'GitHub'],
   );
 });
 
@@ -311,11 +340,13 @@ test('fieldsForTab puts each secret beside its own integration', () => {
   assert.ok(fieldsForTab('authentik').includes('authentikApiToken'));
   assert.ok(fieldsForTab('authentik').includes('authentikApiUrl'));
   assert.deepEqual([...fieldsForTab('cloudflare')], ['cloudflareDnsApiToken']);
-  assert.deepEqual([...fieldsForTab('nginx-proxy-manager')], ['npmApiUrl', 'npmApiEmail', 'npmApiPassword']);
   assert.deepEqual([...fieldsForTab('github')], ['githubApiToken']);
 });
 
-test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab', () => {
+// Issue #73: the three Nginx Proxy Manager fields move onto the end of the
+// Proxy tab, after the other driver-dependent fields, rather than keeping
+// their own tab.
+test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab, ending with the Nginx Proxy Manager fields', () => {
   assert.deepEqual([...fieldsForTab('proxy')], [
     'proxyDriver',
     'proxyConfigPath',
@@ -325,6 +356,9 @@ test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab', (
     'proxyTlsKey',
     'proxyCertResolver',
     'proxyApiUrl',
+    'npmApiUrl',
+    'npmApiEmail',
+    'npmApiPassword',
   ]);
   assert.ok(fieldsForTab('general').includes('webUiAuthMode'));
 });

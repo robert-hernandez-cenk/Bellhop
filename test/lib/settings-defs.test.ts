@@ -22,9 +22,11 @@ const EXPECTED: Record<string, [string, string, boolean]> = {
   authentikOidcSigningKeyName: ['AUTHENTIK_OIDC_SIGNING_KEY_NAME', 'authentik', false],
   webUiAuthMode: ['WEB_UI_AUTH_MODE', 'general', false],
   cloudflareDnsApiToken: ['CLOUDFLARE_DNS_API_TOKEN', 'cloudflare', true],
-  npmApiUrl: ['NPM_API_URL', 'nginx-proxy-manager', false],
-  npmApiEmail: ['NPM_API_EMAIL', 'nginx-proxy-manager', false],
-  npmApiPassword: ['NPM_API_PASSWORD', 'nginx-proxy-manager', true],
+  // issue #73: these three now sit in the proxy group, not their own --
+  // envVar/secret/envFile are unchanged.
+  npmApiUrl: ['NPM_API_URL', 'proxy', false],
+  npmApiEmail: ['NPM_API_EMAIL', 'proxy', false],
+  npmApiPassword: ['NPM_API_PASSWORD', 'proxy', true],
   githubApiToken: ['GITHUB_API_TOKEN', 'github', true],
 };
 
