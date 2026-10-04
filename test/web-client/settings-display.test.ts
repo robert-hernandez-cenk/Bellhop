@@ -73,6 +73,7 @@ test('proxyFieldView hides both fields when "no proxy" is selected', () => {
   const view = proxyFieldView('none', DRIVERS, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showNpmApiFields, false);
 });
 
 test('proxyFieldView hides both fields for an unknown driver id', () => {
@@ -80,6 +81,7 @@ test('proxyFieldView hides both fields for an unknown driver id', () => {
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
   assert.equal(view.showTlsFields, false);
+  assert.equal(view.showNpmApiFields, false);
 });
 
 // issue #30 x #33: nginx's entry exactly as GET /api/settings serves it.
@@ -237,9 +239,11 @@ test('proxyFieldView hides the cert resolver and API URL fields for an unmanaged
   const unmanaged = proxyFieldView('none', DRIVERS, 'cloudflare');
   assert.equal(unmanaged.showCertResolverField, false);
   assert.equal(unmanaged.showApiUrlField, false);
+  assert.equal(unmanaged.showNpmApiFields, false);
   const unknown = proxyFieldView('unknown-provider', DRIVERS, 'cloudflare');
   assert.equal(unknown.showCertResolverField, false);
   assert.equal(unknown.showApiUrlField, false);
+  assert.equal(unknown.showNpmApiFields, false);
 });
 
 // issue #73 (US1): Nginx Proxy Manager's entry exactly as GET /api/settings
@@ -268,6 +272,18 @@ test('proxyFieldView for Nginx Proxy Manager shows only the Nginx Proxy Manager 
   assert.equal(view.showCaddyTlsField, false);
   assert.equal(view.showCertResolverField, false);
   assert.equal(view.showApiUrlField, false);
+});
+
+// issue #73 (US2): the Nginx Proxy Manager fields never show for any other
+// driver, before the driver list has loaded, or for an unknown id.
+test('proxyFieldView hides the Nginx Proxy Manager fields for every other driver, and while unloaded/unknown', () => {
+  const drivers = [...DRIVERS, NGINX, HAPROXY, TRAEFIK, NGINX_PROXY_MANAGER];
+  assert.equal(proxyFieldView('caddy', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('traefik', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('nginx', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('haproxy', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('none', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('unknown-provider', drivers, 'cloudflare').showNpmApiFields, false);
 });
 
 // issue #51 (T016): proxyFieldView's third argument is the shown Caddy TLS

@@ -47,8 +47,21 @@ Nothing to set up — existing project, no new dependencies.
 
 **Independent Test**: Cycle the dropdown through every driver; only Nginx Proxy Manager shows the fields; an unsaved edit survives a switch away and back with no request sent.
 
-- [ ] T009 [US2] Add tests in `test/web-client/settings-display.test.ts`: `proxyFieldView` returns `showNpmApiFields: false` for a Caddy-shaped driver, for a Traefik-shaped driver, for an unmanaged ("No proxy") driver, and for an id not in the list; extend the existing "every hide flag false" assertions for the unmanaged/unknown branches to include `showNpmApiFields`
-- [ ] T010 [US2] Confirm `SettingsPage.tsx` never clears drafts or sends a PATCH on driver change for the new fields (the existing `isVisible` filter is display-only) — no code change expected; note the result in this task
+- [x] T009 [US2] Add tests in `test/web-client/settings-display.test.ts`: `proxyFieldView` returns `showNpmApiFields: false` for a Caddy-shaped driver, for a Traefik-shaped driver, for an unmanaged ("No proxy") driver, and for an id not in the list; extend the existing "every hide flag false" assertions for the unmanaged/unknown branches to include `showNpmApiFields`
+- [x] T010 [US2] Confirm `SettingsPage.tsx` never clears drafts or sends a PATCH on driver change for the new fields (the existing `isVisible` filter is display-only) — no code change expected; note the result in this task
+
+  **Finding**: Confirmed by inspection. `isVisible(key)` is consulted only
+  to build `visibleFields` (the render filter) in the JSX return; it is
+  never called from `setDrafts`, `save`, or `requestSave`. `drafts` is
+  populated once per load/reload in `applyResponse` (from `res.settings`,
+  independent of which driver is selected) and is otherwise only updated
+  by a field's own `onChange`/post-save handler. The proxy-driver
+  `<select>`'s `onChange` touches only `drafts.proxyDriver`. So switching
+  the dropdown away from Nginx Proxy Manager (or to it) changes nothing
+  about `drafts.npmApiUrl`/`npmApiEmail`/`npmApiPassword`, and no PATCH is
+  ever sent as a side effect of visibility changing -- the same
+  already-established property every other driver-dependent field (TLS,
+  Caddy TLS, cert resolver/API URL) already has. No code change needed.
 
 **Checkpoint**: tests pass.
 
