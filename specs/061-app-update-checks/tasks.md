@@ -148,18 +148,18 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
 
 **Independent Test**: a successful update-app job re-checks its guest; a failed one leaves the old row.
 
-- [ ] T025 [US4] Add tests to `test/operations/maintenance.test.ts` (or the existing update-app operation test file):
+- [x] T025 [US4] Add tests to `test/operations/maintenance.test.ts` (or the existing update-app operation test file):
   - `update-app` apply with exit 0 upserts a fresh result for that guest.
   - Exit non-zero → no re-check and the old row is unchanged.
   - Re-check throws → `logWarn` and apply still resolves.
-- [ ] T026 [US4] In `src/operations/maintenance.ts` `update-app.apply`, after `runUpdateApp` returns `result.code === 0`, call `checkOneGuest` and `upsertAppUpdateResult(deps.inventoryPath, ...)`, wrapped in try/catch → `logWarn` (research R10).
+- [x] T026 [US4] In `src/operations/maintenance.ts` `update-app.apply`, after `runUpdateApp` returns `result.code === 0`, call `checkOneGuest` and `upsertAppUpdateResult(deps.inventoryPath, ...)`, wrapped in try/catch → `logWarn` (research R10).
 
 ---
 
 ## Phase 7: User Story 5 - Check from the command line (P3)
 
-- [ ] T027 [US5] Add a `check-app-updates` case to `test/cli.test.ts` (or the existing CLI registration test): options `--guest`, `--apply`.
-- [ ] T028 [US5] Register `check-app-updates [--guest <name>] [--apply]` in `src/cli.ts`. It prints `formatCheckAppUpdates` and the `[DRY RUN]` line without `--apply`, per `contracts/cli.md`.
+- [x] T027 [US5] Add a `check-app-updates` case to `test/cli.test.ts` (or the existing CLI registration test): options `--guest`, `--apply`.
+- [x] T028 [US5] Register `check-app-updates [--guest <name>] [--apply]` in `src/cli.ts`. It prints `formatCheckAppUpdates` and the `[DRY RUN]` line without `--apply`, per `contracts/cli.md`.
 
 ---
 

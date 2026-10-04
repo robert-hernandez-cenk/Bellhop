@@ -45,6 +45,15 @@ test('set-config --help lists every setting key', async () => {
   }
 });
 
+test('check-app-updates --help documents --guest and --apply', () => {
+  const output = execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'check-app-updates', '--help'], {
+    encoding: 'utf8',
+  });
+  assert.match(output, /check-app-updates/);
+  assert.match(output, /--guest <name>/);
+  assert.match(output, /--apply/);
+});
+
 test('backfill-guest-creators --help documents --map and --apply', () => {
   const output = execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'backfill-guest-creators', '--help'], {
     encoding: 'utf8',

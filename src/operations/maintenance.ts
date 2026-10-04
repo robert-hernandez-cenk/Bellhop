@@ -5,12 +5,15 @@ import { withCapturedConsole } from '../web/console-capture.ts';
 import { runSyncInventory, formatSyncInventory } from '../commands/maintenance/sync-inventory.ts';
 import { runUpdateAll, selectUpdateTargets } from '../commands/maintenance/update-all.ts';
 import { runUpdateApp } from '../commands/maintenance/update-app.ts';
+import { checkOneGuest, formatCheckAppUpdates } from '../commands/maintenance/check-app-updates.ts';
+import { upsertAppUpdateResult } from '../lib/app-update-store.ts';
 import { runGuestPower } from '../commands/maintenance/guest-power.ts';
 import { runSetGuestVpn } from '../commands/provisioning/set-guest-vpn.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from '../commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from '../commands/maintenance/push-ssh-key.ts';
 import { runSyncProxy } from '../commands/networking/sync-proxy.ts';
 import { formatFailureList } from '../lib/target-failure.ts';
+import { logInfo, logWarn } from '../lib/log.ts';
 import type { Operation } from './types.ts';
 import { reqStr, optStr, flag } from './fields.ts';
 
@@ -86,7 +89,27 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
       return [text, result.script].filter(Boolean).join('\n');
     },
     apply: async (i, deps) => {
-      await runUpdateApp({ ...(i as any), apply: true, source: i.appSource, fetchImpl: deps.fetchImpl }, deps);
+      const result = await runUpdateApp({ ...(i as any), apply: true, source: i.appSource, fetchImpl: deps.fetchImpl }, deps);
+      // research R10: re-check this guest's app-update status right away so
+      // the Update page badge doesn't go stale until the next scheduled
+      // check-app-updates run -- but only on a successful script exit (a
+      // non-zero exit, which this apply deliberately does not fail the job
+      // over -- see update-app.ts -- leaves whatever was last recorded
+      // alone), and only for an lxc guest that actually has an app recorded
+      // (update-app can also target a pve host, or a guest check-app-updates
+      // has nothing to check).
+      if (result.result?.code === 0) {
+        const guestEntry = deps.inventory.guests.find((g) => g.name === i.guest);
+        if (guestEntry?.type === 'lxc' && guestEntry.app) {
+          try {
+            const r = await checkOneGuest(i.guest, { ssh: deps.ssh, inventory: deps.inventory, fetchImpl: deps.fetchImpl, now: deps.now });
+            upsertAppUpdateResult(deps.inventoryPath, r);
+            logInfo(`Refreshed app-update status: ${formatCheckAppUpdates({ results: [r], saved: true })}`);
+          } catch (err) {
+            logWarn(`Could not refresh app-update status for ${i.guest} after update-app: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
     },
   },
   'sync-ssh-keys': {
