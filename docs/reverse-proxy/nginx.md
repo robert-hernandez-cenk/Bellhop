@@ -45,6 +45,43 @@ certificate (for example an extra `-d '*.lab.example.com'`) — nginx serves
 the certificate regardless and does not warn, so browsers see a name
 mismatch instead.
 
+**A Let's Encrypt route that doesn't need Cloudflare** (or any DNS
+provider at all) works the same way, over a public HTTP-01 challenge
+instead of DNS-01 — the certificate still lands at the same default path,
+or wherever `proxyTlsCertificate`/`proxyTlsKey` point. `--webroot` serves
+the challenge files through nginx itself (needs a `location
+/.well-known/acme-challenge/` in your own hand-authored configuration,
+since this driver's generated file doesn't carry one), while
+`--standalone` runs its own listener and needs port 80 free for the
+duration of the request — both need port 80 reachable from the internet
+for every name:
+
+```bash
+certbot certonly --webroot -w /var/www/html -d example.com -d '*.example.com'
+# or, with nothing else bound to port 80:
+certbot certonly --standalone -d example.com -d '*.example.com'
+```
+
+(certbot's `--webroot` plugin cannot validate a wildcard name at all —
+drop `-d '*.example.com'` and issue one certificate per hostname instead,
+or use `--dns-cloudflare`/another DNS plugin for a wildcard.)
+
+**A self-signed certificate** needs no certificate authority or public
+reachability at all — generate one covering every hostname you'll route
+through this driver and point the same two settings at it:
+
+```bash
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout /etc/letsencrypt/live/example.com/privkey.pem \
+  -out /etc/letsencrypt/live/example.com/fullchain.pem \
+  -subj '/CN=example.com' \
+  -addext 'subjectAltName=DNS:example.com,DNS:*.example.com'
+```
+
+Every browser warns on an untrusted self-signed certificate unless its
+root is installed on the client — the same trade-off Caddy's own
+`internal` TLS mode has.
+
 Add a certbot deploy hook that reloads nginx after every renewal (for
 example a script under `/etc/letsencrypt/renewal-hooks/deploy/` running
 `systemctl reload nginx`) — issuing and renewing the certificate, and

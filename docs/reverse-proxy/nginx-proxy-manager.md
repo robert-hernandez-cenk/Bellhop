@@ -75,24 +75,36 @@ the very next sync silently reverts, not a setting Bellhop reads first.
 
 ## Certificates
 
-`sync-proxy` reuses a certificate already in NPM whenever one covers every
-hostname a route needs (an exact name, or a wildcard covering that one
-extra label) and isn't expired. A wildcard you create yourself in NPM (SSL
-Certificates → Add → a DNS-challenge Let's Encrypt certificate, or your own
-uploaded one) is picked up automatically this way, so adding a new
-subdomain under an existing wildcard needs no certificate step of its own.
-
-With no covering certificate, `sync-proxy --apply` has NPM request one
+**HTTP-01 is this driver's default route to a Let's Encrypt certificate —
+no Cloudflare or any other DNS provider is ever involved.** With no
+covering certificate for a route, `sync-proxy --apply` has NPM request one
 over its default HTTP-01 challenge, using the login email above as the
 certificate's contact address — **the hostname must already be reachable
 from the internet on port 80 through NPM** before the sync that creates
 it runs. A hostname Let's Encrypt can never validate that way (a LAN-only
 name, or one behind split DNS) fails that request on every sync, and each
 attempt can hold a Dashboard save for up to 3 minutes while NPM waits on
-certbot — create a covering wildcard certificate in NPM (a DNS-challenge
-Let's Encrypt one, or your own) for such names instead. A certificate Bellhop requested is never deleted later, even
-once no proxy host still uses it — remove an unused one by hand in NPM if
-you want it gone.
+certbot — create a covering certificate (self-signed or DNS-challenge, see
+below) in NPM for such names instead. A certificate Bellhop requested is
+never deleted later, even once no proxy host still uses it — remove an
+unused one by hand in NPM if you want it gone.
+
+**An uploaded custom certificate works just as well as a Let's Encrypt
+one, self-signed included.** `sync-proxy` reuses *any* certificate already
+in NPM — a DNS-challenge Let's Encrypt one, a self-signed one, or anything
+else you upload — whenever it covers every hostname a route needs (an
+exact name, or a wildcard covering that one extra label) and isn't
+expired; a wildcard here is exactly as good as covering every name
+individually. With several qualifying certificates, the one expiring
+latest wins (lowest id breaks a tie); a route's *current* certificate is
+kept as-is while it still qualifies, rather than switched to a
+later-expiring one for no reason. A wildcard you create yourself in NPM
+(SSL Certificates → Add → a DNS-challenge Let's Encrypt certificate, your
+own self-signed upload, or any other uploaded one) is picked up
+automatically this way, so adding a new subdomain under an existing
+wildcard — or standing up an entirely self-signed deployment with no
+Cloudflare account at all — needs no certificate step of its own beyond
+the upload.
 
 ## Conflicts
 

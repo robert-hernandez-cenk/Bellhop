@@ -1,0 +1,753 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"proxmox.example.com",
+										"pve-admin.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"transport": {
+														"protocol": "http",
+														"tls": {
+															"insecure_skip_verify": true
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "198.51.100.10:8006"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"media.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.50:8096"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"dash.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.22:80"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"web.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.51:80"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"app.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handle_response": [
+														{
+															"match": {
+																"status_code": [
+																	2
+																]
+															},
+															"routes": [
+																{
+																	"handle": [
+																		{
+																			"handler": "vars"
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Email": [
+																						"{http.reverse_proxy.header.X-Authentik-Email}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Email}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Groups": [
+																						"{http.reverse_proxy.header.X-Authentik-Groups}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Groups}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Name": [
+																						"{http.reverse_proxy.header.X-Authentik-Name}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Name}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Uid": [
+																						"{http.reverse_proxy.header.X-Authentik-Uid}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Uid}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Username": [
+																						"{http.reverse_proxy.header.X-Authentik-Username}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Username}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																}
+															]
+														}
+													],
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Method": [
+																	"{http.request.method}"
+																],
+																"X-Forwarded-Uri": [
+																	"{http.request.uri}"
+																]
+															}
+														}
+													},
+													"rewrite": {
+														"method": "GET",
+														"uri": "/outpost.goauthentik.io/auth/caddy"
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.9:9000"
+														}
+													]
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "192.0.2.9:9000"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/outpost.goauthentik.io/*"
+													]
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.20:80"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"api.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handle_response": [
+														{
+															"match": {
+																"status_code": [
+																	2
+																]
+															},
+															"routes": [
+																{
+																	"handle": [
+																		{
+																			"handler": "vars"
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Email": [
+																						"{http.reverse_proxy.header.X-Authentik-Email}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Email}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Groups": [
+																						"{http.reverse_proxy.header.X-Authentik-Groups}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Groups}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Name": [
+																						"{http.reverse_proxy.header.X-Authentik-Name}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Name}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Uid": [
+																						"{http.reverse_proxy.header.X-Authentik-Uid}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Uid}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																},
+																{
+																	"handle": [
+																		{
+																			"handler": "headers",
+																			"request": {
+																				"set": {
+																					"X-Authentik-Username": [
+																						"{http.reverse_proxy.header.X-Authentik-Username}"
+																					]
+																				}
+																			}
+																		}
+																	],
+																	"match": [
+																		{
+																			"not": [
+																				{
+																					"vars": {
+																						"{http.reverse_proxy.header.X-Authentik-Username}": [
+																							""
+																						]
+																					}
+																				}
+																			]
+																		}
+																	]
+																}
+															]
+														}
+													],
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Method": [
+																	"{http.request.method}"
+																],
+																"X-Forwarded-Uri": [
+																	"{http.request.uri}"
+																]
+															}
+														}
+													},
+													"rewrite": {
+														"method": "GET",
+														"uri": "/outpost.goauthentik.io/auth/caddy"
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.9:9000"
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"not": [
+														{
+															"path": [
+																"/health",
+																"/api/*"
+															]
+														}
+													]
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "192.0.2.9:9000"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/outpost.goauthentik.io/*"
+													]
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "192.0.2.21:80"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"nas.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-Port": [
+																	"443"
+																]
+															}
+														}
+													},
+													"upstreams": [
+														{
+															"dial": "198.51.100.20:5001"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					],
+					"tls_connection_policies": [
+						{
+							"match": {
+								"sni": [
+									"proxmox.example.com",
+									"pve-admin.example.com",
+									"media.example.com",
+									"dash.example.com",
+									"web.example.com",
+									"app.example.com",
+									"api.example.com",
+									"nas.example.com"
+								]
+							},
+							"certificate_selection": {
+								"any_tag": [
+									"cert0"
+								]
+							}
+						},
+						{}
+					]
+				}
+			}
+		},
+		"tls": {
+			"certificates": {
+				"load_files": [
+					{
+						"certificate": "/etc/letsencrypt/live/example.com/fullchain.pem",
+						"key": "/etc/letsencrypt/live/example.com/privkey.pem",
+						"tags": [
+							"cert0"
+						]
+					}
+				]
+			}
+		}
+	}
+}

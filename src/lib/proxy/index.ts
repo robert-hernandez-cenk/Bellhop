@@ -93,7 +93,8 @@ export function driverDeps(inventory: Inventory, ssh: SSHClient, driver: Reverse
 // enables this) and returns a function that removes it again. No production
 // code path calls this; it exists so a test can exercise getDriver/a
 // capability check against a driver other than the real caddyDriver
-// (e.g. test/web/proxy-sync.test.ts's acmeDns01ViaCloudflare: false case)
+// (e.g. test/web/proxy-sync.test.ts's case where acmeDns01ViaCloudflare
+// returns false)
 // without mutating the real, shipped driver list.
 export function registerDriverForTests(driver: ReverseProxyDriver): () => void {
   DRIVERS.set(driver.id, driver);

@@ -112,9 +112,9 @@ guests:
 # otherwise-untrusted cert (e.g. a NAS's web UI, Proxmox's own web UI) --
 # tells sync-proxy to skip TLS certificate verification for that backend
 # (the caddy driver emits `transport http { tls_insecure_skip_verify }`) so
-# the proxy doesn't refuse to connect to it. Every generated route gets
-# Cloudflare DNS-01 TLS regardless; this only affects the *backend*
-# connection.
+# the proxy doesn't refuse to connect to it. Every generated route still
+# gets front-end TLS from whatever the active proxyDriver/proxyCaddyTls
+# setting issues it regardless; this only affects the *backend* connection.
 #   insecureBackendTls: true
 
 # For an entry whose real proxy config is hand-authored elsewhere (outside

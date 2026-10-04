@@ -455,7 +455,12 @@ export function createNpmDriver(opts: { clientFor: (inventory: Inventory) => Npm
   return {
     id: 'nginx-proxy-manager',
     label: 'Nginx Proxy Manager',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false },
+    // Always false, unaffected by any inventory setting: NPM requests its
+    // own certificates over HTTP-01 or reuses an uploaded one (see
+    // chooseCertificate above), never Cloudflare DNS-01. The function
+    // wrapper here exists only to satisfy the updated DriverCapabilities
+    // type (issue #51).
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
     defaultConfigPath: null,
     statusPage: null,
 

@@ -106,6 +106,35 @@ certificate step of its own — and have it reload HAProxy after every
 renewal. HAProxy expects the certificate and key together in one `.pem`
 file per certificate.
 
+**A Let's Encrypt route that needs no Cloudflare account**: point
+`certbot` at a public HTTP-01 or `--standalone` challenge instead of a DNS
+plugin — any CA-issued certificate works here, since HAProxy's frontend
+reads whatever `.pem` file(s) the directory holds, never anything
+Bellhop-specific:
+
+```bash
+certbot certonly --standalone -d example.com -d '*.example.com' \
+  --cert-name example.com
+cat /etc/letsencrypt/live/example.com/{fullchain,privkey}.pem \
+  > /etc/haproxy/certs/example.com.pem
+```
+
+**A self-signed route** needs no CA or public reachability at all — the
+same `.pem`-with-both-halves shape, generated locally:
+
+```bash
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout /tmp/example.com.key -out /tmp/example.com.crt \
+  -subj '/CN=example.com' \
+  -addext 'subjectAltName=DNS:example.com,DNS:*.example.com'
+cat /tmp/example.com.crt /tmp/example.com.key \
+  > /etc/haproxy/certs/example.com.pem
+```
+
+Every browser warns on an untrusted self-signed certificate unless its
+root is installed on the client — the same trade-off Caddy's own
+`internal` TLS mode has.
+
 ## Applying
 
 An apply backs up both files, writes them, and validates the result

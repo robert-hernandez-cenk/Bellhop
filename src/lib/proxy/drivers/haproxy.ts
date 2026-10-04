@@ -185,8 +185,10 @@ export const haproxyDriver = fileDriver({
   // message before render() ever sees it (research R8). HAProxy cannot
   // obtain certificates either -- the operator's frontend serves its own
   // (research R7) -- so there is no ACME DNS-01 record for
-  // prune-acme-challenges to clean up after.
-  capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: false },
+  // prune-acme-challenges to clean up after. Always false, unaffected by
+  // any inventory setting -- the function wrapper here exists only to
+  // satisfy the updated DriverCapabilities type (issue #51).
+  capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: () => false },
   defaultConfigPath: '/etc/haproxy/bellhop.cfg',
   // No document root of its own to serve a status page from (research R7).
   statusPage: null,

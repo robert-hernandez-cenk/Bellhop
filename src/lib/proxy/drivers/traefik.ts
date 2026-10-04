@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { parse, stringify, Scalar } from 'yaml';
+import type { Inventory } from '../../inventory.ts';
 import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
+import { NO_CERT_RESOLVER, certResolverName } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
 import { settingFix } from '../../settings-hint.ts';
@@ -161,6 +163,18 @@ function patternRule(pattern: PathPattern): string {
 
 const OUTPOST_PATH_PREFIX = '/outpost.goauthentik.io/';
 
+// Every router's tls object (contract "Traefik router TLS"): empty when the
+// active resolver is the reserved NO_CERT_RESOLVER value (issue #51, User
+// Story 3; defined in routes.ts beside DEFAULT_CERT_RESOLVER), so Traefik
+// serves whatever default/static-config certificate applies (its own
+// self-signed default, or one supplied some other way in the operator's
+// static configuration) rather than requesting one through a resolver;
+// otherwise naming it as before. One function so the main/outpost/exempt router sites below
+// can never render this differently from one another.
+function routerTls(ctx: ProxyContext): { certResolver?: string } {
+  return ctx.certResolver === NO_CERT_RESOLVER ? {} : { certResolver: ctx.certResolver };
+}
+
 // The route's own forward-auth-only object names (research.md R7), from the
 // same deduped, outpost-namespace-dropped exempt pattern list the nginx
 // driver uses (candidateExemptPatterns, research.md R6): whether a bare '/*'
@@ -204,7 +218,7 @@ function renderRouteObjects(
     entryPoints: ['websecure'],
     service: name,
     middlewares,
-    tls: { certResolver: ctx.certResolver },
+    tls: routerTls(ctx),
   };
 
   const loadBalancer: Record<string, unknown> = { servers: [{ url: backendUrl(route.backend) }] };
@@ -223,7 +237,7 @@ function renderRouteObjects(
       entryPoints: ['websecure'],
       service: 'bellhop-authentik-outpost',
       middlewares: [...BASE_MIDDLEWARES],
-      tls: { certResolver: ctx.certResolver },
+      tls: routerTls(ctx),
     };
 
     if (exemptTerms.length > 0) {
@@ -232,7 +246,7 @@ function renderRouteObjects(
         entryPoints: ['websecure'],
         service: name,
         middlewares: [...BASE_MIDDLEWARES],
-        tls: { certResolver: ctx.certResolver },
+        tls: routerTls(ctx),
       };
     }
   }
@@ -490,16 +504,25 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
   return lines.join('\n');
 }
 
+// issue #51, User Story 4 (contract "Cloudflare prune decision"): Traefik's
+// own certificate resolver (ctx.certResolver, from inventory.proxyCertResolver)
+// can be configured for Cloudflare DNS-01 in the operator's own static
+// configuration, which is what prune-acme-challenges exists to clean up
+// stray records from -- true for any named resolver (including the unset
+// default, 'cloudflare'), false only for the reserved NO_CERT_RESOLVER
+// value, which addresses no resolver at all and so can never leave a
+// Cloudflare DNS-01 challenge record behind.
+function traefikAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
+  return certResolverName(inventory) !== NO_CERT_RESOLVER;
+}
+
 export const traefikDriver = fileDriver({
   id: 'traefik',
   label: 'Traefik',
   // Traefik's forward-auth and OIDC both work the same way every other
   // driver's do -- see User Story 2 for the forward-auth objects, not yet
-  // rendered by this file. acmeDns01ViaCloudflare mirrors Caddy's: Traefik's
-  // own certificate resolver (ctx.certResolver) can be configured for
-  // Cloudflare DNS-01 in the operator's own static configuration, which is
-  // what prune-acme-challenges exists to clean up stray records from.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true },
+  // rendered by this file.
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare },
   defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
   // Traefik has no static-file server of its own (research.md R11) -- an
   // operator who wants a status page serves it elsewhere.

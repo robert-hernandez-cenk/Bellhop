@@ -342,6 +342,12 @@ status page without any change outside the driver and its registration.
 - The existing single-operator certificate settings inside the Caddy
   configuration (Cloudflare DNS-01 with fixed resolvers) move into the Caddy
   driver unchanged; making them configurable is out of scope.
+  **Superseded by issue #51** (`specs/051-tls-without-cloudflare/`): the
+  Caddy drivers' certificate handling is now configurable via the
+  `proxyCaddyTls` setting (`cloudflare`, `letsencrypt`, `internal`,
+  `files`), and the fixed Cloudflare DNS-01 resolvers remain a
+  single-operator assumption only within the `cloudflare` mode, no longer
+  the only option.
 - Bellhop is pre-release, so breaking renames without aliases are
   acceptable; the upgrade is forward-only, like the earlier auth-group
   upgrade.

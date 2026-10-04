@@ -38,6 +38,7 @@ function ctx(overrides: Partial<ProxyContext> = {}): ProxyContext {
       keyPath: '/etc/letsencrypt/live/example.com/privkey.pem',
     },
     certResolver: 'cloudflare',
+    caddyTls: 'cloudflare',
     ...overrides,
   };
 }
@@ -319,6 +320,27 @@ test('render via buildRoutes/buildProxyContext: an unset proxyCertResolver falls
   const content = render(buildRoutes(inventory), buildProxyContext(inventory), CONFIG_PATH)[0].content;
   const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> } };
   assert.equal(doc.http.routers['bellhop-route-app-example-com'].tls.certResolver, 'cloudflare');
+});
+
+// issue #51, User Story 3: proxyCertResolver: 'none' is a reserved value
+// meaning "no certificate resolver" -- every router this driver renders
+// (main, outpost, exempt) gets an empty tls: {} instead of naming one, so
+// Traefik serves whatever default/static-config certificate applies rather
+// than requesting one through a named resolver.
+test('render: proxyCertResolver \'none\' renders tls: {} on every router (main, outpost, exempt)', () => {
+  const content = renderOne(mediaRoute(), gatedCtx({ certResolver: 'none' }));
+  const doc = parse(content) as { http: { routers: Record<string, { tls: Record<string, unknown> }> } };
+  assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].tls, {});
+  assert.deepEqual(doc.http.routers['bellhop-outpost-media-example-com'].tls, {});
+  assert.deepEqual(doc.http.routers['bellhop-exempt-media-example-com'].tls, {});
+});
+
+test('render: a named or unset proxyCertResolver still sets tls.certResolver on every router (unchanged)', () => {
+  const content = renderOne(mediaRoute(), gatedCtx());
+  const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> } };
+  assert.equal(doc.http.routers['bellhop-route-media-example-com'].tls.certResolver, 'cloudflare');
+  assert.equal(doc.http.routers['bellhop-outpost-media-example-com'].tls.certResolver, 'cloudflare');
+  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'].tls.certResolver, 'cloudflare');
 });
 
 // --- render: forward-auth objects (User Story 2, contract "Rendered file:

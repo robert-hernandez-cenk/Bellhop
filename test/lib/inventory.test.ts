@@ -1242,7 +1242,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the fourteen settings keys', () => {
+test('SETTINGS_KEYS lists exactly the fifteen settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'backupStorage',
     'customScriptsBranch',
@@ -1250,6 +1250,7 @@ test('SETTINGS_KEYS lists exactly the fourteen settings keys', () => {
     'dnsServer',
     'nfsServer',
     'proxyApiUrl',
+    'proxyCaddyTls',
     'proxyCertResolver',
     'proxyConfigPath',
     'proxyDriver',
@@ -1310,6 +1311,37 @@ test('SettingsSchema accepts proxyDriver "haproxy", and an inventory naming it r
   const dest = path.join(dir, 'bellhop.db');
   saveInventory(dest, { ...FIXTURE_INVENTORY, proxyDriver: 'haproxy' });
   assert.equal(loadInventory(dest).proxyDriver, 'haproxy');
+});
+
+// issue #51: proxyCaddyTls is the two Caddy drivers' own setting (one of
+// CADDY_TLS_MODES, src/lib/proxy/ids.ts), following the same
+// optional/independent-default pattern as proxyCertResolver above.
+
+test('SettingsSchema accepts each of the four proxyCaddyTls modes', () => {
+  for (const mode of ['cloudflare', 'letsencrypt', 'internal', 'files']) {
+    assert.equal(SettingsSchema.safeParse({ proxyCaddyTls: mode }).success, true);
+  }
+});
+
+test('SettingsSchema rejects a proxyCaddyTls value outside the four modes', () => {
+  assert.equal(SettingsSchema.safeParse({ proxyCaddyTls: 'bogus' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ proxyCaddyTls: '' }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips proxyCaddyTls, and clearing it removes it from meta', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, { ...FIXTURE_INVENTORY, proxyCaddyTls: 'internal' });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.proxyCaddyTls, 'internal');
+
+  saveInventory(dest, { ...loaded, proxyCaddyTls: undefined });
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.proxyCaddyTls, undefined);
+  const db = new Database(dest, { readonly: true });
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyCaddyTls'").get();
+  db.close();
+  assert.equal(row, undefined);
 });
 
 test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {
