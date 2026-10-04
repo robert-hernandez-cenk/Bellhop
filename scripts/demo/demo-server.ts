@@ -19,6 +19,8 @@ import type { IncomingHttpHeaders } from 'node:http';
 import { loadInventory, saveInventory } from '../../src/lib/inventory.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
+import { useConfigStore, writeSecret } from '../../src/lib/config.ts';
+import { SETTING_DEFS, type SecretSettingKey } from '../../src/lib/settings-defs.ts';
 import type { GoBuilder } from '../../src/lib/go-build.ts';
 import { REPO_ROOT } from '../../src/lib/paths.ts';
 import { JobStore } from '../../src/web/jobs/job-store.ts';
@@ -28,7 +30,7 @@ import { TaskScheduler } from '../../src/web/tasks/scheduler.ts';
 import { buildApp } from '../../src/web/app.ts';
 import { attachJobsWebSocket } from '../../src/web/routes/jobs.ts';
 import type { ImpersonationStore } from '../../src/web/impersonation.ts';
-import { buildDemoInventory } from './demo-inventory.ts';
+import { buildDemoInventory, DEMO_SECRET_SETTINGS } from './demo-inventory.ts';
 import { DemoSSHClient } from './demo-ssh.ts';
 import { demoFetch } from './demo-fetch.ts';
 import { seedDemoJobs } from './demo-jobs.ts';
@@ -70,21 +72,37 @@ function setDemoIdentity(headers: IncomingHttpHeaders): void {
   Object.assign(headers, DEMO_IDENTITY_HEADERS);
 }
 
-// Makes the demo independent of the developer's environment (FR-006): strict
-// header auth (so the headers above are the only identity), no dev-user
-// bypass, default Authentik group names, and the path resolvers pointed at
+// Makes the demo independent of the developer's environment (FR-006): no
+// dev-user bypass, no environment override of any stored setting (so the
+// demo inventory's own webUiAuthMode -- strict header auth, with the headers
+// above as the only identity -- default Authentik group names, and its
+// example secrets are what's in effect), and the path resolvers pointed at
 // the temp directory in case anything ever calls inventoryPath()/dataDir().
 // Mutating process.env is intended -- the demo owns its process.
 function isolateEnvironment(inventoryPath: string, dataDir: string): void {
-  process.env.WEB_UI_AUTH_MODE = 'authentik';
   process.env.INVENTORY_FILE = inventoryPath;
   process.env.WEB_DATA_DIR = dataDir;
   delete process.env.WEB_UI_DEV_USER;
   delete process.env.WEB_UI_DEV_GROUPS;
   delete process.env.WEB_UI_LOCAL_USER;
+  for (const def of Object.values(SETTING_DEFS)) delete process.env[def.envVar];
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('AUTHENTIK_')) delete process.env[key];
   }
+}
+
+// Stores the example secrets (DEMO_SECRET_SETTINGS) and registers the demo's
+// own database as the config store, so every setting -- webUiAuthMode
+// included -- is read from the demo inventory exactly as server.ts reads a
+// real one. No data/*.env import: the demo has none to import.
+function useDemoConfig(inventoryPath: string): void {
+  // The cast is safe: Object.entries only widens the key type to string,
+  // and DEMO_SECRET_SETTINGS is typed with SecretSettingKey keys and
+  // string values (writeSecret validates each value anyway).
+  for (const [key, value] of Object.entries(DEMO_SECRET_SETTINGS) as Array<[SecretSettingKey, string]>) {
+    writeSecret(inventoryPath, key, value);
+  }
+  useConfigStore(inventoryPath);
 }
 
 // deploy-vpn-gateway cross-compiles its agent with the real `go` toolchain;
@@ -109,6 +127,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
   try {
     saveInventory(inventoryPath, buildDemoInventory());
     seedDemoAppUpdates(inventoryPath);
+    useDemoConfig(inventoryPath);
     const inventory = loadInventory(inventoryPath);
 
     const ssh = new DemoSSHClient(inventory);
@@ -193,6 +212,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         store.close();
+        useConfigStore(null);
         removeDir();
       })();
       return closing;
@@ -201,6 +221,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
     return { url: `http://${DEMO_HOST}:${actualPort}`, port: actualPort, dir, inventoryPath, close };
   } catch (err) {
     jobStore?.close();
+    useConfigStore(null);
     removeDir();
     throw err;
   }

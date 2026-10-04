@@ -4,7 +4,7 @@ import { apiGet, apiPost, apiDelete } from '../api/client';
 import type { AuthentikGroupEntry } from '../api/types';
 import { ThemeToggle } from './ThemeToggle';
 import { useWhoAmI } from '../lib/whoami';
-import { adminNavLinks } from '../lib/admin-nav';
+import { adminNavLinks, NO_AUTH_BANNER_TEXT } from '../lib/admin-nav';
 
 interface NavItem {
   id: string;
@@ -160,10 +160,7 @@ export function Sidebar() {
           // configured (so there's something to impersonate) is a supported
           // combination, and this banner is the only signal an operator in
           // that state gets that authentication is still unconfigured.
-          <div className="warning-banner">
-            No authentication configured — everyone who can reach this page has full access. Set
-            WEB_UI_AUTH_MODE=authentik once an identity provider is in place.
-          </div>
+          <div className="warning-banner">{NO_AUTH_BANNER_TEXT}</div>
         )}
         {whoami?.impersonating ? (
           // Driven purely by whoami.impersonating being present -- stays

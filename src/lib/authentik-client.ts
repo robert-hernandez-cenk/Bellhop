@@ -1,5 +1,8 @@
 import type { AuthentikConfig } from './authentik-config.ts';
-import { authentikConfig, authentikConfigured } from './authentik-config.ts';
+import { authentikConfig } from './authentik-config.ts';
+import { configValue } from './config.ts';
+import { liveClient } from './live-client.ts';
+import { settingFix } from './settings-hint.ts';
 
 export interface AuthentikUser {
   id: string;
@@ -1000,7 +1003,11 @@ export class RealAuthentikClient implements AuthentikClient {
   }
 }
 
-export const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
+// Names the two settings and the Settings page (issue #64), the same shape
+// as npm-client.ts's NPM_UNCONFIGURED_MESSAGE.
+export const UNCONFIGURED_MESSAGE =
+  `Authentik API not configured -- set authentikApiUrl (${settingFix('authentikApiUrl', '<https://authentik.example.com>')}) ` +
+  `and authentikApiToken (${settingFix('authentikApiToken')})`;
 
 // Null-object fallback used when AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN
 // aren't set -- routes always get a real AuthentikClient instance to call,
@@ -1181,12 +1188,19 @@ export class UnconfiguredAuthentikClient implements AuthentikClient {
   }
 }
 
-// Delegates the configured/not-configured decision to authentikConfigured()
-// so it lives in exactly one place (mirrors src/cli.ts's own buildAuthentikClient()).
-// The non-null assertions below are safe because authentikConfigured()
-// already checked both vars against the same process.env this file reads.
-// Shared by src/web/server.ts and src/mcp/server.ts.
+// Live (issue #64): the returned client re-resolves the URL, token and
+// authentikConfig() from the config accessor on every call, so a value
+// saved on the Settings page applies without a restart. The
+// configured/unconfigured rule is authentikConfigured()'s (both values
+// present); the two values are read once here and checked directly rather
+// than through it, so a snapshot refresh between a check and a read can never
+// hand RealAuthentikClient an undefined. Shared by src/cli.ts,
+// src/web/server.ts and src/mcp/server.ts.
 export function buildAuthentikClient(): AuthentikClient {
-  if (!authentikConfigured()) return new UnconfiguredAuthentikClient();
-  return new RealAuthentikClient(process.env.AUTHENTIK_API_URL!, process.env.AUTHENTIK_API_TOKEN!, authentikConfig());
+  return liveClient<AuthentikClient>(() => {
+    const url = configValue('authentikApiUrl').value;
+    const token = configValue('authentikApiToken').value;
+    if (url === undefined || token === undefined) return new UnconfiguredAuthentikClient();
+    return new RealAuthentikClient(url, token, authentikConfig());
+  });
 }

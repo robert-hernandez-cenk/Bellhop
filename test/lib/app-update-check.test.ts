@@ -423,3 +423,113 @@ test('buildInstalledVersionScript emits the documented POSIX read script', () =>
     ].join('\n')
   );
 });
+
+// -- Issue #64 US3: authenticated GitHub requests ----------------------------
+
+async function withGithubToken(token: string | undefined, fn: () => Promise<void>): Promise<void> {
+  const original = process.env.GITHUB_API_TOKEN;
+  if (token === undefined) delete process.env.GITHUB_API_TOKEN;
+  else process.env.GITHUB_API_TOKEN = token;
+  try {
+    await fn();
+  } finally {
+    if (original === undefined) delete process.env.GITHUB_API_TOKEN;
+    else process.env.GITHUB_API_TOKEN = original;
+  }
+}
+
+function headerCapturingFetch(body: string, status = 200): { fetchImpl: typeof fetch; headers: () => Record<string, string> } {
+  let seen: Record<string, string> = {};
+  const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+    seen = (init?.headers ?? {}) as Record<string, string>;
+    return new Response(body, { status });
+  }) as unknown as typeof fetch;
+  return { fetchImpl, headers: () => seen };
+}
+
+test('fetchLatestRelease (/latest) sends Authorization: Bearer <token> when githubApiToken is configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    const { fetchImpl, headers } = headerCapturingFetch(RELEASES_LATEST);
+    await fetchLatestRelease('chmln/sd', {}, fetchImpl);
+    assert.equal(headers().Authorization, 'Bearer github_pat_example0000');
+    assert.equal(headers()['User-Agent'], 'bellhop');
+    assert.equal(headers().Accept, 'application/vnd.github+json');
+  });
+});
+
+test('fetchLatestRelease (/latest) sends no Authorization header when no token is configured', async () => {
+  await withGithubToken(undefined, async () => {
+    const { fetchImpl, headers } = headerCapturingFetch(RELEASES_LATEST);
+    await fetchLatestRelease('chmln/sd', {}, fetchImpl);
+    assert.ok(!('Authorization' in headers()));
+  });
+});
+
+test('fetchLatestRelease (/latest) throws the named 401 error, never the token, before the rate-limit check', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    await assert.rejects(
+      () => fetchLatestRelease('chmln/sd', {}, fakeFetch({ 'https://api.github.com/repos/chmln/sd/releases/latest': () => new Response('{}', { status: 401 }) })),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /^Fetching the latest release for chmln\/sd: GitHub rejected the configured GitHub API token \(401\)/);
+        assert.ok(!err.message.includes('github_pat_example0000'));
+        return true;
+      }
+    );
+  });
+});
+
+test('fetchLatestRelease (pinned /releases/tags/<pin>) sends Authorization: Bearer <token> when configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    const { fetchImpl, headers } = headerCapturingFetch(JSON.stringify({ tag_name: 'v1.0.0', draft: false, prerelease: false }));
+    await fetchLatestRelease('chmln/sd', { pin: 'v1.0.0' }, fetchImpl);
+    assert.equal(headers().Authorization, 'Bearer github_pat_example0000');
+  });
+});
+
+test('fetchLatestRelease (pinned /releases/tags/<pin>) throws the named 401 error', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    await assert.rejects(
+      () =>
+        fetchLatestRelease(
+          'chmln/sd',
+          { pin: 'v1.0.0' },
+          fakeFetch({ 'https://api.github.com/repos/chmln/sd/releases/tags/v1.0.0': () => new Response('{}', { status: 401 }) })
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /^Fetching the latest release for chmln\/sd: GitHub rejected the configured GitHub API token \(401\)/);
+        assert.ok(!err.message.includes('github_pat_example0000'));
+        return true;
+      }
+    );
+  });
+});
+
+test('fetchLatestRelease (paginated /releases list) sends Authorization: Bearer <token> when configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    const list = JSON.stringify([{ tag_name: 'web-v1.5.0', draft: false, prerelease: false }]);
+    const { fetchImpl, headers } = headerCapturingFetch(list);
+    await fetchLatestRelease('example/app', { prefix: 'web-v' }, fetchImpl);
+    assert.equal(headers().Authorization, 'Bearer github_pat_example0000');
+  });
+});
+
+test('fetchLatestRelease (paginated /releases list) throws the named 401 error', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    await assert.rejects(
+      () =>
+        fetchLatestRelease(
+          'example/app',
+          { prefix: 'web-v' },
+          fakeFetch({ 'https://api.github.com/repos/example/app/releases?per_page=100': () => new Response('{}', { status: 401 }) })
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /^Fetching the latest release for example\/app: GitHub rejected the configured GitHub API token \(401\)/);
+        assert.ok(!err.message.includes('github_pat_example0000'));
+        return true;
+      }
+    );
+  });
+});

@@ -292,6 +292,21 @@ export interface SettingsValues {
   // to any proxy driver.
   pveUserRealm?: string;
   pveCreatorRole?: string;
+  // Issue #64: the settings that moved out of data/*.env files (mirrors
+  // src/lib/settings-defs.ts's MovedSettingsSchema). Secrets never appear
+  // here -- see SettingsResponse.secrets.
+  authentikApiUrl?: string;
+  authentikAdminGroup?: string;
+  authentikBuiltinAdminGroup?: string;
+  authentikGroupLadder?: string;
+  authentikOutpostName?: string;
+  authentikOutpostPort?: string;
+  authentikAuthorizationFlowSlug?: string;
+  authentikInvalidationFlowSlug?: string;
+  authentikOidcSigningKeyName?: string;
+  webUiAuthMode?: string;
+  npmApiUrl?: string;
+  npmApiEmail?: string;
 }
 
 // One entry per registered reverse-proxy driver (src/lib/proxy/index.ts's
@@ -337,7 +352,33 @@ export interface SettingsResponse {
   // "independent of inventory" shape as proxyDrivers/defaultProxyDriver.
   caddyTlsModes: string[];
   defaultCaddyTls: string;
+  // Issue #64: where each non-secret setting's effective value comes from
+  // (`settings` above holds only the stored values), and every key an
+  // environment variable currently pins -- shown read-only. A pinned secret
+  // carries only its variable name, never a value. `stored` says whether the
+  // store also holds a copy (so an operator can confirm the one-time import
+  // before deleting a data/*.env file); `storedValue` is that copy, for a
+  // non-secret key only.
+  sources: Record<string, SettingSource>;
+  environment: Record<string, EnvironmentPin>;
+  // Each secret's status only -- the API never returns a secret's value.
+  secrets: Record<SecretSettingKey, SecretStatus>;
 }
+
+export interface EnvironmentPin {
+  variable: string;
+  value?: string;
+  stored: boolean;
+  storedValue?: string;
+}
+
+export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken';
+export interface SecretStatus {
+  set: boolean;
+  source: SettingSource;
+}
+
+export type SettingSource = 'environment' | 'settings' | 'none';
 
 // Mirrors src/lib/app-update-store.ts's AppUpdateResult/AppUpdateStatus and
 // GET /api/app-updates (contracts/http-api.md) -- issue #61's daily

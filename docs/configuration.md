@@ -1,6 +1,6 @@
 # Configuration
 
-How the inventory is set up, and the inventory-wide settings Bellhop reads from it.
+How the inventory is set up, the inventory-wide settings Bellhop reads from it, and the integration settings and secrets stored alongside them.
 
 ## Hand-editing the inventory
 
@@ -42,7 +42,9 @@ go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
 ## Inventory-wide settings
 
 Fifteen values live in the inventory database rather than in code, because
-they are specific to your network. Set them with `set-config`:
+they are specific to your network (the integration settings are covered
+separately, under [Integration settings and
+secrets](#integration-settings-and-secrets)). Set them with `set-config`:
 
 ```bash
 bellhop set-config dnsServer 10.0.0.53 --apply
@@ -142,8 +144,9 @@ script URL is unaffected — it's used exactly as given, never resolved
 against the custom repository.
 
 Working out which apps changed takes one GitHub API request on top of the
-head-commit pin, so each resolution uses two of GitHub's 60 unauthenticated
-requests per hour. The web UI resolves separately for the App check, a
+head-commit pin, so each resolution uses two of GitHub's 60 anonymous
+requests per hour (or of a token's much larger allowance — see [GitHub
+token](#github-token)). The web UI resolves separately for the App check, a
 Preview and an Apply, and each refresh of the custom catalog group (at most
 every 5 minutes) spends the same two, so one web install uses roughly 6 to 8. If the comparison can't be made — the repository isn't a
 ProxmoxVED fork, GitHub rate-limits or is unreachable, or the branch
@@ -190,13 +193,13 @@ most recent update came from; a guest installed from upstream and later
 updated through a configured custom repository (because its slug now also
 exists there) still links to the plain community-scripts site.
 
-Each app check, preview, and apply that resolves a slug against the custom
-repository makes exactly one unauthenticated `api.github.com` request (to
-pin the branch's head commit) — GitHub's unauthenticated rate limit is 60
-requests per hour per source IP, shared with anything else on your network
-making unauthenticated GitHub API calls. Hitting that limit fails the
-operation with a named error (GitHub's non-200 status is reported
-verbatim) rather than silently falling back to upstream, per FR-008 above.
+Without a `githubApiToken`, those `api.github.com` requests are anonymous,
+and GitHub's anonymous rate limit is 60 requests per hour per source IP,
+shared with anything else on your network making anonymous GitHub API
+calls. Hitting that limit fails the operation with a named error (GitHub's
+non-200 status is reported verbatim) rather than silently falling back to
+upstream. Setting a [GitHub token](#github-token) lifts the limit for
+every Bellhop request to GitHub's API.
 
 Two related values are *derived*, not configured: `set-guest-vpn --vpn
 none` restores the guest's parent host's `midScheme.gateway`, and the
@@ -206,3 +209,120 @@ This is a real behavior narrowing, not just a literal removed: previously
 the guest's host; now it requires that host to have a `midScheme`
 configured, and fails with a named error (`'<host>' has no midScheme, so
 there is no LAN gateway to restore '<guest>' to`) if it doesn't.
+
+## Integration settings and secrets
+
+How Bellhop reaches Authentik, Cloudflare, Nginx Proxy Manager and GitHub,
+and how the web UI signs people in, are settings too, stored in the same
+inventory database and set the same two ways: on the web UI's Settings
+page or with `set-config`. Each one can also be pinned by an environment
+variable — see [Environment variables](environment-variables.md) for the
+variable names and the precedence rule. A saved value is used from the
+next request (web UI) or the next run (CLI, MCP server), with no restart.
+
+The Settings page groups everything by integration, one tab each:
+General, Proxy, Authentik, Cloudflare, Nginx Proxy Manager and GitHub.
+
+| Setting | Tab | When unset |
+|---|---|---|
+| `webUiAuthMode` | General | `auto` — see [Sign-in mode](environment-variables.md#sign-in-mode) |
+| `authentikApiUrl` | Authentik | the Authentik integration is off (no Users/Permissions pages, no `sync-authentik`) |
+| `authentikApiToken` (secret) | Authentik | the Authentik integration is off |
+| `authentikAdminGroup` | Authentik | `bellhop-admins` |
+| `authentikBuiltinAdminGroup` | Authentik | `authentik Admins` |
+| `authentikGroupLadder` | Authentik | `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins` |
+| `authentikOutpostName` | Authentik | `authentik Embedded Outpost` |
+| `authentikOutpostPort` | Authentik | `9000` |
+| `authentikAuthorizationFlowSlug` | Authentik | `default-provider-authorization-implicit-consent` |
+| `authentikInvalidationFlowSlug` | Authentik | `default-invalidation-flow` |
+| `authentikOidcSigningKeyName` | Authentik | `authentik Self-signed Certificate` |
+| `cloudflareDnsApiToken` (secret) | Cloudflare | `prune-acme-challenges` reports it is not configured; the web UI's push-live step skips it |
+| `npmApiUrl` | Nginx Proxy Manager | `http://<the proxy: true entry's ip>:81` |
+| `npmApiEmail` | Nginx Proxy Manager | the Nginx Proxy Manager driver cannot sync |
+| `npmApiPassword` (secret) | Nginx Proxy Manager | the Nginx Proxy Manager driver cannot sync |
+| `githubApiToken` (secret) | GitHub | GitHub API requests are anonymous |
+
+Both the API URL and the token must be set for the Authentik integration
+to be on. `cloudflareDnsApiToken` is a Cloudflare token scoped to Zone:Read
+and DNS:Edit on the inventory `domain`'s zone; mint a dedicated one rather
+than reusing Caddy's own `CLOUDFLARE_API_TOKEN`, so revoking one never
+breaks certificate issuance. The Nginx Proxy Manager settings are needed
+only with `proxyDriver` set to `nginx-proxy-manager` (see [Nginx Proxy
+Manager driver](reverse-proxy/nginx-proxy-manager.md)).
+
+Saving either admin group asks for confirmation first, and is refused if
+you would no longer be an administrator under the new names. See [Web
+UI](web-ui.md#settings-page) for those and the sign-in mode's guards.
+
+### Secrets
+
+The four secrets — `authentikApiToken`, `cloudflareDnsApiToken`,
+`npmApiPassword` and `githubApiToken` — are write-only. Bellhop uses them,
+but never shows them again: the Settings page and its API report only
+whether each is set and where the value comes from, and no log line, job
+record, error message, status page or inventory snapshot ever carries one.
+On the Settings page each is a masked input with Replace and Clear, empty
+again after every save.
+
+On the CLI a secret is never an argument, so it can't end up in your shell
+history. Pipe it in with `--stdin`, or leave the value off at a terminal to
+be prompted without echo:
+
+```bash
+printf '%s' "$TOKEN" | bellhop set-config githubApiToken --stdin --apply
+bellhop set-config githubApiToken --apply            # prompts for the value
+bellhop set-config githubApiToken --unset --apply    # clears it
+```
+
+`set-config <secret> <value>` is refused, and the dry run prints `Would set
+<key> (value hidden)`. The MCP server can neither read nor write a secret.
+
+Write-only is not encryption: secrets are stored in plain text in the
+inventory database (`inventory/bellhop.db`), in a table of their own, just
+as they were in plain text in the old `data/*.env` files. Anyone who can
+read that file can read them, and every backup or copy of the database
+carries them — protect it accordingly.
+
+### Moving off the data/*.env files
+
+An existing deployment configured through `data/authentik.env`,
+`data/cloudflare-api.env` and `data/nginx-proxy-manager.env` needs no
+manual migration. On the first start of the new version, each entry point
+(web service, CLI, MCP server, Windows service installer) copies every
+value from those files that has no stored setting into the settings store
+and logs which ones it imported — by name, never by value. It never
+overwrites a stored setting and never changes the files, so later starts
+import nothing.
+
+A file that is still present keeps overriding the stored settings, and the
+Settings page shows those fields as "set by environment" and read-only.
+Under each such field the page also shows the store's own copy — "Stored
+copy: <value>" for a setting, "Stored copy: set" for a secret, or "Stored
+copy: not set" if nothing was imported. To finish the move:
+
+1. On the Settings page, check every field marked "set by environment"
+   shows a stored copy. On a production deployment, make sure **Web UI
+   sign-in** (`webUiAuthMode`) shows "Stored copy: authentik" before
+   deleting `data/authentik.env` (the import copies it from there if the
+   file sets `WEB_UI_AUTH_MODE`), or the web UI falls back to `auto`.
+2. Delete the files.
+3. Restart the web service, and any long-running MCP server. A running
+   process keeps the variables it loaded from the files at startup, so the
+   fields stay "set by environment" until it restarts; after that the
+   stored settings take over and the fields become editable.
+
+### GitHub token
+
+The daily app update check, the custom script repository's pin and
+compare, and the Install App catalog all call GitHub's API. Without a
+token they share GitHub's anonymous limit of 60 requests an hour per
+source address. Set `githubApiToken` and every one of those requests is
+authenticated instead, under GitHub's much higher per-token limit.
+
+Bellhop only reads public repositories, so a [fine-grained personal access
+token](https://github.com/settings/personal-access-tokens) with **no
+repository permissions** is enough — choose "Public repositories" as its
+repository access and grant nothing else. If GitHub rejects the token, the
+request fails with an error naming `githubApiToken` and the Settings page,
+never the token itself; replace it or clear it to go back to anonymous
+requests.

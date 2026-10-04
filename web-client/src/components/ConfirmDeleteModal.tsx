@@ -3,11 +3,21 @@ import { useState } from 'react';
 interface Props {
   message: string;
   confirmLabel: string;
+  // The confirm button's class. Defaults to the red danger button every
+  // delete confirmation uses; a non-destructive confirmation (the Settings
+  // page's guarded saves) passes a plain 'button'.
+  confirmClassName?: string;
   onConfirm: () => Promise<void>;
   onClose: () => void;
 }
 
-export function ConfirmDeleteModal({ message, confirmLabel, onConfirm, onClose }: Props) {
+export function ConfirmDeleteModal({
+  message,
+  confirmLabel,
+  confirmClassName = 'button button-danger',
+  onConfirm,
+  onClose,
+}: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +42,7 @@ export function ConfirmDeleteModal({ message, confirmLabel, onConfirm, onClose }
           <button className="button" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
-          <button className="button button-danger" onClick={submit} disabled={submitting}>
+          <button className={confirmClassName} onClick={submit} disabled={submitting}>
             {submitting ? 'Working…' : confirmLabel}
           </button>
         </div>

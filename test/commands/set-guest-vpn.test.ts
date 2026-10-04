@@ -254,3 +254,26 @@ test('runSetGuestVpn --vpn none throws when the parent host has no midScheme', a
     /has no midScheme/
   );
 });
+
+test('runSetGuestVpn apply keeps a setting saved elsewhere while it was running (final review M4)', async () => {
+  const inventory = baseInventory();
+  inventory.dnsServer = '10.0.0.53';
+  const invPath = tempInventoryPath(inventory);
+  const ssh = new FakeSSHClient((_t, _u, c) => {
+    if (c === 'pct config 105') return { stdout: NET0_LINE, stderr: '', code: 0 };
+    if (c === 'pct reboot 105') {
+      // A Settings page save landing while the reboot runs.
+      const onDisk = loadInventory(invPath);
+      saveInventory(invPath, { ...onDisk, authentikOutpostName: 'example concurrent outpost', dnsServer: undefined });
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  await runSetGuestVpn(
+    { guest: 'media', vpn: 'nordvpn-gateway-lxc', apply: true },
+    { ssh, inventory, inventoryPath: invPath, fetchImpl: fakeFetch({ dns: '103.86.96.100' }) }
+  );
+  const saved = loadInventory(invPath);
+  assert.equal(saved.guests.find((g) => g.name === 'media')?.vpn, 'nordvpn-gateway-lxc');
+  assert.equal(saved.authentikOutpostName, 'example concurrent outpost', 'the concurrent save is not reverted');
+  assert.equal(saved.dnsServer, undefined, 'a concurrent clear is not reverted either');
+});

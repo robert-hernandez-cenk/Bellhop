@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { githubApiHeaders, githubUnauthorizedError } from './github.ts';
 import { logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
 import type { Inventory } from './inventory.ts';
@@ -69,9 +70,14 @@ async function fetchRepoSlugs(
     const response = await fetchImpl(url, {
       signal: controller.signal,
       // GitHub rejects unauthenticated API requests that send no User-Agent.
-      headers: { 'User-Agent': 'bellhop', Accept: 'application/vnd.github+json' },
+      headers: githubApiHeaders({ Accept: 'application/vnd.github+json' }),
     });
-    if (!response.ok) throw new Error(`GitHub returned ${response.status} listing ${label}/ct`);
+    if (!response.ok) {
+      // Checked first (issue #64, research R6): a rejected token must never
+      // be reported as a bare status.
+      if (response.status === 401) throw githubUnauthorizedError(`Listing ${label}/ct`);
+      throw new Error(`GitHub returned ${response.status} listing ${label}/ct`);
+    }
     const body: unknown = await response.json();
     if (!Array.isArray(body)) {
       throw new Error(`GitHub returned a non-array response listing ${label}/ct`);

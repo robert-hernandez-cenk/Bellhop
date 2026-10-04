@@ -68,6 +68,12 @@ so you can explore them safely.
   `src/operations/`, not a copy per front end.
 - Secrets entered in any front end are masked on input and redacted before
   they reach job history, logs or the jobs database.
+- Configuration a feature needs is a setting (see
+  [Configuration](docs/configuration.md)), read at the point of use through
+  the config accessor in `src/lib/config.ts` — not a new environment file
+  and not a value read once at startup. A credential is a secret setting:
+  write-only, so no API response, log line, error message or MCP tool ever
+  returns its value.
 - A web UI change must be checked in a browser at desktop width and at a
   mobile width of 640px or narrower. New tables follow the existing
   `data-label` card layout below that breakpoint, a long card value wraps

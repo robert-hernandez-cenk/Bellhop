@@ -334,7 +334,21 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   default like every other mutating command) and the web UI's admin-only
   Settings page (see below) — both validate against the same
   `SettingsSchema`, so a value rejected by one is rejected identically by
-  the other. Two related former literals are *derived* rather than
+  the other. Issue #64 adds twelve more `meta` keys -- the integration
+  settings that used to live only in `data/*.env` files
+  (`authentikApiUrl`, the eight other `authentik*` names, `webUiAuthMode`,
+  `npmApiUrl`, `npmApiEmail`), defined in `src/lib/settings-defs.ts`'s
+  `MovedSettingsSchema` and spread into `SettingsSchema`, so they load,
+  validate and save like every other setting -- plus a seventh table,
+  `secret_settings` (`key`/`value`, `SECRET_SETTINGS_TABLE_SQL` in
+  `src/lib/config.ts`) for the four secrets (`authentikApiToken`,
+  `cloudflareDnsApiToken`, `npmApiPassword`, `githubApiToken`). Like
+  `permission_groups`/`script_catalog`, it sits outside `saveInventory`'s
+  delete-and-reinsert and is never read by `loadInventory`, so a secret is
+  never on `Inventory` and can't reach anything that serializes it (the
+  status page, `/api/inventory`, snapshots); only `writeSecret`/
+  `clearSecret` and the one-time import write it. See the "Settings store"
+  bullet below. Two related former literals are *derived* rather than
   configured, so they never appear here: the LAN gateway `set-guest-vpn
   --vpn none` restores comes from the guest's parent host's own
   `midScheme.gateway`, and the Windows service's firewall `remoteip=`
@@ -393,7 +407,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   self-idempotent schema migration (issue #158) runs the first time
   `hosts`/`guests`/`external_sites` are opened while they still carry a
   `requires_auth` column: every row with `requires_auth = 1` gets
-  `auth_group` set to the configured `AUTHENTIK_GROUP_LADDER`'s *top*
+  `auth_group` set to the configured group ladder's *top*
   rung -- `authentik Admins` in the default ladder -- a deliberate
   fail-closed choice (the narrowest audience), not one tuned to match any
   particular operator's prior Authentik state -- and then the
@@ -403,12 +417,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   by current code never has the column to migrate at all. This is
   **forward-only**: once a database is migrated, code from before this
   branch can no longer open it, since its own `INSERT`s still name the
-  now-dropped `requires_auth` column. Because the migration reads
-  `AUTHENTIK_GROUP_LADDER` at DB-open time, any entry point that opens the
-  inventory database must `dotenv`-load `data/authentik.env` first -- the
-  three that do today are `src/cli.ts`, `src/web/server.ts`, and
-  `scripts/windows-service.ts` -- or a custom ladder never takes effect for
-  the migration and the fail-closed top-rung default is used instead.
+  now-dropped `requires_auth` column. The migration reads the ladder at
+  DB-open time from the database it is opening (issue #64, FR-020): the
+  `authentikGroupLadder` `meta` row read off the same handle, through the
+  config accessor's pure precedence function `effectiveValue` (so
+  `AUTHENTIK_GROUP_LADDER` still overrides it), not through the snapshot
+  -- so a custom ladder takes effect for the migration whichever entry
+  point opens the database, even before the `data/*.env` import has run
+  (an entry point still dotenv-loads those files first, so a ladder only
+  in `data/authentik.env` arrives as the environment override).
   A second one-time, self-idempotent migration sits right next to it
   (`migrateCaddyToProxy`, issue #10's full Caddy-to-proxy rename): the
   first time `hosts`/`guests` are opened while they still carry a `caddy`
@@ -1099,12 +1116,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `NpmClient` (`src/lib/npm-client.ts`) wraps Nginx Proxy Manager's (NPM's)
   REST API the same injection pattern as `AuthentikClient`/
   `CloudflareClient`: a plain interface, a `zod`-validated `RealNpmClient`,
-  and `buildNpmClient(inventory)`, which reads `NPM_API_EMAIL`/
-  `NPM_API_PASSWORD` (and optional `NPM_API_URL`, else derived from the
-  `proxy: true` entry's `ip` at port 81) from `data/nginx-proxy-manager.env`
-  -- dotenv-loaded by the same three entry points (`src/cli.ts`,
-  `src/web/server.ts`, `src/mcp/server.ts`) that load
-  `data/cloudflare-api.env` -- throwing a named error before any request
+  and `buildNpmClient(inventory)`, which reads the `npmApiEmail` setting
+  and `npmApiPassword` secret (and optional `npmApiUrl`, else derived from
+  the `proxy: true` entry's `ip` at port 81) through the config accessor
+  at call time (issue #64 -- `NPM_API_EMAIL`/`NPM_API_PASSWORD`/
+  `NPM_API_URL` still override them; see the "Settings store" bullet
+  below), throwing a named error before any request
   when either credential is missing, or when no URL can be derived either
   way. It logs into `/api/tokens` lazily, once per `plan()`/`apply()`/
   `snapshot()` call (each builds its own client via `clientFor`), and never
@@ -1682,8 +1699,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   genuinely OAuth2-only and this file's own provider-kind logic never has to
   account for the overlap itself. It lists OAuth2 Providers on
   every run (to compute ownership even for a run with no OIDC entries), so
-  once any entry is in OIDC mode the Authentik API token in
-  `data/authentik.env` needs a few scopes forward-auth-only gating never
+  once any entry is in OIDC mode the Authentik API token (the
+  `authentikApiToken` secret setting) needs a few scopes forward-auth-only gating never
   required: read/write on OAuth2/OpenID Providers, read on
   certificate-keypairs and scope/property mappings, and update on
   Applications -- see "OIDC mode" in `docs/authentik.md`. With *no* candidate in
@@ -2109,10 +2126,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   TXT record with no server-side name filter -- a read-only capture of the
   live zone on 2026-09-12 found zero `_acme-challenge` records (8 records
   total), so no filter could be verified, and the command does all name
-  matching. Credential: `CLOUDFLARE_DNS_API_TOKEN` from gitignored
-  `data/cloudflare-api.env` (Zone:Read + DNS:Edit, minted for this alone),
-  dotenv-loaded by `src/cli.ts`, `src/web/server.ts`, and
-  `src/mcp/server.ts`. It is **not**
+  matching. Credential: the `cloudflareDnsApiToken` secret setting
+  (Zone:Read + DNS:Edit, minted for this alone; issue #64 -- before it, the
+  gitignored `data/cloudflare-api.env`, which is now only a one-time import
+  source and, while present, an override), overridable by
+  `CLOUDFLARE_DNS_API_TOKEN`. `buildCloudflareClient()` returns a live
+  client that re-reads it on every call (see the "Settings store" bullet
+  below). It is **not**
   `data/cloudflare.env`, which is the `cloudflare-ddns-lxc` answer file
   and still read by nothing in `src/`, and the variable name differs from
   the `CLOUDFLARE_API_TOKEN` Caddy and DDNS use, so each token stays
@@ -2924,13 +2944,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   every cache holds promises, so a request already in flight is shared --
   this,
   plus one run a day, is what keeps a homelab-sized inventory under
-  GitHub's unauthenticated 60-requests-per-hour limit (SC-005); a
-  **single-operator assumption** this feature adds deliberately, same
-  spirit as the Cloudflare DNS-01 one in the proxy driver bullet above --
-  there is no GitHub token setting, so an unauthenticated rate-limit error
-  is reported per guest (never retried within the same run) rather than
-  the toolkit ever holding a GitHub credential; adding one is a listed
-  follow-up, not done here. A stopped guest is never contacted at all --
+  GitHub's anonymous 60-requests-per-hour limit (SC-005) when no GitHub
+  token is set. Issue #64 removed the single-operator assumption this
+  feature originally made (no GitHub token setting at all, so the
+  toolkit never held a GitHub credential): the optional `githubApiToken`
+  secret now authenticates every `api.github.com` request, this one
+  included, via `githubApiHeaders` (see the "Settings store" bullet
+  below). A rate-limit error is still reported per guest, never retried
+  within the same run. A stopped guest is never contacted at all --
   the full run queries `getGuestStatuses` once up front and reports
   `not-checked`/"Guest is stopped" for one directly from that, the same
   one-status-query-for-everyone pattern `update-all`'s targeting uses.
@@ -2968,8 +2989,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   even when individual guests report `error` (those are results, not
   command failures), and a non-eligible `--guest` target (not an `lxc`
   guest, or one with no `app` recorded) fails outright with a named
-  reason. The only other known limitation (besides the no-token
-  assumption above): only apps whose script uses this one
+  reason. The only other known limitation: only apps whose script uses this one
   `check_for_gh_release` mechanism are ever checked -- Codeberg, GitLab,
   and package-repository-based updates all read as `unsupported` today,
   and covering them is explicitly out of scope for this feature.
@@ -3261,12 +3281,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   put forward-auth in front of the web UI's own subdomain (forward-gating
   is refused) and every Bellhop-generated backend strips `X-authentik-*`
   headers, so routing the web UI through a Bellhop HAProxy backend under
-  `WEB_UI_AUTH_MODE=authentik` only gets 401s. To serve the web UI behind
+  `webUiAuthMode: authentik` only gets 401s. To serve the web UI behind
   HAProxy the operator fronts it themselves: mark that entry `proxyManual`
   and hand-author its routing with their own Authentik forward-auth (e.g.
   the community Lua integration), which must overwrite, never pass
   through, the `X-authentik-*` headers. Production keeps
-  `WEB_UI_AUTH_MODE=authentik` regardless (see below, and "Limits" in
+  `webUiAuthMode: authentik` regardless (see below, and "Limits" in
   `docs/reverse-proxy/haproxy.md`) —
   there is no OIDC client, login page, or session store anywhere in this
   repo; Authentik and the proxy own the actual authentication session, and
@@ -3289,24 +3309,45 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   leaves `uid` untouched (it only replaces `groups` and sets
   `impersonating`), since `isGuestCreator` keys off `impersonating` being
   set, not off `uid` disappearing.
-  Whether authentication is required at all is now controlled by
-  `WEB_UI_AUTH_MODE` (issue #123): `auto` (the default) falls back to a
-  synthetic always-admin local operator when no trusted headers are
-  present, `authentik` requires them and 401s otherwise, and `none`
-  ignores headers entirely. **The production Windows service must set
-  `WEB_UI_AUTH_MODE=authentik`** in its own `data/authentik.env`
-  -- under the default `auto`, a proxy config that lost its forward-auth
-  directive would silently serve every request as a full-admin local
-  operator rather than failing closed. `WEB_UI_DEV_USER` remains the
+  Whether authentication is required at all is controlled by the
+  `webUiAuthMode` setting (issue #123 introduced it as the
+  `WEB_UI_AUTH_MODE` env var; issue #64 made it a stored setting that
+  variable still overrides, reversing the issue's own "environment-only"
+  rule so every `data/*.env` file can be deleted): `auto` (the default)
+  falls back to a synthetic always-admin local operator when no trusted
+  headers are present, `authentik` requires them and 401s otherwise, and
+  `none` ignores headers entirely. `authMode()` (`src/web/auth.ts`) reads
+  it through the config accessor on every request. **The production
+  deployment must store `webUiAuthMode=authentik`** (or pin it with the
+  env var) -- under the default `auto`, a proxy config that lost its
+  forward-auth directive would silently serve every request as a
+  full-admin local operator rather than failing closed; with the setting
+  stored, deleting `data/authentik.env` after the import keeps sign-in
+  required (SC-005). Because the setting is web-editable, two guards keep
+  it from locking an admin out: `AuthUser.viaForwardAuth` (set by
+  `resolveAuthUser` only on the `x-authentik-username` branch, never for
+  the dev user or the local operator, and preserved by the impersonation
+  overlay) marks a header-verified identity, and a Settings PATCH that sets
+  `authentik` re-parses the request's own headers with
+  `forwardAuthIdentity` (the same parse, but regardless of mode -- in
+  `none` mode `req.user` is the local operator even when the proxy sent
+  them) and refuses (409) unless they name a user who passes `isAdminOf`
+  under the admin groups the same PATCH leaves in place; the Settings
+  page confirms before leaving `authentik`, and the server `logWarn`s
+  who left it. CLI/MCP
+  writes are unrestricted (host-level trust), which is also the lockout
+  recovery path: `set-config webUiAuthMode auto --apply` on the host, or
+  the env var (`docs/authentik.md`'s "Locked out"). `WEB_UI_DEV_USER` remains the
   dev/test affordance for simulating a *specific non-admin group
   membership*, which the local operator cannot do -- and, unlike a missing
-  `forward_auth` header, it takes effect regardless of `WEB_UI_AUTH_MODE`
+  `forward_auth` header, it takes effect regardless of `webUiAuthMode`
   (even `authentik`), so it must stay unset in the production service's
   environment the same as before (`scripts/windows-service.ts`'s
   `buildService()` never sets it). The group names `isAdminUser` checks are
-  themselves now `AUTHENTIK_ADMIN_GROUP`/`AUTHENTIK_BUILTIN_ADMIN_GROUP`-
-  configurable via `authentikConfig()` (`src/lib/authentik-config.ts`,
-  defaulting to today's `bellhop-admins`/`authentik Admins`), with
+  themselves the `authentikAdminGroup`/`authentikBuiltinAdminGroup`
+  settings (`AUTHENTIK_ADMIN_GROUP`/`AUTHENTIK_BUILTIN_ADMIN_GROUP`
+  override them), read via `authentikConfig()` (`src/lib/authentik-config.ts`,
+  defaulting to `bellhop-admins`/`authentik Admins`), with
   `isAdminUser` (`src/web/auth.ts`) as the single admin predicate used
   everywhere a group-membership check happens. The
   `/ws/jobs/:id` WebSocket upgrade handler (`src/web/routes/jobs.ts`)
@@ -3362,13 +3403,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `adminGroups` passed down from `UsersPage`. Also gated behind the directory-capability check
   (`requireUserDirectory`, `src/web/auth.ts`) on top of `requireAdminGroup` —
   see "Running without Authentik" in `docs/authentik.md` for what happens when no
-  `AUTHENTIK_API_URL`/`AUTHENTIK_API_TOKEN` are configured. `AuthentikClient`
+  Authentik API URL and token are configured. `AuthentikClient`
   (`src/lib/authentik-client.ts`) wraps
   Authentik's REST API v3, modeled on the `SSHClient` injection pattern:
-  `RealAuthentikClient` is used when `AUTHENTIK_API_URL`/
-  `AUTHENTIK_API_TOKEN` are both set; otherwise `UnconfiguredAuthentikClient`
-  is injected instead, so every route call fails the same clear
-  "not configured" way rather than needing a null check at each call site.
+  `RealAuthentikClient` is used when the `authentikApiUrl` setting and
+  `authentikApiToken` secret (or their `AUTHENTIK_API_URL`/
+  `AUTHENTIK_API_TOKEN` overrides) are both set -- `authentikConfigured()`
+  -- otherwise `UnconfiguredAuthentikClient`, so every route call fails
+  the same clear "not configured" way rather than needing a null check at
+  each call site. As of issue #64 `buildAuthentikClient()` returns a
+  *live* client (`liveClient`, see the "Settings store" bullet below) that
+  makes that choice again on every method call, so the web service and
+  MCP server build it once and still follow a URL/token saved later --
+  `isConfigured()` included, so `requireUserDirectory` and `/api/whoami`'s
+  `capabilities.userDirectory` follow it too.
   `RealAuthentikClient` has no live-instance test (same precedent as
   `Ssh2SSHClient`, verify manually against real infrastructure), but since
   the request bodies it builds and the responses it maps are pure functions
@@ -3385,15 +3433,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   trusts "in the OAuth2 list" to mean "really an OAuth2 provider"
   (`ownedProviderKind`, `planProviderName`, `adopt-oidc-client.ts`,
   `oidc-credentials.ts`) never has to re-check.
-  Those two vars are read via plain `process.env`, same as everything
-  else, but `src/web/server.ts` populates them at startup the same way it
-  populates the VPN gateway credentials (see "VPN gateway deploy
-  credentials" below): a gitignored `data/authentik.env`, loaded via
-  `dotenv` before `buildAuthentikClient()` runs. This exists because
-  nothing else sets these two vars for the actual deployment — the
-  Windows service (`scripts/windows-service.ts`'s `buildService()`) only
-  sets `PORT`/`USERPROFILE` in its env, so without this file there was no
-  working way to hand the production service an Authentik token at all.
+  Before issue #64 those two values could only come from the environment,
+  populated at startup from a gitignored `data/authentik.env` loaded via
+  `dotenv`, since the Windows service (`scripts/windows-service.ts`'s
+  `buildService()`) only sets `PORT`/`USERPROFILE` in its env; now they are
+  ordinary settings an admin sets on the Settings page, and that file is
+  only a one-time import source (and, while present, an override).
   Creating a user never collects a password in this UI — `POST /api/users`
   immediately calls Authentik's recovery-link endpoint and returns it for
   the admin to copy and share, so this app never sees or sets a user's
@@ -3407,10 +3452,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   alongside `WEB_UI_DEV_USER` (both read by `resolveAuthUser`'s dev
   fallback) so the admin-gated `/users` page is reachable without a real
   Authentik session. `package.json`'s `web:dev` script hardcodes that
-  group name to today's *default* `AUTHENTIK_ADMIN_GROUP` value, not to
-  whatever your own `data/authentik.env` actually configures -- and since
-  issue #123 made that name configurable, the two can diverge: if
-  `data/authentik.env` sets `AUTHENTIK_ADMIN_GROUP` to anything else
+  group name to today's *default* `authentikAdminGroup` value, not to
+  whatever your own checkout's stored setting (or `AUTHENTIK_ADMIN_GROUP`)
+  actually configures -- and since issue #123 made that name configurable,
+  the two can diverge: if the effective admin group is anything else
   (`authentik Admins`, say), `isAdminUser` checks against that, not
   `bellhop-admins`, and a local `web:dev` session is
   therefore **not** admin despite `WEB_UI_DEV_GROUPS` naming an
@@ -3419,7 +3464,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `canLower` (see `sync-authentik` above) comes back `false`, and widening
   an app's tier or clearing its gate is refused the same way it would be
   for a real non-admin. Fixing the script is out of scope for a docs pass --
-  if it matters for a given task, either edit `data/authentik.env` locally
+  if it matters for a given task, either change the worktree's own
+  `authentikAdminGroup` setting (or set `AUTHENTIK_ADMIN_GROUP`) locally
   or override `WEB_UI_DEV_GROUPS` to match it. This is deliberately scoped
   to administration only — deciding what a signed-in user/group is
   authorized to see or do elsewhere in this app is a separate, later piece
@@ -3576,7 +3622,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   current one before that lookup, for a user renamed since the job ran --
   a name neither mapped nor found is skipped as `unknown-user`, naming the
   `--map` flag that would fix it. Requires Authentik configured
-  (`data/authentik.env`) -- without it, it fails with the same "not
+  (`authentikConfigured()`: the API URL and token settings, or their env
+  overrides) -- without it, it fails with the same "not
   configured" message the Users page gives, since a username-only record
   here would silently reintroduce the exact rename problem the uid exists
   to solve (see "Web UI per-resource group permissions" above). Every run
@@ -3639,6 +3686,87 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   session (Caddy's login redirect only works on a top-level navigation) and
   the banner only shows once the identity has already failed to load, so
   there's no in-page state a reload would lose.
+- **Settings store** (`src/lib/settings-defs.ts`, `src/lib/config.ts`,
+  `src/lib/config-import.ts`, `src/lib/live-client.ts`, `src/lib/github.ts`
+  -- issue #64): one store for every integration value that used to live
+  only in `data/authentik.env`/`data/cloudflare-api.env`/
+  `data/nginx-proxy-manager.env`, so an admin changes any of them without
+  a shell or a restart. `settings-defs.ts` is a leaf module (it imports
+  nothing from `inventory.ts`, which would close an import cycle through
+  `authentik-config.ts`) holding `MovedSettingsSchema`/
+  `SecretSettingsSchema` and `SETTING_DEFS` (per key: env var name,
+  Settings-page group, secret flag, source `data/*.env` file); see
+  "Reading/writing the inventory database" above for where each kind is
+  stored. `config.ts` is the **one accessor** every consumer reads a moved
+  value or secret through, at the point of use -- never once at startup
+  (FR-005): `configValue(key, env = process.env)` returns `{ value?,
+  source: 'environment' | 'settings' | 'none' }`, environment variable
+  (set and non-empty) first, then the stored value, then nothing (the
+  consumer applies its own default -- `authentikConfig()`, `npm-client.ts`
+  keep theirs); `effectiveValue` is that rule as a pure function, shared
+  with the #158 migration; `configValueAt(path, ...)` reads an explicit
+  database (`/api/settings` uses it). A stored value is re-validated on
+  read and a malformed one throws naming the key and its variable, never
+  the value. The stored half is cached in a per-process **snapshot keyed by
+  database path with a 2 s TTL** (`CONFIG_SNAPSHOT_TTL_MS` -- opening
+  `bellhop.db` read-only costs ~7 ms and `authentikConfig()` runs several
+  times per request; a long-lived connection would hold the file open on
+  Windows), invalidated at the start of every `/api` request (next to
+  `refreshInventory` in `src/web/app.ts`) and by every in-process write
+  (`saveInventory`, `writeSecret`/`clearSecret`, the import), so a web save
+  is visible on the very next request and a CLI/MCP write on the web
+  service's next request. Each entry point (`src/cli.ts`,
+  `src/web/server.ts`, `src/mcp/server.ts`, `scripts/windows-service.ts`)
+  registers its database once with `useConfigStore(path)`, via
+  `importEnvFilesAndUseStore`; with none registered (`useConfigStore(null)`,
+  every test that doesn't opt in) the accessor reads the environment only
+  -- exactly the pre-#64 behaviour, which is why the many tests passing
+  their own `env` object needed no change. `importEnvFiles` (the
+  one-time import, FR-017/FR-018) runs after the entry point's dotenv
+  loads: it `dotenv.parse`s each file directly (a real environment
+  variable is an override, never an import source), stores every valid
+  value whose key has no stored value yet (`ON CONFLICT DO NOTHING`, so a
+  stored value is never overwritten and a second start imports nothing),
+  skips an invalid one with a warning, logs key names only, never touches
+  the files, and does nothing before the database exists. A file left in
+  place is still dotenv-loaded, so it keeps overriding (FR-019) and the
+  Settings page shows its fields as "set by environment" until it's
+  deleted *and the process restarts* (dotenv's values stay in the running
+  process's environment). Each pinned field also shows its "Stored copy"
+  (`environment[key].stored`, plus `storedValue` for a non-secret), which
+  is how an operator confirms the import before deleting a file -- on a
+  production deployment, that **Web UI sign-in** shows "Stored copy:
+  authentik" before deleting `data/authentik.env` (SC-005). The upgrade
+  order is: check the stored copies, delete the files, restart the web
+  service and any long-running MCP server. A command that loads the
+  inventory, awaits something slow, then saves it (`sync-inventory
+  --apply`, `set-guest-vpn`, the Dashboard guest edit) saves through
+  `withFreshSettings` (`src/lib/inventory.ts`), which takes every setting
+  from the database as it is now, so a settings save that landed meanwhile
+  is never reverted by the stale copy. `buildAuthentikClient()`/`buildCloudflareClient()` return a
+  `liveClient(build)` Proxy that rebuilds the real-or-unconfigured client
+  from current config on every property access, so the client the web
+  service and MCP server build once still follows a later save
+  (`isConfigured()` included). `github.ts`'s `githubApiHeaders(extra?)`
+  builds the headers for every `api.github.com` request -- `app-source.ts`
+  (`resolveHeadSha`, `compareBranch`), `app-update-check.ts`, and
+  `script-catalog.ts` -- adding `Authorization: Bearer <githubApiToken>`
+  only when that secret (or `GITHUB_API_TOKEN`) is set, and
+  `githubUnauthorizedError` turns a 401 into an error naming the setting
+  and the Settings page; `raw.githubusercontent.com` reads stay anonymous.
+  Secrets never leave the store: no API response, log line, job record,
+  error message, status page or inventory snapshot carries one (errors
+  name the key); `set-config` takes one only from `--stdin` or a no-echo
+  prompt (`src/lib/secret-input.ts`) and refuses it as an argument, and the
+  MCP `set_config` tool's key enum lists non-secret keys only. A web write
+  to a key pinned by the environment is refused naming the variable; the
+  CLI stores it and warns, since its environment isn't necessarily the
+  service's. Single-operator assumptions this branch removes: the #63
+  "no GitHub token setting" one (see `check-app-updates` above), and the
+  need to hand-write `data/*.env` files on the deployment host at all.
+  One it keeps, by design: secrets are plain text in `bellhop.db`, as they
+  were in the `.env` files -- write-only means never returned, not
+  encrypted at rest, and every copy or backup of the database carries them.
 - **Web UI Settings page** (`/settings`,
   `web-client/src/pages/SettingsPage.tsx` — issue #124, issue #20) is the
   web-UI half of the `meta` scalars
@@ -3759,6 +3887,36 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   is untouched by this -- impersonating a group is itself an Authentik
   user/group operation, so it still needs the directory regardless of what
   the nav shows.
+
+  Issue #64 turned the page into the editor for the settings store (the
+  bullet above). It is tabbed by integration -- `SETTINGS_TABS`/
+  `fieldsForTab` (`web-client/src/lib/settings-display.ts`): General,
+  Proxy, Authentik, Cloudflare, Nginx Proxy Manager, GitHub -- with
+  `proxyFieldView`'s show/hide rules unchanged inside the Proxy tab. The
+  response gains `sources` (every non-secret key's `environment`/
+  `settings`/`none`), `environment` (only the keys an env var currently
+  pins: `{ variable, value? }`, `value` the effective value for a
+  non-secret key and never present for a secret) and `secrets` (`{ set,
+  source }` per secret); `settings` still holds only *stored* non-secret
+  values, which is what the inputs edit. A pinned field renders read-only,
+  labelled "set by environment" with no Save/Clear. A secret renders as a
+  masked, never-pre-filled input with Replace/Clear and a status line
+  (`secretStatusText`), cleared after every save. `PATCH` accepts secret
+  keys too (string sets via `writeSecret`, `null`/`''` clears via
+  `clearSecret`) and refuses, before writing anything: an env-pinned key
+  (400, naming the variable and its `data/*.env` file); an admin-group
+  change under which the real requester (`req.realUser ?? req.user`, never
+  blocking the local operator) would stop passing `isAdminUser`
+  (`adminGroupsWith`, 409); and `webUiAuthMode: 'authentik'` unless the
+  request's forward-auth headers name an admin under those same post-save
+  groups (409, two messages: no headers, or a non-admin identity). The
+  env-pinned refusal tells the operator to unset the variable *and restart
+  the service*, and every `environment` entry carries `stored` (and
+  `storedValue` for a non-secret) so the page can show a "Stored copy"
+  line under each pinned field. The page confirms before saving
+  either admin-group field or leaving `authentik`
+  (`confirmationMessage`). Non-admins and impersonating admins still get
+  403 on both methods.
 - **VPN gateway deploy credentials** (`src/web/server.ts`): unlike an
   operator's interactive shell (which has `NORDVPN_ACCESS_TOKEN`/
   `PIA_USERNAME`/`PIA_PASSWORD` exported for the CLI's own
@@ -3856,17 +4014,26 @@ the same rigor as any other correctness bug.
   `inventory/bellhop.db` is gitignored as a specific file within the
   otherwise-tracked `inventory/` directory (see "Inventory" above). Copy
   `inventory/bellhop.db` (plus its `-wal`/`-shm` sidecar files, for a
-  consistent snapshot), `data/authentik.env` and, when present,
-  `data/cloudflare-api.env` and `data/nginx-proxy-manager.env` across from
-  the operator's deployment checkout
-  (the one the web service actually runs from), `mkdir -p`-ing the
-  worktree's `data/` first. Never seed from the main checkout: main holds
+  consistent snapshot) across from the operator's deployment checkout
+  (the one the web service actually runs from) -- since issue #64 that
+  alone brings every setting and secret along (the "Settings store"
+  bullet above), so the worktree reaches the same Authentik/Cloudflare/
+  NPM/GitHub with no other file. Copy `data/authentik.env`,
+  `data/cloudflare-api.env` or `data/nginx-proxy-manager.env` too
+  (`mkdir -p`-ing the worktree's `data/` first) only while the deployment
+  checkout still has them -- they act as environment overrides there, so
+  the copied database alone could otherwise resolve a different value
+  than the deployment does. (Retiring them on the deployment checkout:
+  confirm each pinned field's "Stored copy" on the Settings page, delete
+  the files, then restart the web service and any long-running MCP
+  server -- see "Moving off the data/*.env files" in
+  `docs/configuration.md`.) Never seed from the main checkout: main holds
   no real data at all — no `inventory/bellhop.db`, no `data/` — so running
   it shows exactly what a fresh clone would. The deployment checkout is the
   only authoritative copy; any other checkout's database is a snapshot that
   drifts from it. Where the deployment checkout lives is operator-specific
   and deliberately not recorded in this repository — it belongs in the
-  operator's own private notes. Without these files the new worktree's CLI
+  operator's own private notes. Without the database the new worktree's CLI
   commands and web UI can't reach real infrastructure or a real Authentik
   instance — commands would operate on stale/wrong hosts, and
   `AuthentikClient` would fall back to `UnconfiguredAuthentikClient`.

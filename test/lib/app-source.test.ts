@@ -879,3 +879,114 @@ test('formatSourceNotice says nothing for a changed app absent upstream, a fork-
   assert.equal(formatSourceNotice({ kind: 'upstream', slug: 'plex', shadows: [] }), undefined);
   assert.equal(formatSourceNotice({ kind: 'url', shadows: [] }), undefined);
 });
+
+// -- Issue #64 US3: authenticated GitHub requests ----------------------------
+
+async function withGithubToken(token: string | undefined, fn: () => Promise<void>): Promise<void> {
+  const original = process.env.GITHUB_API_TOKEN;
+  if (token === undefined) delete process.env.GITHUB_API_TOKEN;
+  else process.env.GITHUB_API_TOKEN = token;
+  try {
+    await fn();
+  } finally {
+    if (original === undefined) delete process.env.GITHUB_API_TOKEN;
+    else process.env.GITHUB_API_TOKEN = original;
+  }
+}
+
+test('resolveHeadSha sends Authorization: Bearer <token> when githubApiToken is configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    let seenHeaders: Record<string, string> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response(HEAD_SHA_RAW, { status: 200 });
+    }) as unknown as typeof fetch;
+    await resolveHeadSha(SOURCE, fetchImpl);
+    assert.equal(seenHeaders.Authorization, 'Bearer github_pat_example0000');
+    assert.equal(seenHeaders['User-Agent'], 'bellhop');
+    assert.equal(seenHeaders.Accept, 'application/vnd.github.sha');
+  });
+});
+
+test('resolveHeadSha sends no Authorization header when no token is configured', async () => {
+  await withGithubToken(undefined, async () => {
+    let seenHeaders: Record<string, string> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response(HEAD_SHA_RAW, { status: 200 });
+    }) as unknown as typeof fetch;
+    await resolveHeadSha(SOURCE, fetchImpl);
+    assert.ok(!('Authorization' in seenHeaders));
+  });
+});
+
+test('resolveHeadSha throws the named 401 error, never the token, and never falls through to the rate-limit/status checks', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    await assert.rejects(
+      () => resolveHeadSha(SOURCE, fakeFetch({ [HEAD_SHA_URL]: () => new Response('{}', { status: 401 }) })),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(
+          err.message,
+          'Custom script repository example-user/ProxmoxVED@my-apps: GitHub rejected the configured GitHub API token (401) -- replace or clear githubApiToken: ' +
+            "run: bellhop set-config githubApiToken --stdin --apply, or set it on the web UI's Settings page"
+        );
+        assert.ok(!err.message.includes('github_pat_example0000'));
+        return true;
+      }
+    );
+  });
+});
+
+test('compareBranch sends Authorization: Bearer <token> when githubApiToken is configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    let seenHeaders: Record<string, string> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    }) as unknown as typeof fetch;
+    await compareBranch(SOURCE, SHA, fetchImpl);
+    assert.equal(seenHeaders.Authorization, 'Bearer github_pat_example0000');
+    assert.equal(seenHeaders['User-Agent'], 'bellhop');
+  });
+});
+
+test('compareBranch sends no Authorization header when no token is configured', async () => {
+  await withGithubToken(undefined, async () => {
+    let seenHeaders: Record<string, string> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response(COMPARE_AHEAD_BODY, { status: 200 });
+    }) as unknown as typeof fetch;
+    await compareBranch(SOURCE, SHA, fetchImpl);
+    assert.ok(!('Authorization' in seenHeaders));
+  });
+});
+
+test('compareBranch throws the named 401 error, never the token', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    await assert.rejects(
+      () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('{}', { status: 401 }))),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /^Custom script repository example-user\/ProxmoxVED@my-apps: GitHub rejected the configured GitHub API token \(401\)/);
+        assert.ok(!err.message.includes('github_pat_example0000'));
+        return true;
+      }
+    );
+  });
+});
+
+test('readUpstreamScript (raw.githubusercontent.com) never sends Authorization even when a token is configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    let seenHeaders: Record<string, string> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response('absent-check', { status: 404 });
+    }) as unknown as typeof fetch;
+    // detectConflict's own raw reads go through readUpstreamScript; drive it
+    // via a diverged comparison so the raw fetch actually runs.
+    await detectConflict('demo-wiki', DIVERGED, fetchImpl);
+    assert.ok(!('Authorization' in seenHeaders));
+  });
+});

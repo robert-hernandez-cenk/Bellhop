@@ -1,18 +1,19 @@
 # Authentik
 
-Bellhop can gate the web UI and your apps behind a self-hosted Authentik instance. This page covers running without it, and gating an app through Authentik's own OpenID Connect clients (OIDC mode).
+Bellhop can gate the web UI and your apps behind a self-hosted Authentik instance. This page covers running without it, connecting it and recovering from a lockout, and gating an app through Authentik's own OpenID Connect clients (OIDC mode).
 
 ## Running without Authentik
 
-Authentik is optional. With no `data/authentik.env` and no
-`WEB_UI_AUTH_MODE` set, the web UI runs in `auto` mode: every request is
-served as a single always-admin local operator, and the features that need
-Authentik's REST API disable themselves — the Users and Permissions pages
-disappear from the nav, `POST /api/impersonate` returns 503, and
-`sync-authentik` is skipped by the Dashboard's push-live step instead of
-failing it. The Settings page stays in the nav and reachable, since it
-needs no Authentik. Everything else — the Dashboard, provisioning,
-maintenance, jobs, `sync-proxy`, and every CLI command — works unchanged.
+Authentik is optional. With no Authentik API URL and token set and the
+web UI's sign-in mode (`webUiAuthMode`) left at its default `auto`, every
+request is served as a single always-admin local operator, and the
+features that need Authentik's REST API disable themselves — the Users and
+Permissions pages disappear from the nav, `POST /api/impersonate` returns
+503, and `sync-authentik` is skipped by the Dashboard's push-live step
+instead of failing it. The Settings page stays in the nav and reachable,
+since it needs no Authentik. Everything else — the Dashboard,
+provisioning, maintenance, jobs, `sync-proxy`, and every CLI command —
+works unchanged.
 
 A persistent banner in the UI and a warning line in the server's startup
 log both say so, because in this mode **network reach is the only access
@@ -20,10 +21,51 @@ control**: anyone who can connect to the port gets full provisioning
 rights. The Windows firewall rule this repo installs (scoped to the
 `proxy: true` entry's IP) is what keeps that boundary meaningful.
 
-To add authentication later, set up Authentik forward-auth in Caddy (see
-[Web UI](web-ui.md)), create `data/authentik.env`, and set
-`WEB_UI_AUTH_MODE=authentik` so a broken `forward_auth` directive fails
-closed rather than silently reverting to the local operator.
+## Connecting Authentik
+
+1. Set up Authentik forward-auth in front of the web UI's own subdomain
+   (see [Web UI](web-ui.md)), and open the web UI through it, so your
+   session carries Authentik's identity headers.
+2. On the Settings page's Authentik tab, set the Authentik API URL and API
+   token (or pipe the token to `bellhop set-config authentikApiToken
+   --stdin --apply`). The Users and Permissions pages appear on the next
+   request. Change the admin groups, group ladder, outpost and flow
+   settings on the same tab if yours differ from the defaults.
+3. On the General tab, set **Web UI sign-in** to `authentik`, so a broken
+   `forward_auth` directive fails closed rather than silently reverting to
+   the local operator. **A production deployment must store this.** The
+   page refuses the change unless your session came through Authentik's
+   forward-auth as an administrator, since your own next request would
+   otherwise be rejected or lose the page.
+
+Every one of these can also be pinned by an environment variable instead
+(see [Environment variables](environment-variables.md)). A deployment
+still configured through `data/authentik.env` has its values imported into
+these settings on first start — see [Moving off the data/*.env
+files](configuration.md#moving-off-the-dataenv-files).
+
+## Locked out
+
+The Settings page guards the three values that decide who can use the web
+UI: it refuses an admin-group change that would remove your own
+administrator access, refuses `authentik` sign-in unless the session
+carries Authentik's headers for an administrator, and asks before you
+leave `authentik`. If you are
+locked out anyway — Authentik is down, or forward-auth broke while
+sign-in is `authentik` — recover from the host the service runs on, with
+no web UI needed:
+
+- Run `bellhop set-config webUiAuthMode auto --apply` (or fix the admin
+  group with `bellhop set-config authentikAdminGroup <group> --apply`) in
+  the checkout the service runs from. The web service picks the change up
+  on its next request.
+- Or set `WEB_UI_AUTH_MODE=auto` (or `AUTHENTIK_ADMIN_GROUP=...`) in the
+  service's environment and restart it; the environment overrides the
+  stored setting until you remove it again.
+
+Under `auto`, a request that reaches the web UI without Authentik's
+headers is the local operator, so set sign-in back to `authentik` once
+forward-auth works again.
 
 ## OIDC mode
 
@@ -117,7 +159,7 @@ flow (under different names) from working around this yourself, delete
 them once Bellhop's copy is in place** — otherwise a mobile sign-in shows
 two consent pages back to back.
 
-The consent step is bound only to the flow `AUTHENTIK_AUTHORIZATION_FLOW_SLUG`
+The consent step is bound only to the flow the `authentikAuthorizationFlowSlug` setting
 names. An OpenID client that uses a different authorization flow (one
 adopted with `adopt-oidc-client` that was set up with its own flow, say)
 still gets its mobile URLs in its allowed callbacks, but no consent step.
@@ -194,7 +236,7 @@ failed run, or made by hand), it resets that client to exactly the three
 built-in mappings, the same as a brand-new client.
 
 **Authentik API token permissions.** OIDC mode needs a few more scopes on
-the token in `data/authentik.env` than forward-auth-only gating did: read
+the Authentik API token (`authentikApiToken`) than forward-auth-only gating did: read
 and write on OAuth2/OpenID Providers (not just Proxy Providers), read on
 certificate-keypairs (to resolve the signing key), read on property/scope
 mappings, and update on Applications. `sync-authentik` lists OAuth2
@@ -223,10 +265,10 @@ never loses a hidden field's saved value — it's simply not shown while the
 other mode is selected.
 
 **Signing key.** A new OpenID client signs its identity tokens with the
-Authentik certificate-keypair named `AUTHENTIK_OIDC_SIGNING_KEY_NAME`
+Authentik certificate-keypair named by the `authentikOidcSigningKeyName` setting
 (default: `authentik Self-signed Certificate`, the self-signed cert every
-stock Authentik install already has — see [Environment
-variables](environment-variables.md)). This default is a single-operator convenience, not a
+stock Authentik install already has — see [Integration settings and
+secrets](configuration.md#integration-settings-and-secrets)). This default is a single-operator convenience, not a
 security recommendation for every deployment; override it if you've set
 up your own signing key, or renamed/removed the default certificate. A
 missing key fails every OIDC entry's sync with a named error; forward-auth

@@ -1,6 +1,6 @@
 import type { SSHClient } from '../../lib/ssh-client.ts';
 import type { Inventory, GuestEntry } from '../../lib/inventory.ts';
-import { saveInventory } from '../../lib/inventory.ts';
+import { saveInventory, withFreshSettings } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { parseNet0, setNet0Gateway, buildDnsmasqInstallScript, buildDnsmasqRemoveScript } from '../../lib/guest-vpn.ts';
 import { logInfo } from '../../lib/log.ts';
@@ -129,7 +129,9 @@ export async function runSetGuestVpn(
 
   const vpn = opts.vpn === 'none' ? undefined : opts.vpn;
   const guests = deps.inventory.guests.map((g) => (g.name === opts.guest ? { ...g, vpn } : g));
-  saveInventory(deps.inventoryPath, { ...deps.inventory, guests });
+  // withFreshSettings: the reboot above can take a while, and a settings
+  // save in the meantime must not be reverted by this one.
+  saveInventory(deps.inventoryPath, withFreshSettings(deps.inventoryPath, { ...deps.inventory, guests }));
   deps.inventory.guests = guests;
 
   return { netScript, dnsScript, applied: true };

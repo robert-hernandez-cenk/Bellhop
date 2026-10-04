@@ -1,7 +1,8 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveAuthUser, requireAdminGroup, isAdminUser, authMode } from '../../src/web/auth.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
+import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
 
 const ADMIN_GROUP_NAME = authentikConfig({}).adminGroup;
 const AUTHENTIK_BUILTIN_ADMIN_GROUP_NAME = authentikConfig({}).builtinAdminGroup;
@@ -12,12 +13,12 @@ test('resolveAuthUser returns a user from Authentik forward-auth headers, splitt
     'x-authentik-email': 'alice@example.com',
     'x-authentik-groups': 'admins|homelab',
   });
-  assert.deepEqual(user, { username: 'alice', email: 'alice@example.com', groups: ['admins', 'homelab'] });
+  assert.deepEqual(user, { username: 'alice', email: 'alice@example.com', groups: ['admins', 'homelab'], viaForwardAuth: true });
 });
 
 test('resolveAuthUser defaults email to undefined and groups to [] when those headers are absent', () => {
   const user = resolveAuthUser({ 'x-authentik-username': 'alice' });
-  assert.deepEqual(user, { username: 'alice', email: undefined, groups: [] });
+  assert.deepEqual(user, { username: 'alice', email: undefined, groups: [], viaForwardAuth: true });
 });
 
 test('resolveAuthUser falls back to WEB_UI_DEV_USER when no trusted headers are present', () => {
@@ -64,7 +65,7 @@ test('auto mode with headers yields the header identity, with real groups and no
   const user = resolveAuthUser({ 'x-authentik-username': 'someone', 'x-authentik-groups': 'homelab' }, {});
   assert.equal(user!.localOperator, undefined);
   assert.equal(isAdminUser(user!.groups, {}), false);
-  assert.deepEqual(user, { username: 'someone', email: undefined, groups: ['homelab'] });
+  assert.deepEqual(user, { username: 'someone', email: undefined, groups: ['homelab'], viaForwardAuth: true });
 });
 
 test('none mode ignores trusted headers entirely and always yields the local operator', () => {
@@ -109,7 +110,7 @@ test('resolveAuthUser ignores an empty x-authentik-username header and falls bac
 test('resolveAuthUser sets uid from a non-empty x-authentik-uid header', () => {
   const user = resolveAuthUser({ 'x-authentik-username': 'test-user', 'x-authentik-uid': 'uid-test-user' });
   assert.equal(user?.uid, 'uid-test-user');
-  assert.deepEqual(user, { username: 'test-user', email: undefined, groups: [], uid: 'uid-test-user' });
+  assert.deepEqual(user, { username: 'test-user', email: undefined, groups: [], uid: 'uid-test-user', viaForwardAuth: true });
 });
 
 test('resolveAuthUser omits uid when the x-authentik-uid header is absent or empty', () => {
@@ -199,4 +200,38 @@ test('requireAdminGroup returns 403 when req.user is undefined', () => {
   });
   assert.equal(called, false);
   assert.equal(state.statusCode, 403);
+});
+
+// -- Issue #64: webUiAuthMode through the config accessor, viaForwardAuth ---
+
+afterEach(() => resetConfigStore());
+
+test('authMode reads the stored webUiAuthMode when a config store is registered', () => {
+  tempConfigStore({ webUiAuthMode: 'authentik' });
+  assert.equal(authMode({}), 'authentik');
+  assert.equal(resolveAuthUser({}, {}), undefined);
+});
+
+test('authMode: WEB_UI_AUTH_MODE overrides the stored webUiAuthMode', () => {
+  tempConfigStore({ webUiAuthMode: 'authentik' });
+  assert.equal(authMode({ WEB_UI_AUTH_MODE: 'none' }), 'none');
+});
+
+test('authMode still rejects an invalid WEB_UI_AUTH_MODE with a store registered', () => {
+  tempConfigStore({ webUiAuthMode: 'auto' });
+  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'oidc' }), /must be one of auto, authentik, none/);
+});
+
+test('resolveAuthUser marks a forward-auth header identity with viaForwardAuth', () => {
+  const user = resolveAuthUser({ 'x-authentik-username': 'alice' }, {});
+  assert.equal(user?.viaForwardAuth, true);
+});
+
+test('viaForwardAuth is never set on the dev user or the local operator', () => {
+  const devUser = resolveAuthUser({}, { WEB_UI_DEV_USER: 'dev-user' });
+  assert.ok(devUser && !('viaForwardAuth' in devUser), 'the dev-bypass identity did not come through forward-auth');
+  const local = resolveAuthUser({}, {});
+  assert.ok(local && !('viaForwardAuth' in local), 'the local operator did not come through forward-auth');
+  const none = resolveAuthUser({ 'x-authentik-username': 'alice' }, { WEB_UI_AUTH_MODE: 'none' });
+  assert.ok(none && !('viaForwardAuth' in none), "none mode ignores headers, so its identity isn't forward-auth's");
 });

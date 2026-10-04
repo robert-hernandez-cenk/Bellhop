@@ -1,5 +1,6 @@
 import express from 'express';
 import { refreshInventory } from '../lib/inventory.ts';
+import { invalidateConfigSnapshot } from '../lib/config.ts';
 import type { Inventory } from '../lib/inventory.ts';
 import type { SSHClient } from '../lib/ssh-client.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
@@ -68,6 +69,16 @@ export function buildApp(deps: AppDeps): express.Express {
   const impersonationStore: ImpersonationStore = deps.impersonationStore ?? new Map();
   const cloudflare: CloudflareClient = deps.cloudflare ?? new UnconfiguredCloudflareClient();
   app.use(express.json());
+  // Drop the config accessor's snapshot at the start of every /api request
+  // (issue #64, research R3), so a setting saved by another process (the
+  // CLI, the MCP server, a direct DB edit) applies on this very request
+  // rather than up to the snapshot's TTL later. It runs ahead of
+  // requireAuth, not beside refreshInventory below, because requireAuth
+  // itself reads settings (webUiAuthMode, the admin group names).
+  app.use('/api', (_req, _res, next) => {
+    invalidateConfigSnapshot();
+    next();
+  });
   app.use(requireAuth);
   app.use(applyImpersonation(impersonationStore));
   // Reload inventory from disk before every /api request so a change

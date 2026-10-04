@@ -672,3 +672,58 @@ test('getScriptCatalog makes no custom fetch when no inventory is passed at all'
   assert.equal(customCalls, 0);
   assert.equal(result.custom, undefined);
 });
+
+// -- Issue #64 US3: authenticated GitHub requests ----------------------------
+
+async function withGithubToken(token: string | undefined, fn: () => Promise<void>): Promise<void> {
+  const original = process.env.GITHUB_API_TOKEN;
+  if (token === undefined) delete process.env.GITHUB_API_TOKEN;
+  else process.env.GITHUB_API_TOKEN = token;
+  try {
+    await fn();
+  } finally {
+    if (original === undefined) delete process.env.GITHUB_API_TOKEN;
+    else process.env.GITHUB_API_TOKEN = original;
+  }
+}
+
+test('fetchCatalog sends Authorization: Bearer <token> on both repo listings when githubApiToken is configured', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    const seenHeaders: Record<string, string>[] = [];
+    const fakeFetch = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    await fetchCatalog(fakeFetch);
+    assert.equal(seenHeaders.length, 2);
+    for (const headers of seenHeaders) {
+      assert.equal(headers.Authorization, 'Bearer github_pat_example0000');
+      assert.equal(headers['User-Agent'], 'bellhop');
+      assert.equal(headers.Accept, 'application/vnd.github+json');
+    }
+  });
+});
+
+test('fetchCatalog sends no Authorization header when no token is configured', async () => {
+  await withGithubToken(undefined, async () => {
+    const seenHeaders: Record<string, string>[] = [];
+    const fakeFetch = (async (_url: unknown, init?: RequestInit) => {
+      seenHeaders.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    await fetchCatalog(fakeFetch);
+    for (const headers of seenHeaders) assert.ok(!('Authorization' in headers));
+  });
+});
+
+test('fetchCatalog throws the named 401 error, never the token, rather than a bare status', async () => {
+  await withGithubToken('github_pat_example0000', async () => {
+    const fakeFetch = (async () => new Response(null, { status: 401 })) as unknown as typeof fetch;
+    await assert.rejects(() => fetchCatalog(fakeFetch), (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /^Listing community-scripts\/ProxmoxVED?\/ct: GitHub rejected the configured GitHub API token \(401\)/);
+      assert.ok(!err.message.includes('github_pat_example0000'));
+      return true;
+    });
+  });
+});

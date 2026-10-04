@@ -19,6 +19,7 @@ import {
   oidcConfigErrors,
   sortInventoryForFile,
   refreshInventory,
+  withFreshSettings,
   HostEntrySchema,
   GuestEntrySchema,
   GuestCreatorSchema,
@@ -1242,13 +1243,24 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the fifteen settings keys', () => {
+test('SETTINGS_KEYS lists exactly the twenty-seven settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
+    'authentikAdminGroup',
+    'authentikApiUrl',
+    'authentikAuthorizationFlowSlug',
+    'authentikBuiltinAdminGroup',
+    'authentikGroupLadder',
+    'authentikInvalidationFlowSlug',
+    'authentikOidcSigningKeyName',
+    'authentikOutpostName',
+    'authentikOutpostPort',
     'backupStorage',
     'customScriptsBranch',
     'customScriptsRepo',
     'dnsServer',
     'nfsServer',
+    'npmApiEmail',
+    'npmApiUrl',
     'proxyApiUrl',
     'proxyCaddyTls',
     'proxyCertResolver',
@@ -1259,6 +1271,7 @@ test('SETTINGS_KEYS lists exactly the fifteen settings keys', () => {
     'pveCreatorRole',
     'pveUserRealm',
     'statusPagePath',
+    'webUiAuthMode',
   ]);
 });
 
@@ -1570,6 +1583,57 @@ test('loadInventory migration leaves auth_group null and still drops requires_au
     if (previous === undefined) delete process.env.AUTHENTIK_GROUP_LADDER;
     else process.env.AUTHENTIK_GROUP_LADDER = previous;
   }
+});
+
+// Issue #64 (FR-020): the #158 migration reads the ladder from the database
+// it is migrating -- the stored authentikGroupLadder setting -- with the
+// AUTHENTIK_GROUP_LADDER variable still overriding it, and the built-in
+// default when neither is set.
+function legacyGatedGuestDb(prefix: string, ladder?: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  const dbPath = path.join(dir, 'bellhop.db');
+  saveInventory(dbPath, {
+    domain: 'example.com',
+    authentikGroupLadder: ladder,
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' }],
+    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'] }],
+  });
+  const raw = new Database(dbPath);
+  raw.exec('ALTER TABLE guests ADD COLUMN requires_auth INTEGER');
+  raw.prepare("UPDATE guests SET requires_auth = 1 WHERE name = 'sonarr'").run();
+  raw.close();
+  return dbPath;
+}
+
+function withLadderEnv<T>(value: string | undefined, fn: () => T): T {
+  const previous = process.env.AUTHENTIK_GROUP_LADDER;
+  if (value === undefined) delete process.env.AUTHENTIK_GROUP_LADDER;
+  else process.env.AUTHENTIK_GROUP_LADDER = value;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) delete process.env.AUTHENTIK_GROUP_LADDER;
+    else process.env.AUTHENTIK_GROUP_LADDER = previous;
+  }
+}
+
+test('the requires_auth migration uses the stored authentikGroupLadder when no env var is set', () => {
+  const dbPath = legacyGatedGuestDb('inventory-migrate-stored-ladder-', 'example-open,example-users,example-admins');
+  const migrated = withLadderEnv(undefined, () => loadInventory(dbPath));
+  assert.equal(migrated.guests[0].authGroup, 'example-admins');
+});
+
+test('the requires_auth migration lets AUTHENTIK_GROUP_LADDER override the stored ladder', () => {
+  const dbPath = legacyGatedGuestDb('inventory-migrate-env-ladder-', 'example-open,example-admins');
+  const migrated = withLadderEnv('env-open,env-top', () => loadInventory(dbPath));
+  assert.equal(migrated.guests[0].authGroup, 'env-top');
+});
+
+test('the requires_auth migration falls back to the default ladder when neither is set', () => {
+  const dbPath = legacyGatedGuestDb('inventory-migrate-default-ladder-');
+  const migrated = withLadderEnv(undefined, () => loadInventory(dbPath));
+  const defaultLadder = authentikConfig({}).groupLadder;
+  assert.equal(migrated.guests[0].authGroup, defaultLadder[defaultLadder.length - 1]);
 });
 
 test('saveInventory round-trips authGroup', () => {
@@ -2251,3 +2315,39 @@ test(
     );
   }
 );
+
+// -- Final review M4: a long-running save never reverts a settings change ----
+
+test('withFreshSettings takes every setting from the database and everything else from the given copy', () => {
+  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'fresh-settings-')), 'bellhop.db');
+  const stale: Inventory = {
+    domain: 'example.com',
+    nfsServer: '192.0.2.5',
+    dnsServer: '192.0.2.53',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.10', ssh_user: 'root' }],
+    guests: [],
+  };
+  saveInventory(dbPath, stale);
+  // Another process changes and clears settings after `stale` was loaded.
+  saveInventory(dbPath, { ...stale, nfsServer: '192.0.2.6', dnsServer: undefined, webUiAuthMode: 'authentik' });
+
+  const edited: Inventory = { ...stale, guests: [{ name: 'app', type: 'lxc', vmid: 101, host: 'pve1' }] };
+  const merged = withFreshSettings(dbPath, edited);
+  assert.equal(merged.nfsServer, '192.0.2.6');
+  assert.equal(merged.dnsServer, undefined);
+  assert.equal(merged.webUiAuthMode, 'authentik');
+  assert.deepEqual(merged.guests, edited.guests, 'non-settings fields come from the given copy');
+  assert.equal(edited.nfsServer, '192.0.2.5', 'the given copy is not mutated');
+
+  saveInventory(dbPath, merged);
+  const saved = loadInventory(dbPath);
+  assert.equal(saved.nfsServer, '192.0.2.6');
+  assert.equal(saved.dnsServer, undefined);
+  assert.equal(saved.guests.length, 1);
+});
+
+test('withFreshSettings returns the given copy unchanged when the database does not exist yet', () => {
+  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'fresh-settings-')), 'missing.db');
+  const inv: Inventory = { domain: 'example.com', nfsServer: '192.0.2.5', hosts: [], guests: [] };
+  assert.deepEqual(withFreshSettings(dbPath, inv), inv);
+});

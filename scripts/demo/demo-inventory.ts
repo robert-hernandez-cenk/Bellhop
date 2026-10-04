@@ -11,6 +11,20 @@
 // in-memory edits, or a test mutating its own copy, can never leak into a
 // later call.
 import type { Inventory } from '../../src/lib/inventory.ts';
+import type { SecretSettingKey } from '../../src/lib/settings-defs.ts';
+
+// Example secrets the demo stores in the "set" state (issue #64, FR-027),
+// so the Settings page shows its write-only secret fields as they look on
+// a configured deployment. Obviously fake on purpose. The Authentik API
+// token is deliberately absent: the demo injects an unconfigured Authentik
+// client, and a stored token plus URL would make authentikConfigured() true
+// while that client still says otherwise. Kept apart from
+// buildDemoInventory() because a secret is never part of an Inventory.
+export const DEMO_SECRET_SETTINGS: Readonly<Partial<Record<SecretSettingKey, string>>> = {
+  cloudflareDnsApiToken: 'demo-example-cloudflare-token',
+  npmApiPassword: 'demo-example-password',
+  githubApiToken: 'demo-example-github-token',
+};
 
 export function buildDemoInventory(): Inventory {
   return {
@@ -20,6 +34,14 @@ export function buildDemoInventory(): Inventory {
     // Not 198.51.100.5 -- that address belongs to the paperless-ngx guest
     // below; a free address in the same range keeps the two from colliding.
     nfsServer: '198.51.100.50',
+    // Stored rather than set through WEB_UI_AUTH_MODE (issue #64): the demo
+    // signs every request in with injected forward-auth headers, the same
+    // way a production deployment does with this setting stored.
+    webUiAuthMode: 'authentik',
+    // Two moved Authentik settings, so that Settings tab isn't all
+    // placeholders. Both are the stock defaults.
+    authentikOutpostName: 'authentik Embedded Outpost',
+    authentikOutpostPort: '9000',
     hosts: [
       {
         name: 'pve1',

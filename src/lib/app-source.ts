@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Inventory } from './inventory.ts';
+import { githubApiHeaders, githubUnauthorizedError } from './github.ts';
 import { logWarn } from './log.ts';
 import { settingFix } from './settings-hint.ts';
 
@@ -127,7 +128,7 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
   try {
     response = await fetchImpl(
       `https://api.github.com/repos/${source.owner}/${source.repo}/commits/${encodeURIComponent(source.branch)}`,
-      { signal: controller.signal, headers: { 'User-Agent': 'bellhop', Accept: 'application/vnd.github.sha' } }
+      { signal: controller.signal, headers: githubApiHeaders({ Accept: 'application/vnd.github.sha' }) }
     );
     body = (await response.text()).trim();
   } catch (err) {
@@ -136,6 +137,11 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
     clearTimeout(timeout);
   }
   if (!response.ok) {
+    // Checked first (issue #64, research R6): a rejected token must never
+    // be reported as a bare "GitHub returned 401", which would send the
+    // operator chasing customScriptsRepo/customScriptsBranch instead of
+    // the token that actually caused it.
+    if (response.status === 401) throw githubUnauthorizedError(prefix.slice(0, -1));
     if (response.status === 404) throw new Error(`${prefix} repository not found or not public${ERROR_SUFFIX}`);
     if (response.status === 422) throw new Error(`${prefix} branch not found${ERROR_SUFFIX}`);
     // The pin is the first rate-limited request of a resolution, so it's the
@@ -226,7 +232,7 @@ export async function compareBranch(
   let response: Response;
   let body: string;
   try {
-    response = await fetchImpl(url, { signal: controller.signal, headers: { 'User-Agent': 'bellhop' } });
+    response = await fetchImpl(url, { signal: controller.signal, headers: githubApiHeaders() });
     body = await response.text();
   } catch (err) {
     throw new Error(`${prefix} could not reach GitHub (${err instanceof Error ? err.message : String(err)})${ERROR_SUFFIX}`);
@@ -234,6 +240,8 @@ export async function compareBranch(
     clearTimeout(timeout);
   }
   if (!response.ok) {
+    // Same ordering rationale as resolveHeadSha above.
+    if (response.status === 401) throw githubUnauthorizedError(prefix.slice(0, -1));
     if (response.status === 404)
       throw new Error(
         `${prefix} commit ${sha.slice(0, 7)} not found in ${COMPARE_UPSTREAM}'s fork network (is ${source.owner}/${source.repo} a fork of ProxmoxVED?)${ERROR_SUFFIX}`

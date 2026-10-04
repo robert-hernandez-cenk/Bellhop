@@ -23,7 +23,24 @@ bellhop audit-nfs-mounts --host plex-lxc  # just one guest
 bellhop backfill-guest-creators          # dry run: prints guests it would attribute, and jobs it skips
 bellhop backfill-guest-creators --apply  # records them
 bellhop backfill-guest-creators --map old-login=test-user --apply  # attribute jobs recorded under a renamed login
+bellhop set-config dnsServer 198.51.100.53 --apply  # set an inventory-wide or integration setting
+bellhop set-config nfsServer --unset --apply         # clear one
+printf '%s' "$TOKEN" | bellhop set-config githubApiToken --stdin --apply  # a secret, on standard input
 ```
+
+`set-config <key> [value] [--stdin] [--unset] [--apply]` writes one
+setting — any of the [inventory-wide
+settings](configuration.md#inventory-wide-settings) or [integration
+settings and secrets](configuration.md#integration-settings-and-secrets) —
+validated by the same rules the web UI's Settings page uses. `--stdin`
+reads the value from standard input instead of an argument, with one
+trailing newline stripped. A secret (`authentikApiToken`,
+`cloudflareDnsApiToken`, `npmApiPassword`, `githubApiToken`) is refused as
+an argument: pipe it with `--stdin`, or leave the value off at a terminal
+to be prompted without echo. The dry run never prints a secret's value.
+When the key's environment variable is set in your own shell,
+`set-config` still stores the value but warns that the variable overrides
+it.
 
 `update-all --group` only accepts `pve` or `lxc` (not `vm`), and `--host`
 naming a VM guest fails with an error rather than doing nothing — this
@@ -86,7 +103,7 @@ inventory while the command ran is not written and is reported under the
 skips instead. A job triggered by the MCP server, by the CLI, by the local
 operator (the identity named by `WEB_UI_LOCAL_USER`, `local` by default), by
 no recorded user, or that didn't succeed is never used. Requires Authentik
-configured (`data/authentik.env`) — without it, it fails with the same
+configured (its API URL and token settings) — without it, it fails with the same
 "not configured" error the Users page gives, since a username-only record
 would reintroduce the rename problem the stable identifier exists to
 solve. See [Permissions](permissions.md) for what the recorded creator
@@ -276,11 +293,14 @@ adapt`, adds the inventory's routes as Bellhop-tagged ones, and loads the
 result into the running Caddy. It refuses to run once Caddy already holds
 Bellhop objects.
 
-`render-status-page` regenerates a static, LAN-only status page (raw
-`inventory/hosts.yaml` plus the actual deployed proxy configuration, both
+`render-status-page` regenerates a static, LAN-only status page (a YAML
+snapshot of the inventory plus the actual deployed proxy configuration, both
 fetched fresh) on whichever host is flagged `proxy: true`. It's a manual,
 on-demand command on the CLI side — the web UI calls it automatically
 after any change that touches the reverse proxy (see [Web UI](web-ui.md)).
+The inventory snapshot it shows includes the non-secret integration
+settings (the Authentik URL and group names, the Nginx Proxy Manager
+email, the sign-in mode and the rest), but never a secret.
 
 `sync-authentik` reconciles Authentik Proxy Providers, OpenID (OAuth2)
 clients, Applications, policy bindings, and embedded-outpost membership

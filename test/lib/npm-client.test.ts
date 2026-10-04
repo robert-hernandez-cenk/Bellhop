@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import {
   NPM_REQUEST_TIMEOUT_MS,
   NPM_CERTIFICATE_TIMEOUT_MS,
 } from '../../src/lib/npm-client.ts';
+import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
 
 const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'nginx-proxy-manager');
 function fixture(name: string): any {
@@ -169,14 +170,14 @@ test('deleteProxyHost accepts the captured delete response', async () => {
   await assert.doesNotReject(client.deleteProxyHost(1));
 });
 
-test('a login 400 is reported with the contract message naming NPM_API_EMAIL/NPM_API_PASSWORD', async () => {
+test('a login 400 is reported naming the npmApiEmail/npmApiPassword settings, never the password', async () => {
   const { impl } = tableFetch({ [`POST ${BASE_URL}/api/tokens`]: fixture('token-create-bad-password.json') });
   const client = new RealNpmClient(BASE_URL, 'ops@example.com', 'wrong', impl);
   await assert.rejects(
     client.listProxyHosts(),
     (err: Error) =>
       err.message ===
-      `Nginx Proxy Manager at ${BASE_URL} rejected the login for ops@example.com: Invalid email or password -- check NPM_API_EMAIL/NPM_API_PASSWORD in data/nginx-proxy-manager.env`
+      `Nginx Proxy Manager at ${BASE_URL} rejected the login for ops@example.com: Invalid email or password -- check the npmApiEmail and npmApiPassword settings (NPM_API_EMAIL/NPM_API_PASSWORD override them): run: bellhop set-config npmApiPassword --stdin --apply, or set it on the web UI's Settings page`
   );
 });
 
@@ -295,7 +296,7 @@ test("buildNpmClient throws naming NPM_API_URL when no entry has 'proxy: true' w
       () => buildNpmClient(fixtureInventory({ hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }] })),
       {
         message:
-          "No NPM_API_URL is set and no inventory entry has 'proxy: true' with an ip -- set NPM_API_URL in data/nginx-proxy-manager.env",
+          "No npmApiUrl is set (or NPM_API_URL) and no inventory entry has 'proxy: true' with an ip -- run: bellhop set-config npmApiUrl <http://host:81> --apply, or set it on the web UI's Settings page",
       }
     );
   });
@@ -379,4 +380,44 @@ test('listCertificates parses a certificate whose expires_on is null', async () 
   const client = new RealNpmClient(BASE_URL, 'ops@example.com', 'secret', impl);
   const [certificate] = await client.listCertificates();
   assert.equal(certificate.expires_on, null);
+});
+
+// -- Issue #64: buildNpmClient reads through the config accessor -------------
+
+afterEach(() => resetConfigStore());
+
+test('NPM_UNCONFIGURED_MESSAGE names both settings and the Settings page, not the old env file', () => {
+  assert.equal(
+    NPM_UNCONFIGURED_MESSAGE,
+    "Nginx Proxy Manager API not configured -- set npmApiEmail (run: bellhop set-config npmApiEmail <email> --apply, or set it on the web UI's Settings page) and npmApiPassword (run: bellhop set-config npmApiPassword --stdin --apply, or set it on the web UI's Settings page)"
+  );
+  assert.ok(!NPM_UNCONFIGURED_MESSAGE.includes('nginx-proxy-manager.env'));
+});
+
+test('buildNpmClient reads npmApiUrl/npmApiEmail/npmApiPassword from the store', () => {
+  withEnv({}, () => {
+    tempConfigStore(
+      { npmApiUrl: 'http://198.51.100.7:81/api', npmApiEmail: 'stored@example.com' },
+      { npmApiPassword: 'example-stored-password' }
+    );
+    const client = buildNpmClient(fixtureInventory());
+    assert.equal(client.baseUrl, 'http://198.51.100.7:81');
+  });
+});
+
+test('buildNpmClient: environment variables override the stored settings', () => {
+  withEnv({ NPM_API_URL: 'http://198.51.100.8:81' }, () => {
+    tempConfigStore({ npmApiUrl: 'http://198.51.100.7:81', npmApiEmail: 'stored@example.com' }, { npmApiPassword: 'pw' });
+    assert.equal(buildNpmClient(fixtureInventory()).baseUrl, 'http://198.51.100.8:81');
+  });
+});
+
+test('buildNpmClient with only a stored email is unconfigured, and the error never carries a value', () => {
+  withEnv({}, () => {
+    tempConfigStore({ npmApiEmail: 'stored-EMAIL-MARKER@example.com' });
+    assert.throws(
+      () => buildNpmClient(fixtureInventory()),
+      (err: Error) => err.message === NPM_UNCONFIGURED_MESSAGE && !err.message.includes('EMAIL-MARKER')
+    );
+  });
 });

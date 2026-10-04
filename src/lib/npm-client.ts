@@ -9,6 +9,8 @@
 
 import { z } from 'zod';
 import { findProxyEntry, type Inventory } from './inventory.ts';
+import { configValue } from './config.ts';
+import { settingFix } from './settings-hint.ts';
 
 // Every request except a certificate request. A sync takes seconds against a
 // one-day token (research R1), so there is no refresh path to time-bound
@@ -20,8 +22,10 @@ export const NPM_REQUEST_TIMEOUT_MS = 10_000;
 // past the ordinary request timeout above.
 export const NPM_CERTIFICATE_TIMEOUT_MS = 180_000;
 
+// Names the settings (issue #64), never a value -- the password is a secret.
 export const NPM_UNCONFIGURED_MESSAGE =
-  "Nginx Proxy Manager API not configured -- set NPM_API_EMAIL and NPM_API_PASSWORD (and optionally NPM_API_URL) in data/nginx-proxy-manager.env";
+  `Nginx Proxy Manager API not configured -- set npmApiEmail (${settingFix('npmApiEmail', '<email>')}) ` +
+  `and npmApiPassword (${settingFix('npmApiPassword')})`;
 
 // -- Response shapes ---------------------------------------------------
 //
@@ -256,7 +260,7 @@ export class RealNpmClient implements NpmClient {
     if (!res.ok) {
       if (res.status === 400) {
         throw new Error(
-          `Nginx Proxy Manager at ${this.baseUrl} rejected the login for ${this.email}: Invalid email or password -- check NPM_API_EMAIL/NPM_API_PASSWORD in data/nginx-proxy-manager.env`
+          `Nginx Proxy Manager at ${this.baseUrl} rejected the login for ${this.email}: Invalid email or password -- check the npmApiEmail and npmApiPassword settings (NPM_API_EMAIL/NPM_API_PASSWORD override them): ${settingFix('npmApiPassword')}`
         );
       }
       throw new Error(npmErrorMessage(res.status, 'POST', '/api/tokens', body));
@@ -332,30 +336,28 @@ export class RealNpmClient implements NpmClient {
 // -- Build ------------------------------------------------------------
 
 function resolveBaseUrl(inventory: Inventory): string {
-  const configured = process.env.NPM_API_URL;
-  if (configured) {
+  const configured = configValue('npmApiUrl').value;
+  if (configured !== undefined) {
     return normalizeBaseUrl(configured);
   }
   const proxyEntry = findProxyEntry(inventory);
   if (!proxyEntry?.ip) {
     throw new Error(
-      "No NPM_API_URL is set and no inventory entry has 'proxy: true' with an ip -- set NPM_API_URL in data/nginx-proxy-manager.env"
+      `No npmApiUrl is set (or NPM_API_URL) and no inventory entry has 'proxy: true' with an ip -- ${settingFix('npmApiUrl', '<http://host:81>')}`
     );
   }
   return `http://${proxyEntry.ip}:81`;
 }
 
-// The one place the configured/unconfigured decision lives; src/cli.ts,
-// src/web/server.ts and src/mcp/server.ts all dotenv-load
-// data/nginx-proxy-manager.env before this ever runs (see the comment
-// alongside that load for why). Reads process.env directly, same as
-// buildCloudflareClient's default -- not parameterised, since every real
-// caller uses the process environment and the driver's own tests inject a
-// fake NpmClient instead of exercising this function's env handling.
+// The one place the configured/unconfigured decision lives. Reads the
+// npmApiUrl/npmApiEmail/npmApiPassword settings through the config accessor
+// (issue #64), each overridden by its NPM_API_* environment variable. Built
+// per plan()/apply()/snapshot() call, so a value saved on the Settings page
+// applies to the next sync with no restart.
 export function buildNpmClient(inventory: Inventory, fetchImpl: typeof fetch = fetch): NpmClient {
-  const email = process.env.NPM_API_EMAIL;
-  const password = process.env.NPM_API_PASSWORD;
-  if (!email || !password) {
+  const email = configValue('npmApiEmail').value;
+  const password = configValue('npmApiPassword').value;
+  if (email === undefined || password === undefined) {
     throw new Error(NPM_UNCONFIGURED_MESSAGE);
   }
   return new RealNpmClient(resolveBaseUrl(inventory), email, password, fetchImpl);

@@ -1,14 +1,20 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { RealAuthentikClient, UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
+import { buildAuthentikClient, RealAuthentikClient, UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
 import type { AuthentikProxyProvider, AuthentikUser } from '../../src/lib/authentik-client.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
+import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
+import { writeSecret } from '../../src/lib/config.ts';
+import { saveInventory, loadInventory } from '../../src/lib/inventory.ts';
 
-const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
+// Issue #64: names the two settings and the Settings page, not an env file.
+const UNCONFIGURED_MESSAGE =
+  "Authentik API not configured -- set authentikApiUrl (run: bellhop set-config authentikApiUrl <https://authentik.example.com> --apply, or set it on the web UI's Settings page) " +
+  "and authentikApiToken (run: bellhop set-config authentikApiToken --stdin --apply, or set it on the web UI's Settings page)";
 
 // Redacted captures from a live Authentik 2026.8.2 instance (issue #22,
 // research.md R4) -- see test/fixtures/authentik/ and specs/010-oidc-mobile-
@@ -880,4 +886,45 @@ test('RealAuthentikClient.listUsers maps a missing uid to an empty string', asyn
       assert.equal(u.uid, '');
     }
   );
+});
+
+// -- Issue #64: buildAuthentikClient is live --------------------------------
+
+afterEach(() => resetConfigStore());
+
+test('buildAuthentikClient follows a URL and token stored after it was built, with no rebuild', async () => {
+  const savedUrl = process.env.AUTHENTIK_API_URL;
+  const savedToken = process.env.AUTHENTIK_API_TOKEN;
+  delete process.env.AUTHENTIK_API_URL;
+  delete process.env.AUTHENTIK_API_TOKEN;
+  const original = globalThis.fetch;
+  const seen: Array<{ url: string; authorization: string | undefined }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    seen.push({ url: String(input), authorization: headers.Authorization });
+    return new Response(JSON.stringify({ results: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    const dbPath = tempConfigStore();
+    const client = buildAuthentikClient();
+    assert.equal(client.isConfigured(), false);
+
+    saveInventory(dbPath, { ...loadInventory(dbPath), authentikApiUrl: 'https://auth.example.com' });
+    writeSecret(dbPath, 'authentikApiToken', 'example-token-1');
+    assert.equal(client.isConfigured(), true);
+    await client.listGroups();
+    assert.deepEqual(seen, [
+      { url: 'https://auth.example.com/api/v3/core/groups/?page_size=500', authorization: 'Bearer example-token-1' },
+    ]);
+
+    writeSecret(dbPath, 'authentikApiToken', 'example-token-2');
+    await client.listGroups();
+    assert.equal(seen[1].authorization, 'Bearer example-token-2');
+  } finally {
+    globalThis.fetch = original;
+    if (savedUrl === undefined) delete process.env.AUTHENTIK_API_URL;
+    else process.env.AUTHENTIK_API_URL = savedUrl;
+    if (savedToken === undefined) delete process.env.AUTHENTIK_API_TOKEN;
+    else process.env.AUTHENTIK_API_TOKEN = savedToken;
+  }
 });

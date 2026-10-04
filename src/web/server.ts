@@ -4,6 +4,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { authentikConfig } from '../lib/authentik-config.ts';
 import { loadInventory } from '../lib/inventory.ts';
+import { importEnvFilesAndUseStore } from '../lib/config-import.ts';
 import { Ssh2SSHClient } from '../lib/ssh-client.ts';
 import { buildAuthentikClient } from '../lib/authentik-client.ts';
 import { buildCloudflareClient } from '../lib/cloudflare-client.ts';
@@ -18,48 +19,49 @@ import { buildApp } from './app.ts';
 import { attachJobsWebSocket } from './routes/jobs.ts';
 import { REPO_ROOT, dataDir, inventoryPath } from '../lib/paths.ts';
 
-// AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN are loaded from a gitignored file
-// rather than a real system/service-level env var -- the Windows service
-// (scripts/windows-service.ts's buildService()) only sets PORT/USERPROFILE,
-// so without this there was no way to hand it these two values at all.
-// Silent no-op if missing: buildAuthentikClient() below falls back to
-// UnconfiguredAuthentikClient when the file doesn't exist yet.
-// Loaded before loadInventory() below because the one-time requires_auth ->
-// auth_group migration (src/lib/inventory.ts) reads AUTHENTIK_GROUP_LADDER
-// at DB-open time; with the old ordering it would silently see the built-in
-// default instead of this operator's configured ladder.
+// Configuration lives in the settings store inside inventory/bellhop.db
+// (issue #64). The gitignored data/*.env files are now only a one-time
+// import source (importEnvFiles, below, copies each value into the store if
+// nothing is stored for it yet) and, loaded into the environment here, an
+// override that wins over the stored value -- the same as any other
+// environment variable, which the Settings page reports as such. A missing
+// file is a silent no-op (dotenv.config never throws). data/authentik.env
+// holds the AUTHENTIK_* settings and WEB_UI_AUTH_MODE;
+// data/cloudflare-api.env holds CLOUDFLARE_DNS_API_TOKEN (not
+// data/cloudflare.env, which is the cloudflare-ddns container's answer
+// file); data/nginx-proxy-manager.env holds the NPM_API_* settings.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
-
-// CLOUDFLARE_DNS_API_TOKEN for syncProxyLive's stale _acme-challenge prune
-// (issue #162), loaded the same way and for the same reason as
-// authentik.env. Not data/cloudflare.env, which is the cloudflare-ddns
-// container's answer file. Silent no-op if missing: buildCloudflareClient()
-// falls back to UnconfiguredCloudflareClient and the prune is skipped.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
-
-// NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for the
-// nginx-proxy-manager proxy driver (issue #31), loaded the same way and for
-// the same reason as the two files above. Silent no-op if missing --
-// buildNpmClient() throws its own named error only once a sync actually
-// tries to reach NPM.
 dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
 
 const invPath = inventoryPath();
+
+// Import, then register the store, both before loadInventory(): the one-time
+// requires_auth -> auth_group migration (src/lib/inventory.ts) reads the
+// group ladder at DB-open time, and must see this operator's configured
+// ladder rather than the built-in default. A failed import only warns: the
+// files' values are already in the environment above.
+importEnvFilesAndUseStore(invPath, dataDir());
 const inventory = loadInventory(invPath);
 
-// Called at boot so an invalid WEB_UI_AUTH_MODE fails fast here rather than
-// on every request. The warning is one of the two visible guards on the
-// inferred default -- the other is the web UI's own banner.
+// Called at boot so an invalid auth mode fails fast here rather than on
+// every request. The warning is one of the two visible guards on the
+// inferred default -- the other is the web UI's own banner. The mode now
+// comes from the stored webUiAuthMode setting unless WEB_UI_AUTH_MODE
+// overrides it; a malformed stored value can only appear by hand-editing
+// the database, since every write path validates it.
 const mode = authMode();
 if (mode !== 'authentik') {
   logWarn(
     `Web UI auth mode is '${mode}': requests with no Authentik forward-auth headers are served as a full-admin local operator. ` +
-      'Set WEB_UI_AUTH_MODE=authentik to require authentication.'
+      'Set the webUiAuthMode setting (or WEB_UI_AUTH_MODE) to authentik to require authentication.'
   );
 }
 
-// authentikConfig() throws on a malformed AUTHENTIK_OUTPOST_PORT (see its
-// own comment in src/lib/authentik-config.ts). It's now reached from
+// authentikConfig() throws on a malformed authentikOutpostPort (see its
+// own comment in src/lib/authentik-config.ts), whether it comes from
+// AUTHENTIK_OUTPOST_PORT or, through the store registered above, a
+// hand-edited stored value. It's now reached from
 // isAdminUser -> resolveAuthUser / localOperator() / isJobVisible on every
 // request -- worst case, the raw 'upgrade' WebSocket listener in
 // src/web/routes/jobs.ts, which has no Express error handling, so an

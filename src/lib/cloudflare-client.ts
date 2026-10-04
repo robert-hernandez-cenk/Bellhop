@@ -1,3 +1,7 @@
+import { configValue } from './config.ts';
+import { liveClient } from './live-client.ts';
+import { settingFix } from './settings-hint.ts';
+
 // Cloudflare REST access for prune-acme-challenges (issue #162). Modeled on
 // authentik-client.ts: an interface, a real fetch-backed implementation, and
 // a null object used when no token is configured, so callers never need a
@@ -5,8 +9,9 @@
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 
-export const CLOUDFLARE_UNCONFIGURED_MESSAGE =
-  'Cloudflare API not configured (set CLOUDFLARE_DNS_API_TOKEN in data/cloudflare-api.env)';
+// Names the setting and the Settings page (issue #64) rather than the
+// data/cloudflare-api.env file it used to come from.
+export const CLOUDFLARE_UNCONFIGURED_MESSAGE = `Cloudflare API not configured -- set cloudflareDnsApiToken (${settingFix('cloudflareDnsApiToken')})`;
 
 // Applied to every request via AbortSignal.timeout(): syncProxyLive awaits
 // this client inside the Dashboard guest-PATCH handler, so a Cloudflare
@@ -143,13 +148,16 @@ export class UnconfiguredCloudflareClient implements CloudflareClient {
   }
 }
 
-// The one place the configured/unconfigured decision lives; src/cli.ts and
-// src/web/server.ts both call it after dotenv-loading data/cloudflare-api.env.
-// An empty value counts as unset, same as authentik-config.ts. Deliberately a
-// different variable from the CLOUDFLARE_API_TOKEN that Caddy and
-// cloudflare-ddns use, so a shell exporting theirs can't silently stand in.
+// The one place the configured/unconfigured decision lives. The token is
+// the cloudflareDnsApiToken setting, overridden by CLOUDFLARE_DNS_API_TOKEN
+// (an empty value counts as unset) -- deliberately a different variable from
+// the CLOUDFLARE_API_TOKEN that Caddy and cloudflare-ddns use, so a shell
+// exporting theirs can't silently stand in. Live (issue #64): resolved on
+// every call, so a token saved or cleared on the Settings page applies to the
+// web service's and MCP server's long-lived client without a restart.
 export function buildCloudflareClient(env: NodeJS.ProcessEnv = process.env): CloudflareClient {
-  const token = env.CLOUDFLARE_DNS_API_TOKEN;
-  if (!token) return new UnconfiguredCloudflareClient();
-  return new RealCloudflareClient(token);
+  return liveClient<CloudflareClient>(() => {
+    const token = configValue('cloudflareDnsApiToken', env).value;
+    return token === undefined ? new UnconfiguredCloudflareClient() : new RealCloudflareClient(token);
+  });
 }

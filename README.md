@@ -120,9 +120,10 @@ behaves.
 
 - [Commands](docs/commands.md) — every command, with examples.
 - [Configuration](docs/configuration.md) — the inventory file, inventory-wide
-  settings, and installing apps from your own script repository.
+  settings, integration settings and secrets, and installing apps from your
+  own script repository.
 - [Environment variables](docs/environment-variables.md) — overrides and
-  the local `data/*.env` files.
+  the environment-only variables.
 - [Web UI](docs/web-ui.md) — running the dashboard and how it authenticates.
 - [Permissions](docs/permissions.md) — per-group allow-lists/block-lists and
   a guest creator's automatic access to it.

@@ -1,6 +1,7 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { authentikConfig, authentikConfigured, rungsAtOrAbove } from '../../src/lib/authentik-config.ts';
+import { adminGroupsWith, authentikConfig, authentikConfigured, rungsAtOrAbove } from '../../src/lib/authentik-config.ts';
+import { resetConfigStore, tempConfigStore, writeMetaRow } from '../support/config-store.ts';
 
 test('authentikConfig defaults to the values this toolkit hardcoded before issue #123', () => {
   const config = authentikConfig({});
@@ -108,4 +109,95 @@ test('rungsAtOrAbove returns the named rung and every rung above it', () => {
 
 test('rungsAtOrAbove returns null for a group that is not on the ladder', () => {
   assert.equal(rungsAtOrAbove(['low', 'mid', 'high'], 'nope'), null);
+});
+
+// -- Issue #64: stored settings through the config accessor -----------------
+
+afterEach(() => resetConfigStore());
+
+test('authentikConfig reads stored settings when a config store is registered', () => {
+  tempConfigStore({
+    authentikAdminGroup: 'stored-admins',
+    authentikBuiltinAdminGroup: 'stored-superusers',
+    authentikGroupLadder: 'low, high',
+    authentikOutpostName: 'stored outpost',
+    authentikOutpostPort: '9200',
+    authentikAuthorizationFlowSlug: 'stored-auth-flow',
+    authentikInvalidationFlowSlug: 'stored-invalidation-flow',
+    authentikOidcSigningKeyName: 'stored-signing-key',
+  });
+  const config = authentikConfig({});
+  assert.equal(config.adminGroup, 'stored-admins');
+  assert.equal(config.builtinAdminGroup, 'stored-superusers');
+  assert.deepEqual(config.groupLadder, ['low', 'high']);
+  assert.equal(config.outpostName, 'stored outpost');
+  assert.equal(config.outpostPort, 9200);
+  assert.equal(config.authorizationFlowSlug, 'stored-auth-flow');
+  assert.equal(config.invalidationFlowSlug, 'stored-invalidation-flow');
+  assert.equal(config.oidcSigningKeyName, 'stored-signing-key');
+});
+
+test('authentikConfig: an environment variable overrides the stored setting', () => {
+  tempConfigStore({ authentikAdminGroup: 'stored-admins', authentikOutpostPort: '9200' });
+  const config = authentikConfig({ AUTHENTIK_ADMIN_GROUP: 'env-admins', AUTHENTIK_OUTPOST_PORT: '9300' });
+  assert.equal(config.adminGroup, 'env-admins');
+  assert.equal(config.outpostPort, 9300);
+});
+
+test('authentikConfig keeps its defaults with a registered store holding nothing', () => {
+  tempConfigStore();
+  const config = authentikConfig({});
+  assert.equal(config.adminGroup, 'bellhop-admins');
+  assert.equal(config.outpostPort, 9000);
+  assert.deepEqual(config.groupLadder, ['bellhop-app-users-open', 'bellhop-app-users', 'bellhop-users', 'authentik Admins']);
+});
+
+test('authentikConfig: a malformed stored outpost port throws naming the setting, never the value', () => {
+  const dbPath = tempConfigStore();
+  writeMetaRow(dbPath, 'authentikOutpostPort', 'port-XYZ');
+  assert.throws(
+    () => authentikConfig({}),
+    (err: Error) => err.message.includes('authentikOutpostPort') && !err.message.includes('port-XYZ')
+  );
+});
+
+test('authentikConfigured reads the stored URL and token', () => {
+  tempConfigStore({ authentikApiUrl: 'https://auth.example.com' }, { authentikApiToken: 'example-token-1' });
+  assert.equal(authentikConfigured({}), true);
+});
+
+test('authentikConfigured: a stored URL alone is not configured; an env token completes it', () => {
+  tempConfigStore({ authentikApiUrl: 'https://auth.example.com' });
+  assert.equal(authentikConfigured({}), false);
+  assert.equal(authentikConfigured({ AUTHENTIK_API_TOKEN: 'example-env-token' }), true);
+});
+
+// -- Issue #64 US6: adminGroupsWith --------------------------------------
+
+test('adminGroupsWith keeps the current effective groups when overrides is empty', () => {
+  assert.deepEqual(adminGroupsWith({}, { AUTHENTIK_ADMIN_GROUP: 'my-admins' }), {
+    adminGroup: 'my-admins',
+    builtinAdminGroup: 'authentik Admins',
+  });
+});
+
+test('adminGroupsWith applies an override string value', () => {
+  assert.deepEqual(adminGroupsWith({ authentikAdminGroup: 'new-admins' }, {}), {
+    adminGroup: 'new-admins',
+    builtinAdminGroup: 'authentik Admins',
+  });
+});
+
+test('adminGroupsWith treats an override key present with undefined as "clear to default"', () => {
+  assert.deepEqual(
+    adminGroupsWith({ authentikAdminGroup: undefined }, { AUTHENTIK_ADMIN_GROUP: 'my-admins' }),
+    { adminGroup: 'bellhop-admins', builtinAdminGroup: 'authentik Admins' }
+  );
+});
+
+test('adminGroupsWith applies both overrides independently', () => {
+  assert.deepEqual(
+    adminGroupsWith({ authentikAdminGroup: 'new-admins', authentikBuiltinAdminGroup: 'new-builtin' }, {}),
+    { adminGroup: 'new-admins', builtinAdminGroup: 'new-builtin' }
+  );
 });

@@ -8,6 +8,7 @@
 // src/web/tasks and the check-app-updates command (later work units) are
 // what wire it to a real run.
 import { z } from 'zod';
+import { githubApiHeaders, githubUnauthorizedError } from './github.ts';
 
 // --- Parsing a ct/*.sh script's check_for_gh_release call (research R2) ---
 
@@ -220,7 +221,7 @@ export function createReleaseCache(): ReleaseCache {
 
 async function githubGet(path: string, fetchImpl: typeof fetch): Promise<Response> {
   return fetchImpl(`${GITHUB_API_BASE}${path}`, {
-    headers: GITHUB_HEADERS,
+    headers: githubApiHeaders(GITHUB_HEADERS),
     signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
   });
 }
@@ -229,7 +230,11 @@ function toLatestRelease(release: Release): LatestRelease {
   return { tag: release.tag_name, version: normalizeVersion(release.tag_name) };
 }
 
+// Checked before the 403/429 rate-limit case (issue #64, research R6): a
+// rejected token must never be reported as a generic rate limit or a bare
+// status code, which would send the operator looking in the wrong place.
 function statusError(repo: string, status: number): Error {
+  if (status === 401) return githubUnauthorizedError(`Fetching the latest release for ${repo}`);
   if (status === 403 || status === 429) return new Error(GITHUB_RATE_LIMIT_MESSAGE);
   return new Error(`GitHub API returned ${status} fetching releases for ${repo}`);
 }
@@ -295,6 +300,7 @@ async function fetchLatestReleaseUncached(
   // rate-limited either path, so it throws immediately with no fallback.
   if (opts.pin) {
     const res = await githubGet(`/repos/${repo}/releases/tags/${encodeURIComponent(opts.pin)}`, fetchImpl);
+    if (res.status === 401) throw githubUnauthorizedError(`Fetching the latest release for ${repo}`);
     if (res.status === 403 || res.status === 429) throw new Error(GITHUB_RATE_LIMIT_MESSAGE);
     if (res.status === 200) {
       const release = ReleaseSchema.parse(await res.json());
@@ -310,6 +316,7 @@ async function fetchLatestReleaseUncached(
   if (!opts.prefix) {
     const res = await githubGet('/repos/' + repo + '/releases/latest', fetchImpl);
     if (res.status === 200) return toLatestRelease(ReleaseSchema.parse(await res.json()));
+    if (res.status === 401) throw githubUnauthorizedError(`Fetching the latest release for ${repo}`);
     if (res.status === 403 || res.status === 429) throw new Error(GITHUB_RATE_LIMIT_MESSAGE);
     // Any other non-200 (e.g. the repo has no releases yet, so /latest
     // 404s) falls through to the paginated list below.

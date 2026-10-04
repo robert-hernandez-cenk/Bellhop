@@ -2,10 +2,10 @@ import { Command } from 'commander';
 import path from 'node:path';
 import { stringify } from 'yaml';
 import dotenv from 'dotenv';
-import { authentikConfig, authentikConfigured } from './lib/authentik-config.ts';
 import { logError, logInfo } from './lib/log.ts';
+import { importEnvFilesAndUseStore } from './lib/config-import.ts';
 import { Ssh2SSHClient } from './lib/ssh-client.ts';
-import { loadInventory, saveInventory, SETTINGS_KEYS } from './lib/inventory.ts';
+import { loadInventory, saveInventory, SETTINGS_KEYS, withFreshSettings } from './lib/inventory.ts';
 import { dataDir, inventoryPath } from './lib/paths.ts';
 import { runAuditNfsMounts, formatAuditNfsMounts } from './commands/maintenance/audit-nfs-mounts.ts';
 import { runImportYamlInventory } from './commands/maintenance/import-yaml-inventory.ts';
@@ -16,7 +16,9 @@ import { runCheckAppUpdates, formatCheckAppUpdates } from './commands/maintenanc
 import { runGuestPower } from './commands/maintenance/guest-power.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from './commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/push-ssh-key.ts';
-import { runSetConfig } from './commands/maintenance/set-config.ts';
+import { runSetConfig, resolveSetConfigValue } from './commands/maintenance/set-config.ts';
+import { promptHidden, readAllStdin } from './lib/secret-input.ts';
+import { SECRET_SETTINGS_KEYS } from './lib/settings-defs.ts';
 import { runBackfillGuestCreators, formatBackfillGuestCreators } from './commands/maintenance/backfill-guest-creators.ts';
 import { JobStore } from './web/jobs/job-store.ts';
 import { runSyncProxy } from './commands/networking/sync-proxy.ts';
@@ -27,8 +29,7 @@ import { runOidcCredentials, formatOidcCredentials } from './commands/networking
 import { runAdoptOidcClient, formatAdoptOidcClient } from './commands/networking/adopt-oidc-client.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
-import { RealAuthentikClient, UnconfiguredAuthentikClient } from './lib/authentik-client.ts';
-import type { AuthentikClient } from './lib/authentik-client.ts';
+import { buildAuthentikClient } from './lib/authentik-client.ts';
 import { localOperatorUsername } from './web/auth.ts';
 import { runAttachNfsMount } from './commands/provisioning/attach-nfs-mount.ts';
 import { runConfigureGuest } from './commands/provisioning/configure-guest.ts';
@@ -42,43 +43,35 @@ import { runDeleteGuest } from './commands/provisioning/delete-guest.ts';
 import { runMigrateGuest } from './commands/provisioning/migrate-guest.ts';
 import type { TargetSelector } from './lib/targets.ts';
 
-// Mirrors src/web/server.ts: the gitignored data/authentik.env supplies
-// AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN plus the AUTHENTIK_* overrides read
-// by authentikConfig(). Loading it here too is what keeps a CLI
-// sync-authentik run and a web-triggered one from silently disagreeing about
-// group names, the outpost, or the flow slugs. A missing file is a silent
-// no-op (dotenv.config never throws).
+// Mirrors src/web/server.ts (issue #64). Configuration lives in the settings
+// store inside inventory/bellhop.db; the gitignored data/*.env files are now
+// two things only: a one-time import source (importEnvFiles, below, copies
+// each value into the store if nothing is stored for it yet) and, loaded into
+// the environment here, an override that wins over the stored value -- the
+// same as any other environment variable. A missing file is a silent no-op
+// (dotenv.config never throws). data/authentik.env holds the AUTHENTIK_*
+// settings and WEB_UI_AUTH_MODE; data/cloudflare-api.env holds
+// CLOUDFLARE_DNS_API_TOKEN (not data/cloudflare.env -- that is the
+// cloudflare-ddns container's answer file, which nothing in src/ reads);
+// data/nginx-proxy-manager.env holds the NPM_API_* settings.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
-
-// Mirrors src/web/server.ts: the gitignored data/cloudflare-api.env supplies
-// CLOUDFLARE_DNS_API_TOKEN for prune-acme-challenges (issue #162). Not
-// data/cloudflare.env -- that is the cloudflare-ddns container's answer file,
-// which nothing in src/ reads. A missing file is a silent no-op.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
-
-// Mirrors src/web/server.ts: the gitignored data/nginx-proxy-manager.env
-// supplies NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for
-// the nginx-proxy-manager proxy driver (issue #31). A missing file is a
-// silent no-op -- buildNpmClient() throws its own named error only once a
-// command actually tries to reach NPM.
 dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
+
+// Before any command runs, --help included (an import is idempotent, and with
+// no database there is nothing to import into and nothing is created). A
+// failed import only warns, so it can never stop a command --
+// import-yaml-inventory creating a fresh database, say -- from running.
+// Registering the store is what makes configValue() read stored settings at
+// all; without it the accessor sees the environment only.
+importEnvFilesAndUseStore(inventoryPath(), dataDir());
+
 export function fstabPath(): string | undefined {
   return process.env.FSTAB_PATH;
 }
 
 export function nfsServer(): string | undefined {
   return process.env.NFS_SERVER;
-}
-
-// Mirrors src/web/server.ts's buildAuthentikClient(). Both AUTHENTIK_API_URL
-// and AUTHENTIK_API_TOKEN come either from the operator's own shell or from
-// data/authentik.env, loaded above. Delegates the configured/not-configured
-// decision to authentikConfigured() so it lives in exactly one place -- the
-// non-null assertions below are safe because authentikConfigured() already
-// checked both vars against the same process.env this file reads.
-export function buildAuthentikClient(): AuthentikClient {
-  if (!authentikConfigured()) return new UnconfiguredAuthentikClient();
-  return new RealAuthentikClient(process.env.AUTHENTIK_API_URL!, process.env.AUTHENTIK_API_TOKEN!, authentikConfig());
 }
 
 export function parsePositiveInt(value: string, flag: string): number {
@@ -136,7 +129,9 @@ program
         logInfo(`[DRY RUN] Not writing ${invPath}. Pass --apply to write these changes.`);
         return;
       }
-      saveInventory(invPath, { ...inventory, guests: result.guests, hosts: result.hosts });
+      // withFreshSettings: the sync queried every host first, and a settings
+      // save in the meantime must not be reverted by this one.
+      saveInventory(invPath, withFreshSettings(invPath, { ...inventory, guests: result.guests, hosts: result.hosts }));
       logInfo(`Wrote ${invPath}`);
     })
   );
@@ -164,18 +159,37 @@ program
 
 program
   .command('set-config')
-  .description(`Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')})`)
+  .description(
+    `Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')}) or secret ` +
+      `(${SECRET_SETTINGS_KEYS.join(', ')}; read from --stdin or a no-echo prompt, never an argument)`
+  )
   .argument('<key>', 'the setting to change')
-  .argument('[value]', 'the new value (omit with --unset)')
+  .argument('[value]', 'the new value (omit with --unset or --stdin; never given for a secret)')
+  .option('--stdin', 'read the value from standard input (one trailing newline is stripped)')
   .option('--unset', 'clear the setting instead of setting it')
   .option('--apply', 'write the change (default: dry run)')
   .action(
-    action(async (key: string, value: string | undefined, opts: { unset?: boolean; apply?: boolean }) => {
-      const invPath = inventoryPath();
-      const result = runSetConfig({ key, value, ...opts }, { inventoryPath: invPath });
-      if (!result.applied) return;
-      logInfo(result.value === undefined ? `Cleared ${result.key} in ${invPath}` : `Set ${result.key} to ${result.value} in ${invPath}`);
-    })
+    action(
+      async (key: string, rawValue: string | undefined, opts: { stdin?: boolean; unset?: boolean; apply?: boolean }) => {
+        const invPath = inventoryPath();
+        // A secret arrives on stdin or through a no-echo prompt (issue #64);
+        // resolveSetConfigValue refuses one given as an argument.
+        const value = await resolveSetConfigValue(
+          { key, value: rawValue, stdin: opts.stdin, unset: opts.unset },
+          { isTTY: process.stdin.isTTY === true, readStdin: () => readAllStdin(), prompt: (q) => promptHidden(q) }
+        );
+        const result = runSetConfig({ key, value, unset: opts.unset, apply: opts.apply }, { inventoryPath: invPath });
+        if (!result.applied) return;
+        // result.value is never a secret's (runSetConfig leaves it undefined).
+        logInfo(
+          result.cleared
+            ? `Cleared ${result.key} in ${invPath}`
+            : result.secret
+              ? `Set ${result.key} in ${invPath}`
+              : `Set ${result.key} to ${result.value} in ${invPath}`
+        );
+      }
+    )
   );
 
 program

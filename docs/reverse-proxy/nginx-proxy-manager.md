@@ -14,23 +14,28 @@ the fields Bellhop sends on a create or update.
 
 ## Credentials
 
-Create `data/nginx-proxy-manager.env` (same convention as
-`data/authentik.env`/`data/cloudflare-api.env` — see [Environment
-variables](../environment-variables.md)):
+Set the login Bellhop signs in to NPM with on the Settings page's Nginx
+Proxy Manager tab, or with `set-config` (see [Integration settings and
+secrets](../configuration.md#integration-settings-and-secrets)):
 
-```text
-NPM_API_EMAIL=admin@example.com
-NPM_API_PASSWORD=your-npm-admin-password
+```bash
+bellhop set-config npmApiEmail admin@example.com --apply
+bellhop set-config npmApiPassword --apply   # prompts for the password without echo
 ```
 
-`NPM_API_URL` is optional. Unset, Bellhop reaches NPM at
+The password is a write-only secret: Bellhop never shows it again once
+saved. `npmApiUrl` is optional. Unset, Bellhop reaches NPM at
 `http://<the proxy: true entry's ip>:81` — NPM's own admin UI/API port; set
 it if NPM's admin API is reachable at a different address. Either way,
 **NPM's admin API must be reachable over HTTP from wherever Bellhop
 runs** — a LAN address is fine, the same posture this toolkit already
 assumes for Authentik's own API. A missing or rejected credential fails
-with an error naming the file and which of `NPM_API_EMAIL`/
-`NPM_API_PASSWORD` (or the login itself) is at fault.
+with an error naming the `npmApiEmail`/`npmApiPassword` settings (or the
+login itself) is at fault. `NPM_API_EMAIL`/`NPM_API_PASSWORD`/
+`NPM_API_URL` still override the settings (see [Environment
+variables](../environment-variables.md)); an existing
+`data/nginx-proxy-manager.env` is imported into the settings on first
+start, after which it can be deleted.
 
 ## Ownership
 

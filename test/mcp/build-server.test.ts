@@ -8,6 +8,9 @@ import { loadInventory, saveInventory, type Inventory } from '../../src/lib/inve
 import { gatewayStatus } from '../../src/operations/vpn-gateway.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { setupMcp as setup, waitForFinished, parse, MCP_TEST_INVENTORY } from '../support/mcp-harness.ts';
+import { SECRET_SETTINGS_KEYS } from '../../src/lib/settings-defs.ts';
+import { useConfigStore, writeSecret } from '../../src/lib/config.ts';
+import { resetConfigStore } from '../support/config-store.ts';
 
 // Mirrors sync-authentik.test.ts's/oidc-credentials.test.ts's own OIDC
 // fixture shape -- an OIDC-gated 'media' guest and a matching owned OpenID
@@ -636,4 +639,46 @@ test('connect_vpn_gateway is an isError with the provider message on a 502', asy
   assert.equal(result.isError, true);
   assert.equal(result.content[0].text, 'no servers matched');
   assert.deepEqual(jobStore.list(), []);
+});
+
+// -- Issue #64 US2: no MCP tool writes or returns a secret --------------------
+
+test('set_config accepts no secret key, in its schema or at call time', async () => {
+  const { client, call } = await setup();
+  const tool = (await client.listTools()).tools.find((t) => t.name === 'set_config')!;
+  const key = (tool.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.key;
+  for (const secret of SECRET_SETTINGS_KEYS) {
+    assert.ok(!key.enum?.includes(secret), `set_config must not accept ${secret}`);
+    const result = await call('set_config', { key: secret, value: 'example-token', apply: true });
+    assert.equal(result.isError, true, `set_config(${secret}) must be refused`);
+  }
+});
+
+test('no tool output contains a stored secret', async () => {
+  const h = await setup();
+  const markers = SECRET_SETTINGS_KEYS.map((key) => `leak-marker-${key}-7f3a`);
+  SECRET_SETTINGS_KEYS.forEach((key, i) => writeSecret(h.inventoryPath, key, markers[i]));
+  // Registered so every consumer that reads a secret through the accessor
+  // sees the stored ones, as in the real MCP server.
+  useConfigStore(h.inventoryPath);
+  try {
+    const outputs: string[] = [JSON.stringify((await h.client.listTools()).tools)];
+    const record = async (name: string, args: Record<string, unknown> = {}) => {
+      const result = await h.call(name, args);
+      outputs.push(result.content.map((c) => c.text).join('\n'));
+      return result;
+    };
+    await record('get_inventory');
+    await record('set_config', { key: 'dnsServer', value: '192.0.2.53' });
+    const started = JSON.parse((await record('set_config', { key: 'dnsServer', value: '192.0.2.53', apply: true })).content[0].text);
+    await waitForFinished(h.jobStore, started.jobId);
+    await record('get_job', { id: started.jobId });
+    await record('list_jobs');
+    const job = h.jobStore.get(started.jobId)!;
+    outputs.push(job.argsJson, h.jobLog.read(job.logFile));
+    const all = outputs.join('\n');
+    for (const marker of markers) assert.ok(!all.includes(marker), `${marker} leaked into a tool output`);
+  } finally {
+    resetConfigStore();
+  }
 });
