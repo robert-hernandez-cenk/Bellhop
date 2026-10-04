@@ -21,6 +21,12 @@ function formatCheckedTime(iso: string): string {
 // hover-only `title`, since `title` never shows on touch. Open/pinned state
 // is local to this one badge -- unlike AdvancedGuestModal's multi-field
 // coordination, there is only ever one field here to toggle.
+//
+// placement="anchored" (issue #75): the badge sits in a card with no
+// positioned ancestor, so the row-style explanation the Advanced modal uses
+// laid out against <body> -- full width, below every card -- and scrolled
+// the page to reach it. Anchored, it opens beside the ⓘ instead, sized to
+// its text, and the page never moves.
 export function AppUpdateBadge({ result }: Props) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -49,6 +55,7 @@ export function AppUpdateBadge({ result }: Props) {
             setPinned(true);
           }
         }}
+        placement="anchored"
         onClose={() => {
           setOpen(false);
           setPinned(false);

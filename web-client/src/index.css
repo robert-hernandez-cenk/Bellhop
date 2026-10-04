@@ -148,6 +148,21 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* issue #75: an explanation anchored to its ⓘ marker rather than spanning a
+   form row (the Update page's app-update badge, which has no positioned
+   ancestor -- the row rule above would lay it out against <body>, full
+   width and below every card). Fixed, so opening it never resizes or
+   scrolls the page; FieldHelp sets top/left/max-width from
+   lib/popover-position.ts, and this max-width is the pre-script fallback. */
+.field-help-popover-anchored {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+  margin-top: 0;
+}
 .button-icon { display: inline-flex; align-items: center; justify-content: center; padding: 8px; }
 .update-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .update-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }

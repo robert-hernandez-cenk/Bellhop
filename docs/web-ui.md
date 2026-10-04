@@ -79,8 +79,9 @@ badge when a newer release exists, with the guest's community-script-update
 button visually emphasized to match, or a quiet note ("Up to date",
 "Update check failed", "Not checked: guest is stopped") for every other
 outcome — an app whose script has no recognizable release check shows
-nothing at all, never an error. Tapping or clicking the badge or note shows
-when it was last checked (and, for a failure, why). After a successful
+nothing at all, never an error. Tapping or clicking the badge or note opens
+its explanation right beside it, showing when it was last checked (and, for
+a failure, why), without scrolling or moving the page. After a successful
 app update from this page, that guest's result is refreshed immediately as
 part of the same job, rather than waiting for the next daily run.
 
