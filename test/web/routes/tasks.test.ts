@@ -135,6 +135,39 @@ test('PATCH /api/tasks/:id for an unknown id returns 404', async () => {
   assert.equal(res.body.error, 'Unknown task: no-such-task');
 });
 
+// Fix round 1: only the malformed-timeOfDay case is a 400 -- an unrelated
+// failure inside the scheduler (here, an inventoryPath that can't be
+// opened as a database at all -- a directory, not a file) must surface as
+// a 500, never be folded into the same 400 a validation error gets.
+test('PATCH /api/tasks/:id surfaces a non-timeOfDay scheduler failure as 500', async () => {
+  const inv = baseInventory();
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const jobRunner = new JobRunner(jobStore, jobLog, ssh);
+  const badInventoryPath = mkdtempSync(path.join(tmpdir(), 'bad-inventory-'));
+  const taskScheduler = new TaskScheduler({
+    inventory: inv,
+    inventoryPath: badInventoryPath,
+    jobRunner,
+    jobStore,
+    tasks: [FAKE_TASK],
+  });
+  const app = buildApp({
+    inventory: inv,
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner,
+    inventoryPath: badInventoryPath,
+    authentik: new FakeAuthentikClient(),
+    taskScheduler,
+  });
+
+  const res = await asAdmin(request(app).patch('/api/tasks/fake-task')).send({ enabled: false });
+  assert.equal(res.status, 500);
+});
+
 test('POST /api/tasks/:id/run returns 200 with a jobId attributed to the caller', async () => {
   const { app, jobStore } = testApp();
   const res = await asAdmin(request(app).post('/api/tasks/fake-task/run'));

@@ -122,7 +122,11 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
     // Built so the Tasks page's routes (GET/PATCH /api/tasks, run now) work
     // in the demo, but start() is deliberately never called -- the demo
     // must never fire a real scheduled (or startup catch-up) run.
-    const taskScheduler = new TaskScheduler({ inventory, inventoryPath, jobRunner, jobStore });
+    // fetchImpl: demoFetch (fix round 1) -- without it, TaskScheduler.
+    // startRun hands the check-app-updates task `ctx.fetchImpl: undefined`,
+    // and runCheckAppUpdates falls back to the real global fetch, making a
+    // "Run now" click reach the real GitHub API.
+    const taskScheduler = new TaskScheduler({ inventory, inventoryPath, jobRunner, jobStore, fetchImpl: demoFetch });
 
     const impersonationStore: ImpersonationStore = new Map();
     const app = buildApp({

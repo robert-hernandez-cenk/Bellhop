@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdminGroup } from '../auth.ts';
 import { resolveTriggeredBy } from '../impersonation.ts';
 import { UnknownTaskError, type TaskScheduler } from '../tasks/scheduler.ts';
+import { TIME_OF_DAY_ERROR } from '../../lib/task-schedules.ts';
 
 // contracts/http-api.md's PATCH body: strict (an unknown key is a 400, not
 // silently ignored) and at least one of the two fields -- an empty body is
@@ -16,10 +17,6 @@ const PatchTaskBodySchema = z
   .refine((body) => body.timeOfDay !== undefined || body.enabled !== undefined, {
     message: 'At least one of timeOfDay or enabled is required',
   });
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 // GET/PATCH /api/tasks(/:id), POST /api/tasks/:id/run (contracts/http-api.md,
 // FR-007..FR-011). `taskScheduler` is undefined in any process that never
@@ -54,10 +51,17 @@ export function tasksRoutes(taskScheduler: TaskScheduler | undefined): Router {
         res.status(404).json({ error: err.message });
         return;
       }
-      // The only other thrown error is TIME_OF_DAY_ERROR (a malformed
-      // timeOfDay the zod schema above can't catch, since it only knows the
-      // field is a string) -- a client-side mistake, not a server error.
-      res.status(400).json({ error: errMsg(err) });
+      // Fix round 1: only the malformed-timeOfDay case (the zod schema
+      // above only knows the field is a string, not that it's HH:MM) is a
+      // client mistake -- matched on the exact message rather than "any
+      // other thrown error", so a genuine server failure (e.g. the
+      // database write itself failing) surfaces as a 500 instead of being
+      // misreported as a bad request.
+      if (err instanceof Error && err.message === TIME_OF_DAY_ERROR) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
     }
   });
 

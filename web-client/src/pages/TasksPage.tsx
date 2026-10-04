@@ -16,11 +16,16 @@ interface TaskDraft {
   enabled: boolean;
   saving: boolean;
   running: boolean;
-  error: string | null;
+  // Fix round 1: Save and Run now are two independent actions on the same
+  // row, so each gets its own error -- a 409 from Run now must never show
+  // up next to the Schedule fields, and a bad time-of-day must never show
+  // up next to the Run now button.
+  saveError: string | null;
+  runError: string | null;
 }
 
 function draftFor(task: TaskView): TaskDraft {
-  return { timeOfDay: task.timeOfDay, enabled: task.enabled, saving: false, running: false, error: null };
+  return { timeOfDay: task.timeOfDay, enabled: task.enabled, saving: false, running: false, saveError: null, runError: null };
 }
 
 export function TasksPage() {
@@ -31,13 +36,19 @@ export function TasksPage() {
   const [loading, setLoading] = useState(true);
 
   // Replaces every row's draft with the server's own values, except each
-  // row's own in-flight error -- a reload must not silently clear a message
-  // the admin hasn't seen yet.
+  // row's own in-flight errors -- a reload must not silently clear a
+  // message the admin hasn't seen yet.
   const applyTasks = (list: TaskView[]) => {
     setTasks(list);
     setDrafts((prev) => {
       const next: Record<string, TaskDraft> = {};
-      for (const task of list) next[task.id] = { ...draftFor(task), error: prev[task.id]?.error ?? null };
+      for (const task of list) {
+        next[task.id] = {
+          ...draftFor(task),
+          saveError: prev[task.id]?.saveError ?? null,
+          runError: prev[task.id]?.runError ?? null,
+        };
+      }
       return next;
     });
   };
@@ -60,29 +71,29 @@ export function TasksPage() {
   const save = async (task: TaskView) => {
     const draft = drafts[task.id] ?? draftFor(task);
     if (!isValidTimeOfDay(draft.timeOfDay)) {
-      setDraft(task.id, { error: 'timeOfDay must be HH:MM in 24-hour time, e.g. 04:00' });
+      setDraft(task.id, { saveError: 'timeOfDay must be HH:MM in 24-hour time, e.g. 04:00' });
       return;
     }
-    setDraft(task.id, { saving: true, error: null });
+    setDraft(task.id, { saving: true, saveError: null });
     try {
       const updated = await apiPatch<TaskView>(`/tasks/${task.id}`, {
         timeOfDay: draft.timeOfDay,
         enabled: draft.enabled,
       });
       setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-      setDrafts((prev) => ({ ...prev, [task.id]: { ...draftFor(updated), error: null } }));
+      setDrafts((prev) => ({ ...prev, [task.id]: { ...draftFor(updated), runError: prev[task.id]?.runError ?? null } }));
     } catch (err) {
-      setDraft(task.id, { saving: false, error: err instanceof Error ? err.message : String(err) });
+      setDraft(task.id, { saving: false, saveError: err instanceof Error ? err.message : String(err) });
     }
   };
 
   const runNow = async (task: TaskView) => {
-    setDraft(task.id, { running: true, error: null });
+    setDraft(task.id, { running: true, runError: null });
     try {
       const res = await apiPost<{ jobId: number }>(`/tasks/${task.id}/run`, {});
       navigate(`/jobs/${res.jobId}`);
     } catch (err) {
-      setDraft(task.id, { running: false, error: err instanceof Error ? err.message : String(err) });
+      setDraft(task.id, { running: false, runError: err instanceof Error ? err.message : String(err) });
     }
   };
 
@@ -138,29 +149,40 @@ export function TasksPage() {
                         {draft.saving ? 'Saving...' : 'Save'}
                       </button>
                     </div>
-                    {draft.error && <p className="task-row-error">{draft.error}</p>}
+                    {draft.saveError && <p className="task-row-error">{draft.saveError}</p>}
                   </div>
                 </td>
                 <td data-label="Last run">
-                  {task.lastRun ? (
-                    <>
-                      {task.lastRun.status ? (
-                        <JobStatusBadge status={task.lastRun.status} />
-                      ) : (
-                        taskStatusLabel(task.lastRun.status)
-                      )}{' '}
-                      <Link to={`/jobs/${task.lastRun.jobId}`}>{lastRunText(task.lastRun, formatLocalTime)}</Link>
-                    </>
-                  ) : (
-                    lastRunText(null, formatLocalTime)
-                  )}
+                  {/* A single wrapping element, even though only the `task.lastRun`
+                      branch needs more than one child -- a bare Fragment here
+                      would hand the mobile .data-table tbody td flex rule two
+                      direct children (the status badge/label and the link)
+                      instead of one, the same bug the Task/Schedule cells
+                      above already had. */}
+                  <span>
+                    {task.lastRun ? (
+                      <>
+                        {task.lastRun.status ? (
+                          <JobStatusBadge status={task.lastRun.status} />
+                        ) : (
+                          taskStatusLabel(task.lastRun.status)
+                        )}{' '}
+                        <Link to={`/jobs/${task.lastRun.jobId}`}>{lastRunText(task.lastRun, formatLocalTime)}</Link>
+                      </>
+                    ) : (
+                      lastRunText(null, formatLocalTime)
+                    )}
+                  </span>
                 </td>
                 <td data-label="Next run">{nextRunText(task.nextRun, formatLocalTime)}</td>
                 <td data-label="Actions">
-                  <div className="actions-cell">
-                    <button type="button" className="button" disabled={draft.running} onClick={() => runNow(task)}>
-                      {draft.running ? 'Starting...' : 'Run now'}
-                    </button>
+                  <div>
+                    <div className="actions-cell">
+                      <button type="button" className="button" disabled={draft.running} onClick={() => runNow(task)}>
+                        {draft.running ? 'Starting...' : 'Run now'}
+                      </button>
+                    </div>
+                    {draft.runError && <p className="task-row-error">{draft.runError}</p>}
                   </div>
                 </td>
               </tr>
