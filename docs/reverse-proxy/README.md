@@ -27,9 +27,16 @@ settings](../configuration.md#inventory-wide-settings).
 ![The Settings page's Proxy driver dropdown set to "Caddy (default)", followed by the Proxy config path field showing the Caddy driver's default path](../images/settings-proxy-driver.png)
 
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
-both `forward` and `oidc`) and whether it issues TLS certificates itself
-through Cloudflare DNS-01 (`acmeDns01ViaCloudflare`, which gates whether
-`prune-acme-challenges` runs as part of the web UI's push-live step). It
+both `forward` and `oidc`) and whether, for the current settings, it's
+issuing TLS certificates via ACME DNS-01 through Cloudflare right now
+(`acmeDns01ViaCloudflare(inventory)`, a function rather than a fixed
+boolean — both Caddy drivers answer `true` only in their default
+`cloudflare` TLS mode, and Traefik answers `true` for any named
+certificate resolver but `false` for its reserved `none` value; see the
+per-driver TLS options table and "Certificates" below). This is what
+gates whether `prune-acme-challenges` runs as part
+of the web UI's push-live step — a driver/mode that never touches
+Cloudflare's DNS leaves nothing behind for it to clean up. It
 implements three operations: `plan()` turns the routes derived from
 inventory into a preview and an opaque payload (the dry-run preview is
 always exactly what `--apply` sends); `apply()` sends that payload live and
@@ -73,8 +80,10 @@ combined push-live step and `migrate-guest`'s post-move push log the same
 page render with one log line and continue, the same opt-in
 skip they already give an unset `statusPagePath`. The stale ACME-challenge
 cleanup is skipped too, through the same driver-capability check that
-skips it for any driver that doesn't issue certificates via Cloudflare
-DNS-01 (nginx, Nginx Proxy Manager, and HAProxy included).
+skips it for any driver/mode combination not currently issuing
+certificates via Cloudflare DNS-01 (nginx, Nginx Proxy Manager, and
+HAProxy always; both Caddy drivers whenever their Caddy TLS mode isn't
+`cloudflare`; Traefik whenever its certificate resolver is `none`).
 
 A driver that's configured through a file (Caddy, nginx, HAProxy, and
 Traefik all are; the REST-managed Caddy admin-API and Nginx Proxy Manager
@@ -116,21 +125,52 @@ itself sent, unverified, so a backend must not trust them on an exempt
 path the way it can trust them everywhere else on a gated site.
 
 **Certificates are the operator's job for a driver that doesn't issue them
-itself.** Caddy issues its own via Cloudflare DNS-01 with no extra setup;
-Traefik can too, but — unlike Caddy — through a certificate resolver you
+itself, and even Caddy's own DNS-01 issuance is now one choice among
+several (issue #51).** Caddy's `proxyCaddyTls` setting (unset means
+`cloudflare`, today's original behaviour — see
+[Inventory-wide settings](../configuration.md#inventory-wide-settings))
+picks how *both* Caddy drivers obtain a certificate per site: Cloudflare
+DNS-01 with no extra setup beyond a Caddy build carrying the Cloudflare DNS
+module; a public Let's Encrypt HTTP-01/TLS-ALPN-01 challenge through
+Caddy's own automatic HTTPS, needing no DNS provider but needing ports
+80/443 reachable from the internet; Caddy's internal (self-signed) CA,
+needing nothing public at all but needing that CA trusted on every client
+that connects; or the same shared certificate/key file pair the nginx
+driver uses. Switching modes needs only the setting change and one sync —
+see [Caddy driver](caddy.md#certificate-modes). Traefik can also obtain its
+own certificates, but — unlike Caddy — through a certificate resolver you
 define yourself in its static configuration (Bellhop only names it on each
-router; see [Traefik](traefik.md#prerequisites-the-static-configuration-you-own)).
-nginx cannot obtain its own certificate, so every site the nginx driver
+router; see [Traefik](traefik.md#prerequisites-the-static-configuration-you-own)),
+or through `proxyCertResolver: none` to enable TLS with no resolver at all
+and let Traefik's file provider or default certificate serve it instead —
+see [Traefik](traefik.md#certificate-resolver). nginx cannot obtain its own
+certificate, so every site the nginx driver
 generates shares one certificate/key pair instead — see [nginx
 driver](nginx.md). Nginx Proxy Manager sits in between: it reuses a
-covering certificate already in NPM (typically a wildcard you created
-there yourself), and otherwise has NPM request one over its own HTTP-01
+covering certificate already in NPM (a self-signed one works as well as a
+Let's Encrypt one — see [Nginx Proxy Manager](nginx-proxy-manager.md#certificates)),
+and otherwise has NPM request one over its own HTTP-01
 challenge — see [Nginx Proxy Manager](nginx-proxy-manager.md) for what
 that requires. HAProxy needs the same kind of operator-managed certificate tool
-(`certbot`, `acme.sh`) running alongside it, filling the certificate
+(`certbot`, `acme.sh`, or a self-signed `openssl` certificate) running
+alongside it, filling the certificate
 directory your own frontend's `bind … ssl crt` names — see [HAProxy
 driver](haproxy.md#prerequisites). Bellhop itself never issues or renews a
 certificate.
+
+**Per driver, a Let's Encrypt route that doesn't need Cloudflare, and a
+self-signed route** (issue #51 — every driver's own page documents both in
+full, and a future driver's page must too):
+
+| Driver | Let's Encrypt without Cloudflare | Self-signed |
+|---|---|---|
+| Caddy / Caddy (admin API) | `proxyCaddyTls: letsencrypt` — Caddy's own HTTP-01/TLS-ALPN-01, ports 80/443 reachable from the internet | `proxyCaddyTls: internal` — Caddy's own internal CA |
+| nginx | `certbot --webroot`/`--standalone`, pointed at `proxyTlsCertificate`/`proxyTlsKey` | `openssl req -x509`, pointed at the same two settings |
+| Nginx Proxy Manager | its own built-in HTTP-01 request (the default when no covering certificate exists) | an uploaded self-signed certificate covering the route's hostnames |
+| HAProxy | `certbot`/`acme.sh` (HTTP-01), writing into the frontend's own certificate directory | an `openssl`-generated PEM in the same directory |
+| Traefik | an HTTP-01 resolver in static configuration (`certificatesResolvers.<name>.acme.httpChallenge`) | `proxyCertResolver: none` plus a certificate loaded through the file provider, or Traefik's own default certificate |
+| None | n/a — Bellhop manages no proxy | n/a |
+
 ## Upgrading from the Caddy-only version
 
 **Upgrading an existing installation needs no manual steps in most

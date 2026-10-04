@@ -4,8 +4,10 @@ Select it with `bellhop set-config proxyDriver caddy-api --apply` (or the
 Settings page, where it's listed as "Caddy (admin API)"). It serves exactly
 what the [Caddy driver](caddy.md) serves: the same hostnames, backends,
 `X-Forwarded-Port` header, untrusted-backend-TLS setting, Authentik
-forward-auth with `unauthenticatedPaths`, and Cloudflare DNS-01
-certificates. The difference is how it gets there. Instead of writing a
+forward-auth with `unauthenticatedPaths`, and — issue #51 — the same four
+`proxyCaddyTls` certificate modes (unset/`cloudflare` the default;
+`letsencrypt`; `internal`; `files`; see [Caddy driver](caddy.md#certificate-modes)
+for what each needs). The difference is how it gets there. Instead of writing a
 section of a Caddyfile and reloading, it changes Caddy's live JSON
 configuration through Caddy's admin API.
 
@@ -16,8 +18,9 @@ configuration through Caddy's admin API.
   the admin endpoint is never exposed to the network.
 - **Only Bellhop's objects.** Bellhop tags everything it creates with an
   `@id` starting with `bellhop-`: one route per subdomain-bearing entry
-  (`bellhop-route-<hostname>`) and one TLS automation policy
-  (`bellhop-tls`). Untagged objects are yours, and `sync-proxy` never
+  (`bellhop-route-<hostname>`) and, per the active `proxyCaddyTls` mode (see
+  [Certificate modes](#certificate-modes) below), zero or more TLS objects.
+  Untagged objects are yours, and `sync-proxy` never
   changes, moves, or removes them.
 - **Placement.** Bellhop's routes go first in the one server listening on
   port 443, so a catch-all route of your own can't shadow them. On an empty
@@ -41,10 +44,36 @@ configuration through Caddy's admin API.
   the status page, whose "Deployed proxy configuration" section shows it
   pretty-printed.
 
+## Certificate modes
+
+`proxyCaddyTls` (unset means `cloudflare`; see
+[Caddy driver](caddy.md#certificate-modes) for what each mode needs) decides
+which Bellhop-tagged TLS objects this driver writes into Caddy's live
+configuration, reconciled the same way as routes — stripped and rebuilt
+from the current mode on every sync, never touching an object Bellhop
+didn't tag:
+
+| Mode | Bellhop-tagged objects |
+|---|---|
+| unset / `cloudflare` | One automation policy, `bellhop-tls` (ACME issuer: Cloudflare DNS-01) |
+| `letsencrypt` | None — Caddy's own automatic HTTPS handles it |
+| `internal` | One automation policy, `bellhop-tls` (issuer: Caddy's internal CA) |
+| `files` | A `load_files` certificate entry (`bellhop-tls-files`), a connection policy selecting it (`bellhop-tls-connection`), and — only when the target server has no untagged catch-all connection policy already — a catch-all `bellhop-tls-default` |
+
+**An operator automation policy with no `subjects` (a catch-all) is
+intended to apply to Bellhop's hostnames in `letsencrypt` and `files`
+mode**, since Bellhop writes no automation policy of its own in either —
+this is the one exception to "nothing untagged is ever touched": in
+`cloudflare`/`internal` mode, an untagged policy naming a Bellhop hostname
+is a conflict the same way an untagged route is, but in `letsencrypt`/
+`files` mode it isn't, because there's no Bellhop policy for it to
+collide with.
+
 ## Prerequisites
 
-- **Caddy 2.6 or newer, with the Cloudflare DNS module**, the same build the
-  Caddy driver needs.
+- **Caddy 2.6 or newer**, any build — **with the Cloudflare DNS module**
+  only if `proxyCaddyTls` is unset or `cloudflare` (the Caddy driver's
+  default); the other three modes need no extra module.
 - **`curl` on the proxy host.**
 - **Caddy running from its API-configured service, not a Caddyfile.** The
   packaged `caddy.service` runs Caddy from `/etc/caddy/Caddyfile`, and its
@@ -53,7 +82,8 @@ configuration through Caddy's admin API.
   --resume`, which restores the last configuration Caddy autosaved. While
   `caddy.service` is active, `sync-proxy` refuses to run, in both dry run
   and `--apply`, and says how to switch.
-- **`CLOUDFLARE_API_TOKEN` in `caddy-api.service`'s environment.** A
+- **`CLOUDFLARE_API_TOKEN` in `caddy-api.service`'s environment** — only
+  for `cloudflare` mode. A
   `systemctl edit caddy` override applies to `caddy.service` only, so copy
   it with `systemctl edit caddy-api`. Bellhop never writes the token itself;
   its TLS policy references `{env.CLOUDFLARE_API_TOKEN}`, exactly as the

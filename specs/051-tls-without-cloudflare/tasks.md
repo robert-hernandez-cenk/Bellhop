@@ -121,13 +121,13 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 
 **Goal**: documentation per FR-014/FR-015.
 
-- [ ] T026 [P] [US5] `docs/reverse-proxy/README.md`: per-driver TLS options table (Let's Encrypt without Cloudflare / self-signed), replace "Caddy issues its own via Cloudflare DNS-01" as the only path and the fixed-capability description at line ~31, and add the driver-authoring rule that every driver's page documents both routes
-- [ ] T027 [P] [US5] `docs/reverse-proxy/caddy.md` and `docs/reverse-proxy/caddy-api.md`: the four `proxyCaddyTls` modes with requirements (`letsencrypt`: ports 80/443 reachable from the internet; `internal`: Caddy's root CA trusted on clients; `cloudflare`: a Caddy build with `caddy-dns/cloudflare`; `files`: the certificate/key settings and their certbot defaults), and that switching modes needs only a sync
-- [ ] T028 [P] [US5] `docs/reverse-proxy/traefik.md`: `proxyCertResolver: none` (reserved name; routers get `tls: {}`; certificates from the file provider or Traefik's default) and an example HTTP-01 resolver in static configuration
-- [ ] T029 [P] [US5] `docs/reverse-proxy/nginx.md`: a `certbot --webroot`/`--standalone` recipe and an `openssl` self-signed recipe alongside the Cloudflare one
-- [ ] T030 [P] [US5] `docs/reverse-proxy/nginx-proxy-manager.md`: HTTP-01 is the default request; an uploaded custom certificate (self-signed or otherwise) covering every hostname of a route, unexpired, is reused instead (research R10)
-- [ ] T031 [P] [US5] `docs/reverse-proxy/haproxy.md`: the frontend certificate is the operator's; pointers to a non-Cloudflare Let's Encrypt route (certbot HTTP-01) and a self-signed route
-- [ ] T032 [P] [US5] `docs/configuration.md`: a `proxyCaddyTls` row and the reserved `none` note on `proxyCertResolver`; `inventory/hosts.yaml.example`: replace "Cloudflare DNS-01 TLS regardless" wording
+- [x] T026 [P] [US5] `docs/reverse-proxy/README.md`: per-driver TLS options table (Let's Encrypt without Cloudflare / self-signed), replace "Caddy issues its own via Cloudflare DNS-01" as the only path and the fixed-capability description at line ~31, and add the driver-authoring rule that every driver's page documents both routes
+- [x] T027 [P] [US5] `docs/reverse-proxy/caddy.md` and `docs/reverse-proxy/caddy-api.md`: the four `proxyCaddyTls` modes with requirements (`letsencrypt`: ports 80/443 reachable from the internet; `internal`: Caddy's root CA trusted on clients; `cloudflare`: a Caddy build with `caddy-dns/cloudflare`; `files`: the certificate/key settings and their certbot defaults), and that switching modes needs only a sync
+- [x] T028 [P] [US5] `docs/reverse-proxy/traefik.md`: `proxyCertResolver: none` (reserved name; routers get `tls: {}`; certificates from the file provider or Traefik's default) and an example HTTP-01 resolver in static configuration
+- [x] T029 [P] [US5] `docs/reverse-proxy/nginx.md`: a `certbot --webroot`/`--standalone` recipe and an `openssl` self-signed recipe alongside the Cloudflare one
+- [x] T030 [P] [US5] `docs/reverse-proxy/nginx-proxy-manager.md`: HTTP-01 is the default request; an uploaded custom certificate (self-signed or otherwise) covering every hostname of a route, unexpired, is reused instead (research R10)
+- [x] T031 [P] [US5] `docs/reverse-proxy/haproxy.md`: the frontend certificate is the operator's; pointers to a non-Cloudflare Let's Encrypt route (certbot HTTP-01) and a self-signed route
+- [x] T032 [P] [US5] `docs/configuration.md`: a `proxyCaddyTls` row and the reserved `none` note on `proxyCertResolver`; `inventory/hosts.yaml.example`: replace "Cloudflare DNS-01 TLS regardless" wording
 
 **Checkpoint**: `npm test` (includes `test/docs/links.test.ts`) passes.
 

@@ -45,7 +45,10 @@ up:
 - **A `websecure` entry point.** Every Bellhop router is sent to an entry
   point of exactly that name (issue #35: fixed, not configurable).
 - **A certificate resolver**, matching `proxyCertResolver` (unset means
-  `cloudflare`). Bellhop only names the resolver on each router's `tls`
+  `cloudflare`) — unless you set `proxyCertResolver` to the reserved value
+  `none`, in which case no resolver is needed at all; see [Certificate
+  resolver](#certificate-resolver) below. Bellhop only names the resolver
+  on each router's `tls`
   block — issuing certificates (DNS-01 with Cloudflare, in the common case)
   is entirely this resolver's own configuration.
 - **The file provider**, pointed at the directory holding
@@ -82,6 +85,54 @@ api:
 With that in place, `proxyConfigPath`'s default
 (`/etc/traefik/dynamic/bellhop.yml`) already sits inside `providers.file.directory`,
 so no further setting is required before `sync-proxy --apply`.
+
+A resolver obtaining its certificate over a public HTTP-01 challenge
+instead of Cloudflare's DNS-01 needs no DNS provider at all, just ports
+80/443 reachable from the internet (the `web` entry point below is the
+conventional name for Traefik's port-80 entry point, separate from the
+`websecure` one Bellhop's own routers use):
+
+```yaml
+entryPoints:
+  web:
+    address: ':80'
+  websecure:
+    address: ':443'
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: you@example.com
+      storage: /etc/traefik/acme.json
+      httpChallenge:
+        entryPoint: web
+```
+
+With a resolver named `letsencrypt` instead of `cloudflare`, point Bellhop
+at it: `bellhop set-config proxyCertResolver letsencrypt --apply`.
+
+## Certificate resolver
+
+Setting `proxyCertResolver` to the reserved name `none` tells every
+Bellhop router to enable TLS without naming any resolver at all
+(`tls: {}` instead of `tls: { certResolver: <name> }`) — Traefik then
+serves whatever certificate its file provider loads for that hostname
+(a `tls.certificates` entry in a dynamic-configuration file of your own,
+alongside Bellhop's, including one covering a self-signed certificate you
+generated yourself) or, failing that, its own default certificate. This is
+for an operator who manages certificates entirely through the file
+provider rather than through any ACME resolver — a real certificate
+resolver can never actually be named `none`, since Traefik's own
+`certificatesResolvers` key would collide with the reserved value. With
+`proxyCertResolver` unset or set to any other name, output is unchanged
+from today (`tls: { certResolver: <name> }` on every router).
+
+The web UI's push-live step runs the stale `_acme-challenge` cleanup
+(`prune-acme-challenges`) under this driver for any resolver name except
+`none` — a named resolver may be obtaining its own certificate (through
+Cloudflare DNS-01 or otherwise) and so may leave one of those records
+behind; `none` never touches an ACME resolver at all, so there's nothing
+to clean up.
 
 ## Rendered file
 
