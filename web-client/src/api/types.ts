@@ -284,6 +284,10 @@ export interface SettingsValues {
   // Traefik's own two settings (issue #35) -- inert for every other driver.
   proxyCertResolver?: string;
   proxyApiUrl?: string;
+  // Which of the four ways the two Caddy drivers obtain a certificate
+  // (issue #51) -- inert for every other driver. Unset means 'cloudflare'
+  // (defaultCaddyTls on SettingsResponse below).
+  proxyCaddyTls?: string;
   // The Proxmox VM-creator grant (issue #53) -- always-visible, not tied
   // to any proxy driver.
   pveUserRealm?: string;
@@ -311,6 +315,10 @@ export interface ProxyDriverInfo {
   // field only then.
   usesCertResolver: boolean;
   usesApiUrl: boolean;
+  // true only for a driver that reads the proxyCaddyTls setting (issue #51,
+  // the two Caddy drivers only) -- the page shows the Caddy TLS dropdown
+  // only then.
+  usesCaddyTls: boolean;
   // Driver-supplied sentence appended to the Proxy config path help, e.g.
   // nginx's "replaces this whole file" warning. null = none.
   configPathNote: string | null;
@@ -324,4 +332,9 @@ export interface SettingsResponse {
   };
   proxyDrivers: ProxyDriverInfo[];
   defaultProxyDriver: string;
+  // The four ways the two Caddy drivers can obtain a certificate (issue
+  // #51), and which one an unset proxyCaddyTls resolves to -- same
+  // "independent of inventory" shape as proxyDrivers/defaultProxyDriver.
+  caddyTlsModes: string[];
+  defaultCaddyTls: string;
 }

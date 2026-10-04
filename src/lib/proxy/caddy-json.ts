@@ -24,10 +24,29 @@ const HostMatchSchema = z.object({ host: z.array(z.string()).optional() }).passt
 const RouteSchema = z
   .object({ '@id': z.string().optional(), match: z.array(HostMatchSchema).optional() })
   .passthrough();
+// A server's TLS connection policy (issue #51's 'files' mode). Only @id and
+// whether it has a `match` matter to the planner: one with no match is a
+// catch-all.
+const ConnectionPolicySchema = z
+  .object({ '@id': z.string().optional(), match: z.record(z.unknown()).optional() })
+  .passthrough();
 const ServerSchema = z
-  .object({ listen: z.array(z.string()).optional(), routes: z.array(RouteSchema).optional() })
+  .object({
+    listen: z.array(z.string()).optional(),
+    routes: z.array(RouteSchema).optional(),
+    tls_connection_policies: z.array(ConnectionPolicySchema).optional(),
+  })
   .passthrough();
 const TlsPolicySchema = z.object({ '@id': z.string().optional(), subjects: z.array(z.string()).optional() }).passthrough();
+// An apps.tls.certificates.load_files entry (issue #51's 'files' mode).
+const LoadFileSchema = z
+  .object({
+    '@id': z.string().optional(),
+    certificate: z.string().optional(),
+    key: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+  })
+  .passthrough();
 const ConfigObjectSchema = z
   .object({
     apps: z
@@ -36,6 +55,7 @@ const ConfigObjectSchema = z
         tls: z
           .object({
             automation: z.object({ policies: z.array(TlsPolicySchema).optional() }).passthrough().optional(),
+            certificates: z.object({ load_files: z.array(LoadFileSchema).optional() }).passthrough().optional(),
           })
           .passthrough()
           .optional(),
@@ -51,6 +71,8 @@ export const CaddyConfigSchema = z.union([z.null(), ConfigObjectSchema]);
 export type CaddyRoute = z.infer<typeof RouteSchema>;
 export type CaddyServer = z.infer<typeof ServerSchema>;
 export type CaddyTlsPolicy = z.infer<typeof TlsPolicySchema>;
+export type CaddyLoadFile = z.infer<typeof LoadFileSchema>;
+export type CaddyConnectionPolicy = z.infer<typeof ConnectionPolicySchema>;
 export type CaddyConfigObject = z.infer<typeof ConfigObjectSchema>;
 export type CaddyConfig = CaddyConfigObject | null;
 
@@ -59,7 +81,18 @@ export type CaddyConfig = CaddyConfigObject | null;
 // Every object this driver creates carries an @id with this prefix, and an
 // object is Bellhop's if and only if it does (FR-006).
 export const BELLHOP_ID_PREFIX = 'bellhop-';
+// The TLS objects (data-model.md "Bellhop TLS objects"): the automation
+// policy ('cloudflare'/'internal'), and for 'files' the load_files entry,
+// the SNI-matched connection policy selecting it, and a catch-all
+// connection policy. The certificate tag is Bellhop's own rather than the
+// adapter's cert0, since an operator's own `tls <cert> <key>` site would
+// also get cert0 and Bellhop's policy would then select their certificate
+// (research R2).
 export const BELLHOP_TLS_POLICY_ID = 'bellhop-tls';
+export const BELLHOP_TLS_FILES_ID = 'bellhop-tls-files';
+export const BELLHOP_TLS_CONNECTION_ID = 'bellhop-tls-connection';
+export const BELLHOP_TLS_DEFAULT_ID = 'bellhop-tls-default';
+export const BELLHOP_CERT_TAG = 'bellhop-cert';
 
 export function routeId(route: ProxyRoute): string {
   return `${BELLHOP_ID_PREFIX}route-${route.hostnames[0]}`;
@@ -134,22 +167,72 @@ export function renderRoute(route: ProxyRoute, ctx: ProxyContext): CaddyRoute {
   };
 }
 
-// The one automation policy for every Bellhop hostname: Cloudflare DNS-01
-// with the same token placeholder and resolvers as the file-based driver's
-// TLS_BLOCK, which the adapter merges into exactly this shape.
-export function renderTlsPolicy(hostnames: string[]): CaddyTlsPolicy {
-  return {
-    '@id': BELLHOP_TLS_POLICY_ID,
-    subjects: hostnames,
-    issuers: [
-      {
-        challenges: {
-          dns: { provider: { api_token: CLOUDFLARE_TOKEN_PLACEHOLDER, name: 'cloudflare' }, resolvers: ACME_DNS_RESOLVERS },
+// Bellhop's TLS objects for one proxyCaddyTls mode -- exactly what Caddy's
+// adapter makes from the file-based driver's per-site clause for the same
+// mode (research R1, pinned against test/fixtures/caddy/tls-*-adapted.json),
+// with Bellhop's @ids and certificate tag:
+//   - cloudflare: one automation policy, ACME with the Cloudflare DNS-01
+//     challenge, the same token placeholder and resolvers as the file-based
+//     driver's clause;
+//   - internal: one automation policy issued by Caddy's internal CA;
+//   - files: the certificate/key pair loaded from disk, plus a connection
+//     policy selecting it for every Bellhop hostname;
+//   - letsencrypt: nothing -- Caddy's automatic HTTPS needs no TLS app.
+// The catch-all connection policy the adapter appends after a 'files'
+// policy is placed by planCaddyConfig instead (renderDefaultConnectionPolicy),
+// since whether it is needed depends on the live server.
+export interface CaddyTlsObjects {
+  policy?: CaddyTlsPolicy;
+  loadFile?: CaddyLoadFile;
+  connectionPolicy?: CaddyConnectionPolicy;
+}
+
+export function renderTlsObjects(hostnames: string[], ctx: ProxyContext): CaddyTlsObjects {
+  switch (ctx.caddyTls) {
+    case 'cloudflare':
+      return {
+        policy: {
+          '@id': BELLHOP_TLS_POLICY_ID,
+          subjects: hostnames,
+          issuers: [
+            {
+              challenges: {
+                dns: {
+                  provider: { api_token: CLOUDFLARE_TOKEN_PLACEHOLDER, name: 'cloudflare' },
+                  resolvers: ACME_DNS_RESOLVERS,
+                },
+              },
+              module: 'acme',
+            },
+          ],
         },
-        module: 'acme',
-      },
-    ],
-  };
+      };
+    case 'internal':
+      return { policy: { '@id': BELLHOP_TLS_POLICY_ID, subjects: hostnames, issuers: [{ module: 'internal' }] } };
+    case 'files':
+      return {
+        loadFile: {
+          '@id': BELLHOP_TLS_FILES_ID,
+          certificate: ctx.tls.certificatePath,
+          key: ctx.tls.keyPath,
+          tags: [BELLHOP_CERT_TAG],
+        },
+        connectionPolicy: {
+          '@id': BELLHOP_TLS_CONNECTION_ID,
+          match: { sni: hostnames },
+          certificate_selection: { any_tag: [BELLHOP_CERT_TAG] },
+        },
+      };
+    case 'letsencrypt':
+      return {};
+  }
+}
+
+// The adapter's trailing `{}` connection policy: once a server has any
+// connection policy, a handshake whose SNI matches none of them is refused,
+// so this catch-all keeps every other site on the server working.
+export function renderDefaultConnectionPolicy(): CaddyConnectionPolicy {
+  return { '@id': BELLHOP_TLS_DEFAULT_ID };
 }
 
 // --- Planning --------------------------------------------------------------
@@ -183,10 +266,15 @@ export interface CaddyConflict {
 
 export interface CaddyChange {
   kind: 'add' | 'replace' | 'remove' | 'reorder';
-  object: 'route' | 'tls-policy';
+  // 'tls-files' is the load_files entry and 'tls-connection' the connection
+  // policies ('files' mode, issue #51); the catch-all bellhop-tls-default is
+  // reported as part of 'tls-connection', never on its own.
+  object: 'route' | 'tls-policy' | 'tls-files' | 'tls-connection';
   hostnames: string[];
   // add/replace of a route only: its preview details.
   route?: ProxyRoute;
+  // add/replace of 'tls-files' only: the certificate path it loads.
+  certificatePath?: string;
 }
 
 export interface CaddyConfigPlan {
@@ -197,7 +285,7 @@ export interface CaddyConfigPlan {
   conflicts: CaddyConflict[];
   // Every Bellhop object in the planned configuration, in write order --
   // what the preview prints.
-  bellhopObjects: Array<CaddyRoute | CaddyTlsPolicy>;
+  bellhopObjects: Array<CaddyRoute | CaddyTlsPolicy | CaddyLoadFile | CaddyConnectionPolicy>;
 }
 
 // A listen address on port 443 (":443", "0.0.0.0:443", "[::]:443",
@@ -231,11 +319,56 @@ function targetServer(servers: Record<string, CaddyServer>, host: string): strin
   return https[0];
 }
 
+// Add, replace, or remove: how one Bellhop object (or, for connection
+// policies, one group of them) changed between the live and the planned
+// configuration. undefined when it didn't.
+function changeKind(before: unknown, after: unknown): CaddyChange['kind'] | undefined {
+  if (after !== undefined && before === undefined) return 'add';
+  if (after === undefined && before !== undefined) return 'remove';
+  if (after !== undefined && canonicalJson(before) !== canonicalJson(after)) return 'replace';
+  return undefined;
+}
+
+function sniOf(policy: CaddyConnectionPolicy | undefined): string[] {
+  const sni = (policy?.match as { sni?: unknown } | undefined)?.sni;
+  return Array.isArray(sni) ? (sni as string[]) : [];
+}
+
+// Which kinds of Bellhop object sit in a different place in `after` than in
+// `before`, for a plan whose objects are all unchanged but whose
+// configuration still differs (final review F4): routes, connection
+// policies (any server -- a stale one on a non-target server moving back
+// counts), the automation policy, or the load_files entry. Compares each
+// container as a whole, since with no listed change the only difference
+// left is position. Falls back to 'route' -- the one move that existed
+// before issue #51 -- if nothing narrower explains the difference.
+function movedObjects(before: CaddyConfigObject, after: CaddyConfigObject): CaddyChange['object'][] {
+  const differs = (a: unknown, b: unknown) => canonicalJson(a ?? null) !== canonicalJson(b ?? null);
+  const serversBefore = before.apps?.http?.servers ?? {};
+  const serversAfter = after.apps?.http?.servers ?? {};
+  const names = [...new Set([...Object.keys(serversBefore), ...Object.keys(serversAfter)])];
+  const moved: CaddyChange['object'][] = [];
+  if (names.some((n) => differs(serversBefore[n]?.routes, serversAfter[n]?.routes))) moved.push('route');
+  if (differs(before.apps?.tls?.automation?.policies, after.apps?.tls?.automation?.policies)) moved.push('tls-policy');
+  if (differs(before.apps?.tls?.certificates?.load_files, after.apps?.tls?.certificates?.load_files)) {
+    moved.push('tls-files');
+  }
+  if (names.some((n) => differs(serversBefore[n]?.tls_connection_policies, serversAfter[n]?.tls_connection_policies))) {
+    moved.push('tls-connection');
+  }
+  return moved.length > 0 ? moved : ['route'];
+}
+
 // Reconciles the desired routes against the live configuration (research
-// R5/R6): strips every Bellhop object, leaves out routes whose hostnames an
-// untagged object already claims (conflicts), prepends the rest -- routes
-// to the HTTPS server, the TLS policy to the automation policies -- and
-// reports what changed. The input is never mutated.
+// R5/R6, issue #51 research R3/R4): strips every Bellhop object, leaves out
+// routes whose hostnames an untagged object already claims (conflicts),
+// prepends the rest -- routes to the HTTPS server, and the active TLS mode's
+// objects to their own lists (the automation policy to the automation
+// policies, the load_files entry to load_files, the connection policies to
+// that same HTTPS server) -- prunes any container a removed Bellhop object
+// leaves empty, and reports what changed. Switching TLS modes is just this
+// rebuild: every bellhop-tls* object is stripped and the current mode's
+// added back. The input is never mutated.
 export function planCaddyConfig(
   current: CaddyConfig,
   routes: ProxyRoute[],
@@ -245,19 +378,30 @@ export function planCaddyConfig(
   const config: CaddyConfigObject = current === null ? {} : (JSON.parse(JSON.stringify(current)) as CaddyConfigObject);
   const servers: Record<string, CaddyServer> = config.apps?.http?.servers ?? {};
   const policies: CaddyTlsPolicy[] = config.apps?.tls?.automation?.policies ?? [];
+  const loadFiles: CaddyLoadFile[] = config.apps?.tls?.certificates?.load_files ?? [];
 
   // Existing Bellhop objects, for change detection.
   const existingRoutes = new Map<string, CaddyRoute>();
+  const existingConnections: CaddyConnectionPolicy[] = [];
   for (const server of Object.values(servers)) {
     for (const r of server.routes ?? []) {
       // isBellhopObject has just checked that @id is a string.
       if (isBellhopObject(r)) existingRoutes.set(r['@id']!, r);
     }
+    existingConnections.push(...(server.tls_connection_policies ?? []).filter(isBellhopObject));
   }
   const existingPolicy = policies.find(isBellhopObject);
+  const existingLoadFile = loadFiles.find(isBellhopObject);
 
-  // Conflicts: an untagged route (any server) or policy naming the hostname
-  // exactly, case-insensitively. Wildcards never match here.
+  // Conflicts: an untagged route (any server) naming the hostname exactly,
+  // case-insensitively -- and an untagged automation policy doing the same,
+  // but only in a mode where Bellhop writes an automation policy of its own
+  // for it to collide with ('cloudflare'/'internal'). In 'letsencrypt' or
+  // 'files' an operator policy naming a Bellhop host is meant to apply
+  // (research R4). Untagged load_files entries and connection policies
+  // never claim: Bellhop's SNI policy is prepended, so it matches first.
+  // Wildcards never match here.
+  const writesPolicy = ctx.caddyTls === 'cloudflare' || ctx.caddyTls === 'internal';
   const claims = new Map<string, Omit<CaddyConflict, 'hostname' | 'owner'>>();
   for (const [name, server] of Object.entries(servers)) {
     for (const r of server.routes ?? []) {
@@ -267,7 +411,7 @@ export function planCaddyConfig(
       }
     }
   }
-  for (const p of policies) {
+  for (const p of writesPolicy ? policies : []) {
     if (isBellhopObject(p)) continue;
     for (const h of p.subjects ?? []) {
       if (!claims.has(h.toLowerCase())) claims.set(h.toLowerCase(), { claimedBy: 'tls-policy' });
@@ -286,13 +430,29 @@ export function planCaddyConfig(
   }
 
   const desiredRoutes = kept.map((r) => renderRoute(r, ctx));
-  const desiredPolicy = kept.length > 0 ? renderTlsPolicy(kept.flatMap((r) => r.hostnames)) : undefined;
+  // No kept route means no TLS objects either, in any mode -- an
+  // empty-subjects policy or empty-SNI connection policy would match every
+  // hostname.
+  const desiredTls: CaddyTlsObjects =
+    kept.length > 0 ? renderTlsObjects(kept.flatMap((r) => r.hostnames), ctx) : {};
+  const desiredPolicy = desiredTls.policy;
+  const desiredLoadFile = desiredTls.loadFile;
+  // Filled in below once the target server is known: whether the catch-all
+  // is needed depends on what that server already holds.
+  const desiredConnections: CaddyConnectionPolicy[] = [];
 
-  // Strip every Bellhop object.
+  // Strip every Bellhop object. A server whose connection policies were
+  // all Bellhop's loses the key entirely rather than keeping `[]`.
   for (const server of Object.values(servers)) {
     if (server.routes) server.routes = server.routes.filter((r) => !isBellhopObject(r));
+    if (server.tls_connection_policies?.some(isBellhopObject)) {
+      const rest = server.tls_connection_policies.filter((p) => !isBellhopObject(p));
+      if (rest.length > 0) server.tls_connection_policies = rest;
+      else delete server.tls_connection_policies;
+    }
   }
   const operatorPolicies = policies.filter((p) => !isBellhopObject(p));
+  const operatorLoadFiles = loadFiles.filter((f) => !isBellhopObject(f));
 
   // Prepend the desired objects.
   if (desiredRoutes.length > 0) {
@@ -302,6 +462,17 @@ export function planCaddyConfig(
     const target = targetServer(config.apps.http.servers, host);
     const server = config.apps.http.servers[target];
     server.routes = [...desiredRoutes, ...(server.routes ?? [])];
+    // Connection policies belong on the server the routes are on (research
+    // R3). Bellhop's SNI policy goes first so it wins first-match; the
+    // catch-all goes last, and only when the operator hasn't already got
+    // one (an untagged policy with no match) -- two would be redundant.
+    if (desiredTls.connectionPolicy) {
+      const operatorConnections = server.tls_connection_policies ?? [];
+      const hasCatchAll = operatorConnections.some((p) => p.match === undefined);
+      desiredConnections.push(desiredTls.connectionPolicy);
+      if (!hasCatchAll) desiredConnections.push(renderDefaultConnectionPolicy());
+      server.tls_connection_policies = [desiredTls.connectionPolicy, ...operatorConnections, ...desiredConnections.slice(1)];
+    }
   }
   const newPolicies = desiredPolicy ? [desiredPolicy, ...operatorPolicies] : operatorPolicies;
   if (newPolicies.length > 0) {
@@ -314,7 +485,20 @@ export function planCaddyConfig(
     // empty rather than writing `policies: []` Caddy never had before.
     delete config.apps.tls.automation.policies;
     if (Object.keys(config.apps.tls.automation).length === 0) delete config.apps.tls.automation;
-    if (Object.keys(config.apps.tls).length === 0) delete config.apps.tls;
+  }
+  const newLoadFiles = desiredLoadFile ? [desiredLoadFile, ...operatorLoadFiles] : operatorLoadFiles;
+  if (newLoadFiles.length > 0) {
+    config.apps ??= {};
+    config.apps.tls ??= {};
+    config.apps.tls.certificates ??= {};
+    config.apps.tls.certificates.load_files = newLoadFiles;
+  } else if (existingLoadFile && config.apps?.tls?.certificates) {
+    // Same pruning as the policy above, for the certificates container.
+    delete config.apps.tls.certificates.load_files;
+    if (Object.keys(config.apps.tls.certificates).length === 0) delete config.apps.tls.certificates;
+  }
+  if ((existingPolicy || existingLoadFile) && config.apps?.tls && Object.keys(config.apps.tls).length === 0) {
+    delete config.apps.tls;
   }
 
   const changes: CaddyChange[] = [];
@@ -331,26 +515,51 @@ export function planCaddyConfig(
   for (const [id, before] of existingRoutes) {
     if (!desiredIds.has(id)) changes.push({ kind: 'remove', object: 'route', hostnames: routeHosts(before) });
   }
-  if (desiredPolicy && !existingPolicy) {
-    changes.push({ kind: 'add', object: 'tls-policy', hostnames: desiredPolicy.subjects ?? [] });
-  } else if (desiredPolicy && existingPolicy && canonicalJson(desiredPolicy) !== canonicalJson(existingPolicy)) {
-    changes.push({ kind: 'replace', object: 'tls-policy', hostnames: desiredPolicy.subjects ?? [] });
-  } else if (!desiredPolicy && existingPolicy) {
-    changes.push({ kind: 'remove', object: 'tls-policy', hostnames: existingPolicy.subjects ?? [] });
+  const policyChange = changeKind(existingPolicy, desiredPolicy);
+  if (policyChange) {
+    changes.push({ kind: policyChange, object: 'tls-policy', hostnames: (desiredPolicy ?? existingPolicy)?.subjects ?? [] });
+  }
+  const filesChange = changeKind(existingLoadFile, desiredLoadFile);
+  if (filesChange) {
+    changes.push({
+      kind: filesChange,
+      object: 'tls-files',
+      hostnames: [],
+      ...(desiredLoadFile?.certificate !== undefined ? { certificatePath: desiredLoadFile.certificate } : {}),
+    });
+  }
+  // The connection policies change as one group, the catch-all included.
+  const connectionChange = changeKind(
+    existingConnections.length > 0 ? existingConnections : undefined,
+    desiredConnections.length > 0 ? desiredConnections : undefined
+  );
+  if (connectionChange) {
+    changes.push({
+      kind: connectionChange,
+      object: 'tls-connection',
+      hostnames: sniOf(desiredTls.connectionPolicy ?? existingConnections.find((p) => p.match !== undefined)),
+    });
   }
 
   const changed = canonicalJson(config) !== canonicalJson(current ?? {});
   if (changed && changes.length === 0) {
     // Same objects, different position (e.g. an operator moved a Bellhop
-    // route behind their own) -- still a write, so still a listed change.
-    changes.push({ kind: 'reorder', object: 'route', hostnames: [] });
+    // route behind their own, or a connection policy/load_files entry
+    // behind theirs) -- still a write, so still a listed change, one per
+    // kind of object that actually moved so the preview names the right one.
+    changes.push(...movedObjects(current ?? {}, config).map((object) => ({ kind: 'reorder' as const, object, hostnames: [] })));
   }
 
   return {
     config: changed ? config : null,
     changes,
     conflicts,
-    bellhopObjects: [...desiredRoutes, ...(desiredPolicy ? [desiredPolicy] : [])],
+    bellhopObjects: [
+      ...desiredRoutes,
+      ...(desiredPolicy ? [desiredPolicy] : []),
+      ...(desiredLoadFile ? [desiredLoadFile] : []),
+      ...desiredConnections,
+    ],
   };
 }
 
@@ -373,6 +582,13 @@ function routeDetails(route: ProxyRoute): string {
 
 const SYMBOLS: Record<CaddyChange['kind'], string> = { add: '+', replace: '~', remove: '-', reorder: '~' };
 
+// The parenthesised name of a moved TLS object in the preview's move line.
+const MOVED_TLS_LABEL: Record<Exclude<CaddyChange['object'], 'route'>, string> = {
+  'tls-policy': 'automation policy',
+  'tls-files': 'certificate files',
+  'tls-connection': 'connection policies',
+};
+
 function conflictClaim(c: CaddyConflict): string {
   return c.claimedBy === 'route' ? `a hand-authored route in server '${c.server}'` : 'a hand-authored TLS automation policy';
 }
@@ -385,12 +601,28 @@ export function formatCaddyPreview(plan: CaddyConfigPlan): string {
   const lines: string[] = [];
   for (const change of plan.changes) {
     const symbol = SYMBOLS[change.kind];
-    if (change.object === 'tls-policy') {
+    if (change.kind === 'reorder') {
+      // Checked before the per-object lines below, which describe an
+      // add/replace/remove, not a move.
+      lines.push(
+        change.object === 'route'
+          ? `${symbol} move Bellhop routes ahead of hand-authored routes`
+          : `${symbol} move Bellhop TLS objects ahead of hand-authored ones (${MOVED_TLS_LABEL[change.object]})`
+      );
+    } else if (change.object === 'tls-policy') {
       lines.push(
         change.kind === 'remove' ? `${symbol} tls policy` : `${symbol} tls policy: ${change.hostnames.length} hostnames`
       );
-    } else if (change.kind === 'reorder') {
-      lines.push(`${symbol} move Bellhop routes ahead of hand-authored routes`);
+    } else if (change.object === 'tls-files') {
+      lines.push(
+        change.kind === 'remove' ? `${symbol} tls certificate files` : `${symbol} tls certificate files: ${change.certificatePath}`
+      );
+    } else if (change.object === 'tls-connection') {
+      lines.push(
+        change.kind === 'remove'
+          ? `${symbol} tls connection policy`
+          : `${symbol} tls connection policy: ${change.hostnames.length} hostnames`
+      );
     } else {
       const details = change.route ? routeDetails(change.route) : '';
       lines.push(`${symbol} route ${change.hostnames.join(', ')}${details}`);

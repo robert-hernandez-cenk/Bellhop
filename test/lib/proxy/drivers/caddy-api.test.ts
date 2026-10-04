@@ -49,8 +49,14 @@ test('declares what the Settings page and capability checks read', () => {
   assert.equal(caddyApiDriver.id, 'caddy-api');
   assert.equal(caddyApiDriver.label, 'Caddy (admin API)');
   assert.equal(caddyApiDriver.defaultConfigPath, null);
-  assert.deepEqual(caddyApiDriver.capabilities, { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true });
+  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
+  // by its return value for a sample inventory rather than by deepEqual on
+  // the whole capabilities object (which would compare function identity).
+  assert.deepEqual(caddyApiDriver.capabilities.authModes, ['forward', 'oidc']);
+  assert.equal(caddyApiDriver.capabilities.acmeDns01ViaCloudflare(inventory), true);
   assert.deepEqual(caddyApiDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });
+  // issue #51: the Settings page shows the Caddy TLS dropdown for it.
+  assert.equal(caddyApiDriver.usesCaddyTls, true);
 });
 
 test('a dry run reads once, with the Caddyfile-mode check, and writes nothing (FR-003)', async () => {

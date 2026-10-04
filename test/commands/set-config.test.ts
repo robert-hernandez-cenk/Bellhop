@@ -210,6 +210,33 @@ test('runSetConfig rejects a proxyApiUrl with a scheme other than http/https', (
   );
 });
 
+// issue #51: proxyCaddyTls is the two Caddy drivers' own setting -- same
+// round-trip/rejection pattern as proxyCertResolver above.
+test('runSetConfig round-trips proxyCaddyTls through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyCaddyTls', value: 'internal', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, 'internal');
+  runSetConfig({ key: 'proxyCaddyTls', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, undefined);
+});
+
+test('runSetConfig round-trips every proxyCaddyTls mode through --apply', () => {
+  const inventoryPath = tempInventoryPath();
+  for (const mode of ['cloudflare', 'letsencrypt', 'internal', 'files']) {
+    runSetConfig({ key: 'proxyCaddyTls', value: mode, apply: true }, { inventoryPath });
+    assert.equal(loadInventory(inventoryPath).proxyCaddyTls, mode);
+  }
+});
+
+test('runSetConfig rejects a proxyCaddyTls value outside the four modes', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'proxyCaddyTls', value: 'bogus', apply: true }, { inventoryPath }),
+    /proxyCaddyTls/
+  );
+  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, undefined);
+});
+
 test('runSetConfig round-trips proxyDriver nginx through --apply', () => {
   const inventoryPath = tempInventoryPath();
   runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath });

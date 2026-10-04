@@ -54,13 +54,15 @@ export interface SyncProxyLiveResult {
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
 
-// The prune only ever makes sense for a driver that issues certs via ACME
-// DNS-01 through Cloudflare (Caddy's own hardcoded TLS_BLOCK, today). A
-// driver without that capability never leaves stale
+// The prune only ever makes sense for a driver/mode combination that issues
+// certificates via ACME DNS-01 through Cloudflare -- the two Caddy drivers'
+// default caddyTls mode, or Traefik's certResolver when it names one (issue
+// #51; before that, Caddy's TLS_BLOCK was the only, non-configurable path).
+// A driver/mode that never touches Cloudflare's DNS never leaves stale
 // _acme-challenge TXT records behind in the first place, so there is
 // nothing here for this step to clean up.
 export function pruneAcmeDriverSkipMessage(driverId: string): string {
-  return `prune-acme-challenges: skipped, the '${driverId}' proxy driver does not use ACME DNS-01 via Cloudflare`;
+  return `prune-acme-challenges: skipped, the '${driverId}' proxy driver is not configured to use ACME DNS-01 via Cloudflare`;
 }
 
 // Last step of the push-live sequence (issue #162). Every failure is turned
@@ -70,7 +72,7 @@ export function pruneAcmeDriverSkipMessage(driverId: string): string {
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
   const driver = getDriver(inventory);
-  if (!driver.capabilities.acmeDns01ViaCloudflare) {
+  if (!driver.capabilities.acmeDns01ViaCloudflare(inventory)) {
     logInfo(pruneAcmeDriverSkipMessage(driver.id));
     return;
   }

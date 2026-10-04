@@ -13,6 +13,8 @@ import {
 } from '../../lib/inventory.ts';
 import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
+import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
+import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
 
 function currentSettings(inv: Inventory): Settings {
   const settings: Settings = {};
@@ -52,6 +54,9 @@ function proxyDriversInfo() {
     usesSharedCertificate: driver.usesSharedCertificate ?? false,
     usesCertResolver: driver.usesCertResolver ?? false,
     usesApiUrl: driver.usesApiUrl ?? false,
+    // true only for the two Caddy drivers (issue #51) -- the Settings page
+    // shows the Caddy TLS dropdown only for a driver that sets this.
+    usesCaddyTls: driver.usesCaddyTls ?? false,
     configPathNote: driver.configPathNote ?? null,
   }));
 }
@@ -66,6 +71,13 @@ function settingsResponse(inv: Inventory) {
     derived: derivedValues(inv),
     proxyDrivers: proxyDriversInfo(),
     defaultProxyDriver: DEFAULT_PROXY_DRIVER_ID,
+    // The four ways the two Caddy drivers can obtain a certificate (issue
+    // #51) and which one an unset proxyCaddyTls resolves to -- same
+    // "independent of inventory, same on every call" shape as
+    // proxyDrivers/defaultProxyDriver above, so the Settings page's Caddy
+    // TLS dropdown is populated from this rather than a hardcoded list.
+    caddyTlsModes: [...CADDY_TLS_MODES],
+    defaultCaddyTls: DEFAULT_CADDY_TLS,
   };
 }
 

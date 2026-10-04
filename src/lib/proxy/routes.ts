@@ -2,6 +2,7 @@ import type { Inventory } from '../inventory.ts';
 import { effectiveAuth, isValidUnauthenticatedPath, UNAUTHENTICATED_PATH_MESSAGE } from '../inventory.ts';
 import { publicHostname } from '../hostname.ts';
 import { authentikConfig } from '../authentik-config.ts';
+import type { CaddyTlsMode } from './ids.ts';
 
 // Every site this toolkit's proxy fronts is reached externally over HTTPS on
 // 443 -- not inventory-configurable, one operator, one deployment.
@@ -28,25 +29,65 @@ export interface ProxyContext {
   // its own per-site certificate (nginx, issue #30) writes into every
   // server block. Always present -- buildProxyContext can always derive it,
   // since domain is mandatory -- so a driver never has to handle "no
-  // certificate". The Caddy driver ignores this field entirely: it obtains
-  // its own per-site certificate via DNS-01 (see TLS_BLOCK in
-  // src/lib/proxy/drivers/caddy.ts).
+  // certificate". The two Caddy drivers read it only in caddyTls 'files'
+  // mode (issue #51); in every other mode Caddy obtains or issues its own
+  // per-site certificate (see tlsClause in src/lib/proxy/drivers/caddy.ts).
   tls: { certificatePath: string; keyPath: string };
   // The ACME certificate resolver name the Traefik driver (issue #35) sets
   // on every rendered router's tls.certResolver -- inventory.proxyCertResolver
-  // when set, else DEFAULT_CERT_RESOLVER. Always present, the same
+  // when set, else DEFAULT_CERT_RESOLVER (certResolverName). Always present, the same
   // "never handle the unset case" precedent as tls above. Ignored by every
   // other driver, which either obtains its own certificate (Caddy) or
   // shares the ctx.tls pair instead (nginx).
   certResolver: string;
+  // Which of the four ways the two Caddy drivers obtain a certificate
+  // (issue #51) -- inventory.proxyCaddyTls when set, else DEFAULT_CADDY_TLS,
+  // resolved by caddyTlsMode(inventory) below. Always present, the same
+  // "never handle the unset case" precedent as tls/certResolver above.
+  // Ignored by every other driver, which either always obtains its own
+  // certificate one fixed way (nginx, HAProxy, Nginx Proxy Manager) or reads
+  // certResolver instead (Traefik).
+  caddyTls: CaddyTlsMode;
 }
 
 // research.md R10: a stock Traefik install has no certificate resolver
 // named this by default, but it is what the driver's own live-verified
 // research setup used, and it is a safe, memorable default for an operator
 // who names their own resolver 'cloudflare' too (the same DNS provider
-// Caddy's own hardcoded TLS_BLOCK uses).
+// Caddy's own default 'cloudflare' TLS mode uses).
 export const DEFAULT_CERT_RESOLVER = 'cloudflare';
+
+// issue #51, User Story 3: the reserved proxyCertResolver value meaning "no
+// certificate resolver" -- the Traefik driver renders every router with an
+// empty tls: {} instead of naming one, so Traefik serves whatever
+// default/static-config certificate applies rather than requesting one
+// through a resolver. Lives here beside DEFAULT_CERT_RESOLVER so both
+// proxyCertResolver constants are defined in one place; the Traefik
+// driver's render() and its prune capability both import it from here.
+export const NO_CERT_RESOLVER = 'none';
+
+// inventory.proxyCertResolver when set, else DEFAULT_CERT_RESOLVER -- the
+// one place this fold-in happens (the caddyTlsMode precedent below), read
+// by buildProxyContext for ctx.certResolver and by the Traefik driver's
+// acmeDns01ViaCloudflare capability, so the two can never disagree about
+// which resolver is active.
+export function certResolverName(inventory: Inventory): string {
+  return inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER;
+}
+
+// issue #51: the Caddy drivers' own default TLS mode -- Cloudflare DNS-01,
+// the only behavior that existed before proxyCaddyTls did, so an unset
+// setting changes nothing for an existing deployment.
+export const DEFAULT_CADDY_TLS: CaddyTlsMode = 'cloudflare';
+
+// inventory.proxyCaddyTls when set, else DEFAULT_CADDY_TLS -- the one place
+// this fold-in happens, so ProxyContext.caddyTls (buildProxyContext below)
+// and any other future reader can never disagree about which mode is
+// active, the same precedent as effectiveAuth() folding authGroup/authMode
+// together.
+export function caddyTlsMode(inventory: Inventory): CaddyTlsMode {
+  return inventory.proxyCaddyTls ?? DEFAULT_CADDY_TLS;
+}
 
 // A stored unauthenticatedPaths string -> its parsed form (data-model.md
 // "PathPattern"). Must start with '/'; '*' may appear only as the final
@@ -205,7 +246,9 @@ export function buildRouteForEntry(inventory: Inventory, owner: ProxyRoute['owne
 // would already have thrown in buildRoutes before this matters), the fixed
 // external port every site is reached on, and the shared TLS certificate/key
 // pair (issue #30) -- proxyTlsCertificate/proxyTlsKey when set, else the
-// domain-derived default path each falls back to independently.
+// domain-derived default path each falls back to independently -- and
+// (issue #51) which of the four ways the Caddy drivers obtain a
+// certificate, from caddyTlsMode(inventory).
 export function buildProxyContext(inventory: Inventory): ProxyContext {
   const authentikEntry = findAuthentikEntry(inventory);
   const ctx: ProxyContext = {
@@ -214,7 +257,8 @@ export function buildProxyContext(inventory: Inventory): ProxyContext {
       certificatePath: inventory.proxyTlsCertificate ?? `/etc/letsencrypt/live/${inventory.domain}/fullchain.pem`,
       keyPath: inventory.proxyTlsKey ?? `/etc/letsencrypt/live/${inventory.domain}/privkey.pem`,
     },
-    certResolver: inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER,
+    certResolver: certResolverName(inventory),
+    caddyTls: caddyTlsMode(inventory),
   };
   if (authentikEntry?.ip) {
     ctx.outpost = { ip: authentikEntry.ip, port: authentikConfig().outpostPort };

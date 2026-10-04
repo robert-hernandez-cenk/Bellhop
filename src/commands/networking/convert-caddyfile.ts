@@ -76,11 +76,18 @@ function resolveCaddyfile(opts: ConvertCaddyfileOptions, inventory: Inventory): 
   return CADDYFILE_DEFAULT_PATH;
 }
 
+// Any object the caddy-api driver tags as its own: a route or a connection
+// policy on any server, the automation policy, or (issue #51 'files' mode)
+// the load_files entry -- a leftover of any one kind means Caddy has
+// already been switched over once.
 function hasBellhopObjects(config: CaddyConfig): boolean {
   if (config === null) return false;
-  const routes = Object.values(config.apps?.http?.servers ?? {}).flatMap((s) => s.routes ?? []);
+  const servers = Object.values(config.apps?.http?.servers ?? {});
+  const routes = servers.flatMap((s) => s.routes ?? []);
+  const connections = servers.flatMap((s) => s.tls_connection_policies ?? []);
   const policies = config.apps?.tls?.automation?.policies ?? [];
-  return [...routes, ...policies].some((o) => o['@id']?.startsWith(BELLHOP_ID_PREFIX));
+  const loadFiles = config.apps?.tls?.certificates?.load_files ?? [];
+  return [...routes, ...connections, ...policies, ...loadFiles].some((o) => o['@id']?.startsWith(BELLHOP_ID_PREFIX));
 }
 
 function keptSummary(adapted: CaddyConfig, caddyfile: string): string {
