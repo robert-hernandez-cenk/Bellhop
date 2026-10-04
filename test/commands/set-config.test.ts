@@ -505,3 +505,13 @@ test('resolveSetConfigValue: --unset needs no value, and a non-secret takes an a
     /either a value or --stdin, not both/
   );
 });
+
+test('resolveSetConfigValue refuses a secret passed as an argument even with --unset (final review M9)', async () => {
+  await assert.rejects(
+    resolveSetConfigValue({ key: 'npmApiPassword', value: 'example-pw', unset: true }, fakeInput().input),
+    (err: Error) =>
+      err.message ===
+      'npmApiPassword is a secret -- pass it on standard input with --stdin (or omit the value to be prompted), never as an argument'
+  );
+  assert.equal(await resolveSetConfigValue({ key: 'npmApiPassword', unset: true }, fakeInput().input), undefined);
+});

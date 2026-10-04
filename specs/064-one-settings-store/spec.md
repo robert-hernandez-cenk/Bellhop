@@ -271,7 +271,9 @@ for confirmation in the UI.
 - **FR-021**: A change to either admin-group setting MUST be refused when, under the new values,
   the requesting real (non-impersonated) administrator would no longer be an administrator.
 - **FR-022**: Setting the auth mode to `authentik` through the web UI MUST be refused unless the
-  saving request itself carried verified Authentik identity headers.
+  saving request itself carried verified Authentik identity headers, and the identity in them is
+  an administrator under the admin groups in force after the save (checked from the headers
+  even when the current mode ignores them).
 - **FR-023**: The UI MUST ask for confirmation before saving either admin-group field, and before
   saving an auth mode change away from `authentik`.
 - **FR-024**: Reads and writes of settings MUST stay restricted to administrators; a non-admin or

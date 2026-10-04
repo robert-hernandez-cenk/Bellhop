@@ -57,6 +57,8 @@ export function importEnvFiles(inventoryPath: string, dataDir: string): ImportRe
   // database for writing.
   const candidates: Array<ImportedSetting & { value: string }> = [];
   const parsed = new Map<EnvFile, Record<string, string>>();
+  // Object.entries widens keys to string; safe since SETTING_DEFS is a
+  // Record<ConfigKey, SettingDef> literal with no other keys.
   for (const [key, def] of Object.entries(SETTING_DEFS) as [ConfigKey, (typeof SETTING_DEFS)[ConfigKey]][]) {
     if (!def.envFile) continue;
     let vars = parsed.get(def.envFile);

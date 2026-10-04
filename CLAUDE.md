@@ -3327,9 +3327,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   it from locking an admin out: `AuthUser.viaForwardAuth` (set by
   `resolveAuthUser` only on the `x-authentik-username` branch, never for
   the dev user or the local operator, and preserved by the impersonation
-  overlay) must be true on the *real* requester (`req.realUser ??
-  req.user`) for a Settings PATCH to set `authentik` (409 otherwise),
-  and the Settings page confirms before leaving `authentik`. CLI/MCP
+  overlay) marks a header-verified identity, and a Settings PATCH that sets
+  `authentik` re-parses the request's own headers with
+  `forwardAuthIdentity` (the same parse, but regardless of mode -- in
+  `none` mode `req.user` is the local operator even when the proxy sent
+  them) and refuses (409) unless they name a user who passes `isAdminOf`
+  under the admin groups the same PATCH leaves in place; the Settings
+  page confirms before leaving `authentik`, and the server `logWarn`s
+  who left it. CLI/MCP
   writes are unrestricted (host-level trust), which is also the lockout
   recovery path: `set-config webUiAuthMode auto --apply` on the host, or
   the env var (`docs/authentik.md`'s "Locked out"). `WEB_UI_DEV_USER` remains the
@@ -3726,7 +3731,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   the files, and does nothing before the database exists. A file left in
   place is still dotenv-loaded, so it keeps overriding (FR-019) and the
   Settings page shows its fields as "set by environment" until it's
-  deleted. `buildAuthentikClient()`/`buildCloudflareClient()` return a
+  deleted *and the process restarts* (dotenv's values stay in the running
+  process's environment). Each pinned field also shows its "Stored copy"
+  (`environment[key].stored`, plus `storedValue` for a non-secret), which
+  is how an operator confirms the import before deleting a file -- on a
+  production deployment, that **Web UI sign-in** shows "Stored copy:
+  authentik" before deleting `data/authentik.env` (SC-005). The upgrade
+  order is: check the stored copies, delete the files, restart the web
+  service and any long-running MCP server. A command that loads the
+  inventory, awaits something slow, then saves it (`sync-inventory
+  --apply`, `set-guest-vpn`, the Dashboard guest edit) saves through
+  `withFreshSettings` (`src/lib/inventory.ts`), which takes every setting
+  from the database as it is now, so a settings save that landed meanwhile
+  is never reverted by the stale copy. `buildAuthentikClient()`/`buildCloudflareClient()` return a
   `liveClient(build)` Proxy that rebuilds the real-or-unconfigured client
   from current config on every property access, so the client the web
   service and MCP server build once still follows a later save
@@ -3890,8 +3907,13 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (400, naming the variable and its `data/*.env` file); an admin-group
   change under which the real requester (`req.realUser ?? req.user`, never
   blocking the local operator) would stop passing `isAdminUser`
-  (`adminGroupsWith`, 409); and `webUiAuthMode: 'authentik'` from a
-  request without `viaForwardAuth` (409). The page confirms before saving
+  (`adminGroupsWith`, 409); and `webUiAuthMode: 'authentik'` unless the
+  request's forward-auth headers name an admin under those same post-save
+  groups (409, two messages: no headers, or a non-admin identity). The
+  env-pinned refusal tells the operator to unset the variable *and restart
+  the service*, and every `environment` entry carries `stored` (and
+  `storedValue` for a non-secret) so the page can show a "Stored copy"
+  line under each pinned field. The page confirms before saving
   either admin-group field or leaving `authentik`
   (`confirmationMessage`). Non-admins and impersonating admins still get
   403 on both methods.
@@ -4001,7 +4023,11 @@ the same rigor as any other correctness bug.
   (`mkdir -p`-ing the worktree's `data/` first) only while the deployment
   checkout still has them -- they act as environment overrides there, so
   the copied database alone could otherwise resolve a different value
-  than the deployment does. Never seed from the main checkout: main holds
+  than the deployment does. (Retiring them on the deployment checkout:
+  confirm each pinned field's "Stored copy" on the Settings page, delete
+  the files, then restart the web service and any long-running MCP
+  server -- see "Moving off the data/*.env files" in
+  `docs/configuration.md`.) Never seed from the main checkout: main holds
   no real data at all — no `inventory/bellhop.db`, no `data/` — so running
   it shows exactly what a fresh clone would. The deployment checkout is the
   only authoritative copy; any other checkout's database is a snapshot that

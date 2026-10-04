@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { requireAdminGroup } from '../auth.ts';
+import { forwardAuthIdentity, isAdminOf, requireAdminGroup } from '../auth.ts';
+import { logWarn } from '../../lib/log.ts';
 import {
   loadInventory,
   saveInventory,
@@ -15,7 +16,7 @@ import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
 import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
 import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
-import { clearSecret, configValueAt, writeSecret, type ConfigSource } from '../../lib/config.ts';
+import { clearSecret, configValueAt, storedSecretKeys, writeSecret, type ConfigSource } from '../../lib/config.ts';
 import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
   SECRET_SETTINGS_KEYS,
@@ -36,10 +37,12 @@ function isConfigKey(key: string): key is ConfigKey {
 // The 400 a web write gets for a key its environment variable pins
 // (contracts/settings-api.md). Exported for its test: the no-file form only
 // applies to githubApiToken, the one secret that never had a data/ file.
+// Names the restart because a running service keeps a variable it loaded
+// at startup (dotenv included) until it restarts.
 export function envPinnedError(key: ConfigKey): string {
   const { envVar, envFile } = SETTING_DEFS[key];
   const where = envFile === undefined ? '' : ` (or remove it from data/${envFile})`;
-  return `${key} is set by the environment variable ${envVar} -- unset ${envVar}${where} to manage it here`;
+  return `${key} is set by the environment variable ${envVar} -- unset ${envVar}${where} and restart the service to manage it here`;
 }
 
 // Where each non-secret setting's effective value comes from. A key with no
@@ -58,17 +61,38 @@ function settingSources(inv: Inventory, inventoryPath: string): Record<string, C
   return sources;
 }
 
+interface EnvironmentPin {
+  variable: string;
+  value?: string;
+  stored: boolean;
+  storedValue?: string;
+}
+
 // Every key whose environment variable is currently set (non-empty), so the
 // page can show it read-only. A non-secret entry carries the effective value
 // it is pinned to; a secret entry never does -- its value must not reach any
-// response (contracts/settings-api.md).
-function environmentPins(inventoryPath: string): Record<string, { variable: string; value?: string }> {
-  const pins: Record<string, { variable: string; value?: string }> = {};
+// response (contracts/settings-api.md). `stored` says whether the store
+// also holds a copy, so an operator can confirm the one-time import landed
+// before deleting the data/*.env file that pins it; `storedValue` is that
+// copy, for a non-secret key only. The copy is read from the inventory
+// (non-secret) or the secret_settings key list rather than through
+// configValueAt, which would re-validate it and throw on a malformed row.
+function environmentPins(inv: Inventory, inventoryPath: string): Record<string, EnvironmentPin> {
+  const pins: Record<string, EnvironmentPin> = {};
+  const storedSecrets = storedSecretKeys(inventoryPath);
   for (const key of Object.keys(SETTING_DEFS) as ConfigKey[]) {
     const def = SETTING_DEFS[key];
     const effective = configValueAt(inventoryPath, key);
     if (effective.source !== 'environment') continue;
-    pins[key] = def.secret ? { variable: def.envVar } : { variable: def.envVar, value: effective.value };
+    if (isSecretSettingKey(key)) {
+      pins[key] = { variable: def.envVar, stored: storedSecrets.has(key) };
+      continue;
+    }
+    const storedValue = inv[key];
+    pins[key] =
+      storedValue === undefined
+        ? { variable: def.envVar, value: effective.value, stored: false }
+        : { variable: def.envVar, value: effective.value, stored: true, storedValue };
   }
   return pins;
 }
@@ -151,7 +175,7 @@ function settingsResponse(inv: Inventory, inventoryPath: string) {
     // edit); these say where each effective value comes from, and which keys
     // an environment variable currently pins.
     sources: settingSources(inv, inventoryPath),
-    environment: environmentPins(inventoryPath),
+    environment: environmentPins(inv, inventoryPath),
     secrets: secretStatus(inventoryPath),
   };
 }
@@ -237,13 +261,13 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     for (const key of ADMIN_GROUP_KEYS) {
       if (key in updates) adminGroupOverrides[key] = updates[key];
     }
+    // The admin group names as they will be once this request is saved --
+    // shared by both guards below.
+    const adminGroupsAfter = adminGroupsWith(adminGroupOverrides);
     if (Object.keys(adminGroupOverrides).length > 0) {
       const realUser = req.realUser ?? req.user;
       if (realUser && !realUser.localOperator) {
-        const effective = adminGroupsWith(adminGroupOverrides);
-        const stillAdmin =
-          realUser.groups.includes(effective.adminGroup) || realUser.groups.includes(effective.builtinAdminGroup);
-        if (!stillAdmin) {
+        if (!isAdminOf(realUser.groups, adminGroupsAfter)) {
           // Names whichever of the two fields the request body touches --
           // the first one, in the body's own key order, when both do.
           const key = Object.keys(body).find((k): k is (typeof ADMIN_GROUP_KEYS)[number] =>
@@ -257,22 +281,36 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       }
     }
 
-    // Issue #64 US6: refuse switching webUiAuthMode to 'authentik' from a
-    // request that did not itself come through Authentik forward-auth --
-    // every later request, including the one needed to undo it, would then
-    // be rejected. Clearing it or setting auto/none needs no such check:
-    // confirming "authentik" is a deliberate choice is the Settings page's
-    // job (client-side), not a lockout risk this guard exists for.
+    // Issue #64 US6: refuse switching webUiAuthMode to 'authentik' unless
+    // the identity authentik mode would see on this very request -- its
+    // forward-auth headers, parsed as authentik mode parses them -- exists
+    // and is an administrator under the admin groups this request leaves in
+    // place. Otherwise every later request, including the one needed to
+    // undo it, would be rejected or lose this page. The headers are read
+    // directly rather than from req.user, because in none mode req.user is
+    // the local operator even when the proxy did send them. Clearing it or
+    // setting auto/none needs no such check: confirming that leaving
+    // "authentik" is deliberate is the Settings page's job (client-side).
     if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'authentik') {
-      const realUser = req.realUser ?? req.user;
-      if (!realUser?.viaForwardAuth) {
+      const identity = forwardAuthIdentity(req.headers);
+      if (!identity) {
         res.status(409).json({
           error:
             'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected',
         });
         return;
       }
+      if (!isAdminOf(identity.groups, adminGroupsAfter)) {
+        res.status(409).json({
+          error: `Refusing to set webUiAuthMode to authentik: the Authentik identity on this request (${identity.username}) is not an administrator, so it would lose access to this page`,
+        });
+        return;
+      }
     }
+
+    // The mode in force before this write, for the audit line below. No
+    // env pin can be in play here: the pinned-key check above refused one.
+    const authModeBefore = 'webUiAuthMode' in updates ? configValueAt(inventoryPath, 'webUiAuthMode').value : undefined;
 
     try {
       // Partial<Settings> rather than Record<string, ...> so this spread
@@ -296,6 +334,15 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       // one.
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
       return;
+    }
+    // Leaving authentik turns sign-in off for the whole web UI, so it is
+    // worth a line in the service log naming who did it (the real user,
+    // never an impersonated view). An unset mode is auto.
+    if (authModeBefore === 'authentik' && 'webUiAuthMode' in updates && updates.webUiAuthMode !== 'authentik') {
+      const who = (req.realUser ?? req.user)?.username ?? 'unknown';
+      logWarn(
+        `Sign-in mode changed from authentik to ${updates.webUiAuthMode ?? 'auto'} by ${who} -- the web UI no longer requires Authentik sign-in`
+      );
     }
     // Reflect the write in the shared in-memory object immediately rather
     // than waiting for the next request's reload middleware.

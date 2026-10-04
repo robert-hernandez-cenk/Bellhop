@@ -239,3 +239,15 @@ test('no database file means everything is none, and no file is created', () => 
   assert.deepEqual([...storedSecretKeys(dbPath)], []);
   assert.equal(existsSync(dbPath), false);
 });
+
+test('a snapshot read with the clock gone backwards counts as expired (final review M14)', () => {
+  useFakeClock();
+  const dbPath = tempDb({ authentikAdminGroup: 'first' });
+  useConfigStore(dbPath);
+  assert.equal(configValue('authentikAdminGroup', {}).value, 'first');
+  writeMetaBehindTheCachesBack(dbPath, 'authentikAdminGroup', 'second');
+  // The wall clock steps back (an NTP correction): the cached copy's age is
+  // negative, which must not keep it alive past the TTL indefinitely.
+  now -= 60_000;
+  assert.equal(configValue('authentikAdminGroup', {}).value, 'second');
+});

@@ -30,3 +30,11 @@ test('readAllStdin reads the whole stream', async () => {
   input.end('token\n');
   assert.equal(await text, 'example-token\n');
 });
+
+test('promptHidden rejects when the input ends before a line is entered (final review M10)', async () => {
+  const input = new PassThrough();
+  const output = sink();
+  const answer = promptHidden('Value for githubApiToken: ', input, output.out);
+  input.end();
+  await assert.rejects(answer, (err: Error) => err.message === 'Cancelled -- nothing was written');
+});

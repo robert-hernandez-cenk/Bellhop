@@ -210,15 +210,34 @@ export function isSecretField(key: SettingsFieldKey): key is SecretSettingKey {
 // Whether a field can be edited here, or is pinned by an environment
 // variable and so shown read-only, labelled with that variable (FR-015).
 // `value` is the pinned effective value -- present for a non-secret only,
-// since the API never returns a secret's value.
-export type FieldState = { kind: 'env-pinned'; variable: string; value?: string } | { kind: 'editable' };
+// since the API never returns a secret's value. `stored`/`storedValue`
+// describe the store's own copy underneath the pin (storedValue again for a
+// non-secret only).
+export type EnvPinnedState = {
+  kind: 'env-pinned';
+  variable: string;
+  value?: string;
+  stored: boolean;
+  storedValue?: string;
+};
+export type FieldState = EnvPinnedState | { kind: 'editable' };
 
 export function fieldState(key: SettingsFieldKey, data: Pick<SettingsResponse, 'environment'>): FieldState {
   const pin = data.environment[key];
   if (!pin) return { kind: 'editable' };
-  return pin.value === undefined
-    ? { kind: 'env-pinned', variable: pin.variable }
-    : { kind: 'env-pinned', variable: pin.variable, value: pin.value };
+  const state: EnvPinnedState = { kind: 'env-pinned', variable: pin.variable, stored: pin.stored };
+  if (pin.value !== undefined) state.value = pin.value;
+  if (pin.storedValue !== undefined) state.storedValue = pin.storedValue;
+  return state;
+}
+
+// The line under a pinned field saying whether the store holds its own
+// copy -- what an operator checks before deleting the data/*.env file that
+// pins it, since the stored copy is what takes over once the file is gone
+// and the service restarts. A secret's copy is only ever "set".
+export function storedCopyText(state: EnvPinnedState): string {
+  if (!state.stored) return 'Stored copy: not set';
+  return state.storedValue === undefined ? 'Stored copy: set' : `Stored copy: ${state.storedValue}`;
 }
 
 // The auth mode actually in force: the environment's value when pinned,

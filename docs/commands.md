@@ -293,11 +293,14 @@ adapt`, adds the inventory's routes as Bellhop-tagged ones, and loads the
 result into the running Caddy. It refuses to run once Caddy already holds
 Bellhop objects.
 
-`render-status-page` regenerates a static, LAN-only status page (raw
-`inventory/hosts.yaml` plus the actual deployed proxy configuration, both
+`render-status-page` regenerates a static, LAN-only status page (a YAML
+snapshot of the inventory plus the actual deployed proxy configuration, both
 fetched fresh) on whichever host is flagged `proxy: true`. It's a manual,
 on-demand command on the CLI side — the web UI calls it automatically
 after any change that touches the reverse proxy (see [Web UI](web-ui.md)).
+The inventory snapshot it shows includes the non-secret integration
+settings (the Authentik URL and group names, the Nginx Proxy Manager
+email, the sign-in mode and the rest), but never a secret.
 
 `sync-authentik` reconciles Authentik Proxy Providers, OpenID (OAuth2)
 clients, Applications, policy bindings, and embedded-outpost membership

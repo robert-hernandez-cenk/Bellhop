@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import { logError, logInfo } from './lib/log.ts';
 import { importEnvFilesAndUseStore } from './lib/config-import.ts';
 import { Ssh2SSHClient } from './lib/ssh-client.ts';
-import { loadInventory, saveInventory, SETTINGS_KEYS } from './lib/inventory.ts';
+import { loadInventory, saveInventory, SETTINGS_KEYS, withFreshSettings } from './lib/inventory.ts';
 import { dataDir, inventoryPath } from './lib/paths.ts';
 import { runAuditNfsMounts, formatAuditNfsMounts } from './commands/maintenance/audit-nfs-mounts.ts';
 import { runImportYamlInventory } from './commands/maintenance/import-yaml-inventory.ts';
@@ -129,7 +129,9 @@ program
         logInfo(`[DRY RUN] Not writing ${invPath}. Pass --apply to write these changes.`);
         return;
       }
-      saveInventory(invPath, { ...inventory, guests: result.guests, hosts: result.hosts });
+      // withFreshSettings: the sync queried every host first, and a settings
+      // save in the meantime must not be reverted by this one.
+      saveInventory(invPath, withFreshSettings(invPath, { ...inventory, guests: result.guests, hosts: result.hosts }));
       logInfo(`Wrote ${invPath}`);
     })
   );

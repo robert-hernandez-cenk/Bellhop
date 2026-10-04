@@ -147,18 +147,24 @@ fields still appear and disappear with the selected proxy driver (see
 - **Fields set by the environment** are read-only, labelled "set by
   environment" with the variable's name, and have no Save or Clear: the
   environment variable wins over anything saved here, so the server
-  refuses the write. Unset the variable (or remove it from its
-  `data/*.env` file) to manage the field here again — see [The data/*.env
+  refuses the write. Each also shows its "Stored copy" — the value saved
+  underneath (a secret only says "set"), or "not set" — so you can confirm
+  the import before deleting a `data/*.env` file. Unset the variable (or
+  remove it from its `data/*.env` file) and restart the service to manage
+  the field here again — see [The data/*.env
   files](environment-variables.md#the-dataenv-files).
 - **Admin groups.** Saving the admin group or the built-in admin group asks
   for confirmation first, and is refused when, under the new names, you
   would no longer be an administrator yourself. The check uses your real
   groups even while impersonating, and never blocks the local operator.
 - **Web UI sign-in** (`webUiAuthMode`). Switching it to `authentik` is
-  refused unless your own session came through Authentik's forward-auth —
-  otherwise the next request from your browser would already be rejected.
-  Switching away from `authentik` asks for confirmation, since the web UI
-  then becomes reachable without signing in. If a wrong value locks you
+  refused unless the save itself carries Authentik's forward-auth headers
+  and the user they name is an administrator (under the admin groups as
+  they will be after the save) — otherwise the next request from your
+  browser would be rejected or lose this page. The headers are checked
+  even in `none` mode, which otherwise ignores them. Switching away from
+  `authentik` asks for confirmation, since the web UI then becomes
+  reachable without signing in, and the service log records who did it. If a wrong value locks you
   out anyway, see [Locked out](authentik.md#locked-out).
 
 Settings stays in the nav for any admin even without Authentik's user

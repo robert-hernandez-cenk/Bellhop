@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
@@ -1224,6 +1225,22 @@ export function refreshInventory(inventory: Inventory, path: string): void {
     if (!(key in fresh)) delete inventory[key];
   }
   Object.assign(inventory, fresh);
+}
+
+// For a caller that loaded the inventory, then awaited something slow (an
+// SSH round trip, a reboot, a TLS probe) before saving it back: every
+// setting is taken from the database as it is now, everything else from
+// `inventory`. saveInventory rewrites the whole meta table, so saving the
+// stale copy as-is would silently revert a setting saved meanwhile -- on
+// the Settings page, by set-config, or by the MCP server (issue #64 moved
+// the integration settings there, which made such a save far more likely
+// to land mid-command). A missing database has nothing newer to keep.
+export function withFreshSettings(path: string, inventory: Inventory): Inventory {
+  if (!existsSync(path)) return inventory;
+  const fresh = loadInventory(path);
+  const merged: Inventory = { ...inventory };
+  for (const key of SETTINGS_KEYS) assignSetting(merged, key, fresh[key]);
+  return merged;
 }
 
 // Mirrors web-client/src/pages/Dashboard.tsx's compareIp -- keep both in

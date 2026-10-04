@@ -30,6 +30,15 @@ const httpUrl = z.string().refine((value) => {
   }
 }, 'must be an http:// or https:// URL');
 
+// Comma-separated, ordered low to high; parsed (and deduplicated) by
+// parseGroupLadder in authentik-config.ts, which drops blank rungs -- so a
+// value of only commas and spaces would parse to an empty ladder, leaving
+// every gated entry off it.
+const groupLadder = nonEmpty.refine(
+  (value) => value.split(',').some((rung) => rung.trim() !== ''),
+  'must name at least one group'
+);
+
 const positiveIntegerString = z
   .string()
   .refine((value) => /^[0-9]+$/.test(value) && Number(value) > 0, 'must be a positive integer');
@@ -56,9 +65,7 @@ export const MovedSettingsSchema = z.object({
   authentikApiUrl: httpUrl.optional(),
   authentikAdminGroup: nonEmpty.optional(),
   authentikBuiltinAdminGroup: nonEmpty.optional(),
-  // Comma-separated, ordered low to high; parsed (and deduplicated) by
-  // parseGroupLadder in authentik-config.ts.
-  authentikGroupLadder: nonEmpty.optional(),
+  authentikGroupLadder: groupLadder.optional(),
   authentikOutpostName: nonEmpty.optional(),
   authentikOutpostPort: positiveIntegerString.optional(),
   authentikAuthorizationFlowSlug: nonEmpty.optional(),

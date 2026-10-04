@@ -355,11 +355,21 @@ export interface SettingsResponse {
   // Issue #64: where each non-secret setting's effective value comes from
   // (`settings` above holds only the stored values), and every key an
   // environment variable currently pins -- shown read-only. A pinned secret
-  // carries only its variable name, never a value.
+  // carries only its variable name, never a value. `stored` says whether the
+  // store also holds a copy (so an operator can confirm the one-time import
+  // before deleting a data/*.env file); `storedValue` is that copy, for a
+  // non-secret key only.
   sources: Record<string, SettingSource>;
-  environment: Record<string, { variable: string; value?: string }>;
+  environment: Record<string, EnvironmentPin>;
   // Each secret's status only -- the API never returns a secret's value.
   secrets: Record<SecretSettingKey, SecretStatus>;
+}
+
+export interface EnvironmentPin {
+  variable: string;
+  value?: string;
+  stored: boolean;
+  storedValue?: string;
 }
 
 export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken';

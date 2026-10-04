@@ -54,6 +54,7 @@ Gains `viaForwardAuth?: true` -- set only when the identity came from verified
 ## State transitions
 
 - Import: stored(none) + file value -> stored(file value). Stored(any) is never changed.
-- `webUiAuthMode` -> `authentik` only from a `viaForwardAuth` request (web). From `authentik` to
+- `webUiAuthMode` -> `authentik` only from a request whose forward-auth headers name an admin
+  under the post-save admin groups (web). From `authentik` to
   anything else: UI confirmation. CLI/MCP: unrestricted (host-level trust).
 - Admin groups: a web write is refused if the real requester would stop being an admin.

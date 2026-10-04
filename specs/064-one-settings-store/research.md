@@ -103,7 +103,10 @@
   `WEB_UI_AUTH_MODE`. `authMode(env)` reads it through the accessor. `AuthUser` gains
   `viaForwardAuth?: true`, set by `resolveAuthUser` only on the `x-authentik-username` branch
   (never for the dev user or the local operator). PATCH refuses `webUiAuthMode: 'authentik'`
-  unless `(req.realUser ?? req.user).viaForwardAuth`. Leaving `authentik` is confirmed client-side.
+  unless the request's forward-auth headers, parsed as authentik mode would
+  (`forwardAuthIdentity`, so the check also works in `none` mode, where `req.user` is the
+  local operator), describe an admin under the post-save admin groups (final review F2).
+  Leaving `authentik` is confirmed client-side and logged server-side.
 - **Admin-group guard**: PATCH computes the effective admin/builtin-admin group names after the
   update and refuses when the real user (`req.realUser ?? req.user`) is not `localOperator` and
   would no longer pass `isAdminUser`. Both guards run after schema validation, before any write.

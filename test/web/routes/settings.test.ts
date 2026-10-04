@@ -17,7 +17,7 @@ import { SETTINGS_KEYS } from '../../../src/lib/inventory.ts';
 import { SECRET_SETTINGS_KEYS } from '../../../src/lib/settings-defs.ts';
 import { envPinnedError } from '../../../src/web/routes/settings.ts';
 import Database from 'better-sqlite3';
-import { configValueAt, writeSecret } from '../../../src/lib/config.ts';
+import { configValueAt, useConfigStore, writeSecret } from '../../../src/lib/config.ts';
 
 function baseInventory(): Inventory {
   return {
@@ -499,8 +499,9 @@ test('GET /api/settings lists env-pinned keys, with a value only for non-secret 
       assert.deepEqual(res.body.environment.authentikOutpostName, {
         variable: 'AUTHENTIK_OUTPOST_NAME',
         value: 'example env outpost',
+        stored: false,
       });
-      assert.deepEqual(res.body.environment.githubApiToken, { variable: 'GITHUB_API_TOKEN' });
+      assert.deepEqual(res.body.environment.githubApiToken, { variable: 'GITHUB_API_TOKEN', stored: false });
       assert.ok(!('nfsServer' in res.body.environment), 'a key with no env var is never pinned');
       assert.ok(!('authentikAdminGroup' in res.body.environment), 'an unset variable does not pin');
       assert.ok(!JSON.stringify(res.body).includes('GITHUB-SECRET-MARKER'), 'a secret value never appears');
@@ -527,7 +528,7 @@ test('PATCH /api/settings refuses an env-pinned key with 400 naming the variable
     assert.equal(res.status, 400);
     assert.equal(
       res.body.error,
-      'authentikOutpostName is set by the environment variable AUTHENTIK_OUTPOST_NAME -- unset AUTHENTIK_OUTPOST_NAME (or remove it from data/authentik.env) to manage it here'
+      'authentikOutpostName is set by the environment variable AUTHENTIK_OUTPOST_NAME -- unset AUTHENTIK_OUTPOST_NAME (or remove it from data/authentik.env) and restart the service to manage it here'
     );
     const onDisk = loadInventory(inventoryPath);
     assert.equal(onDisk.authentikOutpostName, undefined);
@@ -556,12 +557,12 @@ test('PATCH /api/settings writes a moved key that is not env-pinned', async () =
 test('envPinnedError names each key\'s own env file, and omits the file for a key that has none', () => {
   assert.equal(
     envPinnedError('webUiAuthMode'),
-    'webUiAuthMode is set by the environment variable WEB_UI_AUTH_MODE -- unset WEB_UI_AUTH_MODE (or remove it from data/authentik.env) to manage it here'
+    'webUiAuthMode is set by the environment variable WEB_UI_AUTH_MODE -- unset WEB_UI_AUTH_MODE (or remove it from data/authentik.env) and restart the service to manage it here'
   );
   assert.match(envPinnedError('cloudflareDnsApiToken'), /remove it from data\/cloudflare-api\.env/);
   assert.equal(
     envPinnedError('githubApiToken'),
-    'githubApiToken is set by the environment variable GITHUB_API_TOKEN -- unset GITHUB_API_TOKEN to manage it here'
+    'githubApiToken is set by the environment variable GITHUB_API_TOKEN -- unset GITHUB_API_TOKEN and restart the service to manage it here'
   );
 });
 
@@ -816,4 +817,127 @@ test('PATCH /api/settings allows clearing webUiAuthMode and setting auto/none wi
     if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
     else process.env.WEB_UI_DEV_GROUPS = originalGroups;
   }
+});
+
+// -- Final review F1: a pinned key reports whether a stored copy exists ------
+
+test('GET /api/settings reports a pinned key\'s stored copy: its value for a non-secret, never for a secret', async () => {
+  await withEnv(
+    { AUTHENTIK_OUTPOST_NAME: 'example env outpost', NPM_API_PASSWORD: 'example-npm-ENV-MARKER' },
+    async () => {
+      const { app, inventoryPath } = testApp({ ...baseInventory(), authentikOutpostName: 'example stored outpost' });
+      writeSecret(inventoryPath, 'npmApiPassword', 'example-npm-STORED-MARKER');
+      const res = await asAdmin(request(app).get('/api/settings'));
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.environment.authentikOutpostName, {
+        variable: 'AUTHENTIK_OUTPOST_NAME',
+        value: 'example env outpost',
+        stored: true,
+        storedValue: 'example stored outpost',
+      });
+      assert.deepEqual(res.body.environment.npmApiPassword, { variable: 'NPM_API_PASSWORD', stored: true });
+      const body = JSON.stringify(res.body);
+      assert.ok(!body.includes('STORED-MARKER') && !body.includes('ENV-MARKER'), 'no secret value in the response');
+    }
+  );
+});
+
+// -- Final review F2: switching to authentik checks the header identity ------
+
+// Registers the test app's own database as the config store, so its stored
+// webUiAuthMode is the mode requireAuth actually runs under.
+async function withStoredAuthMode(
+  mode: 'auto' | 'authentik' | 'none',
+  fn: (app: ReturnType<typeof testApp>['app'], inventoryPath: string) => Promise<void>
+): Promise<void> {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: mode });
+  useConfigStore(inventoryPath);
+  try {
+    await fn(app, inventoryPath);
+  } finally {
+    useConfigStore(null);
+  }
+}
+
+test('PATCH webUiAuthMode: authentik in auto mode with admin forward-auth headers is allowed', async () => {
+  await withStoredAuthMode('auto', async (app, inventoryPath) => {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
+    assert.equal(res.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+  });
+});
+
+test('PATCH webUiAuthMode: authentik in none mode with admin forward-auth headers is allowed', async () => {
+  await withStoredAuthMode('none', async (app, inventoryPath) => {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
+    assert.equal(res.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+  });
+});
+
+test('PATCH webUiAuthMode: authentik in none mode with non-admin forward-auth headers is refused', async () => {
+  await withStoredAuthMode('none', async (app, inventoryPath) => {
+    // none mode serves this request as the (admin) local operator, so it
+    // passes requireAdminGroup; the Authentik identity it carries is not.
+    const res = await request(app)
+      .patch('/api/settings')
+      .set('x-authentik-username', 'someone')
+      .set('x-authentik-groups', 'family')
+      .send({ webUiAuthMode: 'authentik' });
+    assert.equal(res.status, 409);
+    assert.equal(
+      res.body.error,
+      'Refusing to set webUiAuthMode to authentik: the Authentik identity on this request (someone) is not an administrator, so it would lose access to this page'
+    );
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
+  });
+});
+
+test('PATCH webUiAuthMode: authentik in none mode with no forward-auth headers is refused', async () => {
+  await withStoredAuthMode('none', async (app, inventoryPath) => {
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'authentik' });
+    assert.equal(res.status, 409);
+    assert.equal(
+      res.body.error,
+      'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected'
+    );
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
+  });
+});
+
+test('PATCH webUiAuthMode: authentik checks the header identity against the admin groups the same request sets', async () => {
+  await withStoredAuthMode('none', async (app, inventoryPath) => {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({
+      webUiAuthMode: 'authentik',
+      authentikAdminGroup: 'example-other-admins',
+    });
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /^Refusing to set webUiAuthMode to authentik: the Authentik identity on this request \(admin\) is not an administrator/);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
+  });
+});
+
+// -- Final review M7: leaving authentik is logged ------------------------------
+
+test('PATCH /api/settings logs a warning naming the real user when webUiAuthMode leaves authentik', async (t) => {
+  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'authentik' });
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (message: string) => errors.push(message));
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
+  assert.equal(res.status, 200);
+  assert.ok(
+    errors.some((line) =>
+      line.includes('Sign-in mode changed from authentik to none by admin -- the web UI no longer requires Authentik sign-in')
+    ),
+    `expected the sign-in mode warning, got: ${errors.join(' | ')}`
+  );
+});
+
+test('PATCH /api/settings logs nothing about sign-in mode for a change that does not leave authentik', async (t) => {
+  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'auto' });
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (message: string) => errors.push(message));
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
+  assert.equal(res.status, 200);
+  assert.ok(!errors.some((line) => line.includes('Sign-in mode changed')));
 });

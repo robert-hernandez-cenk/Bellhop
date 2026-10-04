@@ -145,7 +145,12 @@ export function clearSecret(inventoryPath: string, key: SecretSettingKey): void 
 function storedValues(inventoryPath: string): Map<string, string> {
   const now = clock();
   const cached = snapshots.get(inventoryPath);
-  if (cached && now - cached.readAt < CONFIG_SNAPSHOT_TTL_MS) return cached.stored;
+  // A negative age means the clock went backwards since the read; treat it
+  // as expired, or the copy would stay fresh until the clock caught up.
+  if (cached) {
+    const age = now - cached.readAt;
+    if (age >= 0 && age < CONFIG_SNAPSHOT_TTL_MS) return cached.stored;
+  }
   const stored = readStored(inventoryPath);
   snapshots.set(inventoryPath, { readAt: now, stored });
   return stored;

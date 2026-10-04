@@ -19,3 +19,10 @@ export function adminNavLinks(isAdmin: boolean, hasDirectory: boolean): AdminNav
   links.push({ to: '/settings', label: 'Settings' });
   return links;
 }
+
+// The Sidebar's warning when no identity provider is in play (the local
+// operator). Since issue #64 the sign-in mode is a stored setting, so the
+// fix named first is the Settings page's own field; the environment
+// variable still overrides it and stays the alternative.
+export const NO_AUTH_BANNER_TEXT =
+  'No authentication configured — everyone who can reach this page has full access. Set Web UI sign-in (webUiAuthMode) to authentik on the Settings page, or WEB_UI_AUTH_MODE=authentik in the service environment, once an identity provider is in place.';

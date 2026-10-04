@@ -74,7 +74,8 @@ test('imports non-secret keys to meta, secrets to secret_settings, WEB_UI_AUTH_M
   assert.equal(inv.authentikAdminGroup, 'example-admins');
   assert.equal(inv.webUiAuthMode, 'authentik');
   assert.equal(inv.npmApiEmail, 'admin@example.com');
-  // Secrets are never on Inventory, only in secret_settings.
+  // Secrets are never on Inventory, only in secret_settings. The cast only
+  // widens the type so a key Inventory deliberately lacks can be indexed.
   assert.equal((inv as Record<string, unknown>).authentikApiToken, undefined);
   assert.equal(configValueAt(dbPath, 'authentikApiToken', {}).value, 'example-authentik-token');
   assert.equal(configValueAt(dbPath, 'cloudflareDnsApiToken', {}).value, 'example-cloudflare-token');
@@ -149,16 +150,23 @@ test('missing files are skipped silently', async () => {
 });
 
 test('real process.env values are not imported', async () => {
-  const { dbPath, dataDir } = setup({});
-  const saved = process.env.AUTHENTIK_ADMIN_GROUP;
-  process.env.AUTHENTIK_ADMIN_GROUP = 'env-only-admins';
+  // A real file candidate, so the import actually runs and writes: the
+  // stored value must be the file's, never the environment's, and a
+  // variable set only in the environment must not be stored at all.
+  const { dbPath, dataDir } = setup({ 'authentik.env': 'AUTHENTIK_ADMIN_GROUP=example-file-admins\n' });
+  const saved = { group: process.env.AUTHENTIK_ADMIN_GROUP, outpost: process.env.AUTHENTIK_OUTPOST_NAME };
+  process.env.AUTHENTIK_ADMIN_GROUP = 'example-env-admins';
+  process.env.AUTHENTIK_OUTPOST_NAME = 'example env-only outpost';
   try {
     const { result } = await capture(() => importEnvFiles(dbPath, dataDir));
-    assert.deepEqual(result.imported, []);
-    assert.equal(configValueAt(dbPath, 'authentikAdminGroup', {}).value, undefined);
+    assert.deepEqual(result.imported.map((i) => i.key), ['authentikAdminGroup']);
+    assert.equal(configValueAt(dbPath, 'authentikAdminGroup', {}).value, 'example-file-admins');
+    assert.equal(configValueAt(dbPath, 'authentikOutpostName', {}).value, undefined);
   } finally {
-    if (saved === undefined) delete process.env.AUTHENTIK_ADMIN_GROUP;
-    else process.env.AUTHENTIK_ADMIN_GROUP = saved;
+    if (saved.group === undefined) delete process.env.AUTHENTIK_ADMIN_GROUP;
+    else process.env.AUTHENTIK_ADMIN_GROUP = saved.group;
+    if (saved.outpost === undefined) delete process.env.AUTHENTIK_OUTPOST_NAME;
+    else process.env.AUTHENTIK_OUTPOST_NAME = saved.outpost;
   }
 });
 

@@ -125,13 +125,16 @@ export async function resolveSetConfigValue(
   opts: { key: string; value?: string; stdin?: boolean; unset?: boolean },
   input: SetConfigInput
 ): Promise<string | undefined> {
-  if (opts.unset) return undefined;
   const secret = isSecretSettingKey(opts.key);
+  // Checked before --unset returns: a secret typed as an argument is
+  // already in shell history and the process list, --unset or not, so it
+  // is refused rather than silently ignored.
   if (secret && opts.value !== undefined) {
     throw new Error(
       `${opts.key} is a secret -- pass it on standard input with --stdin (or omit the value to be prompted), never as an argument`
     );
   }
+  if (opts.unset) return undefined;
   if (opts.stdin) {
     if (opts.value !== undefined) throw new Error(`set-config ${opts.key}: pass either a value or --stdin, not both`);
     // Exactly one trailing newline -- what `echo` or a here-string adds --

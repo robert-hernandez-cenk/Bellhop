@@ -149,3 +149,17 @@ test('a zod failure message never contains the rejected input', () => {
     }
   }
 });
+
+test('authentikGroupLadder must name at least one group, with a fixed message', () => {
+  assert.ok(accepts(SettingsSchema, 'authentikGroupLadder', 'example-users, example-admins'));
+  assert.ok(accepts(SettingsSchema, 'authentikGroupLadder', ' , example-admins'), 'one non-blank rung is enough');
+  for (const bad of [',', ' , ,', '   ']) {
+    const result = SettingsSchema.safeParse({ authentikGroupLadder: bad });
+    assert.ok(!result.success, JSON.stringify(bad));
+    assert.deepEqual(
+      result.error.issues.map((i) => i.message),
+      ['must name at least one group'],
+      JSON.stringify(bad)
+    );
+  }
+});

@@ -22,7 +22,8 @@ page or with `set-config` takes effect on the next request (web UI) or the
 next run (CLI, MCP server) without a restart — unless an environment
 variable pins it. A pinned field is shown read-only on the Settings page,
 labelled "set by environment", and the web UI refuses to change it, naming
-the variable. `set-config` stores the value anyway and warns that the
+the variable and asking you to unset it and restart the service (a running
+process keeps the variables it started with). `set-config` stores the value anyway and warns that the
 variable overrides it, because the shell you run the CLI from does not
 necessarily share the web service's environment.
 
@@ -65,9 +66,16 @@ and the files themselves are never changed.
 
 While a file is still present, its values are also loaded into the
 environment, so they keep overriding the stored settings, and the Settings
-page shows those fields as "set by environment". Once the Settings page
-shows the values you expect, delete the files: from then on the stored
-settings are what's in use, and the fields become editable. Copy the
+page shows those fields as "set by environment", each with a "Stored
+copy" line saying whether the import stored a value underneath (a
+setting's stored value is shown; a secret only says "set"). Once every
+such field shows a stored copy, delete the files and restart the web
+service and any long-running MCP server — until they restart they keep the
+values they loaded at startup. From then on the stored settings are what's
+in use, and the fields become editable. On a production deployment, check
+that **Web UI sign-in** shows "Stored copy: authentik" before deleting
+`data/authentik.env`, or sign-in falls back to `auto` (see [Sign-in
+mode](#sign-in-mode)). Copy the
 inventory database somewhere safe first if you want a backup — it now
 holds the secrets too (see
 [Secrets](configuration.md#secrets)).
@@ -89,9 +97,12 @@ who is making a request:
   fails closed.
 - `none` — always the local operator; trusted headers are ignored.
 
-The Settings page refuses to switch it to `authentik` from a session that
-did not itself come through Authentik's forward-auth, and asks for
-confirmation before switching away from `authentik` — see [Locked
+The Settings page refuses to switch it to `authentik` unless the saving
+request carries Authentik's forward-auth headers and the user they name is
+an administrator (checked even in `none` mode, which otherwise ignores
+those headers), and asks for confirmation before switching away from
+`authentik` — a switch away is also logged as a warning naming who made
+it — see [Locked
 out](authentik.md#locked-out) for recovering from a wrong value anyway.
 
 ### Group ladder upgrades

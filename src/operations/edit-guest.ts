@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { GuestEntry } from '../lib/inventory.ts';
 import {
   saveInventory,
+  withFreshSettings,
   parseSubdomains,
   parsePort,
   parseAuthGroup,
@@ -181,7 +182,9 @@ export async function commitGuestEdit(
     }
   }
 
-  saveInventory(deps.inventoryPath, { ...inventory, guests });
+  // withFreshSettings: the TLS probe above is an SSH round trip, and a
+  // settings save in the meantime must not be reverted by this one.
+  saveInventory(deps.inventoryPath, withFreshSettings(deps.inventoryPath, { ...inventory, guests }));
   inventory.guests = guests;
 
   try {

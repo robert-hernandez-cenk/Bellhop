@@ -34,9 +34,9 @@ rights. The Windows firewall rule this repo installs (scoped to the
 3. On the General tab, set **Web UI sign-in** to `authentik`, so a broken
    `forward_auth` directive fails closed rather than silently reverting to
    the local operator. **A production deployment must store this.** The
-   page refuses the change from a session that did not come through
-   Authentik's forward-auth, since your own next request would be
-   rejected.
+   page refuses the change unless your session came through Authentik's
+   forward-auth as an administrator, since your own next request would
+   otherwise be rejected or lose the page.
 
 Every one of these can also be pinned by an environment variable instead
 (see [Environment variables](environment-variables.md)). A deployment
@@ -48,8 +48,9 @@ files](configuration.md#moving-off-the-dataenv-files).
 
 The Settings page guards the three values that decide who can use the web
 UI: it refuses an admin-group change that would remove your own
-administrator access, refuses `authentik` sign-in from a session without
-Authentik's headers, and asks before you leave `authentik`. If you are
+administrator access, refuses `authentik` sign-in unless the session
+carries Authentik's headers for an administrator, and asks before you
+leave `authentik`. If you are
 locked out anyway — Authentik is down, or forward-auth broke while
 sign-in is `authentik` — recover from the host the service runs on, with
 no web UI needed:

@@ -37,8 +37,9 @@ export interface AuthUser {
   uid?: string;
   // Set only when the identity came from Authentik forward-auth headers
   // (issue #64) -- never for the dev user or the local operator. The
-  // Settings page refuses to switch webUiAuthMode to 'authentik' from a
-  // request without it, since every later request would then be rejected.
+  // Settings page's webUiAuthMode guard reads the headers itself through
+  // forwardAuthIdentity, since in none mode req.user is the local operator
+  // even when they are present.
   viaForwardAuth?: true;
 }
 
@@ -59,7 +60,6 @@ export interface AuthUser {
 // docs/authentik.md.
 export type AuthMode = 'auto' | 'authentik' | 'none';
 
-//
 // Read through the config accessor (issue #64): WEB_UI_AUTH_MODE wins, then
 // the stored webUiAuthMode setting. A stored value was already validated by
 // the accessor, so the check below only ever rejects the environment
@@ -102,22 +102,8 @@ export function resolveAuthUser(
   const mode = authMode(env);
   if (mode === 'none') return localOperator(env);
 
-  const username = headers['x-authentik-username'];
-  if (typeof username === 'string' && username.length > 0) {
-    const email = headers['x-authentik-email'];
-    const groupsHeader = headers['x-authentik-groups'];
-    const uid = headers['x-authentik-uid'];
-    return {
-      username,
-      email: typeof email === 'string' ? email : undefined,
-      groups: typeof groupsHeader === 'string' && groupsHeader.length > 0 ? groupsHeader.split('|') : [],
-      // A conditional spread, not `uid: ... ?? undefined`, so a request
-      // with no (or an empty) x-authentik-uid header round-trips without
-      // a uid key at all rather than one set to `undefined`.
-      ...(typeof uid === 'string' && uid.length > 0 ? { uid } : {}),
-      viaForwardAuth: true,
-    };
-  }
+  const fromHeaders = forwardAuthIdentity(headers);
+  if (fromHeaders) return fromHeaders;
 
   // Checked before the mode gate below, so this bypasses authentication even
   // in strict 'authentik' mode -- intended, and what this repo's own tests
@@ -132,6 +118,30 @@ export function resolveAuthUser(
   }
 
   return mode === 'auto' ? localOperator(env) : undefined;
+}
+
+// The identity the forward-auth headers describe, or undefined when the
+// request carries none -- whatever the configured mode, and never the dev
+// user or the local operator. resolveAuthUser uses it in auto/authentik
+// mode; the Settings page also calls it directly (issue #64), since in
+// none mode the request's own identity is the local operator even when
+// the proxy did send these headers.
+export function forwardAuthIdentity(headers: IncomingHttpHeaders): AuthUser | undefined {
+  const username = headers['x-authentik-username'];
+  if (typeof username !== 'string' || username.length === 0) return undefined;
+  const email = headers['x-authentik-email'];
+  const groupsHeader = headers['x-authentik-groups'];
+  const uid = headers['x-authentik-uid'];
+  return {
+    username,
+    email: typeof email === 'string' ? email : undefined,
+    groups: typeof groupsHeader === 'string' && groupsHeader.length > 0 ? groupsHeader.split('|') : [],
+    // A conditional spread, not `uid: ... ?? undefined`, so a request
+    // with no (or an empty) x-authentik-uid header round-trips without
+    // a uid key at all rather than one set to `undefined`.
+    ...(typeof uid === 'string' && uid.length > 0 ? { uid } : {}),
+    viaForwardAuth: true,
+  };
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -153,8 +163,14 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 // membership in either is sufficient (issue #86), so there is always a path
 // into the Users page without a manual, out-of-band Authentik group edit.
 export function isAdminUser(groups: string[], env: NodeJS.ProcessEnv = process.env): boolean {
-  const config = authentikConfig(env);
-  return groups.includes(config.adminGroup) || groups.includes(config.builtinAdminGroup);
+  return isAdminOf(groups, authentikConfig(env));
+}
+
+// The same check against an explicit pair of group names -- the Settings
+// page's lockout guards (issue #64) test a requester against the names a
+// pending change *would* set, before anything is written.
+export function isAdminOf(groups: string[], adminGroups: { adminGroup: string; builtinAdminGroup: string }): boolean {
+  return groups.includes(adminGroups.adminGroup) || groups.includes(adminGroups.builtinAdminGroup);
 }
 
 export function requireAdminGroup(req: Request, res: Response, next: NextFunction): void {

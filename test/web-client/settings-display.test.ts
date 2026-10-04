@@ -13,6 +13,7 @@ import {
   needsConfirmation,
   confirmationMessage,
   secretStatusText,
+  storedCopyText,
   mergeSettingsResponse,
 } from '../../web-client/src/lib/settings-display.ts';
 import { SETTINGS_KEYS } from '../../src/lib/inventory.ts';
@@ -328,18 +329,36 @@ test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab', (
   assert.ok(fieldsForTab('general').includes('webUiAuthMode'));
 });
 
-test('fieldState reports a key the environment pins as env-pinned with its variable', () => {
-  const data = { environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik' } } };
+test('fieldState reports a key the environment pins as env-pinned with its variable and stored copy', () => {
+  const data = {
+    environment: {
+      webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik', stored: true, storedValue: 'authentik' },
+    },
+  };
   assert.deepEqual(fieldState('webUiAuthMode', data), {
     kind: 'env-pinned',
     variable: 'WEB_UI_AUTH_MODE',
     value: 'authentik',
+    stored: true,
+    storedValue: 'authentik',
   });
 });
 
-test('fieldState reports a pinned secret with no value', () => {
-  const data = { environment: { githubApiToken: { variable: 'GITHUB_API_TOKEN' } } };
-  assert.deepEqual(fieldState('githubApiToken', data), { kind: 'env-pinned', variable: 'GITHUB_API_TOKEN' });
+test('fieldState reports a pinned secret with no value and no stored value', () => {
+  const data = { environment: { githubApiToken: { variable: 'GITHUB_API_TOKEN', stored: true } } };
+  assert.deepEqual(fieldState('githubApiToken', data), { kind: 'env-pinned', variable: 'GITHUB_API_TOKEN', stored: true });
+});
+
+test('storedCopyText shows whether a pinned field has a stored copy, and its value only for a non-secret', () => {
+  assert.equal(
+    storedCopyText({ kind: 'env-pinned', variable: 'WEB_UI_AUTH_MODE', value: 'authentik', stored: true, storedValue: 'authentik' }),
+    'Stored copy: authentik',
+  );
+  assert.equal(storedCopyText({ kind: 'env-pinned', variable: 'GITHUB_API_TOKEN', stored: true }), 'Stored copy: set');
+  assert.equal(
+    storedCopyText({ kind: 'env-pinned', variable: 'NPM_API_URL', value: 'http://192.0.2.10:81', stored: false }),
+    'Stored copy: not set',
+  );
 });
 
 test('fieldState reports an unpinned key as editable', () => {
@@ -351,7 +370,7 @@ test('effectiveWebUiAuthMode prefers the environment, then the stored value, the
   assert.equal(
     effectiveWebUiAuthMode({
       settings: { webUiAuthMode: 'none' },
-      environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik' } },
+      environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik', stored: false } },
     }),
     'authentik',
   );
@@ -455,10 +474,10 @@ test('mergeSettingsResponse takes only the saved secret status from the response
 });
 
 test('mergeSettingsResponse updates or drops the saved key\'s environment pin', () => {
-  const pin = { variable: 'NPM_API_URL', value: 'http://192.0.2.10:81' };
-  const prev = settingsResponse({ environment: { npmApiUrl: pin, npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com' } } });
+  const pin = { variable: 'NPM_API_URL', value: 'http://192.0.2.10:81', stored: false };
+  const prev = settingsResponse({ environment: { npmApiUrl: pin, npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com', stored: false } } });
   const dropped = mergeSettingsResponse(prev, settingsResponse(), 'npmApiUrl');
-  assert.deepEqual(dropped.environment, { npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com' } });
+  assert.deepEqual(dropped.environment, { npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com', stored: false } });
   const kept = mergeSettingsResponse(settingsResponse(), settingsResponse({ environment: { npmApiUrl: pin } }), 'npmApiUrl');
   assert.deepEqual(kept.environment, { npmApiUrl: pin });
 });

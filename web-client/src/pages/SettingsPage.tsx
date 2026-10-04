@@ -17,6 +17,7 @@ import {
   needsConfirmation,
   confirmationMessage,
   secretStatusText,
+  storedCopyText,
   mergeSettingsResponse,
   type SettingsFieldKey,
   type SettingsTab,
@@ -223,6 +224,7 @@ function SecretField({
       <p className="settings-secret-status">
         {secretStatusText(status, data.environment[settingKey]?.variable)}
       </p>
+      {state.kind === 'env-pinned' && <p className="settings-help">{storedCopyText(state)}</p>}
       {!pinned && (
         <input
           id={`setting-${settingKey}`}
@@ -472,6 +474,7 @@ export function SettingsPage() {
             {field.label} <span className="settings-pinned">Set by environment ({state.variable})</span>
           </label>
           <input id={`setting-${key}`} className="field-input" type="text" value={state.value ?? ''} readOnly />
+          <p className="settings-help">{storedCopyText(state)}</p>
           <p className="settings-help">{help}</p>
         </div>
       );
@@ -564,6 +567,7 @@ export function SettingsPage() {
         <ConfirmDeleteModal
           message={confirmationMessage(pending.key)}
           confirmLabel="Save"
+          confirmClassName="button"
           onConfirm={async () => {
             await save(pending.key, pending.value);
           }}

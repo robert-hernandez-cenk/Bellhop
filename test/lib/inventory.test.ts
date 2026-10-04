@@ -19,6 +19,7 @@ import {
   oidcConfigErrors,
   sortInventoryForFile,
   refreshInventory,
+  withFreshSettings,
   HostEntrySchema,
   GuestEntrySchema,
   GuestCreatorSchema,
@@ -2314,3 +2315,39 @@ test(
     );
   }
 );
+
+// -- Final review M4: a long-running save never reverts a settings change ----
+
+test('withFreshSettings takes every setting from the database and everything else from the given copy', () => {
+  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'fresh-settings-')), 'bellhop.db');
+  const stale: Inventory = {
+    domain: 'example.com',
+    nfsServer: '192.0.2.5',
+    dnsServer: '192.0.2.53',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.10', ssh_user: 'root' }],
+    guests: [],
+  };
+  saveInventory(dbPath, stale);
+  // Another process changes and clears settings after `stale` was loaded.
+  saveInventory(dbPath, { ...stale, nfsServer: '192.0.2.6', dnsServer: undefined, webUiAuthMode: 'authentik' });
+
+  const edited: Inventory = { ...stale, guests: [{ name: 'app', type: 'lxc', vmid: 101, host: 'pve1' }] };
+  const merged = withFreshSettings(dbPath, edited);
+  assert.equal(merged.nfsServer, '192.0.2.6');
+  assert.equal(merged.dnsServer, undefined);
+  assert.equal(merged.webUiAuthMode, 'authentik');
+  assert.deepEqual(merged.guests, edited.guests, 'non-settings fields come from the given copy');
+  assert.equal(edited.nfsServer, '192.0.2.5', 'the given copy is not mutated');
+
+  saveInventory(dbPath, merged);
+  const saved = loadInventory(dbPath);
+  assert.equal(saved.nfsServer, '192.0.2.6');
+  assert.equal(saved.dnsServer, undefined);
+  assert.equal(saved.guests.length, 1);
+});
+
+test('withFreshSettings returns the given copy unchanged when the database does not exist yet', () => {
+  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'fresh-settings-')), 'missing.db');
+  const inv: Inventory = { domain: 'example.com', nfsServer: '192.0.2.5', hosts: [], guests: [] };
+  assert.deepEqual(withFreshSettings(dbPath, inv), inv);
+});

@@ -29,13 +29,27 @@ export function promptHidden(
         callback();
       },
     });
+    // Set once the promise settles, so the 'close' every path below ends
+    // in only rejects when nothing else has.
+    let settled = false;
     const rl = createInterface({ input, output: echo, terminal: true });
     rl.on('SIGINT', () => {
+      settled = true;
       rl.close();
       output.write('\n');
       reject(new Error('Cancelled'));
     });
+    // The input ended (Ctrl+D, or a closed pipe) before a line was entered:
+    // without this the promise would never settle and set-config would
+    // hang instead of exiting.
+    rl.on('close', () => {
+      if (settled) return;
+      settled = true;
+      output.write('\n');
+      reject(new Error('Cancelled -- nothing was written'));
+    });
     rl.question(question, (answer) => {
+      settled = true;
       rl.close();
       output.write('\n');
       resolve(answer);

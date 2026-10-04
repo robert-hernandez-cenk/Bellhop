@@ -296,11 +296,20 @@ import nothing.
 
 A file that is still present keeps overriding the stored settings, and the
 Settings page shows those fields as "set by environment" and read-only.
-Check that the Settings page shows what you expect, then delete the files;
-the stored settings take over and the fields become editable. On a
-production deployment, make sure `webUiAuthMode` is stored as `authentik`
-before deleting `data/authentik.env` (the import copies it from there if
-the file sets `WEB_UI_AUTH_MODE`), or the web UI falls back to `auto`.
+Under each such field the page also shows the store's own copy — "Stored
+copy: <value>" for a setting, "Stored copy: set" for a secret, or "Stored
+copy: not set" if nothing was imported. To finish the move:
+
+1. On the Settings page, check every field marked "set by environment"
+   shows a stored copy. On a production deployment, make sure **Web UI
+   sign-in** (`webUiAuthMode`) shows "Stored copy: authentik" before
+   deleting `data/authentik.env` (the import copies it from there if the
+   file sets `WEB_UI_AUTH_MODE`), or the web UI falls back to `auto`.
+2. Delete the files.
+3. Restart the web service, and any long-running MCP server. A running
+   process keeps the variables it loaded from the files at startup, so the
+   fields stay "set by environment" until it restarts; after that the
+   stored settings take over and the fields become editable.
 
 ### GitHub token
 
