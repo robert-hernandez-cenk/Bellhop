@@ -47,7 +47,7 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
   - With no custom settings, no network.
   - Existing `resolveAppSource` tests still pass unchanged.
 - [x] T007 Implement `createAppSourceResolver(inventory, fetchImpl)` in `src/lib/app-source.ts`, refactoring `resolveAppSource` onto the shared internals (research R4) without changing its behavior.
-- [ ] T008 Write `test/commands/check-app-updates.test.ts`, using `FakeSSHClient`, a temp inventory, and a stubbed fetch:
+- [x] T008 Write `test/commands/check-app-updates.test.ts`, using `FakeSSHClient`, a temp inventory, and a stubbed fetch:
   - Only `lxc` guests with `app` are checked.
   - A stopped guest (from the `pvesh` status responder) → `not-checked` "Guest is stopped", with no `pct exec` to it.
   - A host whose status query fails → its guests are still attempted.
@@ -61,7 +61,7 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
   - `apply: false` saves nothing; `apply: true` replaces all rows.
   - `--guest` mode skips the status query, upserts one row, and rejects an unknown guest, a non-lxc guest, or a guest with no app, using the messages in `contracts/cli.md`.
   - `formatCheckAppUpdates` output matches the contract's line layout.
-- [ ] T009 Implement `src/commands/maintenance/check-app-updates.ts`: `runCheckAppUpdates({ guest?, apply }, { ssh, inventory, inventoryPath, fetchImpl?, now? })`, the exported `checkOneGuest(guestName, ctx)` used by the re-check, and `formatCheckAppUpdates(result)`. Guest reads go only through `runRemote`.
+- [x] T009 Implement `src/commands/maintenance/check-app-updates.ts`: `runCheckAppUpdates({ guest?, apply }, { ssh, inventory, inventoryPath, fetchImpl?, now? })`, the exported `checkOneGuest(guestName, ctx)` used by the re-check, and `formatCheckAppUpdates(result)`. Guest reads go only through `runRemote`.
 
 **Checkpoint**: the check runs end to end against fakes and saves results.
 
