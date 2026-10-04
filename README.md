@@ -101,6 +101,7 @@ with `--apply`. The main ones:
 | `sync-inventory` | Reconcile the inventory's guests with what each Proxmox host actually runs |
 | `install-app` | Create a new LXC from a community-scripts app installer |
 | `update-app` | Re-run an app's installer inside its guest to update it |
+| `check-app-updates` | Check whether a newer release exists for each LXC app guest |
 | `update-all` | Update OS packages on hosts and LXC guests |
 | `create-lxc` / `create-vm` | Create a bare container or VM from a Machine ID |
 | `configure-guest` | Install packages or an SSH key on a guest |

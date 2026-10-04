@@ -165,7 +165,7 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T029 [P] Update docs:
+- [x] T029 [P] Update docs:
   - `docs/web-ui.md`: Update page badge, Tasks page.
   - `docs/commands.md`: `check-app-updates`.
   - `README.md` main-commands table, if it lists maintenance commands, keeping the README at most 200 lines.

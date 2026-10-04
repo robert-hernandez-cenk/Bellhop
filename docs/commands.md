@@ -13,6 +13,9 @@ bellhop update-all --all        # every host and every lxc guest; VMs are never 
 bellhop sync-inventory          # dry run: prints new/updated/removed guests
 bellhop sync-inventory --apply  # writes inventory/bellhop.db's hosts[] and guests[]
 bellhop update-app --guest plex --app plex --apply
+bellhop check-app-updates          # dry run: prints each lxc app guest's installed vs. latest version
+bellhop check-app-updates --apply  # saves the results so the Update page shows them
+bellhop check-app-updates --guest plex --apply  # just one guest
 bellhop guest-power --guest plex --state start --apply
 bellhop guest-power --guest plex --state shutdown --apply
 bellhop audit-nfs-mounts        # report NFS mounts across all lxc guests
@@ -35,6 +38,19 @@ get `type`/`ip` refreshed; newly discovered guests are added (with no
 on their host are removed. `--apply` writes the reconciled `hosts[]`/
 `guests[]` back to `inventory/bellhop.db`, a SQLite database (see
 `CLAUDE.md`) — `domain` and `externalSites[]` are left untouched.
+
+`check-app-updates` compares each `lxc` guest's installed community-scripts
+app version against its latest stable GitHub release, the same way the
+app's own install script would decide it — a stopped guest is reported
+`not checked` without being contacted, an app whose script has no
+recognizable release check is `unsupported`, and a release-service error
+(including a rate limit) is reported for that guest alone without stopping
+the rest of the run. `--guest <name>` checks just one guest and skips the
+guest-status query; without it, every eligible guest is checked. Without
+`--apply`, nothing is saved; with it, a full run replaces every saved
+result and a `--guest` run replaces just that one, which is what the web
+UI's Update page reads. The web service also runs this once a day on its
+own — see [Web UI](web-ui.md) for the Tasks page that schedules it.
 
 `audit-nfs-mounts` reads `pct config <vmid>` on each `lxc` guest's *parent
 host* (or one guest via `--host`) and cross-references its host-relay
