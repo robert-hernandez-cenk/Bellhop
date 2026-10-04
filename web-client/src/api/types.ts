@@ -334,6 +334,10 @@ export interface ProxyDriverInfo {
   // the two Caddy drivers only) -- the page shows the Caddy TLS dropdown
   // only then.
   usesCaddyTls: boolean;
+  // true only for a driver that reads the npmApiUrl/npmApiEmail/
+  // npmApiPassword settings (Nginx Proxy Manager today, issue #73) -- the
+  // page shows those three fields on the Proxy tab only then.
+  usesNpmApi: boolean;
   // Driver-supplied sentence appended to the Proxy config path help, e.g.
   // nginx's "replaces this whole file" warning. null = none.
   configPathNote: string | null;

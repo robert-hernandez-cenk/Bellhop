@@ -150,6 +150,10 @@ function proxyDriversInfo() {
     // true only for the two Caddy drivers (issue #51) -- the Settings page
     // shows the Caddy TLS dropdown only for a driver that sets this.
     usesCaddyTls: driver.usesCaddyTls ?? false,
+    // true only for the Nginx Proxy Manager driver (issue #73) -- the
+    // Settings page shows its npmApiUrl/npmApiEmail/npmApiPassword fields
+    // on the Proxy tab only for a driver that sets this.
+    usesNpmApi: driver.usesNpmApi ?? false,
     configPathNote: driver.configPathNote ?? null,
   }));
 }
