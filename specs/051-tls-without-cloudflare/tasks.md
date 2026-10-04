@@ -78,7 +78,7 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 - [x] T017 [US2] In `src/web/routes/settings.ts`: add `usesCaddyTls` to `proxyDriversInfo()` and `caddyTlsModes`/`defaultCaddyTls` to `settingsResponse()`
 - [x] T018 [US2] In `web-client/src/api/types.ts` and `web-client/src/lib/settings-display.ts`: add the response fields, `caddyTlsOptions`, `showCaddyTlsField`, and the new `showTlsFields` rule
 - [x] T019 [US2] In `web-client/src/pages/SettingsPage.tsx`: add a `proxyCaddyTls` FIELDS entry (label "Caddy TLS", help naming the four modes and what each needs) rendered as a `<select>` like `proxyDriver` (disabled until loaded), shown per `showCaddyTlsField`; pass `drafts.proxyCaddyTls || data.defaultCaddyTls` to `proxyFieldView`; certificate/key fields' help mentions Caddy `files` mode; hiding never edits stored values
-- [ ] T020 [US2] Run `npm run typecheck`, `npm test`, `npm run web:build`; verify the Settings page in a browser at desktop width and at ≤640px via `npm run demo` (quickstart §4)
+- [x] T020 [US2] Run `npm run typecheck`, `npm test`, `npm run web:build`; verify the Settings page in a browser at desktop width and at ≤640px via `npm run demo` (quickstart §4)
 
 **Checkpoint**: US2 complete.
 
@@ -137,8 +137,8 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 
 - [x] T033 Update `CLAUDE.md`: the Caddy driver, Caddy admin-API driver, reverse-proxy driver-interface (single-operator assumption: Cloudflare DNS-01 now the default, not unavoidable), Traefik, `prune-acme-challenges`, and Settings page bullets; the driver contract's capability is now a function and `usesCaddyTls` exists
 - [x] T034 [P] Mark the out-of-scope line in `specs/006-reverse-proxy-driver/spec.md` (Cloudflare DNS-01 configuration) as superseded by issue #51; update `CONTRIBUTING.md` only if it restates proxy-driver or TLS rules
-- [ ] T035 Regenerate `docs/images/settings-proxy-driver.png` with `npm run docs:screenshots` and check it by eye for example-only values
-- [ ] T036 Run quickstart.md §1–§2 against a temp inventory and record results; full `npm run typecheck`, `npm test`, `npm run web:build`
+- [x] T035 Regenerate `docs/images/settings-proxy-driver.png` with `npm run docs:screenshots` and check it by eye for example-only values
+- [x] T036 Run quickstart.md §1–§2 against a temp inventory and record results; full `npm run typecheck`, `npm test`, `npm run web:build`
 
 ---
 
