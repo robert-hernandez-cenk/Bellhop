@@ -135,8 +135,8 @@ description: "Task list for TLS Without Cloudflare (issue #51)"
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T033 Update `CLAUDE.md`: the Caddy driver, Caddy admin-API driver, reverse-proxy driver-interface (single-operator assumption: Cloudflare DNS-01 now the default, not unavoidable), Traefik, `prune-acme-challenges`, and Settings page bullets; the driver contract's capability is now a function and `usesCaddyTls` exists
-- [ ] T034 [P] Mark the out-of-scope line in `specs/006-reverse-proxy-driver/spec.md` (Cloudflare DNS-01 configuration) as superseded by issue #51; update `CONTRIBUTING.md` only if it restates proxy-driver or TLS rules
+- [x] T033 Update `CLAUDE.md`: the Caddy driver, Caddy admin-API driver, reverse-proxy driver-interface (single-operator assumption: Cloudflare DNS-01 now the default, not unavoidable), Traefik, `prune-acme-challenges`, and Settings page bullets; the driver contract's capability is now a function and `usesCaddyTls` exists
+- [x] T034 [P] Mark the out-of-scope line in `specs/006-reverse-proxy-driver/spec.md` (Cloudflare DNS-01 configuration) as superseded by issue #51; update `CONTRIBUTING.md` only if it restates proxy-driver or TLS rules
 - [ ] T035 Regenerate `docs/images/settings-proxy-driver.png` with `npm run docs:screenshots` and check it by eye for example-only values
 - [ ] T036 Run quickstart.md §1–§2 against a temp inventory and record results; full `npm run typecheck`, `npm test`, `npm run web:build`
 

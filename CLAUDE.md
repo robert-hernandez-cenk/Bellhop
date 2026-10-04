@@ -283,18 +283,25 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   which one entry has `proxy: true`; written by `saveInventory` but not
   currently read back by `loadInventory`, which instead reads the `proxy`
   boolean column already present directly on the owning `hosts`/`guests`
-  row), and `meta` (`domain` plus fourteen optional operator-specific scalars,
+  row), and `meta` (`domain` plus fifteen optional operator-specific scalars,
   issue #124: `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath`,
   plus the issue #11 pair `customScriptsRepo`/`customScriptsBranch`, the
   issue #10 pair `proxyDriver`/`proxyConfigPath` (which reverse-proxy
   driver `src/lib/proxy/index.ts`'s `getDriver()` hands back, and its
   configuration-file location — see the "Reverse-proxy driver interface"
-  bullet below), the issue #30 pair `proxyTlsCertificate`/
+  bullet below), the issue #51 `proxyCaddyTls` (which of four ways the two
+  Caddy drivers obtain a site's certificate — `cloudflare` the default,
+  `letsencrypt`, `internal`, or `files` — see the "Caddy driver" bullet
+  below; inert for every other driver), the issue #30 pair `proxyTlsCertificate`/
   `proxyTlsKey` (the shared TLS certificate/key path pair the nginx
-  driver's every server block references — see the "nginx driver" bullet
-  below; inert for Caddy, which issues its own per-site certificate),
+  driver's every server block references, and — issue #51 — what a Caddy
+  driver's `files` `proxyCaddyTls` mode serves too; inert for a Caddy
+  driver in any other mode),
   the issue #35 pair `proxyCertResolver`/`proxyApiUrl` (the Traefik
-  driver's own certificate-resolver name and optional API address — see
+  driver's own certificate-resolver name — `proxyCertResolver` also admits
+  the issue #51 reserved value `none`, meaning "no resolver, TLS from the
+  file provider or Traefik's default certificate instead" — and optional
+  API address — see
   the "Traefik driver" bullet below; inert for every other driver),
   and the issue #53 pair `pveUserRealm`/`pveCreatorRole` (the Proxmox
   OpenID realm and role a VM's web-UI creator is granted on it — see the
@@ -632,11 +639,19 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   update: this toolkit is no longer hard-wired to Caddy -- exactly one
   driver is active per deployment (`proxyDriver`, a per-deployment choice,
   not a per-entry one), and a future driver only has to declare what it
-  supports rather than fit into Caddy-shaped code. The one single-operator
-  assumption this round deliberately keeps is `TLS_BLOCK`'s hardcoded
-  Cloudflare DNS-01 with fixed resolvers (one domain, one DNS provider,
-  one operator) -- unchanged in effect, just now confined entirely inside
-  the Caddy driver instead of spread through a Caddy-specific generator.
+  supports rather than fit into Caddy-shaped code. The Cloudflare DNS-01
+  issuance this round originally kept as a deliberate single-operator
+  assumption (`TLS_BLOCK`'s hardcoded resolvers, one domain, one DNS
+  provider, one operator) is no longer hardcoded or unavoidable as of
+  issue #51: `proxyCaddyTls` (unset/`cloudflare` still means exactly this,
+  byte-identical, so an existing deployment sees no change) lets both Caddy
+  drivers obtain a certificate three other ways instead -- `letsencrypt`
+  (Caddy's own automatic HTTPS, no DNS provider at all), `internal`
+  (Caddy's own self-signed CA), or `files` (the same shared
+  `proxyTlsCertificate`/`proxyTlsKey` pair the nginx driver reads) -- see
+  the "Caddy driver" bullet below. The fixed resolvers themselves
+  (`ACME_DNS_RESOLVERS`) remain a single-operator assumption *within*
+  `cloudflare` mode, now one mode among four rather than the only option.
   The nginx driver (issue #30) adds two more of its own, both narrower:
   its shared-certificate default is derived from the inventory `domain`,
   not hardcoded, but its CA-bundle verification path and its `conf.d`
@@ -672,15 +687,24 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   -- tier enforcement stays entirely Authentik's job, in `sync-authentik`
   below. `driver.ts` defines the `ReverseProxyDriver` interface itself
   (`id`, `label` -- the Settings page dropdown's option text --,
-  `capabilities`, `defaultConfigPath: string | null` (`null` means the
+  `capabilities` (`authModes`, and -- issue #51 -- `acmeDns01ViaCloudflare`,
+  now `(inventory: Inventory) => boolean` rather than a fixed boolean,
+  since a driver's Cloudflare-DNS-01 usage can depend on a setting --
+  Caddy's `proxyCaddyTls`, Traefik's `proxyCertResolver` -- rather than
+  being fixed per driver; see the "Cloudflare prune decision" discussion in
+  the `prune-acme-challenges` bullet below), `defaultConfigPath: string |
+  null` (`null` means the
   driver uses no configuration file), `statusPage: { suggestedPath:
-  string } | null` (`null` means it serves no status page), four optional
+  string } | null` (`null` means it serves no status page), five optional
   Settings-page hints -- `usesSharedCertificate` (`true` means the driver
   serves `ctx.tls`'s shared certificate, so the page shows the
   `proxyTlsCertificate`/`proxyTlsKey` fields; nginx only),
   `usesCertResolver`/`usesApiUrl` (`true` means the page shows the Proxy
   cert resolver/Proxy API URL fields respectively; Traefik only, issue
-  #35 -- see the "Traefik driver" bullet below), and
+  #35 -- see the "Traefik driver" bullet below), `usesCaddyTls` (`true`
+  means the page shows the Caddy TLS dropdown, and -- with that dropdown's
+  own value `files` -- the `proxyTlsCertificate`/`proxyTlsKey` fields too;
+  both Caddy drivers only, issue #51), and
   `configPathNote` (a sentence appended to the Proxy config path help) --,
   `plan()`/`apply()`/`snapshot()`) and `checkCapabilities(routes, driver)`;
   `file-driver.ts`'s
@@ -739,7 +763,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `capabilities` accept both `forward` and `oidc` auth modes (so
   `checkCapabilities` never rejects a gated entry under it -- the
   assumption is that whatever proxy the operator does run enforces
-  `forward_auth` itself) with `acmeDns01ViaCloudflare: false`. Its `plan()`
+  `forward_auth` itself) with `acmeDns01ViaCloudflare: () => false`. Its `plan()`
   returns `{ preview: NO_PROXY_SYNC_MESSAGE, payload: null }` with no
   routes/context ever consulted, `apply()` is a no-op, and `snapshot()`
   throws `NO_PROXY_STATUS_PAGE_ERROR` -- both constants defined in
@@ -888,7 +912,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `sync-proxy` run would fail on.
 - **Caddy driver** (`src/lib/proxy/drivers/caddy.ts`) is the first driver
   that shipped (and the default), built with `fileDriver`: `capabilities: {
-  authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: true }`,
+  authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare:
+  caddyAcmeDns01ViaCloudflare }` (exported so the admin-API driver's own
+  capabilities object reads the exact same function rather than keeping a
+  second copy -- `caddyTlsMode(inventory) === 'cloudflare'`, issue #51),
   `defaultConfigPath: '/etc/caddy/Caddyfile'`, `validateCommand: caddy
   validate --adapter caddyfile --config <path>`, `reloadCommand:
   systemctl reload caddy`. Its `render()` is the old `buildCaddyBlock`
@@ -907,12 +934,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   repeating directives per alias) across hosts, guests, and external
   sites (`ExternalSiteSchema` in `src/lib/inventory.ts` — a reverse-proxy
   target that isn't a Proxmox host or guest at all, e.g. a NAS; never an
-  SSH/exec target, only ever the source of a `ProxyRoute`); the same
-  hardcoded Cloudflare DNS-01 `tls {}` clause on every block (`TLS_BLOCK`,
-  not inventory-configurable -- one domain, one DNS provider, one
-  operator -- the single-operator assumption this refactor deliberately
-  keeps, now contained inside this one driver instead of spread across a
-  Caddy-specific generator); every `reverse_proxy` always in block form
+  SSH/exec target, only ever the source of a `ProxyRoute`); a per-mode TLS
+  clause on every block (`tlsClause(ctx)`, reading `ctx.caddyTls` -- issue
+  #51, see "Certificate modes" above -- unset/`cloudflare` still emits the
+  original hardcoded `CLOUDFLARE_TLS_BLOCK`, one domain/one DNS provider/
+  one operator within that mode, but it is no longer the only clause this
+  driver can emit: `letsencrypt` emits none at all, `internal` emits
+  `tls internal`, and `files` emits `tls <cert> <key>` from `ctx.tls`,
+  quoted by `caddyfileToken` -- research R6 -- when either path holds
+  whitespace or a `"`); every `reverse_proxy` always in block form
   with an unconditional `header_up X-Forwarded-Port 443` (`EXTERNAL_PORT`,
   from `ProxyContext`, so backends building absolute external URLs --
   e.g. Dispatcharr's VOD cover art, issue #91 -- get the real external
@@ -929,7 +959,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   to address.
 - **nginx driver** (`src/lib/proxy/drivers/nginx.ts`, issue #30) is the
   second driver that ships, also built with `fileDriver`: `capabilities: {
-  authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: false }` --
+  authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false }` --
   nginx cannot obtain its own certificate the way Caddy's DNS-01 does, so
   it never leaves a stale `_acme-challenge` record behind for
   `prune-acme-challenges` to find (see that bullet below). As of issue #31,
@@ -1058,7 +1088,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   this driver), and the Settings page hides Proxy config path/Status page
   path/the TLS fields for it the same way it already hides them for
   `none`. `capabilities: { authModes: ['forward', 'oidc'],
-  acmeDns01ViaCloudflare: false }`; `statusPage: null` too, since it has no
+  acmeDns01ViaCloudflare: () => false }`; `statusPage: null` too, since it has no
   document root of its own to serve one from.
 
   `NpmClient` (`src/lib/npm-client.ts`) wraps Nginx Proxy Manager's (NPM's)
@@ -1232,7 +1262,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   backend, else plain HTTP -- except HAProxy verifies the chain only, not
   the name (no `sni`/`verifyhost`; research R6, documented rather than
   worked around). `capabilities: { authModes: ['oidc'],
-  acmeDns01ViaCloudflare: false }` -- no forward-auth, so
+  acmeDns01ViaCloudflare: () => false }` -- no forward-auth, so
   `checkCapabilities` refuses a forward-gated entry before `render()`
   sees it; `render()` still throws `HAProxy cannot enforce forward-auth
   for entry '<name>'` as a backstop against a caller that skipped the
@@ -1339,12 +1369,23 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   (`'cloudflare'`, `src/lib/proxy/routes.ts`) -- carried to `render()` as a
   new `ProxyContext.certResolver` field, always present (same
   "never handle the unset case" precedent as `ctx.tls`), next to nginx's
-  own `tls` field. `capabilities: { authModes: ['forward', 'oidc'],
-  acmeDns01ViaCloudflare: true }` -- Traefik can obtain its own
+  own `tls` field. Issue #51 reserves one value of that same setting,
+  `NO_CERT_RESOLVER = 'none'` (exported from `traefik.ts`, admitted
+  already by `proxyCertResolver`'s existing `^[A-Za-z0-9_-]+$` regex with
+  no schema change needed): every router's `routerTls(ctx)` renders
+  `tls: {}` instead of `tls: { certResolver: ctx.certResolver }` when
+  `ctx.certResolver === NO_CERT_RESOLVER`, so Traefik serves whatever
+  certificate its own file provider or default certificate supplies for
+  that hostname rather than requesting one from a named resolver. `capabilities: { authModes: ['forward', 'oidc'],
+  acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare }` --
+  `(inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER) !==
+  NO_CERT_RESOLVER` -- Traefik can obtain its own
   certificates too, just through a resolver the *operator* defines in
   Traefik's own static configuration rather than Bellhop's hardcoded
-  `TLS_BLOCK`, so `prune-acme-challenges` keeps running under it the same
-  as under Caddy. `statusPage: null` -- the first shipped *managed*
+  `TLS_BLOCK`, so `prune-acme-challenges` keeps running under it for any
+  named resolver, the same as under Caddy's default `cloudflare` mode, and
+  is skipped only for the reserved `none` resolver, which never touches an
+  ACME resolver at all. `statusPage: null` -- the first shipped *managed*
   driver with no status page at all (Traefik serves no static files);
   `render-status-page`'s existing `statusPageUnsupportedError`/
   `statusPageSkipReason` paths already cover a `null` status page with no
@@ -1424,31 +1465,56 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   resolves `configPath: null` for it and the Settings page hides Proxy
   config path (while still showing Status page path, since it suggests
   one). Capabilities match Caddy's (`forward`
-  + `oidc`, `acmeDns01ViaCloudflare: true`); status page suggestion
+  + `oidc`, `acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare` -- the
+  exact same shared function the file-based driver uses, issue #51);
+  status page suggestion
   `/usr/share/caddy/index.html`. Three files split it:
-  `src/lib/proxy/caddy-json.ts` is pure -- `renderRoute`/`renderTlsPolicy`
+  `src/lib/proxy/caddy-json.ts` is pure -- `renderRoute` produces the route
+  JSON and `renderTlsObjects(hostnames, ctx)` produces each mode's TLS
+  objects (renamed from the single-mode `renderTlsPolicy` in issue #51: an
+  automation policy, `{ policy }`, for `cloudflare`/`internal`; a
+  `load_files` entry plus a connection policy, `{ loadFile,
+  connectionPolicy }`, for `files`; nothing, `{}`, for `letsencrypt` --
+  `renderDefaultConnectionPolicy()` is the adapter's own trailing catch-all
+  connection policy, placed by `planCaddyConfig` rather than `renderTlsObjects`
+  itself since whether it's needed depends on the live server) -- both
   produce the exact JSON Caddy's own adapter makes from the Caddy driver's
   site block (pinned by a parity test against
-  `test/fixtures/caddy/characterization-adapted.json`, a real Caddy v2.10.2
-  `caddy adapt` capture of `caddy.test.ts`'s characterization block; the
+  `test/fixtures/caddy/{characterization,tls-internal,tls-files,
+  tls-letsencrypt}-adapted.json`, real Caddy v2.10.2
+  `caddy adapt` captures of `caddy.test.ts`'s characterization block per mode; the
   Caddy driver now exports `OUTPOST_AUTH_URI`/`OUTPOST_PATH_PREFIX`/
   `AUTHENTIK_COPY_HEADERS`/`CLOUDFLARE_TOKEN_PLACEHOLDER`/
   `ACME_DNS_RESOLVERS` so both drivers render the same values -- its own
   output stays byte-identical), and `planCaddyConfig(current, routes, ctx,
   host)` reconciles: every object Bellhop owns carries an `@id` starting
-  `bellhop-` (`bellhop-route-<canonical hostname>` per route, one
-  `bellhop-tls` automation policy) and nothing untagged is ever changed;
+  `bellhop-` (`bellhop-route-<canonical hostname>` per route; per the
+  active `ctx.caddyTls` mode, zero or more of `bellhop-tls` (the automation
+  policy, `cloudflare`/`internal`), `bellhop-tls-files` (the `load_files`
+  entry, certificate tagged `bellhop-cert` rather than the adapter's own
+  `cert0`, `files` only), `bellhop-tls-connection` (the SNI-matched
+  connection policy selecting that tag, `files` only), and
+  `bellhop-tls-default` (the catch-all connection policy, `files` only and
+  only when the target server has no untagged catch-all of its own
+  already)) and nothing untagged is ever changed;
   Bellhop routes are prepended to the single server listening on port 443
   (an empty config gets `srv0` on `:443`; zero HTTPS servers among existing
-  ones, or several, throws naming them), the policy is prepended to
+  ones, or several, throws naming them), the automation policy (when the
+  mode writes one) is prepended to
   `apps.tls.automation.policies` and removed outright once no route is
-  left (an empty-`subjects` policy would match every hostname); an
-  untagged route in any server or untagged policy naming an inventory
-  hostname exactly (case-insensitive -- wildcards are not conflicts) is a
-  `CaddyConflict`, and that whole route is left out; comparison is
+  left (an empty-`subjects` policy would match every hostname), and the
+  `files`-mode `load_files`/connection-policy objects are pruned the same
+  way once their containers would otherwise be left empty; an
+  untagged route in any server naming an inventory hostname exactly
+  (case-insensitive -- wildcards are not conflicts) is always a
+  `CaddyConflict`, but an untagged *automation policy* naming one only is
+  in `cloudflare`/`internal` mode -- in `letsencrypt`/`files` mode Bellhop
+  writes no automation policy of its own, so an operator catch-all policy
+  is intended to apply to Bellhop's hostnames there (research R4); a
+  conflicting route is left out either way; comparison is
   key-order-insensitive (`canonicalJson`, since Caddy returns keys
   sorted), so an unchanged inventory plans `config: null` and writes
-  nothing. `src/lib/proxy/caddy-admin.ts` is the remote half, POSIX `sh` via
+  nothing, in every mode. `src/lib/proxy/caddy-admin.ts` is the remote half, POSIX `sh` via
   `runRemote`: `readCaddyConfig` runs `curl -sS -D -
   http://localhost:2019/config/` (preceded, for a sync, by `systemctl
   is-active --quiet caddy.service` -> exit 3 -> the "running from a
@@ -1475,8 +1541,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   default `localhost:2019` on the `proxy: true` entry; Caddy runs under
   systemd with the packaged unit names (`caddy.service` is what the
   Caddyfile check looks for, `caddy-api.service` the documented target);
-  `curl` is installed on the proxy host; and it keeps the Caddy driver's
-  hardcoded Cloudflare DNS-01 issuance. A guest proxy host receives the
+  `curl` is installed on the proxy host; and -- within the default
+  `cloudflare` `proxyCaddyTls` mode only, issue #51 -- the fixed ACME DNS
+  resolvers the Caddy driver's `cloudflare` clause shares with it
+  (`ACME_DNS_RESOLVERS`). A guest proxy host receives the
   whole configuration as one `sh -c` argument through `pct exec`, so it is
   bounded by Linux's 128 KiB single-argument limit (documented in
   `docs/reverse-proxy/caddy-api.md`, not engineered around).
@@ -1997,14 +2065,23 @@ how to reach a target and is the only code that talks to `ssh2` directly:
 - **`prune-acme-challenges`**
   (`src/commands/networking/prune-acme-challenges.ts`, issue #162) deletes
   `_acme-challenge` TXT records left behind in the inventory `domain`'s
-  Cloudflare zone by the Caddy driver's DNS-01 `TLS_BLOCK` (an aborted
-  issuance, a restart mid-challenge, a removed or renamed subdomain).
+  Cloudflare zone by a Caddy driver's `cloudflare`-mode DNS-01 issuance (an
+  aborted issuance, a restart mid-challenge, a removed or renamed
+  subdomain).
   The command's own name and behavior are unchanged by issue #10 -- only
   *when it runs inside `syncProxyLive`* is now gated on a driver
-  capability (see below), since a driver without
-  `capabilities.acmeDns01ViaCloudflare` (the nginx driver, issue #30,
-  declares this `false` since it never touches DNS at all, and so do the
-  Nginx Proxy Manager and HAProxy drivers) never leaves one of these records behind in the
+  capability (see below), now a per-inventory function rather than a fixed
+  boolean (issue #51 -- see the `driver.ts` paragraph above and the
+  "Cloudflare prune decision" wording in `contracts/
+  rendering-and-settings.md`): `capabilities.acmeDns01ViaCloudflare(inventory)`
+  is `false` for the nginx (issue #30), Nginx Proxy Manager, and HAProxy
+  drivers unconditionally, since none ever touches DNS at all; for a Caddy
+  driver whenever its `proxyCaddyTls` mode isn't `cloudflare`
+  (`letsencrypt`/`internal`/`files` never touch Cloudflare's DNS either);
+  and for the Traefik driver whenever its `proxyCertResolver` is the
+  reserved `none` (every other resolver name *might* be Cloudflare DNS-01,
+  so it still runs). Any of these cases means the active driver/mode never
+  leaves one of these records behind in the
   first place.
   REST-only via
   `CloudflareClient` (`src/lib/cloudflare-client.ts`, the same
@@ -2041,9 +2118,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   delete is reported and the rest proceed (CLI exit 1). In `syncProxyLive`
   (`src/web/proxy-sync.ts`) it is the last step and **never fails the
   caller** (the 10s timeout on every request bounds how long that can
-  take): a driver without `acmeDns01ViaCloudflare` (checked via
-  `getDriver(inventory)`) logs one skip line and returns before ever
-  touching Cloudflare (`pruneAcmeDriverSkipMessage`); an unconfigured
+  take): a driver whose `acmeDns01ViaCloudflare(inventory)` (checked via
+  `getDriver(inventory)`) comes back `false` logs one skip line and returns before ever
+  touching Cloudflare (`pruneAcmeDriverSkipMessage`, reworded in issue #51
+  to "is not configured to use ACME DNS-01 via Cloudflare" now that the
+  reason can be a setting rather than only the driver choice itself); an unconfigured
   client logs its own skip line; and any thrown error (bad token, outage,
   zone not found, timeout) becomes a `logWarn`; `SyncProxyLiveResult`
   carries nothing for either case, since there is no Dashboard action to
@@ -3399,21 +3478,25 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `proxyDriver` and `proxyConfigPath` alongside the pre-existing six;
   issue #30 adds `proxyTlsCertificate`/`proxyTlsKey` (placeholders
   showing certbot's own default path for the inventory domain) beside
-  those, inert unless the nginx driver is active; issue #35 adds
+  those, inert unless the nginx driver is active (or, as of issue #51, a
+  Caddy driver in `files` `proxyCaddyTls` mode); issue #35 adds
   `proxyCertResolver`/`proxyApiUrl` (placeholders `cloudflare` and
   `http://127.0.0.1:8080`) the same way, inert unless the Traefik driver
-  is active.
+  is active; issue #51 adds `proxyCaddyTls` itself, a `<select>` like
+  `proxyDriver`'s own (below), inert unless a Caddy driver is active.
   `proxyDriver` renders as a `<select>`, not the plain `<input>` every other
   setting gets: as of issue #33, `settingsResponse()` (`src/web/routes/
   settings.ts`, shared by GET and PATCH so the two can never disagree)
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
   managesProxy, usesSharedCertificate, usesCertResolver, usesApiUrl,
-  configPathNote }` (the last two, issue #35's `proxyDriversInfo()`
-  addition, default `false` the same way `usesSharedCertificate` does),
+  usesCaddyTls, configPathNote }` (`usesCertResolver`/`usesApiUrl`,
+  issue #35's `proxyDriversInfo()`
+  addition, and `usesCaddyTls`, issue #51's, all default `false` the same way `usesSharedCertificate` does),
   Caddy, Caddy (admin API), nginx,
   Nginx Proxy Manager, HAProxy, Traefik, then None) and `defaultProxyDriver`
-  (`DEFAULT_PROXY_DRIVER_ID`) to the
+  (`DEFAULT_PROXY_DRIVER_ID`), plus (issue #51) `caddyTlsModes`
+  (`[...CADDY_TLS_MODES]`) and `defaultCaddyTls` (`DEFAULT_CADDY_TLS`), to the
   response, and the page's `proxyDriverOptions(drivers, defaultId)`
   (`web-client/src/lib/settings-display.ts`, framework-free so it's
   tested with plain `node --test`, same convention as `admin-nav.ts`)
@@ -3421,10 +3504,20 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver's label with `" (default)"`. The displayed value is
   `drafts.proxyDriver || data.defaultProxyDriver`, so an unset setting
   shows as the default driver selected, and Save/Clear round-trip exactly
-  like every other field. The same file's `proxyFieldView(selectedId,
-  drivers)` decides, for whichever driver is currently selected in that
+  like every other field. Issue #51's Caddy TLS dropdown is a second
+  `<select>` built the same way: `caddyTlsOptions(modes, defaultMode)`
+  (`web-client/src/lib/settings-display.ts`, same file and convention as
+  `proxyDriverOptions`) turns the response's `caddyTlsModes`/
+  `defaultCaddyTls` into its options, labelling only the default
+  `cloudflare (default)`; it's shown only while the *currently selected*
+  driver's `usesCaddyTls` is true (`showCaddyTlsField`), its displayed
+  value is `drafts.proxyCaddyTls || data.defaultCaddyTls`, and — being a
+  driver-specific field like the others below — it's disabled with Save
+  disabled until the driver list has loaded, same as `proxyDriver` itself.
+  The same file's `proxyFieldView(selectedId,
+  drivers, caddyTls)` decides, for whichever driver is currently selected in that
   *unsaved* dropdown value, whether the Proxy config path, Status page
-  path, Proxy TLS certificate/key, and (issue #35) Proxy cert
+  path, Caddy TLS, Proxy TLS certificate/key, and (issue #35) Proxy cert
   resolver/Proxy API URL fields apply at all: a driver whose
   `managesProxy` is `false` (only `none` today) hides all of them
   entirely rather than showing them disabled or empty; a managed driver
@@ -3447,8 +3540,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Manager, HAProxy, and Traefik too, since none of the three has a
   document root to serve one from; the Caddy admin-API driver, issue #26,
   has no file but does suggest one, so it shows Status page path alone),
-  and shows the two TLS fields only when `usesSharedCertificate` is true
-  (`showTlsFields`; nginx only, issue #30 -- driver metadata, never an id
+  and shows the two TLS fields when `usesSharedCertificate` is true
+  (nginx, issue #30) or (issue #51) `usesCaddyTls` is true *and* the
+  dropdown's own current Caddy TLS value is `files`
+  (`showTlsFields`; driver (and, for Caddy, mode) metadata, never an id
   comparison in the page), and (issue #35) shows the Proxy cert
   resolver/Proxy API URL fields only when `usesCertResolver`/`usesApiUrl`
   are true respectively (`showCertResolverField`/`showApiUrlField`;
