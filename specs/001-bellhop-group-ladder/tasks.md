@@ -11,7 +11,7 @@ description: "Task list for renaming the default Authentik group ladder to Bellh
 
 **Tests**: Included. Constitution Principle III requires every behavior change to ship with tests in the same change.
 
-**Organization**: Grouped by user story. All paths are relative to the repository root of the worktree `C:\Users\rcher\Dev\Bellhop-Worktrees\issue-8-bellhop-group-ladder`. Never `cd` the session into it; use absolute paths, `git -C`, and `npm --prefix`.
+**Organization**: Grouped by user story. All paths are relative to the repository root of the worktree `<worktree-path>`. Never `cd` the session into it; use absolute paths, `git -C`, and `npm --prefix`.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -33,7 +33,7 @@ description: "Task list for renaming the default Authentik group ladder to Bellh
 
 **Purpose**: Make the worktree runnable.
 
-- [x] T001 Run `npm --prefix C:\Users\rcher\Dev\Bellhop-Worktrees\issue-8-bellhop-group-ladder install` (a fresh worktree has no `node_modules`), then run `npm test` there once to record the pre-change baseline as all passing.
+- [x] T001 Run `npm --prefix <worktree-path> install` (a fresh worktree has no `node_modules`), then run `npm test` there once to record the pre-change baseline as all passing.
 
 ---
 
