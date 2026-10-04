@@ -61,3 +61,14 @@ test('demo catalog slugs cover every app slug used in the demo inventory', () =>
     assert.ok(stable.includes(slug) || dev.includes(slug), `demo inventory app slug '${slug}' is missing from the demo catalog`);
   }
 });
+
+// Issue #64: the demo stores an example githubApiToken, so every GitHub API
+// request it makes now carries an Authorization header. demoFetch answers
+// by URL alone, so the header must change nothing.
+test('demoFetch answers a request carrying the GitHub token header the same as one without', async () => {
+  const url = 'https://api.github.com/repos/community-scripts/ProxmoxVE/contents/ct';
+  const withToken = await demoFetch(url, { headers: { 'User-Agent': 'bellhop', Authorization: 'Bearer demo-example-github-token' } });
+  const without = await demoFetch(url);
+  assert.equal(withToken.status, 200);
+  assert.deepEqual(await withToken.json(), await without.json());
+});

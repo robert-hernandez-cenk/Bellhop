@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadInventory, saveInventory, effectiveAuth } from '../../../src/lib/inventory.ts';
-import { buildDemoInventory } from '../../../scripts/demo/demo-inventory.ts';
+import { buildDemoInventory, DEMO_SECRET_SETTINGS } from '../../../scripts/demo/demo-inventory.ts';
 import { DEMO_JOB_DEFS, DEMO_JOB_LOGS } from '../../../scripts/demo/demo-jobs.ts';
 import { DEMO_IDENTITY_HEADERS } from '../../../scripts/demo/demo-server.ts';
 import { DemoSSHClient, DEMO_AUTHORIZED_KEY, DEMO_PACKAGE_MANAGER, demoSimulatedOutput } from '../../../scripts/demo/demo-ssh.ts';
@@ -248,6 +248,7 @@ test('example-data guard: every demo value uses documentation IPs and example do
     ...Object.entries(DEMO_JOB_LOGS).map(([name, log]): [string, string] => [`job log ${name}`, log]),
     ...DEMO_JOB_DEFS.map((job): [string, string] => [`seeded job ${job.command}`, JSON.stringify(job)]),
     ['demo identity headers', JSON.stringify(DEMO_IDENTITY_HEADERS)],
+    ['demo secret settings', JSON.stringify(DEMO_SECRET_SETTINGS)],
     ...(await allDemoSshOutputs()).map((out, i): [string, string] => [`DemoSSHClient output #${i}`, out]),
     ...(await allDemoCatalogText()).map((text, i): [string, string] => [`demo catalog #${i}`, text]),
   ];
@@ -284,4 +285,23 @@ test('example-data guard: every demo username and email is an example one', asyn
   assert.ok(emails.includes(DEMO_IDENTITY_HEADERS['x-authentik-email']));
   const badEmails = emails.filter((email) => !email.toLowerCase().endsWith('@example.com'));
   assert.deepEqual(badEmails, []);
+});
+
+// Issue #64 (FR-027): the demo stores example secrets in the "set" state.
+// Each must be obviously fake -- a recognisable demo-example- prefix rather
+// than anything shaped like a real credential -- and the Authentik API
+// token must stay unset, since the demo's injected Authentik client is
+// unconfigured and a stored token plus URL would contradict it.
+test('example-data guard: every demo secret is an obviously fake demo-example- value', () => {
+  const entries = Object.entries(DEMO_SECRET_SETTINGS);
+  assert.ok(entries.length >= 3, `expected the three seeded secrets, got ${entries.length}`);
+  for (const [key, value] of entries) {
+    assert.match(value ?? '', /^demo-example-[a-z-]+$/, `${key} is not an obviously fake demo-example- value`);
+  }
+  assert.equal(DEMO_SECRET_SETTINGS.authentikApiToken, undefined);
+  assert.equal(buildDemoInventory().authentikApiUrl, undefined);
+});
+
+test('buildDemoInventory stores webUiAuthMode authentik rather than relying on WEB_UI_AUTH_MODE', () => {
+  assert.equal(buildDemoInventory().webUiAuthMode, 'authentik');
 });

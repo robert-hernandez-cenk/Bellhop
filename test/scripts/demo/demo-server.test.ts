@@ -5,11 +5,14 @@ import { networkInterfaces, tmpdir } from 'node:os';
 import path from 'node:path';
 import { startDemoServer } from '../../../scripts/demo/demo-server.ts';
 import { loadInventory, saveInventory } from '../../../src/lib/inventory.ts';
+import { DEMO_SECRET_SETTINGS } from '../../../scripts/demo/demo-inventory.ts';
 
-// startDemoServer mutates process.env (WEB_UI_AUTH_MODE, INVENTORY_FILE,
-// WEB_DATA_DIR, and deletes WEB_UI_DEV_USER -- which `npm test` itself sets --
-// plus every AUTHENTIK_* variable). node --test runs each test file in its
-// own process, so that never leaks into another file's tests.
+// startDemoServer mutates process.env (INVENTORY_FILE, WEB_DATA_DIR, and
+// deletes WEB_UI_DEV_USER -- which `npm test` itself sets -- plus every
+// AUTHENTIK_* variable and every other settings override such as
+// WEB_UI_AUTH_MODE) and registers its own config store. node --test runs
+// each test file in its own process, so that never leaks into another
+// file's tests.
 
 function isInside(child: string, parent: string): boolean {
   const rel = path.relative(realpathSync(parent), realpathSync(child));
@@ -114,6 +117,21 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     const settings = await get('/api/settings');
     assert.equal(settings.settings.dnsServer, '198.51.100.53');
     assert.ok(settings.proxyDrivers.length > 0);
+    // Issue #64: the auth mode comes from the demo's own stored settings,
+    // not the environment, and the example secrets read as "set" -- with no
+    // part of any secret value anywhere in the response.
+    assert.equal(process.env.WEB_UI_AUTH_MODE, undefined);
+    assert.equal(settings.settings.webUiAuthMode, 'authentik');
+    assert.equal(settings.sources.webUiAuthMode, 'settings');
+    assert.deepEqual(settings.environment, {});
+    for (const key of Object.keys(DEMO_SECRET_SETTINGS)) {
+      assert.deepEqual(settings.secrets[key], { set: true, source: 'settings' }, key);
+    }
+    assert.deepEqual(settings.secrets.authentikApiToken, { set: false, source: 'none' });
+    const settingsText = JSON.stringify(settings);
+    for (const value of Object.values(DEMO_SECRET_SETTINGS)) {
+      assert.ok(value && !settingsText.includes(value), 'a demo secret value leaked into GET /api/settings');
+    }
 
     const dir = demo.dir;
     await demo.close();
