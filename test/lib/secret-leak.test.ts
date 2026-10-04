@@ -187,3 +187,43 @@ test('MCP: set_config rejects every secret key, and a set-config job records no 
   assertNoMarker(job.argsJson, "the job's argsJson");
   assertNoMarker(h.jobLog.read(job.logFile), 'the job log');
 });
+
+test('importing data/*.env (imported and invalid-value skip paths alike) logs and returns no secret', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { importEnvFiles } = await import('../../src/lib/config-import.ts');
+  const { saveInventory } = await import('../../src/lib/inventory.ts');
+  const fileBacked = SECRET_SETTINGS_KEYS.filter((key) => SETTING_DEFS[key].envFile !== undefined);
+  // A space makes a token invalid; the password schema allows one, so a tab
+  // (a control character) makes it invalid instead.
+  const invalid = (key: SecretSettingKey) => `${marker(key, '-bad')}${key === 'npmApiPassword' ? '\t' : ' '}x`;
+
+  for (const [label, value] of [['imported', (key: SecretSettingKey) => marker(key, '-file')], ['skipped', invalid]] as const) {
+    clearSecretEnv();
+    const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-import-leak-'));
+    const dataDir = path.join(dir, 'data');
+    mkdirSync(dataDir);
+    const dbPath = path.join(dir, 'bellhop.db');
+    saveInventory(dbPath, { domain: 'example.com', hosts: [], guests: [] });
+    const files = new Map<string, string[]>();
+    for (const key of fileBacked) {
+      const { envVar, envFile } = SETTING_DEFS[key];
+      if (!envFile) continue;
+      const lines = files.get(envFile) ?? [];
+      lines.push(`${envVar}="${value(key)}"`);
+      files.set(envFile, lines);
+    }
+    for (const [name, lines] of files) writeFileSync(path.join(dataDir, name), `${lines.join('\n')}\n`);
+
+    const { result, output } = await captureConsole(() => importEnvFiles(dbPath, dataDir));
+    const markers = fileBacked.map(value);
+    assertNoMarker(output, `the ${label} path's log output`, markers);
+    assertNoMarker(JSON.stringify(result), `the ${label} path's result`, markers);
+    if (label === 'imported') {
+      assert.deepEqual(result.imported.map((i) => i.key).sort(), [...fileBacked].sort());
+      for (const key of fileBacked) assert.equal(configValueAt(dbPath, key, {}).value, marker(key, '-file'));
+    } else {
+      assert.deepEqual(result.skipped.map((s) => s.key).sort(), [...fileBacked].sort());
+      assert.match(output, /WARN/);
+    }
+  }
+});

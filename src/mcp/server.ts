@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { authentikConfig } from '../lib/authentik-config.ts';
 import { loadInventory } from '../lib/inventory.ts';
+import { importEnvFilesAndUseStore } from '../lib/config-import.ts';
 import { Ssh2SSHClient } from '../lib/ssh-client.ts';
 import { buildAuthentikClient } from '../lib/authentik-client.ts';
 import { buildCloudflareClient } from '../lib/cloudflare-client.ts';
@@ -18,24 +19,20 @@ import { buildMcpServer } from './build-server.ts';
 // restores whatever console.log is at call time, so this redirect survives it.
 console.log = console.error;
 
-// Same ordering as src/web/server.ts: authentik.env must be loaded before
-// loadInventory, because the requires_auth -> auth_group migration reads
-// AUTHENTIK_GROUP_LADDER at DB-open time.
+// Same ordering and roles as src/web/server.ts (issue #64): the data/*.env
+// files are loaded into the environment as overrides, then imported once
+// into the settings store, which is registered before loadInventory --
+// the requires_auth -> auth_group migration reads the group ladder at
+// DB-open time. The import's log lines go to stderr via the redirect above,
+// never onto the protocol channel. A missing file is a silent no-op.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
-// CLOUDFLARE_DNS_API_TOKEN for the stale _acme-challenge prune (#162) that
-// syncProxyLive runs after a guest edit or provisioning apply -- same file
-// src/web/server.ts and src/cli.ts load. A missing file leaves the prune
-// skipped, never failing the operation.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
-// NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for the
-// nginx-proxy-manager proxy driver (issue #31) -- same file src/web/server.ts
-// and src/cli.ts load. A missing file leaves buildNpmClient() to throw its
-// own named error only once a sync actually tries to reach NPM.
 dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
 
 // Deliberately this checkout's own inventory and data dir (paths.ts), like
 // the web service: whichever checkout runs the server is the one it manages.
 const invPath = inventoryPath();
+importEnvFilesAndUseStore(invPath, dataDir());
 const inventory = loadInventory(invPath);
 authentikConfig();
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { stringify } from 'yaml';
 import dotenv from 'dotenv';
 import { logError, logInfo } from './lib/log.ts';
+import { importEnvFilesAndUseStore } from './lib/config-import.ts';
 import { Ssh2SSHClient } from './lib/ssh-client.ts';
 import { loadInventory, saveInventory, SETTINGS_KEYS } from './lib/inventory.ts';
 import { dataDir, inventoryPath } from './lib/paths.ts';
@@ -42,26 +43,29 @@ import { runDeleteGuest } from './commands/provisioning/delete-guest.ts';
 import { runMigrateGuest } from './commands/provisioning/migrate-guest.ts';
 import type { TargetSelector } from './lib/targets.ts';
 
-// Mirrors src/web/server.ts: the gitignored data/authentik.env supplies
-// AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN plus the AUTHENTIK_* overrides read
-// by authentikConfig(). Loading it here too is what keeps a CLI
-// sync-authentik run and a web-triggered one from silently disagreeing about
-// group names, the outpost, or the flow slugs. A missing file is a silent
-// no-op (dotenv.config never throws).
+// Mirrors src/web/server.ts (issue #64). Configuration lives in the settings
+// store inside inventory/bellhop.db; the gitignored data/*.env files are now
+// two things only: a one-time import source (importEnvFiles, below, copies
+// each value into the store if nothing is stored for it yet) and, loaded into
+// the environment here, an override that wins over the stored value -- the
+// same as any other environment variable. A missing file is a silent no-op
+// (dotenv.config never throws). data/authentik.env holds the AUTHENTIK_*
+// settings and WEB_UI_AUTH_MODE; data/cloudflare-api.env holds
+// CLOUDFLARE_DNS_API_TOKEN (not data/cloudflare.env -- that is the
+// cloudflare-ddns container's answer file, which nothing in src/ reads);
+// data/nginx-proxy-manager.env holds the NPM_API_* settings.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
-
-// Mirrors src/web/server.ts: the gitignored data/cloudflare-api.env supplies
-// CLOUDFLARE_DNS_API_TOKEN for prune-acme-challenges (issue #162). Not
-// data/cloudflare.env -- that is the cloudflare-ddns container's answer file,
-// which nothing in src/ reads. A missing file is a silent no-op.
 dotenv.config({ path: path.join(dataDir(), 'cloudflare-api.env'), quiet: true });
-
-// Mirrors src/web/server.ts: the gitignored data/nginx-proxy-manager.env
-// supplies NPM_API_EMAIL/NPM_API_PASSWORD (and optionally NPM_API_URL) for
-// the nginx-proxy-manager proxy driver (issue #31). A missing file is a
-// silent no-op -- buildNpmClient() throws its own named error only once a
-// command actually tries to reach NPM.
 dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: true });
+
+// Before any command runs, --help included (an import is idempotent, and with
+// no database there is nothing to import into and nothing is created). A
+// failed import only warns, so it can never stop a command --
+// import-yaml-inventory creating a fresh database, say -- from running.
+// Registering the store is what makes configValue() read stored settings at
+// all; without it the accessor sees the environment only.
+importEnvFilesAndUseStore(inventoryPath(), dataDir());
+
 export function fstabPath(): string | undefined {
   return process.env.FSTAB_PATH;
 }

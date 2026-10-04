@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import nodeWindows from 'node-windows';
 import { findProxyEntry, loadInventory } from '../src/lib/inventory.ts';
 import { dataDir, inventoryPath } from '../src/lib/paths.ts';
+import { importEnvFilesAndUseStore } from '../src/lib/config-import.ts';
 
 const { Service, elevate } = nodeWindows;
 
@@ -15,15 +16,19 @@ const SERVICE_DESCRIPTION = 'Bellhop web dashboard';
 const FIREWALL_RULE_NAME = 'BellhopWebUI';
 const DEFAULT_PORT = 3000;
 
-// Mirrors src/cli.ts/src/web/server.ts: loaded before the loadInventory()
-// call below because the one-time requires_auth -> auth_group migration
-// (src/lib/inventory.ts) reads AUTHENTIK_GROUP_LADDER at DB-open time. If
-// this script is the first thing to open a legacy database, an unset
-// AUTHENTIK_GROUP_LADDER here would migrate every gated entry onto the
-// built-in default ladder's top rung instead of this operator's configured
-// one -- and since requires_auth is dropped in the same call, there is no
-// re-running this correctly afterward.
+// Mirrors src/cli.ts/src/web/server.ts (issue #64): data/authentik.env is
+// loaded as an environment override, imported once into the settings store,
+// and the store registered, all before the loadInventory() call below --
+// the one-time requires_auth -> auth_group migration (src/lib/inventory.ts)
+// reads the group ladder at DB-open time. If this script is the first thing
+// to open a legacy database, an unset ladder here would migrate every gated
+// entry onto the built-in default ladder's top rung instead of this
+// operator's configured one -- and since requires_auth is dropped in the
+// same call, there is no re-running this correctly afterward. Only
+// authentik.env is loaded: nothing else this script reads comes from the
+// other two files, and the import reads all three regardless.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
+importEnvFilesAndUseStore(inventoryPath(), dataDir());
 
 type Action = 'install' | 'uninstall';
 

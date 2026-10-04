@@ -103,9 +103,9 @@ next request's `isAdminUser` uses it; with `AUTHENTIK_ADMIN_GROUP` set, the API 
 
 ## Phase 7: User Story 4 -- import from data/*.env (P2)
 
-- [ ] T034 [P] [US4] Tests in test/lib/config-import.test.ts: values imported for keys with no stored value (non-secret to `meta`, secret to `secret_settings`, `WEB_UI_AUTH_MODE` to `webUiAuthMode`); a stored value is never overwritten; second run imports nothing; files byte-identical afterwards; logs contain key/variable names only; invalid value skipped with a warning naming the key; no DB file -> no-op and no file created; real `process.env` values are not imported
-- [ ] T035 [US4] Create src/lib/config-import.ts (`importEnvFiles(inventoryPath, dataDir)`, `dotenv.parse`)
-- [ ] T036 [US4] Wire each entry point -- src/web/server.ts, src/cli.ts, src/mcp/server.ts, scripts/windows-service.ts: keep the dotenv loads (override), then `importEnvFiles`, then `useConfigStore(inventoryPath())`, before `loadInventory`; update their comments; test the CLI wiring in test/cli.test.ts (import runs, store registered)
+- [X] T034 [P] [US4] Tests in test/lib/config-import.test.ts: values imported for keys with no stored value (non-secret to `meta`, secret to `secret_settings`, `WEB_UI_AUTH_MODE` to `webUiAuthMode`); a stored value is never overwritten; second run imports nothing; files byte-identical afterwards; logs contain key/variable names only; invalid value skipped with a warning naming the key; no DB file -> no-op and no file created; real `process.env` values are not imported
+- [X] T035 [US4] Create src/lib/config-import.ts (`importEnvFiles(inventoryPath, dataDir)`, `dotenv.parse`)
+- [X] T036 [US4] Wire each entry point -- src/web/server.ts, src/cli.ts, src/mcp/server.ts, scripts/windows-service.ts: keep the dotenv loads (override), then `importEnvFiles`, then `useConfigStore(inventoryPath())`, before `loadInventory`; update their comments; test the CLI wiring in test/cli.test.ts (import runs, store registered)
 
 ---
 
