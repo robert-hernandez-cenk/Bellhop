@@ -13,17 +13,20 @@ interface CaddyApiPayload {
 
 // Caddy configured through its admin API instead of a Caddyfile (issue
 // #26). Like Nginx Proxy Manager (issue #31) it writes no file at all
-// (defaultConfigPath: null), and reconciles Bellhop-tagged routes and one
-// TLS policy against Caddy's live JSON configuration, leaving every
-// untagged object alone (src/lib/proxy/caddy-json.ts). Served behavior
+// (defaultConfigPath: null), and reconciles Bellhop-tagged routes and the
+// active proxyCaddyTls mode's TLS objects (issue #51 -- planCaddyConfig
+// reads the mode from ctx.caddyTls) against Caddy's live JSON
+// configuration, leaving every untagged object alone
+// (src/lib/proxy/caddy-json.ts). Served behavior
 // matches the file-based 'caddy' driver route for route -- the parity test
 // in test/lib/proxy/caddy-json.test.ts pins it against Caddy's own adapter.
 export const caddyApiDriver: ReverseProxyDriver = {
   id: 'caddy-api',
   label: 'Caddy (admin API)',
-  // Same as the file-based driver: Caddy enforces forward-auth itself and
-  // issues its own certificates through Cloudflare DNS-01, so stale
-  // _acme-challenge records keep being pruned after Dashboard edits.
+  // Same as the file-based driver: Caddy enforces forward-auth itself and,
+  // in the default 'cloudflare' TLS mode, issues its own certificates
+  // through Cloudflare DNS-01, so stale _acme-challenge records keep being
+  // pruned after Dashboard edits.
   // acmeDns01ViaCloudflare is still a fixed true regardless of the
   // inventory handed in -- issue #51's own follow-up task makes this
   // mode-aware (false once proxyCaddyTls is anything but unset/'cloudflare');
@@ -36,6 +39,8 @@ export const caddyApiDriver: ReverseProxyDriver = {
   // The same document root the file-based driver suggests -- the status
   // page site itself stays hand-authored and untagged.
   statusPage: { suggestedPath: '/usr/share/caddy/index.html' },
+  // issue #51: the Settings page shows the Caddy TLS dropdown for it.
+  usesCaddyTls: true,
 
   async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
     const live = await readCaddyConfig(deps, { checkService: true });

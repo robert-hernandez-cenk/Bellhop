@@ -258,3 +258,91 @@ test('caddyDriver.plan previews and carries exactly the pinned block', async () 
     else process.env.AUTHENTIK_OUTPOST_PORT = ORIGINAL_OUTPOST_PORT;
   }
 });
+
+// --- issue #51: proxyCaddyTls ----------------------------------------------
+// Every mode renders the same characterization block with only the per-site
+// TLS clause swapped (contracts/rendering-and-settings.md "Caddyfile per-site
+// TLS clause"). The cloudflare clause is the four lines EXPECTED_LINES
+// carries after each site's directives; these helpers rebuild the expected
+// block from EXPECTED_LINES with that clause replaced, so the other modes
+// are pinned against exactly the same routes the characterization pins.
+const CLOUDFLARE_CLAUSE = [
+  '    tls {',
+  '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}',
+  '        resolvers 1.1.1.1 8.8.8.8',
+  '    }',
+];
+
+function expectedWithClause(clause: string[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < EXPECTED_LINES.length; i++) {
+    if (EXPECTED_LINES.slice(i, i + CLOUDFLARE_CLAUSE.length).join('\n') === CLOUDFLARE_CLAUSE.join('\n')) {
+      out.push(...clause);
+      i += CLOUDFLARE_CLAUSE.length - 1;
+    } else {
+      out.push(EXPECTED_LINES[i]);
+    }
+  }
+  return out.join('\n');
+}
+
+function blockFor(inv: Inventory): string {
+  let block = '';
+  withPinnedOutpostPort(() => {
+    block = buildCaddyBlock(inv);
+  });
+  return block;
+}
+
+test('proxyCaddyTls cloudflare renders exactly the characterization block (unset = cloudflare)', () => {
+  assert.equal(blockFor({ ...inventory, proxyCaddyTls: 'cloudflare' }), EXPECTED_LINES.join('\n'));
+});
+
+test('proxyCaddyTls letsencrypt renders the same block with every TLS clause removed', () => {
+  const block = blockFor({ ...inventory, proxyCaddyTls: 'letsencrypt' });
+  assert.equal(block, expectedWithClause([]));
+  assert.doesNotMatch(block, /\btls\b/);
+});
+
+test('proxyCaddyTls internal renders `tls internal` in place of the Cloudflare clause', () => {
+  assert.equal(blockFor({ ...inventory, proxyCaddyTls: 'internal' }), expectedWithClause(['    tls internal']));
+});
+
+test('proxyCaddyTls files renders the domain-derived certificate/key paths by default', () => {
+  assert.equal(
+    blockFor({ ...inventory, proxyCaddyTls: 'files' }),
+    expectedWithClause(['    tls /etc/letsencrypt/live/example.com/fullchain.pem /etc/letsencrypt/live/example.com/privkey.pem'])
+  );
+});
+
+test('proxyCaddyTls files uses proxyTlsCertificate/proxyTlsKey when set', () => {
+  assert.equal(
+    blockFor({
+      ...inventory,
+      proxyCaddyTls: 'files',
+      proxyTlsCertificate: '/etc/ssl/example/cert.pem',
+      proxyTlsKey: '/etc/ssl/example/key.pem',
+    }),
+    expectedWithClause(['    tls /etc/ssl/example/cert.pem /etc/ssl/example/key.pem'])
+  );
+});
+
+test('proxyCaddyTls files double-quotes a path holding whitespace or a double quote, escaping backslash and quote (research R6)', () => {
+  const block = blockFor({
+    ...inventory,
+    proxyCaddyTls: 'files',
+    proxyTlsCertificate: '/etc/ssl/my certs/cert.pem',
+    // a"b\c -- one double quote and one backslash.
+    proxyTlsKey: String.raw`/etc/ssl/a"b\c/key.pem`,
+  });
+  assert.equal(block, expectedWithClause([String.raw`    tls "/etc/ssl/my certs/cert.pem" "/etc/ssl/a\"b\\c/key.pem"`]));
+});
+
+test('a path with a backslash but no whitespace or double quote stays bare (research R6)', () => {
+  const block = blockFor({ ...inventory, proxyCaddyTls: 'files', proxyTlsCertificate: String.raw`/etc/ssl/a\b.pem` });
+  assert.ok(block.includes(String.raw`    tls /etc/ssl/a\b.pem /etc/letsencrypt/live/example.com/privkey.pem`));
+});
+
+test('caddyDriver declares usesCaddyTls for the Settings page', () => {
+  assert.equal(caddyDriver.usesCaddyTls, true);
+});

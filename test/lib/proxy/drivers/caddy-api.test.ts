@@ -55,6 +55,8 @@ test('declares what the Settings page and capability checks read', () => {
   assert.deepEqual(caddyApiDriver.capabilities.authModes, ['forward', 'oidc']);
   assert.equal(caddyApiDriver.capabilities.acmeDns01ViaCloudflare(inventory), true);
   assert.deepEqual(caddyApiDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });
+  // issue #51: the Settings page shows the Caddy TLS dropdown for it.
+  assert.equal(caddyApiDriver.usesCaddyTls, true);
 });
 
 test('a dry run reads once, with the Caddyfile-mode check, and writes nothing (FR-003)', async () => {

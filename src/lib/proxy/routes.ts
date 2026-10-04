@@ -29,9 +29,9 @@ export interface ProxyContext {
   // its own per-site certificate (nginx, issue #30) writes into every
   // server block. Always present -- buildProxyContext can always derive it,
   // since domain is mandatory -- so a driver never has to handle "no
-  // certificate". The Caddy driver ignores this field entirely: it obtains
-  // its own per-site certificate via DNS-01 (see TLS_BLOCK in
-  // src/lib/proxy/drivers/caddy.ts).
+  // certificate". The two Caddy drivers read it only in caddyTls 'files'
+  // mode (issue #51); in every other mode Caddy obtains or issues its own
+  // per-site certificate (see tlsClause in src/lib/proxy/drivers/caddy.ts).
   tls: { certificatePath: string; keyPath: string };
   // The ACME certificate resolver name the Traefik driver (issue #35) sets
   // on every rendered router's tls.certResolver -- inventory.proxyCertResolver
@@ -54,7 +54,7 @@ export interface ProxyContext {
 // named this by default, but it is what the driver's own live-verified
 // research setup used, and it is a safe, memorable default for an operator
 // who names their own resolver 'cloudflare' too (the same DNS provider
-// Caddy's own hardcoded TLS_BLOCK uses).
+// Caddy's own default 'cloudflare' TLS mode uses).
 export const DEFAULT_CERT_RESOLVER = 'cloudflare';
 
 // issue #51: the Caddy drivers' own default TLS mode -- Cloudflare DNS-01,
