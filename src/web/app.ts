@@ -12,6 +12,7 @@ import type { JobRunner } from './jobs/job-runner.ts';
 import { requireAuth } from './auth.ts';
 import { applyImpersonation, type ImpersonationStore } from './impersonation.ts';
 import { dashboardRoutes } from './routes/dashboard.ts';
+import { appUpdatesRoutes } from './routes/app-updates.ts';
 import { jobsRoutes } from './routes/jobs.ts';
 import { provisioningRoutes } from './routes/provisioning.ts';
 import { maintenanceRoutes } from './routes/maintenance.ts';
@@ -75,6 +76,7 @@ export function buildApp(deps: AppDeps): express.Express {
     next();
   });
   app.use('/api', dashboardRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.fetchImpl));
+  app.use('/api/app-updates', appUpdatesRoutes(deps.inventory, deps.inventoryPath));
   app.use('/api/jobs', jobsRoutes(deps.jobStore, deps.jobLog, deps.jobRunner, deps.inventoryPath, deps.inventory));
   app.use(
     '/api/provisioning',

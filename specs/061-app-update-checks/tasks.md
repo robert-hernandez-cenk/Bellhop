@@ -73,17 +73,17 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
 
 **Independent Test**: seed `app_update_status` rows, open `/update`, and see the badge, the emphasized button, and the quiet notes. A restricted user sees no row for a blocked guest.
 
-- [ ] T010 [P] [US1] Write `test/web/routes/app-updates.test.ts`:
+- [x] T010 [P] [US1] Write `test/web/routes/app-updates.test.ts`:
   - `GET /api/app-updates` returns saved rows in the `contracts/http-api.md` shape, with null fields omitted.
   - Drops rows for guests that are no longer `lxc`+`app` in inventory.
   - Drops rows for guests a block-list or allow-list group can't see.
   - An admin sees all.
   - Impersonating a restricted group filters.
-- [ ] T011 [US1] Implement `src/web/routes/app-updates.ts` and mount it at `/api/app-updates` in `src/web/app.ts`, reusing `isResourceAllowed` from `src/web/access.ts` and the permission rules loading used by `dashboardRoutes`.
-- [ ] T012 [P] [US1] Write `test/web-client/app-update-display.test.ts` for `appUpdateView(result, formatTime)` (research R11): available → tone `available`, text `Update available 1.2.3 → 1.3.0`; up-to-date → `Up to date (1.2.3)`; error → `Update check failed`, with the message in the details; not-checked → `Not checked: guest stopped`; unsupported → `null`. The details always include `Checked <time>`.
-- [ ] T013 [US1] Implement `web-client/src/lib/app-update-display.ts` (framework-free), and add the `AppUpdateResult` type to `web-client/src/api/types.ts`.
-- [ ] T014 [US1] Create `web-client/src/components/AppUpdateBadge.tsx`: a badge or quiet note with a tap/click disclosure revealing the details (not hover-only `title`; reuse the `FieldHelp` pattern). Wire it into `web-client/src/pages/UpdatePage.tsx`: fetch `/app-updates`, show the badge next to the app, add the `button-attention` class to the app update button when `update-available`, and update the `PageDescription` text to mention the daily check. Add styles in `web-client/src/index.css`, with dark-mode overrides under `:root[data-theme='dark']`.
-- [ ] T015 [US1] Seed example app update results in the demo instance (`scripts/demo/`): one available, one up to date, one error, one not checked, all on example guests. Keep `test/scripts/demo/demo-inventory.test.ts` passing.
+- [x] T011 [US1] Implement `src/web/routes/app-updates.ts` and mount it at `/api/app-updates` in `src/web/app.ts`, reusing `isResourceAllowed` from `src/web/access.ts` and the permission rules loading used by `dashboardRoutes`.
+- [x] T012 [P] [US1] Write `test/web-client/app-update-display.test.ts` for `appUpdateView(result, formatTime)` (research R11): available → tone `available`, text `Update available 1.2.3 → 1.3.0`; up-to-date → `Up to date (1.2.3)`; error → `Update check failed`, with the message in the details; not-checked → `Not checked: guest stopped`; unsupported → `null`. The details always include `Checked <time>`.
+- [x] T013 [US1] Implement `web-client/src/lib/app-update-display.ts` (framework-free), and add the `AppUpdateResult` type to `web-client/src/api/types.ts`.
+- [x] T014 [US1] Create `web-client/src/components/AppUpdateBadge.tsx`: a badge or quiet note with a tap/click disclosure revealing the details (not hover-only `title`; reuse the `FieldHelp` pattern). Wire it into `web-client/src/pages/UpdatePage.tsx`: fetch `/app-updates`, show the badge next to the app, add the `button-attention` class to the app update button when `update-available`, and update the `PageDescription` text to mention the daily check. Add styles in `web-client/src/index.css`, with dark-mode overrides under `:root[data-theme='dark']`.
+- [x] T015 [US1] Seed example app update results in the demo instance (`scripts/demo/`): one available, one up to date, one error, one not checked, all on example guests. Keep `test/scripts/demo/demo-inventory.test.ts` passing.
 
 **Checkpoint**: the MVP shows results, whichever way they were saved.
 

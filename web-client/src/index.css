@@ -146,6 +146,23 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .update-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .update-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .update-card-info { display: flex; flex-direction: column; gap: 4px; }
+/* issue #61: the Update page's saved app-update-check result, next to the
+   app name. "available" is a small, colored pill that stands out among the
+   quiet notes; every other visible status (up-to-date/error/not-checked)
+   shares one muted, text-only style -- unsupported/no-result renders no
+   badge at all (AppUpdateBadge returns null). The field text itself is
+   FieldHelp's plain `field` child, so coloring `.field-help` inside each
+   variant colors that text without touching FieldHelp's own CSS. */
+.app-update-badge { margin-left: 6px; }
+.app-update-badge-available .field-help { padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; background: rgba(52, 199, 89, 0.18); color: #1a7a3a; }
+.app-update-badge-quiet .field-help { font-size: 11px; color: var(--text-secondary); }
+:root[data-theme='dark'] .app-update-badge-available .field-help { background: rgba(52, 199, 89, 0.22); color: var(--success); }
+/* The app-update button stands out the same way an operator decision gets
+   flagged elsewhere on this page (.city-mismatch's --warning pill) -- a
+   ring rather than a background swap, since the icon itself must stay
+   legible. --warning is unchanged between themes (see the comment on
+   .dev-app-warning above), so no separate dark-mode rule is needed. */
+.button-attention { box-shadow: 0 0 0 2px var(--warning); }
 .warning-banner { background: var(--error); color: white; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; overflow-wrap: anywhere; }
 .app-suggestions-wrap { position: relative; }
 .app-suggestions { position: absolute; z-index: 20; left: 0; right: 0; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 40vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); }

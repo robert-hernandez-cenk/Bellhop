@@ -31,6 +31,7 @@ import { buildDemoInventory } from './demo-inventory.ts';
 import { DemoSSHClient } from './demo-ssh.ts';
 import { demoFetch } from './demo-fetch.ts';
 import { seedDemoJobs } from './demo-jobs.ts';
+import { seedDemoAppUpdates } from './demo-app-updates.ts';
 
 export interface StartDemoServerOptions {
   // 0 lets the OS pick a free port (the screenshot capture script does this).
@@ -105,6 +106,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
 
   try {
     saveInventory(inventoryPath, buildDemoInventory());
+    seedDemoAppUpdates(inventoryPath);
     const inventory = loadInventory(inventoryPath);
 
     const ssh = new DemoSSHClient(inventory);

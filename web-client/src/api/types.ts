@@ -325,3 +325,20 @@ export interface SettingsResponse {
   proxyDrivers: ProxyDriverInfo[];
   defaultProxyDriver: string;
 }
+
+// Mirrors src/lib/app-update-store.ts's AppUpdateResult/AppUpdateStatus and
+// GET /api/app-updates (contracts/http-api.md) -- issue #61's daily
+// community-scripts update check. Optional fields are absent (never null)
+// on the wire when unset.
+export type AppUpdateStatus = 'update-available' | 'up-to-date' | 'unsupported' | 'not-checked' | 'error';
+
+export interface AppUpdateResult {
+  guest: string;
+  app: string;
+  status: AppUpdateStatus;
+  installedVersion?: string;
+  latestVersion?: string;
+  repo?: string;
+  message?: string;
+  checkedAt: string;
+}
