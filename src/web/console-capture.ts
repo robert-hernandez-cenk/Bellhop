@@ -22,7 +22,16 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 //     becomes the fallback instead, keeping stdout clean.
 //   - Many tests swap console.log for a collector and restore it afterwards.
 //     Restoring at count 0 keeps the console exactly what it was whenever no
-//     capture is running, so no test can save a wrapper as its "original".
+//     capture is running. That alone doesn't stop code from saving
+//     console.log *while a capture is active* (capturing logWrapper itself),
+//     installing its own replacement, and later reassigning that saved
+//     reference back onto console.log once the capture has ended -- at that
+//     point console.log is logWrapper again, but not because install() put
+//     it there. install() below guards against exactly this: it only takes a
+//     new fallback snapshot when console.log/console.error aren't already
+//     its own wrapper functions, so a stray wrapper reintroduced this way is
+//     never captured as its own fallback -- which would otherwise make every
+//     later outside-capture log recurse into logWrapper/errorWrapper forever.
 
 interface CaptureSink {
   lines: string[];
@@ -58,8 +67,14 @@ const errorWrapper = wrap(() => fallbackError);
 
 function install(): void {
   if (activeCaptures === 0) {
-    fallbackLog = console.log;
-    fallbackError = console.error;
+    // Only take a new snapshot when console.log/console.error aren't already
+    // our own wrapper functions -- see the header comment above for the
+    // sequence this guards against (a saved wrapper reference reassigned
+    // back onto console.log after a capture ended, which would otherwise be
+    // captured here as its own fallback and recurse forever the next time a
+    // line is logged outside any capture).
+    if (console.log !== logWrapper) fallbackLog = console.log;
+    if (console.error !== errorWrapper) fallbackError = console.error;
     console.log = logWrapper;
     console.error = errorWrapper;
   }

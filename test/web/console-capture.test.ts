@@ -177,6 +177,82 @@ test('a line logged after its capture settled goes to the fallback console, even
   });
 });
 
+test('console.log replaced during a capture stays replaced after the capture ends (restore-only-if-still-installed, #78)', async () => {
+  const origLog = console.log;
+  const origError = console.error;
+  const collected: string[] = [];
+  try {
+    await withCapturedConsole(async () => {
+      console.log('before replace');
+      // Replaces console.log mid-capture, directly, the way a library
+      // outside this module's control might -- uninstall() must not stomp
+      // this back to the fallback once the capture ends.
+      console.log = (...args: unknown[]) => collected.push(args.map(String).join(' '));
+    });
+    assert.notEqual(console.log, origLog);
+    console.log('after capture');
+    assert.deepEqual(collected, ['after capture']);
+  } finally {
+    console.log = origLog;
+    console.error = origError;
+  }
+});
+
+// H1 regression: install() must not capture its own wrapper as the
+// fallback. Sequence: a capture is active (console.log is logWrapper); code
+// saves that reference and replaces console.log with its own collector;
+// the capture ends (uninstall() correctly leaves the collector in place,
+// per the test above); the saved reference is then reassigned back onto
+// console.log, so console.log is logWrapper again -- but not because
+// install() put it there. A second capture then starts while console.log is
+// already logWrapper: the unguarded install() used to re-snapshot that as
+// its own fallback, so the next line logged outside any capture recursed
+// into logWrapper forever (a stack overflow). The real pre-test console.log
+// is temporarily replaced with a collector before the whole sequence so we
+// can assert the fallback chain still reaches *it* at the end.
+test('install() does not capture its own wrapper as the fallback when a saved wrapper reference is reassigned back onto console.log (#78, H1)', async () => {
+  const origLog = console.log;
+  const origError = console.error;
+  const finalCollected: string[] = [];
+  console.log = (...args: unknown[]) => finalCollected.push(args.map(String).join(' '));
+
+  try {
+    let savedWrapper: typeof console.log | undefined;
+    const collectedWhileOverridden: string[] = [];
+
+    await withCapturedConsole(async () => {
+      // console.log is logWrapper here (the capture just started). Some
+      // code saves that reference, believing it's saving "the original"...
+      savedWrapper = console.log;
+      // ...then installs its own replacement mid-capture.
+      console.log = (...args: unknown[]) => collectedWhileOverridden.push(args.map(String).join(' '));
+    });
+    // The capture has settled; uninstall() found console.log !== logWrapper
+    // (it's the collector above) and correctly left it alone.
+    assert.notEqual(console.log, origLog);
+
+    // The saved reference is reassigned back onto console.log -- it's
+    // actually logWrapper, not "the original".
+    console.log = savedWrapper!;
+    assert.equal(console.log, savedWrapper);
+
+    // A second capture starts while console.log is already logWrapper.
+    const b = await withCapturedConsole(async () => {
+      console.log('inside B');
+    });
+    assert.equal(b.text, 'inside B');
+
+    // Logged after the second capture settled, with no active capture --
+    // must reach the fallback console without recursing/throwing, and the
+    // fallback must be the real pre-test console, not logWrapper itself.
+    console.log('outside after B');
+    assert.deepEqual(finalCollected, ['outside after B']);
+  } finally {
+    console.log = origLog;
+    console.error = origError;
+  }
+});
+
 test('outside-capture lines reach the console in place when the capture started, which is restored afterwards (MCP redirect, #78)', { timeout: 5000 }, async () => {
   await withCollector(async (collected, origError) => {
     const collector = console.log;

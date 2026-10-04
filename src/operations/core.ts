@@ -77,10 +77,15 @@ function enqueue(
   });
 }
 
-// The web apply routes' and MCP apply tools' shared sequence. The preview is
-// computed here, before enqueue, never inside the job: preview implementations
-// use withCapturedConsole, and calling that again from inside the job's own
-// withCapturedConsole-wrapped run() deadlocks the job queue (confirmed live).
+// The web apply routes' and MCP apply tools' shared sequence. The preview
+// still runs here, before enqueue, rather than inside the job (research R7):
+// the preview text is logged at the top of the job's own log (see enqueue()
+// below), and a bad input fails the request before any job row ever exists.
+// Console captures no longer serialize against each other (see
+// src/web/console-capture.ts) and JobRunner now keeps jobs one at a time
+// through its own queue (src/web/jobs/job-runner.ts) -- so a preview inside
+// the job would no longer deadlock the way it once did, but nothing would
+// move into the job log for a caller to see before the job actually ran.
 export async function previewAndEnqueue(
   op: Operation,
   raw: unknown,

@@ -76,11 +76,11 @@ Already done in Stage 1: worktree, `npm install`, baseline `npm run typecheck` a
 
 ### Tests for User Story 1
 
-- [ ] T016 [US1] In `test/operations/core.test.ts`, add a test: enqueue a first job (via `enqueueWithoutPreview` with an operation whose `apply` awaits a test gate, or `runner.enqueue` directly), then `await previewAndEnqueue(op, …)` for a second operation whose `preview` uses `withCapturedConsole`. Assert it resolves with the preview text while the first job is still `running`, the second job's row is `queued`, then release the gate and assert both end `success` and the second job's log starts with the dry-run preview block.
+- [x] T016 [US1] In `test/operations/core.test.ts`, add a test: enqueue a first job (via `enqueueWithoutPreview` with an operation whose `apply` awaits a test gate, or `runner.enqueue` directly), then `await previewAndEnqueue(op, …)` for a second operation whose `preview` uses `withCapturedConsole`. Assert it resolves with the preview text while the first job is still `running`, the second job's row is `queued`, then release the gate and assert both end `success` and the second job's log starts with the dry-run preview block.
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] In `src/operations/core.ts`, replace the deadlock comment above `previewAndEnqueue` with research R7's reason: previews run before enqueue so the preview text is logged at the top of the job log and a bad input fails the request before any job row exists; captures no longer wait on each other, so a preview never waits for a running job.
+- [x] T017 [US1] In `src/operations/core.ts`, replace the deadlock comment above `previewAndEnqueue` with research R7's reason: previews run before enqueue so the preview text is logged at the top of the job log and a bad input fails the request before any job row exists; captures no longer wait on each other, so a preview never waits for a running job.
 
 **Checkpoint**: Commit `Accept a second action while a job is running (#78, US1)`.
 
