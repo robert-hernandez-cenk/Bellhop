@@ -67,8 +67,8 @@ Nothing to set up — existing project, no new dependencies.
 
 ## Phase 5: Polish & Cross-Cutting
 
-- [ ] T011 [P] Update `docs/web-ui.md` (tab list: General, Proxy, Authentik, Cloudflare and GitHub; say the Proxy tab shows the Nginx Proxy Manager API URL/email/password when that driver is selected), `docs/configuration.md` (tab list sentence and the three table rows' Tab column -> `Proxy (Nginx Proxy Manager driver)`), `docs/reverse-proxy/nginx-proxy-manager.md` (Credentials: set on the Settings page's Proxy tab once Nginx Proxy Manager is the selected driver)
-- [ ] T012 [P] Update `CLAUDE.md`: the driver.ts paragraph's list of optional Settings-page hints (add `usesNpmApi`, "five optional" count), the Web UI Settings page bullet's `proxyDriversInfo` field list and `proxyFieldView` description, and the issue #64 tab list (drop Nginx Proxy Manager, say its fields are on the Proxy tab for that driver)
+- [x] T011 [P] Update `docs/web-ui.md` (tab list: General, Proxy, Authentik, Cloudflare and GitHub; say the Proxy tab shows the Nginx Proxy Manager API URL/email/password when that driver is selected), `docs/configuration.md` (tab list sentence and the three table rows' Tab column -> `Proxy (Nginx Proxy Manager driver)`), `docs/reverse-proxy/nginx-proxy-manager.md` (Credentials: set on the Settings page's Proxy tab once Nginx Proxy Manager is the selected driver)
+- [x] T012 [P] Update `CLAUDE.md`: the driver.ts paragraph's list of optional Settings-page hints (add `usesNpmApi`, "five optional" count), the Web UI Settings page bullet's `proxyDriversInfo` field list and `proxyFieldView` description, and the issue #64 tab list (drop Nginx Proxy Manager, say its fields are on the Proxy tab for that driver)
 - [ ] T013 Run `npm run typecheck`, `npm test`, `npm run web:build`; all must pass
 - [ ] T014 Browser check per quickstart.md (demo instance) at desktop width and at ≤640 px
 - [ ] T015 Regenerate `docs/images/settings-proxy-driver.png` with `npm run docs:screenshots` (keep only that image's change if others differ only by noise) and check it shows five tabs and example values only

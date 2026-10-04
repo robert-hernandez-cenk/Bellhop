@@ -14,8 +14,9 @@ the fields Bellhop sends on a create or update.
 
 ## Credentials
 
-Set the login Bellhop signs in to NPM with on the Settings page's Nginx
-Proxy Manager tab, or with `set-config` (see [Integration settings and
+Set the login Bellhop signs in to NPM with on the Settings page's Proxy
+tab once Nginx Proxy Manager is the selected driver, or with `set-config`
+(see [Integration settings and
 secrets](../configuration.md#integration-settings-and-secrets)):
 
 ```bash
