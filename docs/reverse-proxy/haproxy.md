@@ -223,7 +223,7 @@ so such a backend needs `insecureBackendTls` under every driver.
   ever deployed ungated in its place.
 - **Bellhop's own web UI can't sit behind a Bellhop-generated backend.**
   The web UI trusts `X-authentik-*` headers from its proxy, and production
-  runs with `WEB_UI_AUTH_MODE=authentik` (see
+  runs with the `webUiAuthMode` setting stored as `authentik` (see
   [Web UI](../web-ui.md)). Under this driver Bellhop can't put forward-auth
   in front of the web UI's subdomain, and every generated backend strips
   those headers, so routing the web UI through one only produces 401s. To
@@ -231,7 +231,7 @@ so such a backend needs `insecureBackendTls` under every driver.
   `proxyManual` and hand-author its routing with your own Authentik
   forward-auth (for example the community Lua integration), which must
   overwrite — never pass through — any `X-authentik-*` headers the client
-  sent. Keep `WEB_UI_AUTH_MODE=authentik`.
+  sent. Keep `webUiAuthMode` set to `authentik`.
 - **`unauthenticatedPaths` is ignored.** It only means something on a
   forward-gated entry, which this driver never renders.
 - **No status page.** HAProxy has no document root to serve one from.

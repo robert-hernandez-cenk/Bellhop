@@ -79,8 +79,8 @@ directories (and the key) works too. Either way, check with
 
 Stale `_acme-challenge` records that `cloudflare`-mode issuance leaves
 behind are cleaned up by `prune-acme-challenges` and the web UI's
-push-live step once `data/cloudflare-api.env` is set — see
-[Environment variables](../environment-variables.md). The other three
+push-live step once the `cloudflareDnsApiToken` setting is set — see
+[Integration settings and secrets](../configuration.md#integration-settings-and-secrets). The other three
 modes never touch Cloudflare's DNS at all, so that cleanup is skipped for
 them (and the web UI's push-live step logs why) — see [Reverse proxy
 drivers](README.md). The decision follows `proxyCaddyTls` alone: if you

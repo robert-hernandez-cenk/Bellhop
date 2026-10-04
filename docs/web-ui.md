@@ -115,17 +115,54 @@ see [HAProxy limits](reverse-proxy/haproxy.md#limits).) There is no login
 page or session store in this app itself, only a global Express middleware
 (`src/web/auth.ts`) that trusts those headers when present. Whether a
 request arriving with no such headers is rejected or served as a synthetic
-always-admin local operator is controlled by `WEB_UI_AUTH_MODE` (see
-[Environment variables](environment-variables.md) and
-[Running without Authentik](authentik.md#running-without-authentik)).
-The default `auto` mode falls back to the local operator, so running
-`web:start`/`web:dev` directly (not routed through the proxy) works out of the
-box instead of 401ing the whole dashboard; set `WEB_UI_AUTH_MODE=authentik`
-on any deployment where authentication is load-bearing to get the old,
-fail-closed behavior back. `WEB_UI_DEV_USER` remains useful in dev/test for
-simulating a *specific non-admin group membership*, which the synthetic
-local operator can't do — `web:dev` sets it automatically (to `local-dev`)
-and `npm test` sets it too (to `test-user`).
+always-admin local operator is controlled by the `webUiAuthMode` setting
+(the `WEB_UI_AUTH_MODE` environment variable overrides it — see [Sign-in
+mode](environment-variables.md#sign-in-mode) and [Running without
+Authentik](authentik.md#running-without-authentik)). The default `auto`
+mode falls back to the local operator, so running `web:start`/`web:dev`
+directly (not routed through the proxy) works out of the box instead of
+401ing the whole dashboard; store `webUiAuthMode` as `authentik` on any
+deployment where authentication is load-bearing, so a request that
+bypasses forward-auth fails closed. `WEB_UI_DEV_USER` remains useful in
+dev/test for simulating a *specific non-admin group membership*, which the
+synthetic local operator can't do — `web:dev` sets it automatically (to
+`local-dev`) and `npm test` sets it too (to `test-user`).
+
+## Settings page
+
+Admins reach the Settings page from the Admin group in the sidebar. It
+holds every setting described in [Configuration](configuration.md), one
+tab per integration: General, Proxy, Authentik, Cloudflare, Nginx Proxy
+Manager and GitHub. Each field saves on its own, and a saved value is in
+use from the very next request — nothing needs a restart. The Proxy tab's
+fields still appear and disappear with the selected proxy driver (see
+[Reverse proxy drivers](reverse-proxy/README.md)).
+
+- **Secrets** (the Authentik API token, the Cloudflare DNS API token, the
+  Nginx Proxy Manager password and the GitHub API token) show only "Set" or
+  "Not set" and where the value comes from. Each is a masked input with
+  Replace (or Save, when unset) and Clear; it is never pre-filled, has no
+  reveal control, and is empty again after every save. See
+  [Secrets](configuration.md#secrets).
+- **Fields set by the environment** are read-only, labelled "set by
+  environment" with the variable's name, and have no Save or Clear: the
+  environment variable wins over anything saved here, so the server
+  refuses the write. Unset the variable (or remove it from its
+  `data/*.env` file) to manage the field here again — see [The data/*.env
+  files](environment-variables.md#the-dataenv-files).
+- **Admin groups.** Saving the admin group or the built-in admin group asks
+  for confirmation first, and is refused when, under the new names, you
+  would no longer be an administrator yourself. The check uses your real
+  groups even while impersonating, and never blocks the local operator.
+- **Web UI sign-in** (`webUiAuthMode`). Switching it to `authentik` is
+  refused unless your own session came through Authentik's forward-auth —
+  otherwise the next request from your browser would already be rejected.
+  Switching away from `authentik` asks for confirmation, since the web UI
+  then becomes reachable without signing in. If a wrong value locks you
+  out anyway, see [Locked out](authentik.md#locked-out).
+
+Settings stays in the nav for any admin even without Authentik's user
+directory; Users and Permissions need it.
 
 ## Screenshots
 
