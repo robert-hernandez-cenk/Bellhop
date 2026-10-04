@@ -60,7 +60,16 @@ function str(env: NodeJS.ProcessEnv, key: string, fallback: string): string {
 // never be a source of request failures. A repeated rung is unambiguous
 // anyway -- the earlier (broader) position is the one that matters.
 function groupLadder(env: NodeJS.ProcessEnv): string[] {
-  const raw = str(env, 'AUTHENTIK_GROUP_LADDER', DEFAULT_GROUP_LADDER);
+  return parseGroupLadder(env.AUTHENTIK_GROUP_LADDER);
+}
+
+// The ladder parsing rules on a raw comma-separated string, with unset or
+// empty meaning the default ladder. Exported for the #158 migration in
+// inventory.ts, which resolves the raw value itself (stored setting or env
+// var, issue #64) from the database it is opening, so the parsing and
+// dedup rules stay defined only here.
+export function parseGroupLadder(rawValue: string | undefined): string[] {
+  const raw = rawValue !== undefined && rawValue !== '' ? rawValue : DEFAULT_GROUP_LADDER;
   const seen = new Set<string>();
   const ladder: string[] = [];
   for (const part of raw.split(',')) {

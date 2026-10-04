@@ -2,7 +2,9 @@ import Database from 'better-sqlite3';
 import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
 import { openDb } from './sqlite.ts';
-import { authentikConfig } from './authentik-config.ts';
+import { parseGroupLadder } from './authentik-config.ts';
+import { MovedSettingsSchema } from './settings-defs.ts';
+import { SECRET_SETTINGS_TABLE_SQL, effectiveValue, invalidateConfigSnapshot } from './config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
 // module -- importing index.ts here would cycle back into this file.
 import { PROXY_DRIVER_IDS, CADDY_TLS_MODES } from './proxy/ids.ts';
@@ -448,6 +450,13 @@ export const SettingsSchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9._-]+$/, 'must contain only letters, digits, ., - and _')
     .optional(),
+  // The values issue #64 moved out of data/*.env files (Authentik, web UI
+  // auth mode, Nginx Proxy Manager). Defined in the leaf settings-defs.ts
+  // so src/lib/config.ts can validate them without importing this file
+  // (research R2); spread here so they are ordinary meta rows, loaded,
+  // validated and saved like every other setting. Secrets are not here --
+  // they never ride along on an Inventory (research R1).
+  ...MovedSettingsSchema.shape,
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -481,6 +490,9 @@ export type GuestEntry = z.infer<typeof GuestEntrySchema>;
 export type ExternalSite = z.infer<typeof ExternalSiteSchema>;
 export type Inventory = z.infer<typeof InventorySchema>;
 
+// SECRET_SETTINGS_TABLE_SQL (issue #64) creates the secret_settings table,
+// which loadInventory never reads and saveInventory never writes -- only
+// src/lib/config.ts's writeSecret/clearSecret do (research R1).
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -535,6 +547,7 @@ const SCHEMA = `
     id INTEGER PRIMARY KEY CHECK (id = 1),
     owner_type TEXT NOT NULL, owner_name TEXT NOT NULL
   );
+  ${SECRET_SETTINGS_TABLE_SQL}
 `;
 
 // Adds a column to an already-existing table when it's missing -- covers a
@@ -567,7 +580,15 @@ function ensureColumn(db: Database.Database, table: string, column: string, ddl:
 function migrateRequiresAuthToAuthGroup(db: Database.Database, table: string): void {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!cols.some((c) => c.name === 'requires_auth')) return;
-  const ladder = authentikConfig().groupLadder;
+  // The ladder comes from the database being opened (its stored
+  // authentikGroupLadder setting, issue #64 FR-020), with the env var still
+  // overriding it -- read off this handle through the shared precedence
+  // rule rather than the config accessor, which would open a second
+  // connection to a database that is mid-migration.
+  const storedRow = db.prepare("SELECT value FROM meta WHERE key = 'authentikGroupLadder'").get() as
+    | { value: string }
+    | undefined;
+  const ladder = parseGroupLadder(effectiveValue('authentikGroupLadder', storedRow?.value, process.env).value);
   const topRung = ladder[ladder.length - 1];
   // An empty ladder can only come from a deliberately all-separator
   // AUTHENTIK_GROUP_LADDER. Nothing could be gated under it anyway, so drop
@@ -1392,6 +1413,10 @@ export function saveInventory(path: string, inv: Inventory): void {
     tx(sorted);
   } finally {
     db.close();
+    // The moved settings are meta rows, so a save can change what the
+    // config accessor should return -- drop its snapshot rather than serve
+    // the pre-save values for up to its TTL (issue #64, research R3).
+    invalidateConfigSnapshot();
   }
 }
 
