@@ -17,6 +17,15 @@ export interface AppUpdateView {
   details: string;
 }
 
+// check-app-updates.ts's one real not-checked reason today is the sentence
+// "Guest is stopped" (capitalized, as a standalone message). Mid-sentence
+// after "Not checked: " that capital reads oddly, so the first letter is
+// lower-cased here (fix round 1) -- "Not checked: guest is stopped" --
+// rather than hand-tuning the stored message's wording for display.
+function lowercaseFirst(text: string): string {
+  return text.length === 0 ? text : text[0]!.toLowerCase() + text.slice(1);
+}
+
 // research R11: unsupported renders nothing at all -- not an error, not a
 // quiet note, nothing an operator could mistake for a problem with their
 // app. Every other status gets a view; the switch is exhaustive so a sixth
@@ -46,7 +55,7 @@ export function appUpdateView(result: AppUpdateResult, formatTime: (iso: string)
     case 'not-checked':
       return {
         tone: 'quiet',
-        text: `Not checked: ${result.message ?? 'unknown reason'}`,
+        text: `Not checked: ${result.message ? lowercaseFirst(result.message) : 'unknown reason'}`,
         details: checked,
       };
     case 'unsupported':

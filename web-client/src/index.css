@@ -83,7 +83,12 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 .label-hint { margin-left: 6px; font-family: monospace; font-size: 11px; opacity: 0.8; }
 .external-link { display: inline-flex; align-items: center; margin-left: 6px; color: var(--accent); }
 .external-link:hover { color: var(--accent-hover); }
-.app-cell { display: inline-flex; align-items: center; }
+/* issue #61 fix round 1: this cell can hold a long app slug plus the
+   AppUpdateBadge's "Update available x -> y" pill, which otherwise overflows
+   a 280px card at phone widths (.update-card-grid's minmax) -- the same
+   min-width/overflow-wrap remedy as .job-header-main below, plus flex-wrap
+   so the badge drops to its own line instead of forcing the row wider. */
+.app-cell { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px 6px; min-width: 0; overflow-wrap: anywhere; }
 .name-cell { display: inline-flex; align-items: center; }
 .button { background: var(--accent); color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font: inherit; }
 .button:hover:not(:disabled) { background: var(--accent-hover); }
@@ -152,9 +157,13 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
    shares one muted, text-only style -- unsupported/no-result renders no
    badge at all (AppUpdateBadge returns null). The field text itself is
    FieldHelp's plain `field` child, so coloring `.field-help` inside each
-   variant colors that text without touching FieldHelp's own CSS. */
+   variant colors that text without touching FieldHelp's own CSS.
+   Deliberately no white-space: nowrap on the pill (fix round 1) -- .app-cell
+   above already lets this badge wrap to its own line when it doesn't fit,
+   and a long "Update available x -> y" string should still be allowed to
+   wrap inside the pill itself rather than stretch it off the card. */
 .app-update-badge { margin-left: 6px; }
-.app-update-badge-available .field-help { padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; background: rgba(52, 199, 89, 0.18); color: #1a7a3a; }
+.app-update-badge-available .field-help { padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: rgba(52, 199, 89, 0.18); color: #1a7a3a; }
 .app-update-badge-quiet .field-help { font-size: 11px; color: var(--text-secondary); }
 :root[data-theme='dark'] .app-update-badge-available .field-help { background: rgba(52, 199, 89, 0.22); color: var(--success); }
 /* The app-update button stands out the same way an operator decision gets

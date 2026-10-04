@@ -121,3 +121,26 @@ test('.data-table td.host-detail-cell inside the 640px mobile media block declar
   const decl = ruleDeclarations(css, '.data-table td.host-detail-cell ', '@media (max-width: 640px)');
   assert.match(decl, /text-align:\s*start/);
 });
+
+// issue #61 fix round 1: .app-cell holds a guest's app slug, its
+// community-scripts link, and the AppUpdateBadge -- a long slug plus the
+// "Update available x -> y" pill can otherwise overflow a 280px card
+// (.update-card-grid's minmax) at phone widths. Same remedy as
+// .job-header-main above: let the badge wrap onto its own line, and let the
+// slug text itself break if it has no natural break point.
+test('.app-cell declares flex-wrap: wrap and a gap', () => {
+  const decl = ruleDeclarations(css, '.app-cell ');
+  assert.match(decl, /flex-wrap:\s*wrap/);
+  assert.match(decl, /gap:/);
+});
+
+test('.app-cell declares min-width: 0 and overflow-wrap: anywhere', () => {
+  const decl = ruleDeclarations(css, '.app-cell ');
+  assert.match(decl, /min-width:\s*0/);
+  assert.match(decl, /overflow-wrap:\s*anywhere/);
+});
+
+test('.app-update-badge-available .field-help does not force white-space: nowrap (wrapping inside the pill is fine)', () => {
+  const decl = ruleDeclarations(css, '.app-update-badge-available .field-help ');
+  assert.doesNotMatch(decl, /white-space:\s*nowrap/);
+});

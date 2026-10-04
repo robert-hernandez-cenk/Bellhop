@@ -120,7 +120,7 @@ The CLI's own `update-app --apply` does not re-check. The operator can run `chec
   - available: `Update available 1.2.3 → 1.3.0`
   - up-to-date: `Up to date (1.2.3)`
   - error: `Update check failed`, with the message in the title
-  - not-checked: `Not checked: guest stopped`
+  - not-checked: `Not checked: guest is stopped` (the stored message's own wording, e.g. check-app-updates.ts's "Guest is stopped", with its first letter lower-cased so it reads naturally after the fixed "Not checked: " prefix)
   - unsupported: no view at all
   - The title always includes `Checked <local time>`.
   - The app update button gets a `button-attention` class when an update is available.

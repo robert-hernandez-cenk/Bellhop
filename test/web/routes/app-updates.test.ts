@@ -186,3 +186,43 @@ test('GET /api/app-updates filters by the impersonated group, not the real admin
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.results.map((r: AppUpdateResult) => r.guest), ['web-lxc']);
 });
+
+// issue #58 creator access (fix round 1): an allow-list group that names
+// only the host -- never the guest itself -- still surfaces that guest's
+// result to the user recorded as its creator, the same lift
+// isResourceAllowed already grants for /api/inventory and
+// /api/guests/status (see dashboard.test.ts's creatorInventory/creatorApp
+// for the identical pattern this mirrors).
+function creatorInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      { name: 'web-lxc', type: 'lxc', vmid: 102, host: 'pve1', app: 'homepage', creator: { username: 'test-user' } },
+      { name: 'media', type: 'lxc', vmid: 101, host: 'pve1', app: 'jellyseerr' },
+    ],
+  };
+}
+
+test('GET /api/app-updates includes a guest\'s result for its creator even though the allow-list group omits that guest', async () => {
+  const { app, inventoryPath } = testApp(creatorInventory());
+  replaceAppUpdateResults(inventoryPath, [
+    { guest: 'web-lxc', app: 'homepage', status: 'up-to-date', installedVersion: '2.0.0', checkedAt: '2026-10-03T04:00:41.000Z' },
+    { guest: 'media', app: 'jellyseerr', status: 'up-to-date', installedVersion: '1.2.3', checkedAt: '2026-10-03T04:00:42.000Z' },
+  ]);
+  // app-users is a host-only allow-list -- it never names web-lxc (or
+  // media) directly, so only the creator lift can surface web-lxc here.
+  await asAdmin(request(app).put('/api/permissions/app-users')).send({
+    mode: 'allow-list',
+    resources: [{ type: 'host', name: 'pve1' }],
+  });
+
+  const creator = await request(app).get('/api/app-updates').set('x-authentik-username', 'test-user').set('x-authentik-groups', 'app-users');
+  assert.equal(creator.status, 200);
+  assert.deepEqual(creator.body.results.map((r: AppUpdateResult) => r.guest), ['web-lxc']);
+
+  // Another user in the same group, not the creator, sees neither row.
+  const other = await request(app).get('/api/app-updates').set('x-authentik-username', 'other-user').set('x-authentik-groups', 'app-users');
+  assert.equal(other.status, 200);
+  assert.deepEqual(other.body.results, []);
+});

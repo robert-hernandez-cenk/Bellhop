@@ -49,12 +49,22 @@ test('appUpdateView: error gets a fixed quiet text with the reason in the detail
   assert.ok(view!.details.includes('GitHub API rate limit reached; the next scheduled check will retry'));
 });
 
-test('appUpdateView: not-checked names the reason in the text', () => {
-  const view = appUpdateView(result({ status: 'not-checked', message: 'guest stopped' }), formatTime);
+// check-app-updates.ts's real not-checked message is the capitalized,
+// standalone sentence "Guest is stopped" (see check-app-updates.ts and
+// test/commands/check-app-updates.test.ts) -- fix round 1: appUpdateView
+// lower-cases its first letter so it reads naturally after "Not checked: ".
+test('appUpdateView: not-checked names the reason in the text, lower-casing its first letter', () => {
+  const view = appUpdateView(result({ status: 'not-checked', message: 'Guest is stopped' }), formatTime);
   assert.ok(view);
   assert.equal(view!.tone, 'quiet');
-  assert.equal(view!.text, 'Not checked: guest stopped');
+  assert.equal(view!.text, 'Not checked: guest is stopped');
   assert.ok(view!.details.includes('Checked @2026-10-03T04:00:41.000Z'));
+});
+
+test('appUpdateView: not-checked with no message falls back to a generic reason', () => {
+  const view = appUpdateView(result({ status: 'not-checked' }), formatTime);
+  assert.ok(view);
+  assert.equal(view!.text, 'Not checked: unknown reason');
 });
 
 test('appUpdateView: unsupported renders nothing at all', () => {
@@ -67,7 +77,7 @@ test('appUpdateView: every rendered view\'s details includes "Checked <time>"', 
     result({ status: 'update-available', installedVersion: '1.0.0', latestVersion: '1.1.0' }),
     result({ status: 'up-to-date', installedVersion: '1.0.0' }),
     result({ status: 'error', message: 'boom' }),
-    result({ status: 'not-checked', message: 'guest stopped' }),
+    result({ status: 'not-checked', message: 'Guest is stopped' }),
   ];
   for (const r of statuses) {
     const view = appUpdateView(r, formatTime);
