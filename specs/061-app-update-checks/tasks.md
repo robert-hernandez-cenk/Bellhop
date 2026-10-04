@@ -20,19 +20,19 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
 
 ## Phase 1: Setup
 
-- [ ] T001 Capture fixtures from live public responses into `test/fixtures/github-releases/` (`releases-latest.json` from `GET https://api.github.com/repos/<small-public-repo>/releases/latest`, and `releases-list.json` from `.../releases?per_page=100` for a repository whose list includes at least one pre-release and one draft-free stable release). Also capture into `test/fixtures/community-scripts/` one real upstream `ct/*.sh` with a plain `check_for_gh_release "<name>" "<owner/repo>"` call, and one with a `"${RELEASE}"` pin plus its literal `RELEASE="..."` assignment. Store them exactly as captured (research R12). Add a short `README.md` in each fixture directory naming the source URL and the capture date (2026-10-03).
+- [x] T001 Capture fixtures from live public responses into `test/fixtures/github-releases/` (`releases-latest.json` from `GET https://api.github.com/repos/<small-public-repo>/releases/latest`, and `releases-list.json` from `.../releases?per_page=100` for a repository whose list includes at least one pre-release and one draft-free stable release). Also capture into `test/fixtures/community-scripts/` one real upstream `ct/*.sh` with a plain `check_for_gh_release "<name>" "<owner/repo>"` call, and one with a `"${RELEASE}"` pin plus its literal `RELEASE="..."` assignment. Store them exactly as captured (research R12). Add a short `README.md` in each fixture directory naming the source URL and the capture date (2026-10-03).
 
 ---
 
 ## Phase 2: Foundational (check engine; blocks all stories)
 
-- [ ] T002 [P] Write `test/lib/app-update-check.test.ts` covering research R1–R3:
+- [x] T002 [P] Write `test/lib/app-update-check.test.ts` covering research R1–R3:
   - `parseReleaseCheck`: plain call; call behind `[[ -d x ]] && if`; single-quoted and bare args; `"${RELEASE}"` resolved from `RELEASE="v3.2.4"`; `"$VAR"` resolved from `VAR="${VAR:-1.23.0}"`; unresolvable variable → `{ ok: false }`; `$` in name or repo → unsupported; no call → unsupported with reason `no check_for_gh_release call in ct/<slug>.sh`; 5th-arg prefix; name lowercased with spaces removed; name/repo validation regexes.
   - `normalizeVersion`: `v1.2`→`1.2`, `vault-1` unchanged.
   - `decideOutcome`: pinned versus unpinned inequality semantics.
   - `fetchLatestRelease`, with a stubbed fetch serving the T001 fixtures: `/latest` used when there's no pin or prefix; fallback to `?per_page=100` on a non-200 `/latest`; drafts and pre-releases skipped; prefix filter; pinned version tried via `/releases/tags/<pin>` and must exist; 403/429 → `GitHub API rate limit reached; the next scheduled check will retry`; other status → message names the repo and status; the `ReleaseCache` issues one request per `repo|pin|prefix` across repeated calls.
   - `buildInstalledVersionScript(name)`: emits exactly the POSIX script in research R6.
-- [ ] T003 Implement `src/lib/app-update-check.ts` to pass T002, with zod schemas for the release JSON (`tag_name`, `draft`, `prerelease`), a 15s `AbortSignal.timeout`, and the `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28` headers.
+- [x] T003 Implement `src/lib/app-update-check.ts` to pass T002, with zod schemas for the release JSON (`tag_name`, `draft`, `prerelease`), a 15s `AbortSignal.timeout`, and the `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28` headers.
 - [ ] T004 [P] Write `test/lib/app-update-store.test.ts`:
   - Temp db in a `mkdtempSync` directory.
   - `replaceAppUpdateResults` deletes rows absent from the new set.
