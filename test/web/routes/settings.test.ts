@@ -690,3 +690,130 @@ test('PATCH /api/settings refuses an env-pinned secret, and writes nothing', asy
     assert.equal(loadInventory(inventoryPath).nfsServer, undefined);
   });
 });
+
+// -- Issue #64 US6: no self-lockout ------------------------------------------
+
+test('PATCH /api/settings refuses an authentikAdminGroup change that would lock the real requester out', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ authentikAdminGroup: 'other-admins' });
+  assert.equal(res.status, 409);
+  assert.equal(
+    res.body.error,
+    'Refusing to change authentikAdminGroup: you would no longer be an administrator (your groups: bellhop-admins)'
+  );
+  assert.equal(loadInventory(inventoryPath).authentikAdminGroup, undefined, 'nothing is written');
+});
+
+test('PATCH /api/settings refuses an authentikBuiltinAdminGroup change that would lock the real requester out', async () => {
+  const { app, inventoryPath } = testApp();
+  // Only in Authentik's own built-in admin group here (not the configured
+  // bellhop-admins), so changing *that* name is what would lock them out.
+  const res = await request(app)
+    .patch('/api/settings')
+    .set('x-authentik-username', 'admin')
+    .set('x-authentik-groups', 'authentik Admins')
+    .send({ authentikBuiltinAdminGroup: 'other-builtin' });
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /^Refusing to change authentikBuiltinAdminGroup: you would no longer be an administrator/);
+  assert.equal(loadInventory(inventoryPath).authentikBuiltinAdminGroup, undefined);
+});
+
+test('PATCH /api/settings names the first admin-group field in the body when both would lock the requester out', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    authentikBuiltinAdminGroup: 'other-builtin',
+    authentikAdminGroup: 'other-admins',
+  });
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /^Refusing to change authentikBuiltinAdminGroup:/);
+});
+
+test('PATCH /api/settings allows an authentikAdminGroup change that keeps the real requester an admin', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ authentikBuiltinAdminGroup: 'authentik Admins' });
+  assert.equal(res.status, 200);
+  assert.equal(loadInventory(inventoryPath).authentikBuiltinAdminGroup, 'authentik Admins');
+});
+
+test('PATCH /api/settings never blocks the synthetic local operator on an admin-group change', async () => {
+  const { app, inventoryPath } = testApp();
+  const originalDevUser = process.env.WEB_UI_DEV_USER;
+  delete process.env.WEB_UI_DEV_USER;
+  try {
+    const res = await request(app).patch('/api/settings').send({ authentikAdminGroup: 'other-admins' });
+    assert.equal(res.status, 200);
+    assert.equal(loadInventory(inventoryPath).authentikAdminGroup, 'other-admins');
+  } finally {
+    if (originalDevUser !== undefined) process.env.WEB_UI_DEV_USER = originalDevUser;
+  }
+});
+
+test('an impersonating admin still gets 403 on an admin-group PATCH, never reaching the lockout guard', async () => {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, baseInventory());
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const app = buildApp({
+    inventory: baseInventory(),
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner: new JobRunner(jobStore, jobLog, ssh),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    impersonationStore: new Map([['admin', 'family']]),
+  });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ authentikAdminGroup: 'bellhop-admins' });
+  assert.equal(res.status, 403);
+});
+
+test('PATCH /api/settings refuses webUiAuthMode: authentik from a request with no forward-auth headers', async () => {
+  const { app, inventoryPath } = testApp();
+  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
+  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
+  try {
+    // No x-authentik-username header -> falls to the WEB_UI_DEV_USER=test-user
+    // dev identity (set for the whole `npm test` run), which is never
+    // viaForwardAuth.
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'authentik' });
+    assert.equal(res.status, 409);
+    assert.equal(
+      res.body.error,
+      'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected'
+    );
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
+    else process.env.WEB_UI_DEV_GROUPS = originalGroups;
+  }
+});
+
+test('PATCH /api/settings allows webUiAuthMode: authentik from a request with forward-auth headers', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
+  assert.equal(res.status, 200);
+  assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+});
+
+test('PATCH /api/settings allows clearing webUiAuthMode and setting auto/none with no forward-auth check', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: 'authentik' });
+  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
+  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
+  try {
+    const cleared = await request(app).patch('/api/settings').send({ webUiAuthMode: null });
+    assert.equal(cleared.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+
+    const auto = await request(app).patch('/api/settings').send({ webUiAuthMode: 'auto' });
+    assert.equal(auto.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'auto');
+
+    const none = await request(app).patch('/api/settings').send({ webUiAuthMode: 'none' });
+    assert.equal(none.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
+  } finally {
+    if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
+    else process.env.WEB_UI_DEV_GROUPS = originalGroups;
+  }
+});

@@ -87,8 +87,8 @@ next request's `isAdminUser` uses it; with `AUTHENTIK_ADMIN_GROUP` set, the API 
 
 ## Phase 5: User Story 6 -- no self-lockout (P2)
 
-- [ ] T028 [P] [US6] Tests in test/web/routes/settings.test.ts: changing `authentikAdminGroup`/`authentikBuiltinAdminGroup` so the real (non-impersonated) requester is no longer admin -> 409 with the contract message, nothing written; still-admin change succeeds; local operator never blocked; impersonating admin evaluated on real groups (but impersonation still 403s first); `webUiAuthMode: 'authentik'` from a request without forward-auth headers -> 409; from a request with `x-authentik-username` -> 200; clearing or setting `auto`/`none` -> 200
-- [ ] T029 [US6] Implement both guards in src/web/routes/settings.ts (after schema validation, before any write)
+- [X] T028 [P] [US6] Tests in test/web/routes/settings.test.ts: changing `authentikAdminGroup`/`authentikBuiltinAdminGroup` so the real (non-impersonated) requester is no longer admin -> 409 with the contract message, nothing written; still-admin change succeeds; local operator never blocked; impersonating admin evaluated on real groups (but impersonation still 403s first); `webUiAuthMode: 'authentik'` from a request without forward-auth headers -> 409; from a request with `x-authentik-username` -> 200; clearing or setting `auto`/`none` -> 200
+- [X] T029 [US6] Implement both guards in src/web/routes/settings.ts (after schema validation, before any write)
 
 ---
 

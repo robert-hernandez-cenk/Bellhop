@@ -125,6 +125,31 @@ export function authentikConfigured(env: NodeJS.ProcessEnv = process.env): boole
   );
 }
 
+// The admin/builtin-admin group names a settings PATCH would leave in
+// effect, without writing anything -- the no-self-lockout guard (issue
+// #64, US6) uses this to check whether the real requester would still be
+// an administrator afterward. `overrides` holds only the two keys the
+// request body actually touches: a key present with a string value means
+// "set to this"; present with `undefined` means "clear it" (back to the
+// default below); a key left out of `overrides` entirely keeps today's
+// effective value (environment, then stored setting, then the default),
+// resolved the same way authentikConfig() itself resolves it. Reuses
+// authentikConfig's own default literals rather than repeating them.
+export function adminGroupsWith(
+  overrides: { authentikAdminGroup?: string; authentikBuiltinAdminGroup?: string },
+  env: NodeJS.ProcessEnv = process.env
+): { adminGroup: string; builtinAdminGroup: string } {
+  const current = authentikConfig(env);
+  return {
+    adminGroup:
+      'authentikAdminGroup' in overrides ? overrides.authentikAdminGroup ?? DEFAULT_ADMIN_GROUP : current.adminGroup,
+    builtinAdminGroup:
+      'authentikBuiltinAdminGroup' in overrides
+        ? overrides.authentikBuiltinAdminGroup ?? DEFAULT_BUILTIN_ADMIN_GROUP
+        : current.builtinAdminGroup,
+  };
+}
+
 // The rungs an entry's Application must be bound to: the one it names plus
 // every narrower one above it. null means the group is not on the ladder at
 // all -- the caller reports that rather than guessing an audience.

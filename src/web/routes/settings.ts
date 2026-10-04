@@ -16,6 +16,7 @@ import { managesProxy } from '../../lib/proxy/driver.ts';
 import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
 import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
 import { clearSecret, configValueAt, writeSecret, type ConfigSource } from '../../lib/config.ts';
+import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
   SECRET_SETTINGS_KEYS,
   SETTING_DEFS,
@@ -220,6 +221,55 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     for (const key of Object.keys(body)) {
       if (isConfigKey(key) && configValueAt(inventoryPath, key).source === 'environment') {
         res.status(400).json({ error: envPinnedError(key) });
+        return;
+      }
+    }
+
+    // Issue #64 US6: refuse a change that would lock the real (never the
+    // impersonated) requester out of admin entirely, computed without
+    // writing anything. An impersonating admin never reaches here at all --
+    // requireAdminGroup already 403'd on the overlaid, non-admin
+    // req.user.groups before this handler ran -- so this guard only ever
+    // sees a real admin's own groups. Skipped for the synthetic local
+    // operator, who has no real account to lock out.
+    const ADMIN_GROUP_KEYS = ['authentikAdminGroup', 'authentikBuiltinAdminGroup'] as const;
+    const adminGroupOverrides: { authentikAdminGroup?: string; authentikBuiltinAdminGroup?: string } = {};
+    for (const key of ADMIN_GROUP_KEYS) {
+      if (key in updates) adminGroupOverrides[key] = updates[key];
+    }
+    if (Object.keys(adminGroupOverrides).length > 0) {
+      const realUser = req.realUser ?? req.user;
+      if (realUser && !realUser.localOperator) {
+        const effective = adminGroupsWith(adminGroupOverrides);
+        const stillAdmin =
+          realUser.groups.includes(effective.adminGroup) || realUser.groups.includes(effective.builtinAdminGroup);
+        if (!stillAdmin) {
+          // Names whichever of the two fields the request body touches --
+          // the first one, in the body's own key order, when both do.
+          const key = Object.keys(body).find((k): k is (typeof ADMIN_GROUP_KEYS)[number] =>
+            (ADMIN_GROUP_KEYS as readonly string[]).includes(k)
+          )!; // safe: adminGroupOverrides is non-empty, so at least one of these keys is in body
+          res.status(409).json({
+            error: `Refusing to change ${key}: you would no longer be an administrator (your groups: ${realUser.groups.join(', ')})`,
+          });
+          return;
+        }
+      }
+    }
+
+    // Issue #64 US6: refuse switching webUiAuthMode to 'authentik' from a
+    // request that did not itself come through Authentik forward-auth --
+    // every later request, including the one needed to undo it, would then
+    // be rejected. Clearing it or setting auto/none needs no such check:
+    // confirming "authentik" is a deliberate choice is the Settings page's
+    // job (client-side), not a lockout risk this guard exists for.
+    if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'authentik') {
+      const realUser = req.realUser ?? req.user;
+      if (!realUser?.viaForwardAuth) {
+        res.status(409).json({
+          error:
+            'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected',
+        });
         return;
       }
     }

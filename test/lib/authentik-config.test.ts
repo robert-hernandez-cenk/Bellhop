@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { authentikConfig, authentikConfigured, rungsAtOrAbove } from '../../src/lib/authentik-config.ts';
+import { adminGroupsWith, authentikConfig, authentikConfigured, rungsAtOrAbove } from '../../src/lib/authentik-config.ts';
 import { resetConfigStore, tempConfigStore, writeMetaRow } from '../support/config-store.ts';
 
 test('authentikConfig defaults to the values this toolkit hardcoded before issue #123', () => {
@@ -170,4 +170,34 @@ test('authentikConfigured: a stored URL alone is not configured; an env token co
   tempConfigStore({ authentikApiUrl: 'https://auth.example.com' });
   assert.equal(authentikConfigured({}), false);
   assert.equal(authentikConfigured({ AUTHENTIK_API_TOKEN: 'example-env-token' }), true);
+});
+
+// -- Issue #64 US6: adminGroupsWith --------------------------------------
+
+test('adminGroupsWith keeps the current effective groups when overrides is empty', () => {
+  assert.deepEqual(adminGroupsWith({}, { AUTHENTIK_ADMIN_GROUP: 'my-admins' }), {
+    adminGroup: 'my-admins',
+    builtinAdminGroup: 'authentik Admins',
+  });
+});
+
+test('adminGroupsWith applies an override string value', () => {
+  assert.deepEqual(adminGroupsWith({ authentikAdminGroup: 'new-admins' }, {}), {
+    adminGroup: 'new-admins',
+    builtinAdminGroup: 'authentik Admins',
+  });
+});
+
+test('adminGroupsWith treats an override key present with undefined as "clear to default"', () => {
+  assert.deepEqual(
+    adminGroupsWith({ authentikAdminGroup: undefined }, { AUTHENTIK_ADMIN_GROUP: 'my-admins' }),
+    { adminGroup: 'bellhop-admins', builtinAdminGroup: 'authentik Admins' }
+  );
+});
+
+test('adminGroupsWith applies both overrides independently', () => {
+  assert.deepEqual(
+    adminGroupsWith({ authentikAdminGroup: 'new-admins', authentikBuiltinAdminGroup: 'new-builtin' }, {}),
+    { adminGroup: 'new-admins', builtinAdminGroup: 'new-builtin' }
+  );
 });
