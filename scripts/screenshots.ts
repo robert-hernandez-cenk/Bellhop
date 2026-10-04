@@ -135,15 +135,15 @@ export const SCREENSHOTS: ScreenshotDefinition[] = [
     theme: 'light',
     ready: 'role=combobox[name=/^Proxy driver/][disabled=false]',
     prepare: async (page) => {
-      // The proxy driver field sits below the fold; bring it and the
-      // driver-dependent fields after it to the top of the viewport.
+      // The proxy driver field lives on the Proxy tab (issue #64 grouped the
+      // page by integration); open it, then bring the tab strip and the
+      // driver-dependent fields below it to the top of the viewport.
+      await page.getByRole('tab', { name: 'Proxy', exact: true }).click({ timeout: 15_000 });
       const driver = page.getByRole('combobox', { name: /^Proxy driver/ });
       await driver.and(page.locator(':enabled')).waitFor({ timeout: 15_000 });
-      await driver.evaluate((el) => {
-        const field = el.closest<HTMLElement>('.settings-field');
-        if (!field) return;
-        field.style.scrollMarginTop = '12px';
-        field.scrollIntoView({ block: 'start' });
+      await page.getByRole('tablist').evaluate((el) => {
+        (el as HTMLElement).style.scrollMarginTop = '12px';
+        el.scrollIntoView({ block: 'start' });
       });
     },
   },
