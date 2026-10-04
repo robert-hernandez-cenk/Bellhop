@@ -7,10 +7,13 @@ import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import type { Inventory } from '../../src/lib/inventory.ts';
 import { loadInventory, saveInventory } from '../../src/lib/inventory.ts';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { OperationDeps } from '../../src/operations/types.ts';
+import { UPSTREAM_STABLE_BASE } from '../../src/lib/app-source.ts';
+import { loadAppUpdateResults, upsertAppUpdateResult } from '../../src/lib/app-update-store.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -23,6 +26,40 @@ const inventory: Inventory = {
 
 function deps(ssh = new FakeSSHClient(defaultResponder)): OperationDeps {
   return { ssh, inventory, inventoryPath: ':unused:', authentik: new FakeAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() };
+}
+
+// Fixtures shared with test/commands/check-app-updates.test.ts (research R10's
+// post-update-apply re-check reuses checkOneGuest, so these tests exercise the
+// exact same ct/<slug>.sh-parsing / GitHub-release-fetching path).
+const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
+const HOMEPAGE_SCRIPT = readFileSync(path.join(fixtureDir, 'community-scripts', 'homepage.sh'), 'utf8');
+const RELEASES_LATEST = readFileSync(path.join(fixtureDir, 'github-releases', 'releases-latest.json'), 'utf8'); // tag_name "v1.1.0"
+const ctUrl = (slug: string) => `${UPSTREAM_STABLE_BASE}/ct/${slug}.sh`;
+const releasesLatestUrl = (repo: string) => `https://api.github.com/repos/${repo}/releases/latest`;
+
+type Route = () => Response;
+function routedFetch(routes: Record<string, Route>): typeof fetch {
+  return (async (url: unknown) => {
+    const href = String(url);
+    const handler = routes[href];
+    if (!handler) throw new Error(`unexpected fetch: ${href}`);
+    return handler();
+  }) as unknown as typeof fetch;
+}
+function ok(body: string): Route {
+  return () => new Response(body, { status: 200 });
+}
+
+function appUpdateInventory(): Inventory {
+  return {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [{ name: 'media', type: 'lxc', vmid: 101, host: 'pve1', app: 'homepage' }],
+  };
+}
+
+function tempAppUpdateDbPath(): string {
+  return path.join(mkdtempSync(path.join(tmpdir(), 'update-app-recheck-')), 'bellhop.db');
 }
 
 test('toTargetSelector requires exactly one of host, all, group', () => {
@@ -144,4 +181,190 @@ test('sync-inventory apply preserves a setting written to disk while the live qu
   await op.apply(parseOperationInput(op, {}), { ssh, inventory: { ...inv }, inventoryPath, authentik: new FakeAuthentikClient(), cloudflare: new UnconfiguredCloudflareClient() });
   assert.ok(written);
   assert.equal(loadInventory(inventoryPath).dnsServer, '10.0.0.53', 'a concurrently-written setting must not be reverted');
+});
+
+// Issue #61/US4, research R10: a successful update-app apply re-checks the
+// guest's app-update status immediately, so the Update page badge doesn't go
+// stale until the next scheduled check-app-updates run.
+test('update-app apply with exit 0 upserts a fresh app-update result for that guest', async () => {
+  const inv = appUpdateInventory();
+  const inventoryPath = tempAppUpdateDbPath();
+  const ssh = new FakeSSHClient((_t, _u, command) => {
+    if (command.includes('HOME:-/root')) return { stdout: '1.0.0\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  const fetchImpl = routedFetch({
+    [ctUrl('homepage')]: ok(HOMEPAGE_SCRIPT),
+    [releasesLatestUrl('gethomepage/homepage')]: ok(RELEASES_LATEST),
+  });
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  await op.apply(parseOperationInput(op, { guest: 'media', app: 'homepage' }), {
+    ssh,
+    inventory: inv,
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+    fetchImpl,
+  });
+
+  const results = loadAppUpdateResults(inventoryPath);
+  assert.deepEqual(results, [
+    {
+      guest: 'media',
+      app: 'homepage',
+      status: 'update-available',
+      installedVersion: '1.0.0',
+      latestVersion: '1.1.0',
+      repo: 'gethomepage/homepage',
+      message: undefined,
+      checkedAt: results[0].checkedAt,
+    },
+  ]);
+});
+
+test('update-app apply with a nonzero script exit skips the re-check and leaves the old row unchanged', async () => {
+  const inv = appUpdateInventory();
+  const inventoryPath = tempAppUpdateDbPath();
+  const staleRow = {
+    guest: 'media',
+    app: 'homepage',
+    status: 'up-to-date' as const,
+    installedVersion: '0.9.0',
+    latestVersion: '0.9.0',
+    repo: 'gethomepage/homepage',
+    message: undefined,
+    checkedAt: '2026-01-01T00:00:00.000Z',
+  };
+  upsertAppUpdateResult(inventoryPath, staleRow);
+
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'boom', code: 2 }));
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  await op.apply(parseOperationInput(op, { guest: 'media', app: 'homepage' }), {
+    ssh,
+    inventory: inv,
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  });
+
+  assert.deepEqual(loadAppUpdateResults(inventoryPath), [staleRow]);
+  assert.ok(!ssh.history.some((c) => c.command.includes('HOME:-/root')), 'the installed-version read must never run after a failed update');
+});
+
+test('update-app apply still resolves, logging a warning, when the post-apply re-check throws', async () => {
+  const inv = appUpdateInventory();
+  // A path that is itself a directory, not a file: openDb's own
+  // mkdirSync(dirname(path)) happily creates the *parent*, but
+  // better-sqlite3's `new Database()` still throws trying to open a
+  // directory as a database file -- this is what forces
+  // upsertAppUpdateResult to throw here, rather than checkOneGuest's own
+  // (never-thrown, every failure returned as a value) error-result path.
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'update-app-recheck-')), 'bellhop.db');
+  mkdirSync(inventoryPath);
+  const ssh = new FakeSSHClient((_t, _u, command) => {
+    if (command.includes('HOME:-/root')) return { stdout: '1.0.0\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  const fetchImpl = routedFetch({
+    [ctUrl('homepage')]: ok(HOMEPAGE_SCRIPT),
+    [releasesLatestUrl('gethomepage/homepage')]: ok(RELEASES_LATEST),
+  });
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  const warnings: string[] = [];
+  const originalError = console.error;
+  console.error = (msg: string) => warnings.push(String(msg));
+  try {
+    await op.apply(parseOperationInput(op, { guest: 'media', app: 'homepage' }), {
+      ssh,
+      inventory: inv,
+      inventoryPath,
+      authentik: new FakeAuthentikClient(),
+      cloudflare: new UnconfiguredCloudflareClient(),
+      fetchImpl,
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(warnings.some((l) => l.includes('media')), 'a failed re-check must be logged via logWarn, naming the guest');
+});
+
+// Final review: the re-check only makes sense when update-app ran the app
+// the guest actually has recorded -- otherwise the result would describe a
+// different app than the one the badge belongs to.
+test('update-app apply skips the re-check, logging one info line, when the app differs from the recorded one', async () => {
+  const inv = appUpdateInventory();
+  const inventoryPath = tempAppUpdateDbPath();
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg: string) => lines.push(String(msg));
+  try {
+    await op.apply(parseOperationInput(op, { guest: 'media', app: 'jellyfin' }), {
+      ssh,
+      inventory: inv,
+      inventoryPath,
+      authentik: new FakeAuthentikClient(),
+      cloudflare: new UnconfiguredCloudflareClient(),
+      fetchImpl: routedFetch({}),
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(loadAppUpdateResults(inventoryPath), []);
+  assert.ok(!ssh.history.some((c) => c.command.includes('HOME:-/root')), 'no installed-version read for a different app');
+  const skipLines = lines.filter((l) => l.includes('Skipped the app-update re-check'));
+  assert.equal(skipLines.length, 1);
+  assert.match(skipLines[0], /media.*jellyfin.*homepage/);
+});
+
+// Final review: the job already pinned the exact source it installed from
+// (previewAndEnqueue's appSource), so the re-check reads that same script
+// instead of resolving the custom branch again (two more rate-limited
+// GitHub calls, and possibly a newer commit).
+test('update-app apply re-checks against the pinned appSource without resolving it again', async () => {
+  const inv: Inventory = {
+    ...appUpdateInventory(),
+    customScriptsRepo: 'example-owner/ProxmoxVED',
+    customScriptsBranch: 'my-branch',
+  };
+  const inventoryPath = tempAppUpdateDbPath();
+  const ssh = new FakeSSHClient((_t, _u, command) => {
+    if (command.includes('HOME:-/root')) return { stdout: '1.0.0\n', stderr: '', code: 0 };
+    return { stdout: '', stderr: '', code: 0 };
+  });
+  const pinnedCtUrl = 'https://raw.githubusercontent.com/example-owner/ProxmoxVED/0123456789abcdef0123456789abcdef01234567/ct/homepage.sh';
+  const calls: string[] = [];
+  const routes = routedFetch({
+    [pinnedCtUrl]: ok(HOMEPAGE_SCRIPT),
+    [releasesLatestUrl('gethomepage/homepage')]: ok(RELEASES_LATEST),
+  });
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    calls.push(String(url));
+    return routes(url as string, init);
+  }) as unknown as typeof fetch;
+  const op = MAINTENANCE_OPERATIONS['update-app'];
+  const input = parseOperationInput(op, { guest: 'media', app: 'homepage' });
+  input.appSource = {
+    kind: 'custom',
+    slug: 'homepage',
+    ctUrl: pinnedCtUrl,
+    scriptsBaseUrl: 'https://raw.githubusercontent.com/example-owner/ProxmoxVED/0123456789abcdef0123456789abcdef01234567',
+    shadows: [],
+    changed: true,
+  };
+  await op.apply(input, {
+    ssh,
+    inventory: inv,
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+    fetchImpl,
+  });
+
+  const [result] = loadAppUpdateResults(inventoryPath);
+  assert.equal(result.status, 'update-available');
+  assert.equal(result.latestVersion, '1.1.0');
+  assert.ok(!calls.some((u) => u.includes('api.github.com/repos/example-owner')), `no branch resolution expected, got: ${calls.join(', ')}`);
+  assert.ok(calls.includes(pinnedCtUrl));
 });

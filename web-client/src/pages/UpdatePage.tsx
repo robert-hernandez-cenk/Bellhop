@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet, apiPost } from '../api/client';
-import type { HostEntry, GuestEntry, GuestStatusResponse, CustomScripts } from '../api/types';
+import type { HostEntry, GuestEntry, GuestStatusResponse, CustomScripts, AppUpdateResult } from '../api/types';
 import { ExternalLink } from '../components/ExternalLink';
 import { PageDescription } from '../components/PageDescription';
+import { AppUpdateBadge } from '../components/AppUpdateBadge';
+import { appUpdatesUnavailableText } from '../lib/app-update-display';
 import { IconPackage, IconUpdate } from '../components/icons';
 import { proxyUrl, communityScriptsUrl, communityScriptsLinkLabel, sortGuestsForDisplay } from '../lib/guest-display';
 
@@ -15,8 +17,12 @@ export function UpdatePage() {
   const [customScripts, setCustomScripts] = useState<CustomScripts | null>(null);
   const [filter, setFilter] = useState('');
   const [statuses, setStatuses] = useState<Record<string, 'running' | 'stopped'>>({});
+  const [appUpdates, setAppUpdates] = useState<Record<string, AppUpdateResult>>({});
   const [triggering, setTriggering] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error`, which the update buttons clear: without this
+  // banner, a failed load would look exactly like "no updates available".
+  const [appUpdatesError, setAppUpdatesError] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string; customScripts: CustomScripts | null }>(
@@ -33,6 +39,13 @@ export function UpdatePage() {
         setError(`Guest status unavailable for: ${data.failures.join(', ')}`);
       }
     });
+    apiGet<{ results: AppUpdateResult[] }>('/app-updates')
+      .then((data) => {
+        setAppUpdates(Object.fromEntries(data.results.map((r) => [r.guest, r])));
+      })
+      .catch((err) => {
+        setAppUpdatesError(appUpdatesUnavailableText(err));
+      });
   }, []);
 
   // update-all never updates a VM (issue #2), so a VM gets no OS-packages
@@ -84,9 +97,12 @@ export function UpdatePage() {
         app installed gets both icons; they run independently of each other -- the
         community-script update already runs its own package update as part of
         reinstalling, so running the OS-packages icon first isn't required. VMs are never
-        updated here; update packages inside the VM itself.
+        updated here; update packages inside the VM itself. A guest with an app installed
+        is checked once a day for a newer upstream release; the result shows next to its
+        app name, and its update button stands out when an update is waiting.
       </PageDescription>
       {error && <div className="warning-banner">{error}</div>}
+      {appUpdatesError && <div className="warning-banner">{appUpdatesError}</div>}
 
       <h3>Hosts</h3>
       <div className="update-card-grid">
@@ -131,6 +147,8 @@ export function UpdatePage() {
           const appLinkLabel = communityScriptsLinkLabel(g, customScripts);
           const stopped = statuses[g.name] !== 'running';
           const busy = triggering === g.name;
+          const appUpdate = appUpdates[g.name];
+          const updateAvailable = appUpdate?.status === 'update-available';
           return (
             <div className="update-card" key={g.name}>
               <div className="update-card-info">
@@ -142,6 +160,7 @@ export function UpdatePage() {
                   <span className="app-cell">
                     {g.app}
                     {app && <ExternalLink href={app} label={appLinkLabel} />}
+                    <AppUpdateBadge result={appUpdate} />
                   </span>
                 )}
               </div>
@@ -159,7 +178,7 @@ export function UpdatePage() {
                 )}
                 {g.app && (
                   <button
-                    className="button button-icon"
+                    className={`button button-icon${updateAvailable ? ' button-attention' : ''}`}
                     onClick={() => runAppUpdate(g)}
                     disabled={stopped || busy}
                     aria-label="Update via community-script"

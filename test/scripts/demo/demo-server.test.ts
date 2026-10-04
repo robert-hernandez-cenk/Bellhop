@@ -82,7 +82,8 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     assert.equal(check.exists, true, `check-app: ${JSON.stringify(check)}`);
 
     const jobs = await get('/api/jobs');
-    assert.equal(jobs.length, 4);
+    // demo-jobs.ts's four, plus demo-tasks.ts's seeded check-app-updates run.
+    assert.equal(jobs.length, 5);
     assert.equal(jobs.filter((j: { status: string }) => j.status === 'failed').length, 1);
     const installJob = jobs.find((j: { command: string }) => j.command === 'install-app');
     assert.ok(installJob, 'expected the seeded install-app job');
@@ -94,6 +95,18 @@ test('demo server answers every screenshotted page request as a signed-in admin,
 
     const jobDetail = await get(`/api/jobs/${installJob.id}`);
     assert.ok(jobDetail.log.includes('install-app completed successfully.'));
+
+    // Issue #61: the Tasks page's scheduler is wired (not started), and its
+    // one task's last run points at demo-tasks.ts's seeded job.
+    const tasks = await get('/api/tasks');
+    assert.equal(tasks.tasks.length, 1);
+    const checkAppUpdatesTask = tasks.tasks[0];
+    assert.equal(checkAppUpdatesTask.id, 'check-app-updates');
+    assert.ok(checkAppUpdatesTask.lastRun, 'expected a seeded last run');
+    assert.equal(checkAppUpdatesTask.lastRun.status, 'success');
+    const taskJob = jobs.find((j: { id: number }) => j.id === checkAppUpdatesTask.lastRun.jobId);
+    assert.ok(taskJob, "expected the task's lastRun.jobId to be one of the seeded jobs");
+    assert.equal(taskJob.command, 'check-app-updates');
 
     await get('/api/maintenance');
     const authGroups = await get('/api/auth-groups');
@@ -159,6 +172,62 @@ test('demo server never reaches the network through global fetch, even with a cu
     assert.doesNotMatch(statusBody.error ?? '', /outbound request refused/, JSON.stringify(statusBody));
 
     assert.deepEqual(outbound, [], `the demo reached the network through global fetch: ${outbound.join(', ')}`);
+  } finally {
+    await demo.close();
+    globalThis.fetch = realFetch;
+  }
+});
+
+// Fix round 1 (issue #61): the demo's TaskScheduler previously had no
+// fetchImpl, so runCheckAppUpdates fell back to the real global fetch --
+// pressing "Run now" on the Tasks page made a real GitHub API call. Same
+// fetch-spy technique as the test above, scoped to just this one endpoint,
+// plus a poll to completion so the assertion covers the job's *actual*
+// run, not just the enqueue response.
+test('POST /api/tasks/check-app-updates/run never reaches the real network', async () => {
+  const realFetch = globalThis.fetch;
+  const outbound: string[] = [];
+  let demoUrl = '';
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (demoUrl && url.startsWith(demoUrl)) return realFetch(input, init);
+    outbound.push(url);
+    throw new Error(`test: outbound request refused: ${url}`);
+  }) as typeof fetch;
+
+  const demo = await startDemoServer({ port: 0, serveClient: false });
+  demoUrl = demo.url;
+  try {
+    const run = await fetch(`${demo.url}/api/tasks/check-app-updates/run`, { method: 'POST' });
+    const runBody = await run.json();
+    assert.equal(run.status, 200, JSON.stringify(runBody));
+    const jobId = runBody.jobId;
+
+    // Poll to completion -- the demo job makes no real network round trip,
+    // so this finishes almost immediately; the budget is generous only to
+    // avoid flakiness under load.
+    let job: { status: string } | undefined;
+    for (let i = 0; i < 200; i++) {
+      const res = await fetch(`${demo.url}/api/jobs/${jobId}`);
+      const body = await res.json();
+      job = body.job;
+      if (job?.status === 'success' || job?.status === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(job?.status, 'success', `check-app-updates job did not finish successfully: ${JSON.stringify(job)}`);
+    assert.deepEqual(outbound, [], `the task run reached the network through global fetch: ${outbound.join(', ')}`);
+
+    // Not a vacuous pass: proves the run actually exercised demoFetch's
+    // canned check_for_gh_release/releases-latest responses and
+    // DemoSSHClient's canned installed-version read, end to end, rather
+    // than every guest silently coming back 'unsupported'.
+    const updatesRes = await fetch(`${demo.url}/api/app-updates`);
+    const updates = await updatesRes.json();
+    const jellyfin = updates.results.find((r: { guest: string }) => r.guest === 'jellyfin');
+    assert.ok(jellyfin, `expected a jellyfin result: ${JSON.stringify(updates.results)}`);
+    assert.equal(jellyfin.status, 'update-available');
+    assert.equal(jellyfin.installedVersion, '10.8.13');
+    assert.equal(jellyfin.latestVersion, '10.9.0');
   } finally {
     await demo.close();
     globalThis.fetch = realFetch;

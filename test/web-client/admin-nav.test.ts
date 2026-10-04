@@ -10,14 +10,18 @@ test('adminNavLinks(false, true) returns []', () => {
   assert.deepEqual(adminNavLinks(false, true), []);
 });
 
-test('adminNavLinks(true, false) returns only Settings', () => {
-  assert.deepEqual(adminNavLinks(true, false), [{ to: '/settings', label: 'Settings' }]);
+test('adminNavLinks(true, false) returns Tasks and Settings', () => {
+  assert.deepEqual(adminNavLinks(true, false), [
+    { to: '/tasks', label: 'Tasks' },
+    { to: '/settings', label: 'Settings' },
+  ]);
 });
 
-test('adminNavLinks(true, true) returns Users, Permissions, Settings in that order', () => {
+test('adminNavLinks(true, true) returns Users, Permissions, Tasks, Settings in that order', () => {
   assert.deepEqual(adminNavLinks(true, true), [
     { to: '/users', label: 'Users' },
     { to: '/permissions', label: 'Permissions' },
+    { to: '/tasks', label: 'Tasks' },
     { to: '/settings', label: 'Settings' },
   ]);
 });

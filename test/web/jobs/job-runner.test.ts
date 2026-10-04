@@ -180,6 +180,38 @@ test('cancel() aborts a running job: its next ssh.exec call rejects and the job 
   store.close();
 });
 
+// Issue #61 final review: a job that turns per-target failures into results
+// (the check-app-updates task) needs the signal itself to tell a cancel
+// apart from an ordinary failure.
+test('run() receives the job signal, which aborts on cancel()', async () => {
+  const { store, dir, runner } = makeRunner();
+  let seen: AbortSignal | undefined;
+  let release: () => void = () => {};
+  const id = runner.enqueue({
+    command: 'check-app-updates',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async (_ssh, signal) => {
+      seen = signal;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (signal.aborted) throw new Error('stopped');
+    },
+  });
+
+  await waitForStatus(runner, id, 'running');
+  assert.ok(seen);
+  assert.equal(seen!.aborted, false);
+  assert.equal(runner.cancel(id), true);
+  assert.equal(seen!.aborted, true);
+  release();
+  await waitForFinished(runner, id);
+  assert.equal(store.get(id)!.status, 'cancelled');
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
 test('cancel() skips a job that is still waiting its turn behind another running job', async () => {
   const { store, dir, runner } = makeRunner();
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -45,13 +45,58 @@ export const DEMO_CATALOG_SLUGS = {
   dev: ['budget-board', 'demo-dev-app'],
 } as const;
 
+// Fix round 1 (issue #61): a small subset of seeded guest apps gets a real
+// `check_for_gh_release` call in its canned ct script, plus a matching
+// canned GitHub releases/latest response below, so pressing "Run now" on
+// the demo's App update check task produces believable update-available/
+// up-to-date/error outcomes instead of "unsupported" for everything --
+// entirely through demoFetch, never a real network call. Every repo name
+// is the real, public upstream project for that app (public information,
+// not operator data); every version number is made up and chosen to
+// reproduce exactly what demo-app-updates.ts already seeds statically for
+// these three guests (jellyfin: update available, homeassistant: up to
+// date, paperless-ngx: rate-limited/error), so the two never disagree.
+// `installedVersion` is also what DemoSSHClient answers for this app's
+// installed-version file read (scripts/demo/demo-ssh.ts) -- the two files
+// must stay in lockstep, which is why this map lives here and is imported
+// rather than duplicated.
+export interface DemoReleaseCheck {
+  repo: string;
+  installedVersion: string;
+  latestTag: string;
+  // true: the canned releases/latest response is a 403, so the real
+  // check_for_gh_release pipeline reports GITHUB_RATE_LIMIT_MESSAGE --
+  // exactly the message demo-app-updates.ts seeds for paperless-ngx.
+  rateLimited?: boolean;
+}
+
+export const DEMO_RELEASE_CHECKS: Record<string, DemoReleaseCheck> = {
+  jellyfin: { repo: 'jellyfin/jellyfin', installedVersion: '10.8.13', latestTag: 'v10.9.0' },
+  homeassistant: { repo: 'home-assistant/core', installedVersion: '2026.9.0', latestTag: '2026.9.0' },
+  'paperless-ngx': { repo: 'paperless-ngx/paperless-ngx', installedVersion: '2.3.0', latestTag: 'v2.3.0', rateLimited: true },
+};
+
+function releasesLatestUrl(repo: string): string {
+  return `https://api.github.com/repos/${repo}/releases/latest`;
+}
+
+function releaseResponse(check: DemoReleaseCheck): Response {
+  if (check.rateLimited) return new Response('rate limited', { status: 403 });
+  return new Response(JSON.stringify({ tag_name: check.latestTag, draft: false, prerelease: false }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 function scriptBody(slug: string): string {
+  const check = DEMO_RELEASE_CHECKS[slug];
   return [
     '#!/usr/bin/env bash',
     `# Demo placeholder install script for ${slug} -- community-scripts style, no real network access.`,
     'var_cpu="${var_cpu:-1}"',
     'var_ram="${var_ram:-512}"',
     'var_disk="${var_disk:-4}"',
+    ...(check ? [`check_for_gh_release "${slug}" "${check.repo}"`] : []),
     'echo "Access it using the following URL:"',
     'echo "http://${IP}"',
     '',
@@ -110,6 +155,12 @@ export const demoFetch: typeof fetch = (async (input: string | URL | Request, _i
   const devInstall = url.match(rawInstallPattern(DEV_REPO));
   if (devInstall && (DEMO_CATALOG_SLUGS.dev as readonly string[]).includes(devInstall[1])) {
     return new Response(scriptBody(devInstall[1]), { status: 200 });
+  }
+
+  // check-app-updates' release lookup (src/lib/app-update-check.ts's
+  // fetchLatestRelease, unpinned/no-prefix path): GET .../releases/latest.
+  for (const check of Object.values(DEMO_RELEASE_CHECKS)) {
+    if (url === releasesLatestUrl(check.repo)) return releaseResponse(check);
   }
 
   return notFound();

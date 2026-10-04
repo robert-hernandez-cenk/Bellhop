@@ -8,6 +8,7 @@
 import type { ExecResult, SSHClient, SshTarget } from '../../src/lib/ssh-client.ts';
 import type { GuestEntry, HostEntry, Inventory } from '../../src/lib/inventory.ts';
 import { buildDemoInventory } from './demo-inventory.ts';
+import { DEMO_RELEASE_CHECKS } from './demo-fetch.ts';
 
 // Exported so the example-data guard (T004) can scan every canned output
 // string this client ever produces.
@@ -134,6 +135,21 @@ export class DemoSSHClient implements SSHClient {
     // readHostAuthorizedKeys.
     if (command.includes('cat ~/.ssh/authorized_keys')) {
       return ok(`${DEMO_AUTHORIZED_KEY}\n`);
+    }
+
+    // check-app-updates' installed-version read (buildInstalledVersionScript,
+    // src/lib/app-update-check.ts, issue #61): reads `${HOME:-/root}/.<name>`
+    // inside the guest, where <name> is the literal first argument to the
+    // app's canned check_for_gh_release call (demo-fetch.ts's
+    // DEMO_RELEASE_CHECKS, keyed the same way -- by app slug, which this
+    // demo always passes as that literal name). Only the apps demoFetch
+    // wired a release check for ever reach this: every other app's ct
+    // script has no check_for_gh_release call at all, so check-app-updates
+    // reports it 'unsupported' before ever sending a remote command.
+    for (const [slug, check] of Object.entries(DEMO_RELEASE_CHECKS)) {
+      if (command.includes(`/.${slug}"`)) {
+        return ok(`${check.installedVersion}\n`);
+      }
     }
 
     // The package-manager probe (PROBE_COMMAND, src/lib/package-manager.ts)

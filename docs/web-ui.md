@@ -72,6 +72,33 @@ icon:
 
 ![The Update page: a card per Proxmox host with an OS-package update button, and a card per guest with the installed app's name and buttons for an OS-package update and a community-script update](images/update-page.png)
 
+Next to a guest's app name, the Update page also shows the result of the
+once-a-day app update check (see `check-app-updates` in
+[Commands](commands.md)): a prominent "Update available 1.2.3 → 1.3.0"
+badge when a newer release exists, with the guest's community-script-update
+button visually emphasized to match, or a quiet note ("Up to date",
+"Update check failed", "Not checked: guest is stopped") for every other
+outcome — an app whose script has no recognizable release check shows
+nothing at all, never an error. Tapping or clicking the badge or note shows
+when it was last checked (and, for a failure, why). After a successful
+app update from this page, that guest's result is refreshed immediately as
+part of the same job, rather than waiting for the next daily run.
+
+The Admin section of the sidebar (visible to admins only) has a Tasks page
+alongside Users/Permissions/Settings, listing every scheduled background
+task the web service runs on its own — today, just the app update check.
+For each task it shows its schedule, whether it's enabled, its last run
+(with a link to that run's Job History entry) and its next scheduled run,
+and lets an admin change the time of day, turn it off or on, or press "Run
+now" to start it immediately. A scheduled or manual run shows up in Job
+History like any other job, attributed to "scheduler" or to the admin who
+ran it. Only the web service runs tasks on a schedule — the CLI and MCP
+server never do; a task missed because the service was down runs once,
+shortly after it starts back up. A task runs on its schedule at most once
+per calendar day: after a run (scheduled or "Run now"), moving the time
+later that same day takes effect from the next day. Stopping a run from
+Job History saves none of its results.
+
 Changes that touch
 subdomains (a new guest's Subdomains field, editing an existing guest's
 subdomains, deleting a guest that had any) automatically re-run

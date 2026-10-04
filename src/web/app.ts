@@ -9,9 +9,11 @@ import type { GoBuilder } from '../lib/go-build.ts';
 import type { JobStore } from './jobs/job-store.ts';
 import type { JobLog } from './jobs/job-log.ts';
 import type { JobRunner } from './jobs/job-runner.ts';
+import type { TaskScheduler } from './tasks/scheduler.ts';
 import { requireAuth } from './auth.ts';
 import { applyImpersonation, type ImpersonationStore } from './impersonation.ts';
 import { dashboardRoutes } from './routes/dashboard.ts';
+import { appUpdatesRoutes } from './routes/app-updates.ts';
 import { jobsRoutes } from './routes/jobs.ts';
 import { provisioningRoutes } from './routes/provisioning.ts';
 import { maintenanceRoutes } from './routes/maintenance.ts';
@@ -23,6 +25,7 @@ import { settingsRoutes } from './routes/settings.ts';
 import { impersonationRoutes } from './routes/impersonation.ts';
 import { networkingRoutes } from './routes/networking.ts';
 import { oidcRoutes } from './routes/oidc.ts';
+import { tasksRoutes } from './routes/tasks.ts';
 
 export interface AppDeps {
   inventory: Inventory;
@@ -54,6 +57,10 @@ export interface AppDeps {
   // (server.ts never passes it), so probeInsecureBackendTls falls back to
   // its own real setTimeout-based sleep exactly as it always has.
   tlsProbeSleepFn?: (ms: number) => Promise<void>;
+  // The daily-task scheduler (issue #61). server.ts always passes the one
+  // it started; optional so tests that don't care need no changes, and the
+  // /api/tasks routes answer 503 when it's absent.
+  taskScheduler?: TaskScheduler;
 }
 
 export function buildApp(deps: AppDeps): express.Express {
@@ -75,6 +82,7 @@ export function buildApp(deps: AppDeps): express.Express {
     next();
   });
   app.use('/api', dashboardRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.fetchImpl));
+  app.use('/api/app-updates', appUpdatesRoutes(deps.inventory, deps.inventoryPath));
   app.use('/api/jobs', jobsRoutes(deps.jobStore, deps.jobLog, deps.jobRunner, deps.inventoryPath, deps.inventory));
   app.use(
     '/api/provisioning',
@@ -101,5 +109,6 @@ export function buildApp(deps: AppDeps): express.Express {
     '/api/oidc',
     oidcRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.jobRunner)
   );
+  app.use('/api/tasks', tasksRoutes(deps.taskScheduler));
   return app;
 }

@@ -7,6 +7,7 @@ import {
   customScriptSource,
   resolveHeadSha,
   resolveAppSource,
+  createAppSourceResolver,
   formatSourceNotice,
   compareBranch,
   detectConflict,
@@ -716,6 +717,130 @@ test('resolveAppSource makes no conflict reads when the branch is not behind', a
   );
   assert.equal(result.conflict, false);
   assert.deepEqual(warnings, []);
+});
+
+// --- createAppSourceResolver (research R4) ---
+
+// Wraps a routed fetch stub and records how many times each exact URL was
+// requested, so a test can assert "exactly one head-SHA/compare request"
+// rather than just "some number of requests".
+function countingFetch(routes: Record<string, Handler>): { fetchImpl: typeof fetch; counts: Record<string, number> } {
+  const counts: Record<string, number> = {};
+  const inner = fakeFetch(routes);
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    const href = String(url);
+    counts[href] = (counts[href] ?? 0) + 1;
+    return inner(url as string, init);
+  }) as unknown as typeof fetch;
+  return { fetchImpl, counts };
+}
+
+// Routes a resolver run over the three changed slugs the ahead fixture
+// reports (AHEAD_CHANGED): the shared head-SHA/compare pair plus each
+// slug's own shadow-probe pair (both absent, so each resolves to 'custom'
+// with no shadows) -- no fork-ct route, since a changed slug never probes
+// its own fork script, and detectConflict never fires either (behindBy 0).
+function multiSlugRoutes(): Record<string, Handler> {
+  const routes: Record<string, Handler> = {
+    [HEAD_SHA_URL]: () => new Response(HEAD_SHA_RAW, { status: 200 }),
+    [COMPARE_URL]: () => new Response(COMPARE_AHEAD_BODY, { status: 200 }),
+  };
+  for (const slug of AHEAD_CHANGED) {
+    routes[SHADOW_URL(UPSTREAM_STABLE_BASE, slug)] = () => new Response(null, { status: 404 });
+    routes[SHADOW_URL(UPSTREAM_DEV_BASE, slug)] = () => new Response(null, { status: 404 });
+  }
+  return routes;
+}
+
+test('createAppSourceResolver makes exactly one head-SHA request and one compare request when resolving three slugs', async () => {
+  const { fetchImpl, counts } = countingFetch(multiSlugRoutes());
+  const resolve = createAppSourceResolver(withCustomSource(), fetchImpl);
+
+  for (const slug of AHEAD_CHANGED) {
+    const result = await resolve(slug);
+    assert.equal(result.kind, 'custom');
+    assert.equal(result.changed, true);
+  }
+
+  assert.equal(counts[HEAD_SHA_URL], 1);
+  assert.equal(counts[COMPARE_URL], 1);
+});
+
+test('createAppSourceResolver still makes exactly one head-SHA/compare request when the three slugs resolve concurrently', async () => {
+  const { fetchImpl, counts } = countingFetch(multiSlugRoutes());
+  const resolve = createAppSourceResolver(withCustomSource(), fetchImpl);
+
+  const results = await Promise.all(AHEAD_CHANGED.map((slug) => resolve(slug)));
+
+  assert.equal(counts[HEAD_SHA_URL], 1);
+  assert.equal(counts[COMPARE_URL], 1);
+  assert.equal(results.length, 3);
+  assert.ok(results.every((r) => r.kind === 'custom' && r.changed === true));
+});
+
+test('createAppSourceResolver memoizes the same slug: a second call makes no further requests', async () => {
+  const { fetchImpl, counts } = countingFetch(multiSlugRoutes());
+  const resolve = createAppSourceResolver(withCustomSource(), fetchImpl);
+
+  const first = await resolve('demo-shop');
+  const shadowUrl = SHADOW_URL(UPSTREAM_STABLE_BASE, 'demo-shop');
+  const countAfterFirst = counts[shadowUrl];
+  const second = await resolve('demo-shop');
+
+  assert.deepEqual(second, first);
+  assert.equal(counts[shadowUrl], countAfterFirst);
+  assert.equal(counts[HEAD_SHA_URL], 1);
+  assert.equal(counts[COMPARE_URL], 1);
+});
+
+test('createAppSourceResolver makes no fetch calls when the feature is off', async () => {
+  const resolve = createAppSourceResolver(BASE_INVENTORY, throwingFetch);
+  const result = await resolve('plex');
+  assert.deepEqual(result, { kind: 'upstream', slug: 'plex', shadows: [] });
+});
+
+test('createAppSourceResolver passes a full URL through verbatim with no network access', async () => {
+  const resolve = createAppSourceResolver(withCustomSource(), throwingFetch);
+  const result = await resolve('https://example.com/install.sh');
+  assert.deepEqual(result, { kind: 'url', shadows: [] });
+});
+
+// research R4 / FR-006 precedent: a failed shared call poisons every slug
+// waiting on it, and every slug resolved afterward -- there is no per-slug
+// retry of the head-SHA/compare pair.
+test('createAppSourceResolver rejects every slug with the same error when the head-SHA request fails, without retrying', async () => {
+  let headShaCalls = 0;
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) {
+      headShaCalls += 1;
+      return new Response('{}', { status: 500 });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+  const resolve = createAppSourceResolver(withCustomSource(), fetchImpl);
+
+  await assert.rejects(() => resolve('demo-shop'), /GitHub returned 500/);
+  await assert.rejects(() => resolve('plex'), /GitHub returned 500/);
+  assert.equal(headShaCalls, 1);
+});
+
+test('createAppSourceResolver rejects every slug with the same error when the compare request fails, without retrying', async () => {
+  let compareCalls = 0;
+  const fetchImpl = (async (url: unknown) => {
+    const href = String(url);
+    if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
+    if (href === COMPARE_URL) {
+      compareCalls += 1;
+      return new Response('{"message":"Not Found"}', { status: 404 });
+    }
+    throw new Error(`unexpected fetch: ${href}`);
+  }) as unknown as typeof fetch;
+  const resolve = createAppSourceResolver(withCustomSource(), fetchImpl);
+
+  await assert.rejects(() => resolve('demo-shop'), /fork network/);
+  await assert.rejects(() => resolve('plex'), /fork network/);
+  assert.equal(compareCalls, 1);
 });
 
 // --- formatSourceNotice (research R7) ---

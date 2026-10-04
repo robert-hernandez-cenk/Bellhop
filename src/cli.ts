@@ -12,6 +12,7 @@ import { runImportYamlInventory } from './commands/maintenance/import-yaml-inven
 import { runSyncInventory, formatSyncInventory } from './commands/maintenance/sync-inventory.ts';
 import { runUpdateAll, formatUpdateAll } from './commands/maintenance/update-all.ts';
 import { runUpdateApp } from './commands/maintenance/update-app.ts';
+import { runCheckAppUpdates, formatCheckAppUpdates } from './commands/maintenance/check-app-updates.ts';
 import { runGuestPower } from './commands/maintenance/guest-power.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from './commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/push-ssh-key.ts';
@@ -248,6 +249,23 @@ program
       if (result!.stderr) console.error(result!.stderr);
       if (result!.code !== 0) {
         process.exitCode = 1;
+      }
+    })
+  );
+
+program
+  .command('check-app-updates')
+  .description("Check each lxc guest's installed community-scripts app version against its latest GitHub release")
+  .option('--guest <name>', 'check just this guest, skipping the guest-status query')
+  .option('--apply')
+  .action(
+    action(async (opts: { guest?: string; apply?: boolean }) => {
+      const inventory = loadInventory(inventoryPath());
+      const ssh = new Ssh2SSHClient();
+      const result = await runCheckAppUpdates(opts, { ssh, inventory, inventoryPath: inventoryPath() });
+      console.log(formatCheckAppUpdates(result));
+      if (!opts.apply) {
+        console.log('[DRY RUN] Results not saved -- re-run with --apply to show them on the Update page');
       }
     })
   );

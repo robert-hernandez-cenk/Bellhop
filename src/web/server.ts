@@ -13,6 +13,7 @@ import type { ImpersonationStore } from './impersonation.ts';
 import { JobStore } from './jobs/job-store.ts';
 import { createJobLog } from './jobs/job-log.ts';
 import { JobRunner } from './jobs/job-runner.ts';
+import { TaskScheduler } from './tasks/scheduler.ts';
 import { buildApp } from './app.ts';
 import { attachJobsWebSocket } from './routes/jobs.ts';
 import { REPO_ROOT, dataDir, inventoryPath } from '../lib/paths.ts';
@@ -79,6 +80,19 @@ const jobRunner = new JobRunner(jobStore, jobLog, baseSsh);
 // status this process never actually owns.
 jobRunner.reconcileOrphanedJobs();
 
+// Scheduled tasks (issue #61): the daily check-app-updates run. Started only
+// here -- never by the MCP server or CLI (FR-006) -- and only after
+// reconcileOrphanedJobs() above, so a run a previous process left
+// "running" is already interrupted and can't block today's catch-up run.
+// start() ticks once immediately, so a run missed while the service was
+// down starts within seconds (FR-003).
+const taskScheduler = new TaskScheduler({ inventory, inventoryPath: invPath, jobRunner, jobStore });
+taskScheduler.start();
+// The ticker is unref'd, so it never holds the process open on its own;
+// stopping it on exit just keeps shutdown explicit. This process has no
+// other graceful-shutdown handling to hook into.
+process.on('exit', () => taskScheduler.stop());
+
 const authentik = buildAuthentikClient();
 const impersonationStore: ImpersonationStore = new Map();
 const app = buildApp({
@@ -91,6 +105,7 @@ const app = buildApp({
   authentik,
   cloudflare: buildCloudflareClient(),
   impersonationStore,
+  taskScheduler,
 });
 
 const clientDist = path.join(REPO_ROOT, 'web-client', 'dist');

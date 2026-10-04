@@ -607,7 +607,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   they need to return a multi-line block/script for the CLI layer to print
   rather than a single command line; `sync-inventory` always computes and
   prints its new/updated/removed summary and only gates the actual file
-  write behind `--apply`. `create-lxc`'s and `install-app`'s dry-run/preview
+  write behind `--apply`. `check-app-updates` (issue #61) follows the same
+  pattern: it always runs the real check and prints every guest's outcome,
+  and `--apply` only gates whether `app_update_status` is actually
+  written -- a dry run makes every live call (GitHub, the guest) a real
+  apply would, it just doesn't save the result. `create-lxc`'s and `install-app`'s dry-run/preview
   is no longer fully local: both now make one live SSH call to the target
   host to resolve its `authorized_keys` (`readHostAuthorizedKeys`,
   `src/lib/authorized-keys.ts`) so the previewed command/script is provably
@@ -2800,6 +2804,175 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   create-lxc/create-vm/install-app commands nor any other CLI command has
   a way to set `port`+`subdomains` on a guest at all, so there's no
   per-guest hook point to probe from.
+- **Scheduled tasks and the daily app update check** (issue #61) add a
+  general "run this once a day" framework to the web service, plus its
+  first and only task. `src/web/tasks/registry.ts`'s `TASKS` is the static
+  registry -- one `TaskDefinition` (`id`, `label`, `description`,
+  `defaultTime`, `command` for its Job History entries, and a `run(ctx)`
+  that does the work) per task; adding a second task is registering a
+  second entry here, nothing else. `src/web/tasks/scheduler.ts`'s
+  `TaskScheduler` is the only thing that ever starts a run on a schedule
+  (FR-006 -- the CLI and MCP server construct nothing like it): it ticks
+  once a minute (an injected `Ticker`, default `setInterval(...).unref()`,
+  so the timer is never why the process stays alive) and once immediately
+  on `start()`, so a run missed while the service was down starts within
+  seconds of the next startup rather than waiting for the next tick. Each
+  task has exactly one configured local time of day (`HH:MM`, no cron
+  expressions, no more than one scheduled run per day); `mostRecentSlot`/
+  `nextSlot` build each day's slot with the local-time `new Date(y, m, d,
+  hh, mm)` constructor, so a DST jump or fold still yields exactly one
+  slot per calendar day with nothing extra to special-case. The catch-up
+  rule (`slotIsDue`): start a run when the task is enabled and its most
+  recent slot is later than `lastRunStartedAt` *and* on a later local
+  calendar day than it (or there's never been a run at all -- a fresh
+  install runs every task on its first tick, giving results right away
+  rather than waiting until tomorrow's slot), unless a run is already
+  active. The calendar-day half is a final-review ruling: any run started
+  on a day, scheduled or Run now, uses up that day, so moving the time
+  later after today's run, or a Run now just before today's slot, waits
+  for tomorrow's slot instead of running twice; a catch-up after an outage
+  still runs exactly once. "Active" means the schedule's last recorded job
+  id is still `queued`/`running`/`awaiting_input` in `JobStore` --
+  `reconcileOrphanedJobs()` already marked a previous process's stuck rows
+  interrupted before the scheduler ever starts, so a crash can't wedge a
+  task as permanently active. `startRun(taskId, attribution)` is the one
+  path both the schedule and the Tasks page's "Run now" button go through
+  (FR-004): it enqueues the job and records `lastRunStartedAt`/`lastJobId`
+  in the same synchronous call, so nothing can slip a second start in
+  between. It also keeps that last start/job id per task in memory, set
+  right after the enqueue and overlaid on the database row by every read,
+  so a failed `task_schedules` write (only `logWarn`ed) can't make every
+  later tick enqueue a duplicate within the same process. A cancelled run
+  stops and saves nothing: `JobDefinition.run` receives the job's
+  `AbortSignal` as its second argument, the scheduler hands it to the
+  task as `TaskRunContext.signal`, and `runCheckAppUpdates` checks it
+  between guests and before saving -- otherwise the cancel's aborted SSH
+  calls would come back as per-guest errors and overwrite every saved
+  result. A task's run is an ordinary **targetless** job (`target:
+  undefined`, admin-only in Job History, same as any other fleet-wide
+  job) attributed to `triggeredByUsername: 'scheduler'` for a scheduled
+  run or `resolveTriggeredBy(req)` for a manual one -- there is no
+  separate "task run" record anywhere; the job *is* the record, and the
+  schedule just remembers which job id was last started. `src/lib/
+  task-schedules.ts`'s `task_schedules` table (one row per task id:
+  `time_of_day`, `enabled`, `last_run_started_at`, `last_job_id`) lives in
+  `bellhop.db` outside `saveInventory`'s delete-and-reinsert list, same
+  precedent as `script_catalog`/`permission_groups` -- a row for an id no
+  longer registered is silently ignored, and a missing row reads as the
+  task's own `defaultTime`, enabled, never run (FR-002), so a fresh
+  install needs no seeding and a task removed from the registry leaves no
+  cleanup to do. Changing the time of day never resets
+  `last_run_started_at`, so moving it, earlier or later, on a day that
+  already ran can't trigger a second run that day. `src/web/routes/tasks.ts` is a thin
+  admin-only (`requireAdminGroup`) adapter over the scheduler's own
+  `listTasks`/`updateSchedule`/`startRun`, answering 503 in any process
+  with no scheduler wired (every test that doesn't care) rather than
+  throwing.
+
+  **`check-app-updates`** (`src/commands/maintenance/check-app-updates.ts`,
+  `src/lib/app-update-check.ts`) is that one task: once a day (04:00
+  server-local by default) it compares every `lxc` guest's installed
+  community-scripts app version against its latest stable upstream
+  release. It deliberately mirrors `check_for_gh_release` from
+  community-scripts' own `misc/tools.func` line for line (research R1 in
+  `specs/061-app-update-checks/research.md`) rather than inventing a
+  version comparison, since the whole point of the badge is that it must
+  agree with what actually happens when the operator presses the real
+  update button: `parseReleaseCheck` finds the first
+  `check_for_gh_release` call in the guest's resolved `ct/<slug>.sh` (via
+  `createAppSourceResolver` -- the same custom-script-repository
+  resolution `install-app`/`update-app` use, see that bullet above, so a
+  configured fork's own script is read here too) and tokenizes its
+  arguments as shell words; the name and repo arguments must be literal,
+  the pin argument may instead be a bare `$VAR`/`${VAR}` reference
+  resolved through exactly one literal assignment elsewhere in the same
+  script (including the self-referential `VAR="${VAR:-default}"` form
+  community-scripts itself uses), and the tag-prefix argument, if present,
+  must be literal. Anything it can't pin down this way -- no call at all,
+  a non-literal name/repo, an unresolvable pin, a non-literal prefix --
+  is `unsupported`, not an error: roughly a third of community-scripts
+  apps update through a package repository or another forge entirely, and
+  showing nothing for them (FR-015) is correct, not a gap. `fetchLatestRelease`
+  then follows upstream's own request order: unpinned and unprefixed
+  tries `/releases/latest` directly; anything else (a prefix, or any
+  non-clean response to a pin's direct `/releases/tags/<pin>` lookup --
+  a 404, a 200 that turns out to be a draft/pre-release, anything but
+  403/429) falls back to walking the full `/releases?per_page=100` list
+  and re-deriving the candidate from there, matching upstream's own
+  "never trust a single direct hit blindly" behavior (fix round 1 off the
+  original brief, which had undershot this). 403/429 from either path is
+  always `GITHUB_RATE_LIMIT_MESSAGE`, with no fallback -- it's rate-limited
+  either way. The outcome itself (`decideOutcome`) is upstream's own
+  inequality, not a semver comparison: pinned is "update available" when
+  `installed != pin`; unpinned, when `installed` is empty or `!= latest`
+  -- both sides normalized by stripping a leading `v` only when followed
+  by a digit. The installed version is read from inside the guest with
+  one POSIX `sh` script (`buildInstalledVersionScript`, sent through the
+  ordinary `runRemote` -- guest commands are POSIX sh only, per the
+  target-resolution bullet above) that mirrors upstream's own
+  current-version file lookup read-only: `$HOME/.<app_lc>` first, falling
+  back to exactly one `/opt/*_version.txt` match, never writing or
+  migrating either file the way upstream's installer does. No match at
+  all (`exit 3`) is an `error` naming the missing `~/.<name>` file and
+  suggesting the operator run the app's update once to create it --
+  distinct from `unsupported`, since the app genuinely is checkable, the
+  record just doesn't exist yet. A `ReleaseCache`/script cache, both
+  scoped to one run (or one single-guest check) and shared via
+  `CheckAppUpdatesContext`, mean two guests running the same app query
+  GitHub and fetch the script exactly once between them (FR-017), even
+  though a full run checks up to `CHECK_CONCURRENCY` (4) guests at once:
+  every cache holds promises, so a request already in flight is shared --
+  this,
+  plus one run a day, is what keeps a homelab-sized inventory under
+  GitHub's unauthenticated 60-requests-per-hour limit (SC-005); a
+  **single-operator assumption** this feature adds deliberately, same
+  spirit as the Cloudflare DNS-01 one in the proxy driver bullet above --
+  there is no GitHub token setting, so an unauthenticated rate-limit error
+  is reported per guest (never retried within the same run) rather than
+  the toolkit ever holding a GitHub credential; adding one is a listed
+  follow-up, not done here. A stopped guest is never contacted at all --
+  the full run queries `getGuestStatuses` once up front and reports
+  `not-checked`/"Guest is stopped" for one directly from that, the same
+  one-status-query-for-everyone pattern `update-all`'s targeting uses.
+  Results live in `src/lib/app-update-store.ts`'s `app_update_status`
+  table (one row per guest, outside `saveInventory`, same precedent as
+  `task_schedules` above) -- a full run calls `replaceAppUpdateResults`
+  (one transaction: delete everything, re-insert the new set, so a guest
+  removed from inventory or no longer eligible between runs leaves no
+  stale row, FR-021), while `--guest` and the post-update re-check below
+  call `upsertAppUpdateResult` to touch just one guest's row and leave
+  every other result alone. `GET /api/app-updates`
+  (`src/web/routes/app-updates.ts`) reads every row and drops one whose
+  guest isn't currently an eligible `lxc`+`app` guest in the live
+  inventory, whose stored `app` no longer matches the guest's recorded
+  `app` (a repurposed guest never shows the old app's result), or whose
+  guest the caller can't see -- visibility comes from one
+  `filterInventoryForUser` call per request, the same per-resource rule
+  `/inventory` applies,
+  so a restricted user never sees a check result for a guest they're
+  blocked from (FR-026) even though the route itself needs no admin gate.
+  After a successful web/MCP `update-app` apply (`result.result?.code === 0`,
+  `src/operations/maintenance.ts`), the same job calls `checkOneGuest` for
+  that one guest and upserts its result before the job finishes, so the
+  Update page's badge never claims an update is still available
+  immediately after one was just applied (US4/FR-022) -- a failed
+  re-check is only `logWarn`ed and never fails the already-successful
+  update job, and a non-zero script exit skips the re-check entirely,
+  leaving whatever was last recorded alone. The re-check only runs when
+  the update's `app` matches the guest's recorded `app` (one info line
+  otherwise), and it resolves through the job's already-pinned
+  `appSource` when there is one, so it reads the exact script just run
+  rather than resolving a custom branch a second time. The CLI's own `check-app-updates
+  [--guest <name>] [--apply]` (`src/cli.ts`) is the manual/debugging path
+  (`contracts/cli.md`): one line per guest sorted by name, exit code 0
+  even when individual guests report `error` (those are results, not
+  command failures), and a non-eligible `--guest` target (not an `lxc`
+  guest, or one with no `app` recorded) fails outright with a named
+  reason. The only other known limitation (besides the no-token
+  assumption above): only apps whose script uses this one
+  `check_for_gh_release` mechanism are ever checked -- Codeberg, GitLab,
+  and package-repository-based updates all read as `unsupported` today,
+  and covering them is explicitly out of scope for this feature.
 - **Proxmox access for VM creators** (`src/lib/pve-acl.ts`, issue #53) is
   the only module that knows how a Bellhop user maps to a Proxmox user and
   how per-guest Proxmox ACLs are read and written; every remote call it
