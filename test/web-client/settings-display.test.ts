@@ -6,7 +6,18 @@ import {
   proxyDriverOptions,
   proxyFieldView,
   caddyTlsOptions,
+  SETTINGS_TABS,
+  fieldsForTab,
+  fieldState,
+  effectiveWebUiAuthMode,
+  needsConfirmation,
+  confirmationMessage,
+  secretStatusText,
+  mergeSettingsResponse,
 } from '../../web-client/src/lib/settings-display.ts';
+import { SETTINGS_KEYS } from '../../src/lib/inventory.ts';
+import type { SettingsResponse } from '../../web-client/src/api/types.ts';
+import { SECRET_SETTINGS_KEYS } from '../../src/lib/settings-defs.ts';
 
 test('proxyHostText returns "<name> (<ip>)" for a set proxy entry', () => {
   assert.equal(proxyHostText({ name: 'proxy', ip: '10.0.0.2' }), 'proxy (10.0.0.2)');
@@ -279,4 +290,175 @@ test('caddyTlsOptions suffixes whichever mode is passed as the default', () => {
     { value: 'internal', label: 'internal' },
     { value: 'files', label: 'files (default)' },
   ]);
+});
+
+// Issue #64: the Settings page groups every setting by integration.
+test('SETTINGS_TABS lists the six integration tabs in order', () => {
+  assert.deepEqual(
+    SETTINGS_TABS.map((t) => t.label),
+    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'Nginx Proxy Manager', 'GitHub'],
+  );
+});
+
+test('fieldsForTab places every server setting and secret in exactly one tab', () => {
+  const placed = SETTINGS_TABS.flatMap((t) => [...fieldsForTab(t.id)]);
+  // Sorted comparison catches both a missing key and one listed twice.
+  assert.deepEqual([...placed].sort(), [...SETTINGS_KEYS, ...SECRET_SETTINGS_KEYS].sort());
+});
+
+test('fieldsForTab puts each secret beside its own integration', () => {
+  assert.ok(fieldsForTab('authentik').includes('authentikApiToken'));
+  assert.ok(fieldsForTab('authentik').includes('authentikApiUrl'));
+  assert.deepEqual([...fieldsForTab('cloudflare')], ['cloudflareDnsApiToken']);
+  assert.deepEqual([...fieldsForTab('nginx-proxy-manager')], ['npmApiUrl', 'npmApiEmail', 'npmApiPassword']);
+  assert.deepEqual([...fieldsForTab('github')], ['githubApiToken']);
+});
+
+test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab', () => {
+  assert.deepEqual([...fieldsForTab('proxy')], [
+    'proxyDriver',
+    'proxyConfigPath',
+    'statusPagePath',
+    'proxyCaddyTls',
+    'proxyTlsCertificate',
+    'proxyTlsKey',
+    'proxyCertResolver',
+    'proxyApiUrl',
+  ]);
+  assert.ok(fieldsForTab('general').includes('webUiAuthMode'));
+});
+
+test('fieldState reports a key the environment pins as env-pinned with its variable', () => {
+  const data = { environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik' } } };
+  assert.deepEqual(fieldState('webUiAuthMode', data), {
+    kind: 'env-pinned',
+    variable: 'WEB_UI_AUTH_MODE',
+    value: 'authentik',
+  });
+});
+
+test('fieldState reports a pinned secret with no value', () => {
+  const data = { environment: { githubApiToken: { variable: 'GITHUB_API_TOKEN' } } };
+  assert.deepEqual(fieldState('githubApiToken', data), { kind: 'env-pinned', variable: 'GITHUB_API_TOKEN' });
+});
+
+test('fieldState reports an unpinned key as editable', () => {
+  assert.deepEqual(fieldState('nfsServer', { environment: {} }), { kind: 'editable' });
+  assert.deepEqual(fieldState('authentikApiUrl', { environment: {} }), { kind: 'editable' });
+});
+
+test('effectiveWebUiAuthMode prefers the environment, then the stored value, then auto', () => {
+  assert.equal(
+    effectiveWebUiAuthMode({
+      settings: { webUiAuthMode: 'none' },
+      environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik' } },
+    }),
+    'authentik',
+  );
+  assert.equal(effectiveWebUiAuthMode({ settings: { webUiAuthMode: 'none' }, environment: {} }), 'none');
+  assert.equal(effectiveWebUiAuthMode({ settings: {}, environment: {} }), 'auto');
+});
+
+test('needsConfirmation is true for any change to either admin-group field, including a clear', () => {
+  for (const key of ['authentikAdminGroup', 'authentikBuiltinAdminGroup'] as const) {
+    assert.equal(needsConfirmation(key, 'bellhop-admins', 'ops-admins'), true);
+    assert.equal(needsConfirmation(key, undefined, 'ops-admins'), true);
+    assert.equal(needsConfirmation(key, 'bellhop-admins', null), true);
+    assert.equal(needsConfirmation(key, 'bellhop-admins', 'bellhop-admins'), false);
+    assert.equal(needsConfirmation(key, undefined, null), false);
+  }
+});
+
+test('needsConfirmation is true for webUiAuthMode only when leaving authentik', () => {
+  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', 'auto'), true);
+  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', 'none'), true);
+  // Clearing falls back to auto, which also leaves authentik.
+  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', null), true);
+  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', 'authentik'), false);
+  assert.equal(needsConfirmation('webUiAuthMode', 'auto', 'authentik'), false);
+  assert.equal(needsConfirmation('webUiAuthMode', 'auto', 'none'), false);
+});
+
+test('needsConfirmation is false for every other setting', () => {
+  assert.equal(needsConfirmation('nfsServer', '192.0.2.5', null), false);
+  assert.equal(needsConfirmation('authentikApiToken', undefined, 'example-token'), false);
+});
+
+test('confirmationMessage explains each guarded change', () => {
+  assert.match(confirmationMessage('authentikAdminGroup'), /administrator/);
+  assert.match(confirmationMessage('authentikAdminGroup'), /refused if it would remove your own/);
+  assert.match(confirmationMessage('authentikBuiltinAdminGroup'), /administrator/);
+  assert.match(confirmationMessage('webUiAuthMode'), /without signing in through Authentik/);
+});
+
+test('secretStatusText names whether a secret is set and where it comes from', () => {
+  assert.equal(secretStatusText({ set: true, source: 'settings' }), 'Set -- from settings');
+  assert.equal(
+    secretStatusText({ set: true, source: 'environment' }, 'GITHUB_API_TOKEN'),
+    'Set -- set by environment GITHUB_API_TOKEN',
+  );
+  assert.equal(secretStatusText({ set: false, source: 'none' }), 'Not set');
+});
+
+function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsResponse {
+  return {
+    settings: {},
+    derived: { lanGateways: [], proxy: null },
+    proxyDrivers: [],
+    defaultProxyDriver: 'caddy',
+    caddyTlsModes: ['cloudflare'],
+    defaultCaddyTls: 'cloudflare',
+    sources: {},
+    environment: {},
+    secrets: {
+      authentikApiToken: { set: false, source: 'none' },
+      cloudflareDnsApiToken: { set: false, source: 'none' },
+      npmApiPassword: { set: false, source: 'none' },
+      githubApiToken: { set: false, source: 'none' },
+    },
+    ...overrides,
+  };
+}
+
+test('mergeSettingsResponse takes only the saved non-secret key from the response', () => {
+  const prev = settingsResponse({
+    settings: { nfsServer: '192.0.2.5', dnsServer: '192.0.2.53' },
+    sources: { nfsServer: 'settings', dnsServer: 'settings' },
+  });
+  // The response reflects a concurrent save of dnsServer that this merge
+  // must not apply.
+  const res = settingsResponse({
+    settings: { nfsServer: '192.0.2.6' },
+    sources: { nfsServer: 'settings', dnsServer: 'none' },
+    derived: { lanGateways: [{ host: 'pve-a', gateway: '192.0.2.1' }], proxy: null },
+  });
+  const merged = mergeSettingsResponse(prev, res, 'nfsServer');
+  assert.deepEqual(merged.settings, { nfsServer: '192.0.2.6', dnsServer: '192.0.2.53' });
+  assert.deepEqual(merged.sources, { nfsServer: 'settings', dnsServer: 'settings' });
+  assert.deepEqual(merged.derived.lanGateways, [{ host: 'pve-a', gateway: '192.0.2.1' }]);
+});
+
+test('mergeSettingsResponse takes only the saved secret status from the response', () => {
+  const prev = settingsResponse();
+  const res = settingsResponse({
+    secrets: {
+      authentikApiToken: { set: true, source: 'settings' },
+      cloudflareDnsApiToken: { set: true, source: 'settings' },
+      npmApiPassword: { set: false, source: 'none' },
+      githubApiToken: { set: false, source: 'none' },
+    },
+  });
+  const merged = mergeSettingsResponse(prev, res, 'authentikApiToken');
+  assert.deepEqual(merged.secrets.authentikApiToken, { set: true, source: 'settings' });
+  assert.deepEqual(merged.secrets.cloudflareDnsApiToken, { set: false, source: 'none' });
+  assert.deepEqual(merged.settings, {});
+});
+
+test('mergeSettingsResponse updates or drops the saved key\'s environment pin', () => {
+  const pin = { variable: 'NPM_API_URL', value: 'http://192.0.2.10:81' };
+  const prev = settingsResponse({ environment: { npmApiUrl: pin, npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com' } } });
+  const dropped = mergeSettingsResponse(prev, settingsResponse(), 'npmApiUrl');
+  assert.deepEqual(dropped.environment, { npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com' } });
+  const kept = mergeSettingsResponse(settingsResponse(), settingsResponse({ environment: { npmApiUrl: pin } }), 'npmApiUrl');
+  assert.deepEqual(kept.environment, { npmApiUrl: pin });
 });

@@ -6,7 +6,13 @@
 // or nothing at all -- see contracts/ui-and-messages.md ("Settings page
 // text").
 
-import type { SettingsResponse, ProxyDriverInfo } from '../api/types.ts';
+import type {
+  SettingsResponse,
+  SettingsValues,
+  ProxyDriverInfo,
+  SecretSettingKey,
+  SecretStatus,
+} from '../api/types.ts';
 
 export type ProxyHost = NonNullable<SettingsResponse['derived']['proxy']>;
 
@@ -129,5 +135,151 @@ export function proxyFieldView(
     configPathPlaceholder: driver.defaultConfigPath,
     configPathHelp: driver.configPathNote ? `${baseHelp} ${driver.configPathNote}` : baseHelp,
     ...shared,
+  };
+}
+
+// Issue #64: the Settings page groups every setting by integration, one
+// tab each, in this order (FR-014). Each secret sits in the same tab as
+// the integration settings it is used with.
+export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'nginx-proxy-manager' | 'github';
+
+export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'proxy', label: 'Proxy' },
+  { id: 'authentik', label: 'Authentik' },
+  { id: 'cloudflare', label: 'Cloudflare' },
+  { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager' },
+  { id: 'github', label: 'GitHub' },
+];
+
+// Every field the page can show: each stored non-secret setting plus each
+// secret (status-only).
+export type SettingsFieldKey = keyof SettingsValues | SecretSettingKey;
+
+// Field order within a tab is display order. The Proxy tab keeps the
+// driver-dependent fields together so proxyFieldView's show/hide rules
+// apply inside it unchanged.
+const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
+  general: [
+    'nfsServer',
+    'backupStorage',
+    'dnsServer',
+    'customScriptsRepo',
+    'customScriptsBranch',
+    'pveUserRealm',
+    'pveCreatorRole',
+    'webUiAuthMode',
+  ],
+  proxy: [
+    'proxyDriver',
+    'proxyConfigPath',
+    'statusPagePath',
+    'proxyCaddyTls',
+    'proxyTlsCertificate',
+    'proxyTlsKey',
+    'proxyCertResolver',
+    'proxyApiUrl',
+  ],
+  authentik: [
+    'authentikApiUrl',
+    'authentikApiToken',
+    'authentikAdminGroup',
+    'authentikBuiltinAdminGroup',
+    'authentikGroupLadder',
+    'authentikOutpostName',
+    'authentikOutpostPort',
+    'authentikAuthorizationFlowSlug',
+    'authentikInvalidationFlowSlug',
+    'authentikOidcSigningKeyName',
+  ],
+  cloudflare: ['cloudflareDnsApiToken'],
+  'nginx-proxy-manager': ['npmApiUrl', 'npmApiEmail', 'npmApiPassword'],
+  github: ['githubApiToken'],
+};
+
+export function fieldsForTab(tab: SettingsTab): readonly SettingsFieldKey[] {
+  return TAB_FIELDS[tab];
+}
+
+const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken'];
+
+export function isSecretField(key: SettingsFieldKey): key is SecretSettingKey {
+  return (SECRET_KEYS as readonly string[]).includes(key);
+}
+
+// Whether a field can be edited here, or is pinned by an environment
+// variable and so shown read-only, labelled with that variable (FR-015).
+// `value` is the pinned effective value -- present for a non-secret only,
+// since the API never returns a secret's value.
+export type FieldState = { kind: 'env-pinned'; variable: string; value?: string } | { kind: 'editable' };
+
+export function fieldState(key: SettingsFieldKey, data: Pick<SettingsResponse, 'environment'>): FieldState {
+  const pin = data.environment[key];
+  if (!pin) return { kind: 'editable' };
+  return pin.value === undefined
+    ? { kind: 'env-pinned', variable: pin.variable }
+    : { kind: 'env-pinned', variable: pin.variable, value: pin.value };
+}
+
+// The auth mode actually in force: the environment's value when pinned,
+// else the stored one, else the server's own default, auto.
+export function effectiveWebUiAuthMode(data: Pick<SettingsResponse, 'settings' | 'environment'>): string {
+  return data.environment.webUiAuthMode?.value ?? data.settings.webUiAuthMode ?? 'auto';
+}
+
+const ADMIN_GROUP_KEYS: readonly SettingsFieldKey[] = ['authentikAdminGroup', 'authentikBuiltinAdminGroup'];
+
+// Whether saving `next` over `current` needs a confirmation first (FR-023):
+// any change to either admin-group field (a clear included, since that
+// falls back to the default group), and a webUiAuthMode change that leaves
+// authentik. `current` is the stored value for the admin groups and the
+// effective mode (effectiveWebUiAuthMode) for webUiAuthMode; `next` is
+// null for a clear.
+export function needsConfirmation(
+  key: SettingsFieldKey,
+  current: string | undefined,
+  next: string | null | undefined,
+): boolean {
+  if (ADMIN_GROUP_KEYS.includes(key)) return (current ?? '') !== (next ?? '');
+  if (key === 'webUiAuthMode') return current === 'authentik' && (next || 'auto') !== 'authentik';
+  return false;
+}
+
+// The confirmation dialog's text for a guarded field.
+export function confirmationMessage(key: SettingsFieldKey): string {
+  if (key === 'webUiAuthMode') {
+    return 'Leaving authentik means the web UI will be reachable without signing in through Authentik: requests without forward-auth headers are served as the local operator (auto) or every request is (none). Save anyway?';
+  }
+  return 'This changes who counts as an administrator in Bellhop. Saving is refused if it would remove your own administrator access. Save anyway?';
+}
+
+// A secret's status line: whether it has an effective value and where that
+// comes from -- never the value itself (FR-009/FR-010). `variable` names
+// the pinning environment variable when the source is the environment.
+export function secretStatusText(status: SecretStatus, variable?: string): string {
+  if (!status.set) return 'Not set';
+  if (status.source === 'environment') return `Set -- set by environment ${variable ?? 'variable'}`;
+  return 'Set -- from settings';
+}
+
+// Folds a PATCH response into the page's current state for the one key
+// that save targeted. Each field's Save/Clear only disables itself, so two
+// saves can resolve out of request order; taking the whole response would
+// visually revert a field that was in fact saved. `derived` does not depend
+// on which key changed, so it is taken from every response.
+export function mergeSettingsResponse(prev: SettingsResponse, res: SettingsResponse, key: SettingsFieldKey): SettingsResponse {
+  const environment = { ...prev.environment };
+  const pin = res.environment[key];
+  if (pin) environment[key] = pin;
+  else delete environment[key];
+  if (isSecretField(key)) {
+    return { ...prev, environment, secrets: { ...prev.secrets, [key]: res.secrets[key] }, derived: res.derived };
+  }
+  return {
+    ...prev,
+    settings: { ...prev.settings, [key]: res.settings[key] },
+    sources: { ...prev.sources, [key]: res.sources[key] },
+    environment,
+    derived: res.derived,
   };
 }

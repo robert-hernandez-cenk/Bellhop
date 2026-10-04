@@ -292,6 +292,21 @@ export interface SettingsValues {
   // to any proxy driver.
   pveUserRealm?: string;
   pveCreatorRole?: string;
+  // Issue #64: the settings that moved out of data/*.env files (mirrors
+  // src/lib/settings-defs.ts's MovedSettingsSchema). Secrets never appear
+  // here -- see SettingsResponse.secrets.
+  authentikApiUrl?: string;
+  authentikAdminGroup?: string;
+  authentikBuiltinAdminGroup?: string;
+  authentikGroupLadder?: string;
+  authentikOutpostName?: string;
+  authentikOutpostPort?: string;
+  authentikAuthorizationFlowSlug?: string;
+  authentikInvalidationFlowSlug?: string;
+  authentikOidcSigningKeyName?: string;
+  webUiAuthMode?: string;
+  npmApiUrl?: string;
+  npmApiEmail?: string;
 }
 
 // One entry per registered reverse-proxy driver (src/lib/proxy/index.ts's

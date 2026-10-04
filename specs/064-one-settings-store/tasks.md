@@ -111,10 +111,10 @@ next request's `isAdminUser` uses it; with `AUTHENTIK_ADMIN_GROUP` set, the API 
 
 ## Phase 8: Web client -- Settings page (US1, US2, US5, US6)
 
-- [ ] T037 [P] [US1] Tests in test/web-client/settings-display.test.ts: `SETTINGS_TABS` order General, Proxy, Authentik, Cloudflare, Nginx Proxy Manager, GitHub; `fieldsForTab` places every key (incl. each secret next to its integration's settings) in exactly one tab; `proxyFieldView` rules unchanged inside Proxy; `fieldState(key, data)` returns `env-pinned` (read-only, "set by environment") / editable; `needsConfirmation(key, current, next)` true for both admin-group fields and for `webUiAuthMode` leaving `authentik`
-- [ ] T038 [US1] Implement those helpers in web-client/src/lib/settings-display.ts
-- [ ] T039 [US2] Rework web-client/src/pages/SettingsPage.tsx: tab bar (wraps at <=640px), new field defs with help text for every moved key, `webUiAuthMode` as a `<select>`, secret field component (masked `type="password"` input, Replace/Save and Clear, shows set/not-set + source, input cleared after save, no reveal), env-pinned fields read-only with "set by environment" + variable name, `ConfirmModal`-style confirmation for the guarded fields; styles in web-client/src/index.css targeting `:root[data-theme='dark']` for dark
-- [ ] T040 [US1] `npm run web:build` passes
+- [X] T037 [P] [US1] Tests in test/web-client/settings-display.test.ts: `SETTINGS_TABS` order General, Proxy, Authentik, Cloudflare, Nginx Proxy Manager, GitHub; `fieldsForTab` places every key (incl. each secret next to its integration's settings) in exactly one tab; `proxyFieldView` rules unchanged inside Proxy; `fieldState(key, data)` returns `env-pinned` (read-only, "set by environment") / editable; `needsConfirmation(key, current, next)` true for both admin-group fields and for `webUiAuthMode` leaving `authentik`
+- [X] T038 [US1] Implement those helpers in web-client/src/lib/settings-display.ts
+- [X] T039 [US2] Rework web-client/src/pages/SettingsPage.tsx: tab bar (wraps at <=640px), new field defs with help text for every moved key, `webUiAuthMode` as a `<select>`, secret field component (masked `type="password"` input, Replace/Save and Clear, shows set/not-set + source, input cleared after save, no reveal), env-pinned fields read-only with "set by environment" + variable name, `ConfirmModal`-style confirmation for the guarded fields; styles in web-client/src/index.css targeting `:root[data-theme='dark']` for dark
+- [X] T040 [US1] `npm run web:build` passes
 
 ---
 
