@@ -25,13 +25,20 @@ const CLOUDFLARE_TLS_BLOCK = [
 ];
 
 // One Caddyfile token for a certificate/key path (research R6): bare when it
-// holds no whitespace or double quote -- every default certbot path, so the
-// common case reads exactly as an operator would type it -- otherwise a
-// double-quoted token with backslash and double quote backslash-escaped.
+// holds no whitespace, double quote or backslash -- every default certbot
+// path, so the common case reads exactly as an operator would type it --
+// otherwise a double-quoted token with only `"` escaped as `\"`.
 // SettingsSchema only requires an absolute path, so a space is possible.
+// Live-verified against Caddy v2.10.2 `caddy adapt`: inside a quoted token
+// `\"` is the only escape -- any other backslash is kept literally, so
+// doubling one would put two in the adapted path -- and a bare token's
+// backslash is not reliable, hence quoting whenever one appears. Known
+// residual, not worth handling for a certificate path: a value ending in
+// `\` (or with `\` right before a `"`) can't be expressed, since that
+// backslash would read as escaping the quote after it.
 export function caddyfileToken(value: string): string {
-  if (!/[\s"]/.test(value)) return value;
-  return `"${value.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+  if (!/[\s"\\]/.test(value)) return value;
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 // The per-site TLS clause for the active mode (contracts/

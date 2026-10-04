@@ -91,6 +91,36 @@ test('refuses once Caddy already holds Bellhop objects', async () => {
   assert.equal(ssh.history.length, 1);
 });
 
+// Final review F10: a 'files'-mode leftover -- a Bellhop-tagged load_files
+// entry, or a Bellhop connection policy on any server -- is Bellhop's too,
+// even with no Bellhop route or automation policy left beside it.
+for (const [what, add] of [
+  [
+    'a Bellhop load_files entry',
+    (c: typeof adapted) => {
+      c.apps.tls = {
+        certificates: {
+          load_files: [{ '@id': 'bellhop-tls-files', certificate: '/etc/ssl/example/cert.pem', key: '/etc/ssl/example/key.pem', tags: ['bellhop-cert'] }],
+        },
+      };
+    },
+  ],
+  [
+    'a Bellhop connection policy on a non-HTTPS server',
+    (c: typeof adapted) => {
+      c.apps.http.servers.srv1 = { listen: [':8080'], routes: [], tls_connection_policies: [{ '@id': 'bellhop-tls-default' }] };
+    },
+  ],
+] as const) {
+  test(`refuses once Caddy already holds ${what}`, async () => {
+    const config = JSON.parse(adaptedText);
+    add(config);
+    const live = `HTTP/1.1 200 OK\r\nEtag: "/config/ 2"\r\n\r\n${JSON.stringify(config)}`;
+    const ssh = fakeProxyHost({ live });
+    await assert.rejects(runConvertCaddyfile({ apply: true }, { ssh, inventory }), /already has Bellhop objects/);
+    assert.equal(ssh.history.length, 1);
+  });
+}
 test('a missing Caddyfile or an adapt failure names the path and host', async () => {
   await assert.rejects(runConvertCaddyfile({ caddyfile: '/srv/Caddyfile' }, { ssh: fakeProxyHost({ adapt: { stdout: '', stderr: '', code: 5 } }), inventory }), {
     message: "No Caddyfile at /srv/Caddyfile on 'pve1' -- pass --caddyfile <path>.",

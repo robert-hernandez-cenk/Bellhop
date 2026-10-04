@@ -551,3 +551,76 @@ test('the preview ends with every Bellhop object, TLS objects included, as writt
     ...srv0Policies(plan.config),
   ]);
 });
+
+// --- final review (F4/F11) -------------------------------------------------
+
+test('stale bellhop-tls-connection/bellhop-tls-default on a server that is not the target are removed on the next sync (F11a)', () => {
+  // A non-HTTPS server left holding Bellhop's connection policies (e.g. from
+  // a hand edit, or a target server that has since changed).
+  const live = liveConfig('files', handAuthored);
+  const stale = srv0Policies(live);
+  live.apps!.http!.servers!.srv1 = { listen: [':8080'], routes: [], tls_connection_policies: stale };
+  delete live.apps!.http!.servers!.srv0.tls_connection_policies;
+
+  // Same mode: the policies move back to srv0 and leave srv1 entirely.
+  const files = modeRoutesAndCtx('files');
+  const asFiles = planCaddyConfig(JSON.parse(JSON.stringify(live)), files.routes, files.ctx, 'pve1');
+  assert.equal(asFiles.config?.apps?.http?.servers?.srv1?.tls_connection_policies, undefined);
+  assert.deepEqual(
+    srv0Policies(asFiles.config).map((p) => p['@id']),
+    [BELLHOP_TLS_CONNECTION_ID, BELLHOP_TLS_DEFAULT_ID]
+  );
+
+  // A mode with no connection policies: removed outright, from srv1 too.
+  const le = modeRoutesAndCtx('letsencrypt');
+  const asLe = planCaddyConfig(JSON.parse(JSON.stringify(live)), le.routes, le.ctx, 'pve1');
+  assert.equal(asLe.config?.apps?.http?.servers?.srv1?.tls_connection_policies, undefined);
+  assert.equal(asLe.config?.apps?.http?.servers?.srv0?.tls_connection_policies, undefined);
+  assert.ok(asLe.changes.some((c) => c.kind === 'remove' && c.object === 'tls-connection'));
+});
+
+test('an operator catch-all added after bellhop-tls-default makes the next sync drop bellhop-tls-default (F11b)', () => {
+  const live = liveConfig('files', handAuthored);
+  srv0Policies(live).push({});
+  const { routes, ctx } = modeRoutesAndCtx('files');
+  const plan = planCaddyConfig(live, routes, ctx, 'pve1');
+  assert.deepEqual(
+    srv0Policies(plan.config).map((p) => p['@id'] ?? 'operator'),
+    [BELLHOP_TLS_CONNECTION_ID, 'operator']
+  );
+  assert.ok(plan.changes.some((c) => c.kind === 'replace' && c.object === 'tls-connection'));
+});
+
+test('a TLS object that only moved is reported as a TLS move, not a route move (F4)', () => {
+  // The connection policy moved behind an operator's own: same objects, new
+  // position.
+  const live = liveConfig('files', handAuthored);
+  const policies = srv0Policies(live);
+  policies.unshift({ match: { sni: ['other.example.com'] } });
+  const { routes, ctx } = modeRoutesAndCtx('files');
+  const plan = planCaddyConfig(live, routes, ctx, 'pve1');
+  assert.notEqual(plan.config, null);
+  assert.deepEqual(plan.changes, [{ kind: 'reorder', object: 'tls-connection', hostnames: [] }]);
+  const preview = formatCaddyPreview(plan);
+  assert.match(preview, /^~ move Bellhop TLS objects ahead of hand-authored ones \(connection policies\)$/m);
+  assert.doesNotMatch(preview, /move Bellhop routes/);
+});
+
+test('a load_files entry that only moved is reported as a certificate-files move (F4)', () => {
+  const live = liveConfig('files', handAuthored);
+  const operatorFile = { certificate: '/etc/ssl/example/other.pem', key: '/etc/ssl/example/other.key', tags: ['cert0'] };
+  live.apps!.tls!.certificates!.load_files!.push(operatorFile);
+  live.apps!.tls!.certificates!.load_files!.reverse();
+  const { routes, ctx } = modeRoutesAndCtx('files');
+  const plan = planCaddyConfig(live, routes, ctx, 'pve1');
+  assert.deepEqual(plan.changes, [{ kind: 'reorder', object: 'tls-files', hostnames: [] }]);
+  assert.match(formatCaddyPreview(plan), /^~ move Bellhop TLS objects ahead of hand-authored ones \(certificate files\)$/m);
+});
+
+test('a moved route still previews as a route move (F4)', () => {
+  const { routes, ctx } = routesAndCtx();
+  const live = JSON.parse(JSON.stringify(planCaddyConfig(handAuthored, routes, ctx, 'pve1').config));
+  const srvRoutes = live.apps.http.servers.srv0.routes;
+  srvRoutes.push(srvRoutes.shift());
+  assert.match(formatCaddyPreview(planCaddyConfig(live, routes, ctx, 'pve1')), /^~ move Bellhop routes ahead of hand-authored routes$/m);
+});

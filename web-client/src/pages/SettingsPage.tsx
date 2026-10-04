@@ -76,7 +76,7 @@ const FIELDS: Array<{ key: SettingKey; label: string; placeholder?: string; help
     key: 'proxyCertResolver',
     label: 'Proxy cert resolver',
     placeholder: 'cloudflare',
-    help: "The Traefik certificate resolver every Bellhop router names, defined in Traefik's own static configuration. Unset: cloudflare.",
+    help: "The Traefik certificate resolver every Bellhop router names, defined in Traefik's own static configuration. Unset: cloudflare. The reserved value none gives routers TLS with no resolver, so certificates come from Traefik's file provider or its default certificate.",
   },
   {
     key: 'proxyApiUrl',
@@ -172,7 +172,9 @@ export function SettingsPage() {
   // other mode.
   const selectedCaddyTls = drafts.proxyCaddyTls || data?.defaultCaddyTls;
   const view =
-    data && selectedDriver ? proxyFieldView(selectedDriver, data.proxyDrivers, selectedCaddyTls) : null;
+    data && selectedDriver
+      ? proxyFieldView(selectedDriver, data.proxyDrivers, drafts.proxyCaddyTls || data.defaultCaddyTls)
+      : null;
 
   // Hiding a field is display-only: it is simply left out of this list, so
   // its draft/stored value and its Save/Clear behavior are completely

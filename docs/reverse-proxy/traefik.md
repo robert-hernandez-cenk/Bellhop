@@ -121,9 +121,9 @@ serves whatever certificate its file provider loads for that hostname
 alongside Bellhop's, including one covering a self-signed certificate you
 generated yourself) or, failing that, its own default certificate. This is
 for an operator who manages certificates entirely through the file
-provider rather than through any ACME resolver — a real certificate
-resolver can never actually be named `none`, since Traefik's own
-`certificatesResolvers` key would collide with the reserved value. With
+provider rather than through any ACME resolver. `none` is reserved by
+Bellhop: if your static configuration defines a resolver literally named
+`none`, Bellhop can't reference it — rename that resolver. With
 `proxyCertResolver` unset or set to any other name, output is unchanged
 from today (`tls: { certResolver: <name> }` on every router).
 

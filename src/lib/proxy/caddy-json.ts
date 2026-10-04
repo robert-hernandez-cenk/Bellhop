@@ -334,6 +334,31 @@ function sniOf(policy: CaddyConnectionPolicy | undefined): string[] {
   return Array.isArray(sni) ? (sni as string[]) : [];
 }
 
+// Which kinds of Bellhop object sit in a different place in `after` than in
+// `before`, for a plan whose objects are all unchanged but whose
+// configuration still differs (final review F4): routes, connection
+// policies (any server -- a stale one on a non-target server moving back
+// counts), the automation policy, or the load_files entry. Compares each
+// container as a whole, since with no listed change the only difference
+// left is position. Falls back to 'route' -- the one move that existed
+// before issue #51 -- if nothing narrower explains the difference.
+function movedObjects(before: CaddyConfigObject, after: CaddyConfigObject): CaddyChange['object'][] {
+  const differs = (a: unknown, b: unknown) => canonicalJson(a ?? null) !== canonicalJson(b ?? null);
+  const serversBefore = before.apps?.http?.servers ?? {};
+  const serversAfter = after.apps?.http?.servers ?? {};
+  const names = [...new Set([...Object.keys(serversBefore), ...Object.keys(serversAfter)])];
+  const moved: CaddyChange['object'][] = [];
+  if (names.some((n) => differs(serversBefore[n]?.routes, serversAfter[n]?.routes))) moved.push('route');
+  if (differs(before.apps?.tls?.automation?.policies, after.apps?.tls?.automation?.policies)) moved.push('tls-policy');
+  if (differs(before.apps?.tls?.certificates?.load_files, after.apps?.tls?.certificates?.load_files)) {
+    moved.push('tls-files');
+  }
+  if (names.some((n) => differs(serversBefore[n]?.tls_connection_policies, serversAfter[n]?.tls_connection_policies))) {
+    moved.push('tls-connection');
+  }
+  return moved.length > 0 ? moved : ['route'];
+}
+
 // Reconciles the desired routes against the live configuration (research
 // R5/R6, issue #51 research R3/R4): strips every Bellhop object, leaves out
 // routes whose hostnames an untagged object already claims (conflicts),
@@ -519,8 +544,10 @@ export function planCaddyConfig(
   const changed = canonicalJson(config) !== canonicalJson(current ?? {});
   if (changed && changes.length === 0) {
     // Same objects, different position (e.g. an operator moved a Bellhop
-    // route behind their own) -- still a write, so still a listed change.
-    changes.push({ kind: 'reorder', object: 'route', hostnames: [] });
+    // route behind their own, or a connection policy/load_files entry
+    // behind theirs) -- still a write, so still a listed change, one per
+    // kind of object that actually moved so the preview names the right one.
+    changes.push(...movedObjects(current ?? {}, config).map((object) => ({ kind: 'reorder' as const, object, hostnames: [] })));
   }
 
   return {
@@ -555,6 +582,13 @@ function routeDetails(route: ProxyRoute): string {
 
 const SYMBOLS: Record<CaddyChange['kind'], string> = { add: '+', replace: '~', remove: '-', reorder: '~' };
 
+// The parenthesised name of a moved TLS object in the preview's move line.
+const MOVED_TLS_LABEL: Record<Exclude<CaddyChange['object'], 'route'>, string> = {
+  'tls-policy': 'automation policy',
+  'tls-files': 'certificate files',
+  'tls-connection': 'connection policies',
+};
+
 function conflictClaim(c: CaddyConflict): string {
   return c.claimedBy === 'route' ? `a hand-authored route in server '${c.server}'` : 'a hand-authored TLS automation policy';
 }
@@ -567,7 +601,15 @@ export function formatCaddyPreview(plan: CaddyConfigPlan): string {
   const lines: string[] = [];
   for (const change of plan.changes) {
     const symbol = SYMBOLS[change.kind];
-    if (change.object === 'tls-policy') {
+    if (change.kind === 'reorder') {
+      // Checked before the per-object lines below, which describe an
+      // add/replace/remove, not a move.
+      lines.push(
+        change.object === 'route'
+          ? `${symbol} move Bellhop routes ahead of hand-authored routes`
+          : `${symbol} move Bellhop TLS objects ahead of hand-authored ones (${MOVED_TLS_LABEL[change.object]})`
+      );
+    } else if (change.object === 'tls-policy') {
       lines.push(
         change.kind === 'remove' ? `${symbol} tls policy` : `${symbol} tls policy: ${change.hostnames.length} hostnames`
       );
@@ -581,8 +623,6 @@ export function formatCaddyPreview(plan: CaddyConfigPlan): string {
           ? `${symbol} tls connection policy`
           : `${symbol} tls connection policy: ${change.hostnames.length} hostnames`
       );
-    } else if (change.kind === 'reorder') {
-      lines.push(`${symbol} move Bellhop routes ahead of hand-authored routes`);
     } else {
       const details = change.route ? routeDetails(change.route) : '';
       lines.push(`${symbol} route ${change.hostnames.join(', ')}${details}`);

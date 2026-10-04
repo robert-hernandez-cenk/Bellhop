@@ -378,7 +378,7 @@ export const SettingsSchema = z.object({
   // instead of naming a resolver, so Traefik serves whatever
   // default/static-config certificate applies rather than requesting one
   // through a resolver named 'none' -- see NO_CERT_RESOLVER in
-  // src/lib/proxy/drivers/traefik.ts.
+  // src/lib/proxy/routes.ts.
   proxyCertResolver: z
     .string()
     .regex(/^[A-Za-z0-9_-]+$/, 'must contain only letters, digits, - and _')

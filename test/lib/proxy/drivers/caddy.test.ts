@@ -327,20 +327,22 @@ test('proxyCaddyTls files uses proxyTlsCertificate/proxyTlsKey when set', () => 
   );
 });
 
-test('proxyCaddyTls files double-quotes a path holding whitespace or a double quote, escaping backslash and quote (research R6)', () => {
+test('proxyCaddyTls files double-quotes a path holding whitespace, a double quote or a backslash, escaping only the quote (research R6)', () => {
   const block = blockFor({
     ...inventory,
     proxyCaddyTls: 'files',
     proxyTlsCertificate: '/etc/ssl/my certs/cert.pem',
-    // a"b\c -- one double quote and one backslash.
+    // a"b\c -- one double quote and one backslash. Live-verified against
+    // Caddy v2.10.2 `caddy adapt`: inside a quoted token only \" is an
+    // escape, so the backslash goes out as-is (a doubled one adapts to two).
     proxyTlsKey: String.raw`/etc/ssl/a"b\c/key.pem`,
   });
-  assert.equal(block, expectedWithClause([String.raw`    tls "/etc/ssl/my certs/cert.pem" "/etc/ssl/a\"b\\c/key.pem"`]));
+  assert.equal(block, expectedWithClause([String.raw`    tls "/etc/ssl/my certs/cert.pem" "/etc/ssl/a\"b\c/key.pem"`]));
 });
 
-test('a path with a backslash but no whitespace or double quote stays bare (research R6)', () => {
+test('a path with a backslash but no whitespace or double quote is quoted, its backslash left single (research R6)', () => {
   const block = blockFor({ ...inventory, proxyCaddyTls: 'files', proxyTlsCertificate: String.raw`/etc/ssl/a\b.pem` });
-  assert.ok(block.includes(String.raw`    tls /etc/ssl/a\b.pem /etc/letsencrypt/live/example.com/privkey.pem`));
+  assert.ok(block.includes(String.raw`    tls "/etc/ssl/a\b.pem" /etc/letsencrypt/live/example.com/privkey.pem`));
 });
 
 test('caddyDriver declares usesCaddyTls for the Settings page', () => {

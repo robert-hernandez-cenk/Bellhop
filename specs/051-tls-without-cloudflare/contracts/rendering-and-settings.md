@@ -9,7 +9,7 @@ Placed where `TLS_BLOCK` is today (last lines of each site block):
 | unset / `cloudflare` | `    tls {` / `        dns cloudflare {env.CLOUDFLARE_API_TOKEN}` / `        resolvers 1.1.1.1 8.8.8.8` / `    }` (unchanged) |
 | `letsencrypt` | *(none)* |
 | `internal` | `    tls internal` |
-| `files` | `    tls <certificatePath> <keyPath>` — each path bare, or double-quoted with `\`/`"` escaped when it contains whitespace or `"` |
+| `files` | `    tls <certificatePath> <keyPath>` — each path bare, or double-quoted when it contains whitespace, `"` or `\`; inside the quotes only `"` is escaped (as `\"`) and a backslash stays single, since `\"` is Caddy's only escape in a quoted token (a path ending in `\` can't be expressed) |
 
 ## Caddy JSON (`caddy-api` driver)
 

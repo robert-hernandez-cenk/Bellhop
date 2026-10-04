@@ -7,6 +7,8 @@ import {
   buildProxyContext,
   buildRouteForEntry,
   DEFAULT_CERT_RESOLVER,
+  NO_CERT_RESOLVER,
+  certResolverName,
   DEFAULT_CADDY_TLS,
   caddyTlsMode,
   type ProxyRoute,
@@ -451,4 +453,19 @@ test('buildRouteForEntry: undefined for an entry with no route or no such entry'
   assert.equal(buildRouteForEntry(inv, { type: 'guest', name: 'internal-lxc' }), undefined);
   assert.equal(buildRouteForEntry(inv, { type: 'guest', name: 'manual-lxc' }), undefined);
   assert.equal(buildRouteForEntry(inv, { type: 'host', name: 'web-lxc' }), undefined);
+});
+
+// Final-review F8: one fold-in for proxyCertResolver, shared by
+// buildProxyContext and the Traefik driver's prune capability, with the
+// reserved 'none' value living beside the default it pairs with.
+test('certResolverName: proxyCertResolver when set, else DEFAULT_CERT_RESOLVER; NO_CERT_RESOLVER is the reserved none', () => {
+  const base: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
+    guests: [],
+  };
+  assert.equal(certResolverName(base), DEFAULT_CERT_RESOLVER);
+  assert.equal(certResolverName({ ...base, proxyCertResolver: 'my-resolver' }), 'my-resolver');
+  assert.equal(NO_CERT_RESOLVER, 'none');
+  assert.equal(certResolverName({ ...base, proxyCertResolver: NO_CERT_RESOLVER }), 'none');
 });

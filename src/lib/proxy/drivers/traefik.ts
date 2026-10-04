@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { parse, stringify, Scalar } from 'yaml';
 import type { Inventory } from '../../inventory.ts';
 import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
-import { DEFAULT_CERT_RESOLVER } from '../routes.ts';
+import { NO_CERT_RESOLVER, certResolverName } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
 import { settingFix } from '../../settings-hint.ts';
@@ -163,19 +163,13 @@ function patternRule(pattern: PathPattern): string {
 
 const OUTPOST_PATH_PREFIX = '/outpost.goauthentik.io/';
 
-// issue #51, User Story 3: the reserved proxyCertResolver value meaning "no
-// certificate resolver" -- every router gets an empty tls: {} instead of
-// naming one, so Traefik serves whatever default/static-config certificate
-// applies (its own self-signed default, or one supplied some other way in
-// the operator's static configuration) rather than requesting one through a
-// resolver. Exported so routes.ts's DEFAULT_CERT_RESOLVER fallback and this
-// driver's own render() share the one literal rather than each hardcoding
-// 'none' independently.
-export const NO_CERT_RESOLVER = 'none';
-
 // Every router's tls object (contract "Traefik router TLS"): empty when the
-// active resolver is the reserved NO_CERT_RESOLVER value, otherwise naming
-// it as before. One function so the main/outpost/exempt router sites below
+// active resolver is the reserved NO_CERT_RESOLVER value (issue #51, User
+// Story 3; defined in routes.ts beside DEFAULT_CERT_RESOLVER), so Traefik
+// serves whatever default/static-config certificate applies (its own
+// self-signed default, or one supplied some other way in the operator's
+// static configuration) rather than requesting one through a resolver;
+// otherwise naming it as before. One function so the main/outpost/exempt router sites below
 // can never render this differently from one another.
 function routerTls(ctx: ProxyContext): { certResolver?: string } {
   return ctx.certResolver === NO_CERT_RESOLVER ? {} : { certResolver: ctx.certResolver };
@@ -519,7 +513,7 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
 // value, which addresses no resolver at all and so can never leave a
 // Cloudflare DNS-01 challenge record behind.
 function traefikAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
-  return (inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER) !== NO_CERT_RESOLVER;
+  return certResolverName(inventory) !== NO_CERT_RESOLVER;
 }
 
 export const traefikDriver = fileDriver({

@@ -942,7 +942,8 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   driver can emit: `letsencrypt` emits none at all, `internal` emits
   `tls internal`, and `files` emits `tls <cert> <key>` from `ctx.tls`,
   quoted by `caddyfileToken` -- research R6 -- when either path holds
-  whitespace or a `"`); every `reverse_proxy` always in block form
+  whitespace, a `"` or a `\`, escaping only `"` since `\"` is Caddy's
+  only escape inside a quoted token); every `reverse_proxy` always in block form
   with an unconditional `header_up X-Forwarded-Port 443` (`EXTERNAL_PORT`,
   from `ProxyContext`, so backends building absolute external URLs --
   e.g. Dispatcharr's VOD cover art, issue #91 -- get the real external
@@ -1365,12 +1366,14 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   `'forward'` route with no outpost to address.
 
   **Certificate resolver and settings** (research R10): every router's
-  `tls.certResolver` is `inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER`
+  `tls.certResolver` is `certResolverName(inventory)` --
+  `inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER`
   (`'cloudflare'`, `src/lib/proxy/routes.ts`) -- carried to `render()` as a
   new `ProxyContext.certResolver` field, always present (same
   "never handle the unset case" precedent as `ctx.tls`), next to nginx's
   own `tls` field. Issue #51 reserves one value of that same setting,
-  `NO_CERT_RESOLVER = 'none'` (exported from `traefik.ts`, admitted
+  `NO_CERT_RESOLVER = 'none'` (exported from `routes.ts` beside
+  `DEFAULT_CERT_RESOLVER`, admitted
   already by `proxyCertResolver`'s existing `^[A-Za-z0-9_-]+$` regex with
   no schema change needed): every router's `routerTls(ctx)` renders
   `tls: {}` instead of `tls: { certResolver: ctx.certResolver }` when
@@ -1378,11 +1381,10 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   certificate its own file provider or default certificate supplies for
   that hostname rather than requesting one from a named resolver. `capabilities: { authModes: ['forward', 'oidc'],
   acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare }` --
-  `(inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER) !==
-  NO_CERT_RESOLVER` -- Traefik can obtain its own
+  `certResolverName(inventory) !== NO_CERT_RESOLVER` -- Traefik can obtain its own
   certificates too, just through a resolver the *operator* defines in
-  Traefik's own static configuration rather than Bellhop's hardcoded
-  `TLS_BLOCK`, so `prune-acme-challenges` keeps running under it for any
+  Traefik's own static configuration rather than through a Caddy driver's
+  `proxyCaddyTls` clause, so `prune-acme-challenges` keeps running under it for any
   named resolver, the same as under Caddy's default `cloudflare` mode, and
   is skipped only for the reserved `none` resolver, which never touches an
   ACME resolver at all. `statusPage: null` -- the first shipped *managed*

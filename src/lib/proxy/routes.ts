@@ -35,7 +35,7 @@ export interface ProxyContext {
   tls: { certificatePath: string; keyPath: string };
   // The ACME certificate resolver name the Traefik driver (issue #35) sets
   // on every rendered router's tls.certResolver -- inventory.proxyCertResolver
-  // when set, else DEFAULT_CERT_RESOLVER. Always present, the same
+  // when set, else DEFAULT_CERT_RESOLVER (certResolverName). Always present, the same
   // "never handle the unset case" precedent as tls above. Ignored by every
   // other driver, which either obtains its own certificate (Caddy) or
   // shares the ctx.tls pair instead (nginx).
@@ -56,6 +56,24 @@ export interface ProxyContext {
 // who names their own resolver 'cloudflare' too (the same DNS provider
 // Caddy's own default 'cloudflare' TLS mode uses).
 export const DEFAULT_CERT_RESOLVER = 'cloudflare';
+
+// issue #51, User Story 3: the reserved proxyCertResolver value meaning "no
+// certificate resolver" -- the Traefik driver renders every router with an
+// empty tls: {} instead of naming one, so Traefik serves whatever
+// default/static-config certificate applies rather than requesting one
+// through a resolver. Lives here beside DEFAULT_CERT_RESOLVER so both
+// proxyCertResolver constants are defined in one place; the Traefik
+// driver's render() and its prune capability both import it from here.
+export const NO_CERT_RESOLVER = 'none';
+
+// inventory.proxyCertResolver when set, else DEFAULT_CERT_RESOLVER -- the
+// one place this fold-in happens (the caddyTlsMode precedent below), read
+// by buildProxyContext for ctx.certResolver and by the Traefik driver's
+// acmeDns01ViaCloudflare capability, so the two can never disagree about
+// which resolver is active.
+export function certResolverName(inventory: Inventory): string {
+  return inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER;
+}
 
 // issue #51: the Caddy drivers' own default TLS mode -- Cloudflare DNS-01,
 // the only behavior that existed before proxyCaddyTls did, so an unset
@@ -239,7 +257,7 @@ export function buildProxyContext(inventory: Inventory): ProxyContext {
       certificatePath: inventory.proxyTlsCertificate ?? `/etc/letsencrypt/live/${inventory.domain}/fullchain.pem`,
       keyPath: inventory.proxyTlsKey ?? `/etc/letsencrypt/live/${inventory.domain}/privkey.pem`,
     },
-    certResolver: inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER,
+    certResolver: certResolverName(inventory),
     caddyTls: caddyTlsMode(inventory),
   };
   if (authentikEntry?.ip) {

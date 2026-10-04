@@ -69,6 +69,22 @@ is a conflict the same way an untagged route is, but in `letsencrypt`/
 `files` mode it isn't, because there's no Bellhop policy for it to
 collide with.
 
+In `files` mode the certificate and key must be readable by the user Caddy
+runs as (`caddy` for the packaged `caddy-api.service`), not just by root —
+certbot's defaults are root-only. See [File permissions in `files`
+mode](caddy.md#file-permissions-in-files-mode) for a recipe; with this
+driver, end the deploy hook with `systemctl restart caddy-api` instead of
+`systemctl reload caddy` (that unit is the Caddyfile service; `caddy-api`
+resumes its autosaved configuration on restart, re-reading the files). A pair Caddy can't read surfaces as Caddy rejecting the `PATCH
+/config/` load: nothing is written, Caddy keeps its previous
+configuration, and `sync-proxy --apply` reports Caddy's own error.
+
+Stale `_acme-challenge` cleanup follows `proxyCaddyTls` alone, the same as
+for the Caddy driver: Cloudflare DNS-01 issued some other way (your own
+catch-all automation policy in `letsencrypt` mode) isn't detected, so use
+`cloudflare` mode if you want the prune — see [Stale ACME challenge
+records](caddy.md#stale-acme-challenge-records).
+
 ## Prerequisites
 
 - **Caddy 2.6 or newer**, any build — **with the Cloudflare DNS module**

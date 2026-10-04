@@ -88,15 +88,14 @@ export interface ProxyFieldView {
 
 // `caddyTls` is the shown (possibly unsaved) Caddy TLS value -- resolved by
 // the caller the same way `selectedId` already is
-// (`drafts.proxyCaddyTls || data.defaultCaddyTls`). Defaulted to
-// 'cloudflare' (DEFAULT_CADDY_TLS's value, duplicated rather than imported
-// since web-client has no imports from src/ -- see CLAUDE.md's
-// "sortInventoryForFile" precedent) so a caller that doesn't care about
-// Caddy TLS (every driver but the two Caddy ones) doesn't have to pass it.
+// (`drafts.proxyCaddyTls || data.defaultCaddyTls`). Required rather than
+// defaulted (final review F9): a silent default here would let a caller
+// forget the unsaved Caddy TLS value and quietly hide the certificate
+// fields while 'files' is selected.
 export function proxyFieldView(
   selectedId: string,
   drivers: ProxyDriverInfo[],
-  caddyTls: string = 'cloudflare',
+  caddyTls: string,
 ): ProxyFieldView {
   const driver = drivers.find((d) => d.id === selectedId);
   if (!driver || !driver.managesProxy) {

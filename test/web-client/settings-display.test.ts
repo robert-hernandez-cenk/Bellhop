@@ -48,7 +48,7 @@ const DRIVERS = [
 ];
 
 test('proxyFieldView shows both fields with Caddy-specific placeholders/help when Caddy is selected', () => {
-  const view = proxyFieldView('caddy', DRIVERS);
+  const view = proxyFieldView('caddy', DRIVERS, 'cloudflare');
   assert.equal(view.showConfigPath, true);
   assert.equal(view.configPathPlaceholder, '/etc/caddy/Caddyfile');
   assert.match(view.configPathHelp ?? '', /Caddy/);
@@ -58,13 +58,13 @@ test('proxyFieldView shows both fields with Caddy-specific placeholders/help whe
 });
 
 test('proxyFieldView hides both fields when "no proxy" is selected', () => {
-  const view = proxyFieldView('none', DRIVERS);
+  const view = proxyFieldView('none', DRIVERS, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
 });
 
 test('proxyFieldView hides both fields for an unknown driver id', () => {
-  const view = proxyFieldView('unknown-provider', DRIVERS);
+  const view = proxyFieldView('unknown-provider', DRIVERS, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
   assert.equal(view.showTlsFields, false);
@@ -85,7 +85,7 @@ const NGINX = {
 };
 
 test('proxyFieldView for nginx shows the config path (nginx default, whole-file note), the status page, and the TLS fields', () => {
-  const view = proxyFieldView('nginx', [...DRIVERS, NGINX]);
+  const view = proxyFieldView('nginx', [...DRIVERS, NGINX], 'cloudflare');
   assert.equal(view.showConfigPath, true);
   assert.equal(view.configPathPlaceholder, '/etc/nginx/conf.d/bellhop.conf');
   assert.match(view.configPathHelp ?? '', /\/etc\/nginx\/conf\.d\/bellhop\.conf/);
@@ -113,7 +113,7 @@ const HAPROXY = {
 };
 
 test('proxyFieldView for HAProxy shows the config path (HAProxy default, map-file note) and hides the status page and TLS fields', () => {
-  const view = proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY]);
+  const view = proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY], 'cloudflare');
   assert.equal(view.showConfigPath, true);
   assert.equal(view.configPathPlaceholder, '/etc/haproxy/bellhop.cfg');
   assert.match(view.configPathHelp ?? '', /\/etc\/haproxy\/bellhop\.cfg/);
@@ -124,14 +124,14 @@ test('proxyFieldView for HAProxy shows the config path (HAProxy default, map-fil
 });
 
 test('proxyFieldView hides the TLS fields for Caddy and for no proxy', () => {
-  assert.equal(proxyFieldView('caddy', DRIVERS).showTlsFields, false);
-  assert.equal(proxyFieldView('none', DRIVERS).showTlsFields, false);
+  assert.equal(proxyFieldView('caddy', DRIVERS, 'cloudflare').showTlsFields, false);
+  assert.equal(proxyFieldView('none', DRIVERS, 'cloudflare').showTlsFields, false);
 });
 
 test('proxyFieldView appends a driver-supplied configPathNote to the config path help', () => {
   const drivers = [{ ...DRIVERS[0], configPathNote: 'Only a section is replaced.' }];
   assert.equal(
-    proxyFieldView('caddy', drivers).configPathHelp,
+    proxyFieldView('caddy', drivers, 'cloudflare').configPathHelp,
     "Overrides the Caddy driver's default config path (/etc/caddy/Caddyfile). Unset: that default. Only a section is replaced.",
   );
 });
@@ -145,7 +145,7 @@ test('proxyFieldView appends a driver-supplied configPathNote to the config path
 // all three fields are hidden.
 test('proxyFieldView hides all three fields for a managed driver with no config file, no status page, and no shared certificate', () => {
   const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null }];
-  const view = proxyFieldView('nodefault', drivers);
+  const view = proxyFieldView('nodefault', drivers, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.configPathHelp, undefined, 'no "required" help text is shown once the field itself is hidden');
   assert.equal(view.showStatusPagePath, false);
@@ -154,7 +154,7 @@ test('proxyFieldView hides all three fields for a managed driver with no config 
 
 test('proxyFieldView hides the config path field for a driver that manages no proxy, even if it reports a default path', () => {
   const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null }];
-  const view = proxyFieldView('odd', drivers);
+  const view = proxyFieldView('odd', drivers, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
 });
@@ -175,7 +175,7 @@ test('proxyFieldView for the Caddy admin-API driver hides the config path and ke
     usesCaddyTls: true,
     configPathNote: null,
   };
-  const view = proxyFieldView('caddy-api', [CADDY_API]);
+  const view = proxyFieldView('caddy-api', [CADDY_API], 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.configPathHelp, undefined);
   assert.equal(view.showStatusPagePath, true);
@@ -201,7 +201,7 @@ const TRAEFIK = {
 };
 
 test('proxyFieldView for Traefik shows the cert resolver and API URL fields, hides the status page and TLS fields', () => {
-  const view = proxyFieldView('traefik', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]);
+  const view = proxyFieldView('traefik', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare');
   assert.equal(view.showConfigPath, true);
   assert.equal(view.configPathPlaceholder, '/etc/traefik/dynamic/bellhop.yml');
   assert.equal(view.showStatusPagePath, false);
@@ -211,21 +211,21 @@ test('proxyFieldView for Traefik shows the cert resolver and API URL fields, hid
 });
 
 test('proxyFieldView hides the cert resolver and API URL fields for every non-Traefik driver', () => {
-  assert.equal(proxyFieldView('caddy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
-  assert.equal(proxyFieldView('caddy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
-  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
-  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
-  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
-  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
-  assert.equal(proxyFieldView('none', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCertResolverField, false);
-  assert.equal(proxyFieldView('none', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showApiUrlField, false);
+  assert.equal(proxyFieldView('caddy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showCertResolverField, false);
+  assert.equal(proxyFieldView('caddy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showApiUrlField, false);
+  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showCertResolverField, false);
+  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showApiUrlField, false);
+  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showCertResolverField, false);
+  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showApiUrlField, false);
+  assert.equal(proxyFieldView('none', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showCertResolverField, false);
+  assert.equal(proxyFieldView('none', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showApiUrlField, false);
 });
 
 test('proxyFieldView hides the cert resolver and API URL fields for an unmanaged or unknown driver', () => {
-  const unmanaged = proxyFieldView('none', DRIVERS);
+  const unmanaged = proxyFieldView('none', DRIVERS, 'cloudflare');
   assert.equal(unmanaged.showCertResolverField, false);
   assert.equal(unmanaged.showApiUrlField, false);
-  const unknown = proxyFieldView('unknown-provider', DRIVERS);
+  const unknown = proxyFieldView('unknown-provider', DRIVERS, 'cloudflare');
   assert.equal(unknown.showCertResolverField, false);
   assert.equal(unknown.showApiUrlField, false);
 });
@@ -236,12 +236,12 @@ test('proxyFieldView hides the cert resolver and API URL fields for an unmanaged
 // whose usesCaddyTls metadata says so (the two Caddy drivers) -- independent
 // of which mode is selected.
 test('proxyFieldView shows showCaddyTlsField only for a driver with usesCaddyTls', () => {
-  assert.equal(proxyFieldView('caddy', DRIVERS).showCaddyTlsField, true);
-  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX]).showCaddyTlsField, false);
-  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY]).showCaddyTlsField, false);
-  assert.equal(proxyFieldView('traefik', [...DRIVERS, NGINX, HAPROXY, TRAEFIK]).showCaddyTlsField, false);
-  assert.equal(proxyFieldView('none', DRIVERS).showCaddyTlsField, false);
-  assert.equal(proxyFieldView('unknown-provider', DRIVERS).showCaddyTlsField, false);
+  assert.equal(proxyFieldView('caddy', DRIVERS, 'cloudflare').showCaddyTlsField, true);
+  assert.equal(proxyFieldView('nginx', [...DRIVERS, NGINX], 'cloudflare').showCaddyTlsField, false);
+  assert.equal(proxyFieldView('haproxy', [...DRIVERS, NGINX, HAPROXY], 'cloudflare').showCaddyTlsField, false);
+  assert.equal(proxyFieldView('traefik', [...DRIVERS, NGINX, HAPROXY, TRAEFIK], 'cloudflare').showCaddyTlsField, false);
+  assert.equal(proxyFieldView('none', DRIVERS, 'cloudflare').showCaddyTlsField, false);
+  assert.equal(proxyFieldView('unknown-provider', DRIVERS, 'cloudflare').showCaddyTlsField, false);
 });
 
 // The certificate/key fields apply to a Caddy driver only while its shown
@@ -251,7 +251,6 @@ test('proxyFieldView shows showCaddyTlsField only for a driver with usesCaddyTls
 // every call site above that never passes one asserting showTlsFields false
 // for Caddy, matching today's only behavior.
 test('proxyFieldView shows the TLS fields for Caddy only while its shown mode is files', () => {
-  assert.equal(proxyFieldView('caddy', DRIVERS).showTlsFields, false, 'default caddyTls arg is cloudflare');
   assert.equal(proxyFieldView('caddy', DRIVERS, 'cloudflare').showTlsFields, false);
   assert.equal(proxyFieldView('caddy', DRIVERS, 'letsencrypt').showTlsFields, false);
   assert.equal(proxyFieldView('caddy', DRIVERS, 'internal').showTlsFields, false);
@@ -261,7 +260,7 @@ test('proxyFieldView shows the TLS fields for Caddy only while its shown mode is
 test('proxyFieldView never shows the TLS fields for Traefik, whatever the Caddy TLS argument', () => {
   const drivers = [...DRIVERS, NGINX, HAPROXY, TRAEFIK];
   assert.equal(proxyFieldView('traefik', drivers, 'files').showTlsFields, false);
-  assert.equal(proxyFieldView('traefik', drivers).showTlsFields, false);
+  assert.equal(proxyFieldView('traefik', drivers, 'cloudflare').showTlsFields, false);
 });
 
 test('caddyTlsOptions labels only the default mode " (default)"', () => {

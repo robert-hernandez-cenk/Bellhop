@@ -100,9 +100,14 @@ Verified live:
 
 `SettingsSchema` only requires `proxyTlsCertificate`/`proxyTlsKey` to start with
 `/`, so a path could contain a space. **Decision**: emit the path bare when it
-contains no whitespace or `"`; otherwise as a Caddyfile double-quoted token with
-`\` and `"` backslash-escaped. Default certbot paths never need quoting, so
-parity fixtures are unaffected.
+contains no whitespace, `"` or `\`; otherwise as a Caddyfile double-quoted token
+with only `"` escaped as `\"`. Live-verified against Caddy v2.10.2 `caddy
+adapt` (final review): inside a double-quoted token `\"` is the only escape --
+`"a\\b"` adapts to two backslashes, `"a\b"` to one -- so a backslash is left
+single, and since a bare token's backslash is not reliable, a backslash alone
+is enough to quote the path. Known residual: a path ending in `\` can't be
+expressed (that backslash would escape the closing quote); not handled.
+Default certbot paths never need quoting, so parity fixtures are unaffected.
 
 ## R7 — Where the mode lives
 
