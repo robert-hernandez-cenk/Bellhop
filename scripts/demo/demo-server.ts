@@ -24,6 +24,7 @@ import { REPO_ROOT } from '../../src/lib/paths.ts';
 import { JobStore } from '../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../src/web/jobs/job-log.ts';
 import { JobRunner } from '../../src/web/jobs/job-runner.ts';
+import { TaskScheduler } from '../../src/web/tasks/scheduler.ts';
 import { buildApp } from '../../src/web/app.ts';
 import { attachJobsWebSocket } from '../../src/web/routes/jobs.ts';
 import type { ImpersonationStore } from '../../src/web/impersonation.ts';
@@ -32,6 +33,7 @@ import { DemoSSHClient } from './demo-ssh.ts';
 import { demoFetch } from './demo-fetch.ts';
 import { seedDemoJobs } from './demo-jobs.ts';
 import { seedDemoAppUpdates } from './demo-app-updates.ts';
+import { seedDemoTaskSchedule } from './demo-tasks.ts';
 
 export interface StartDemoServerOptions {
   // 0 lets the OS pick a free port (the screenshot capture script does this).
@@ -115,6 +117,12 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
     const jobLog = createJobLog(path.join(dataDir, 'job-logs'));
     const jobRunner = new JobRunner(jobStore, jobLog, ssh);
     seedDemoJobs(jobStore, jobLog, jobsDbPath, jobRunner.owner);
+    seedDemoTaskSchedule(jobStore, jobLog, jobsDbPath, inventoryPath, jobRunner.owner);
+
+    // Built so the Tasks page's routes (GET/PATCH /api/tasks, run now) work
+    // in the demo, but start() is deliberately never called -- the demo
+    // must never fire a real scheduled (or startup catch-up) run.
+    const taskScheduler = new TaskScheduler({ inventory, inventoryPath, jobRunner, jobStore });
 
     const impersonationStore: ImpersonationStore = new Map();
     const app = buildApp({
@@ -129,6 +137,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
       impersonationStore,
       goBuilder: demoGoBuilder,
       fetchImpl: demoFetch,
+      taskScheduler,
     });
 
     const outer = express();

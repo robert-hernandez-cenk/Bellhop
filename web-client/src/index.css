@@ -215,6 +215,14 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
    colored like the status badge's own check-missing (var(--error)), shown
    as its own line under the field rather than only the red ✗ badge. */
 .app-check-error { margin-top: 6px; font-size: 13px; color: var(--error); overflow-wrap: anywhere; }
+/* Tasks page (issue #61): a task's own description under its label, the
+   Schedule cell's time input/enabled checkbox/Save button (reuses
+   .actions-cell's flex-wrap row rather than a new layout rule), and a
+   per-row PATCH/run failure shown the same way .app-check-error shows a
+   field-level failure. */
+.task-description { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
+.task-enabled-label { display: flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap; }
+.task-row-error { margin-top: 6px; font-size: 13px; color: var(--error); overflow-wrap: anywhere; }
 .prompt-banner { background: var(--warning); color: #1d1d1f; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
 .prompt-banner-text { font-weight: 600; margin-bottom: 4px; }
 .prompt-banner-hint { font-size: 13px; opacity: 0.8; margin-bottom: 10px; }
@@ -398,6 +406,23 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
   }
   .data-table td.host-detail-cell::before {
     content: none;
+  }
+  /* Tasks page (issue #61): the Task and Schedule cells hold block content
+     (a description line; a time input + checkbox + Save button, plus an
+     optional error line) rather than one right-alignable value -- same
+     "not a single value" case as .host-detail-cell above, except the label
+     itself should still show, stacked above the content instead of beside
+     it. */
+  .data-table td.task-cell {
+    display: block;
+    text-align: start;
+  }
+  .data-table td.task-cell::before {
+    content: attr(data-label);
+    display: block;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
   }
   .app-suggestions { max-height: 50vh; }
   .app-suggestion { padding: 12px; font-size: 15px; }

@@ -25,6 +25,7 @@ import { settingsRoutes } from './routes/settings.ts';
 import { impersonationRoutes } from './routes/impersonation.ts';
 import { networkingRoutes } from './routes/networking.ts';
 import { oidcRoutes } from './routes/oidc.ts';
+import { tasksRoutes } from './routes/tasks.ts';
 
 export interface AppDeps {
   inventory: Inventory;
@@ -108,5 +109,6 @@ export function buildApp(deps: AppDeps): express.Express {
     '/api/oidc',
     oidcRoutes(deps.inventory, deps.inventoryPath, deps.baseSsh, deps.authentik, cloudflare, deps.jobRunner)
   );
+  app.use('/api/tasks', tasksRoutes(deps.taskScheduler));
   return app;
 }

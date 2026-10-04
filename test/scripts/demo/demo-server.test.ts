@@ -82,7 +82,8 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     assert.equal(check.exists, true, `check-app: ${JSON.stringify(check)}`);
 
     const jobs = await get('/api/jobs');
-    assert.equal(jobs.length, 4);
+    // demo-jobs.ts's four, plus demo-tasks.ts's seeded check-app-updates run.
+    assert.equal(jobs.length, 5);
     assert.equal(jobs.filter((j: { status: string }) => j.status === 'failed').length, 1);
     const installJob = jobs.find((j: { command: string }) => j.command === 'install-app');
     assert.ok(installJob, 'expected the seeded install-app job');
@@ -94,6 +95,18 @@ test('demo server answers every screenshotted page request as a signed-in admin,
 
     const jobDetail = await get(`/api/jobs/${installJob.id}`);
     assert.ok(jobDetail.log.includes('install-app completed successfully.'));
+
+    // Issue #61: the Tasks page's scheduler is wired (not started), and its
+    // one task's last run points at demo-tasks.ts's seeded job.
+    const tasks = await get('/api/tasks');
+    assert.equal(tasks.tasks.length, 1);
+    const checkAppUpdatesTask = tasks.tasks[0];
+    assert.equal(checkAppUpdatesTask.id, 'check-app-updates');
+    assert.ok(checkAppUpdatesTask.lastRun, 'expected a seeded last run');
+    assert.equal(checkAppUpdatesTask.lastRun.status, 'success');
+    const taskJob = jobs.find((j: { id: number }) => j.id === checkAppUpdatesTask.lastRun.jobId);
+    assert.ok(taskJob, "expected the task's lastRun.jobId to be one of the seeded jobs");
+    assert.equal(taskJob.command, 'check-app-updates');
 
     await get('/api/maintenance');
     const authGroups = await get('/api/auth-groups');

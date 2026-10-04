@@ -342,3 +342,20 @@ export interface AppUpdateResult {
   message?: string;
   checkedAt: string;
 }
+
+// Mirrors GET /api/tasks's per-task shape (contracts/http-api.md,
+// data-model.md's TaskView) -- issue #61's daily task scheduler. `lastRun`
+// is null when the task has never run; its own `status` is null when that
+// run's job row no longer exists. `nextRun` is null when the task is
+// disabled.
+export interface TaskView {
+  id: string;
+  label: string;
+  description: string;
+  timeOfDay: string;
+  defaultTime: string;
+  enabled: boolean;
+  running: boolean;
+  lastRun: { startedAt: string; jobId: number; status: JobRow['status'] | null } | null;
+  nextRun: string | null;
+}

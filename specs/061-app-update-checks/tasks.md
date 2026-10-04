@@ -128,7 +128,7 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
 
 **Independent Test**: an admin changes the time and presses Run now; a non-admin is refused and sees no nav link.
 
-- [ ] T021 [P] [US3] Write `test/web/routes/tasks.test.ts`:
+- [x] T021 [P] [US3] Write `test/web/routes/tasks.test.ts`:
   - `GET /api/tasks` shape per `contracts/http-api.md`.
   - `PATCH` valid time/enabled → 200 with the new `nextRun`.
   - `25:00` → 400 `timeOfDay must be HH:MM in 24-hour time, e.g. 04:00`, nothing saved.
@@ -138,9 +138,9 @@ Paths are relative to the worktree root, `C:\Users\rcher\Dev\Bellhop-Worktrees\i
   - A second run while active → 409 `App update check is already running (job #N)`.
   - Every route → 403 for a non-admin, and for an admin impersonating a non-admin group.
   - No scheduler wired → 503.
-- [ ] T022 [US3] Implement `src/web/routes/tasks.ts` (`requireAdminGroup`, zod strict body), and mount it at `/api/tasks` in `src/web/app.ts`.
-- [ ] T023 [P] [US3] Write `test/web-client/task-display.test.ts` (`isValidTimeOfDay`, last-run/next-run text, status labels). Extend `test/web-client/admin-nav.test.ts` (or the existing admin-nav test): admin without a directory → Tasks and Settings; with a directory → Users, Permissions, Tasks, Settings; non-admin → none.
-- [ ] T024 [US3] Implement `web-client/src/lib/task-display.ts`, add the Tasks link in `web-client/src/lib/admin-nav.ts`, create `web-client/src/pages/TasksPage.tsx` (`.data-table` with `data-label` cells: Task, Schedule (time input, enabled checkbox, Save), Last run (status and link to `/jobs/:id`), Next run, Run now → navigate to the job; inline errors), add the `/tasks` route in `web-client/src/App.tsx`, add the `TaskView` type in `web-client/src/api/types.ts`, and add any styles in `web-client/src/index.css`.
+- [x] T022 [US3] Implement `src/web/routes/tasks.ts` (`requireAdminGroup`, zod strict body), and mount it at `/api/tasks` in `src/web/app.ts`.
+- [x] T023 [P] [US3] Write `test/web-client/task-display.test.ts` (`isValidTimeOfDay`, last-run/next-run text, status labels). Extend `test/web-client/admin-nav.test.ts` (or the existing admin-nav test): admin without a directory → Tasks and Settings; with a directory → Users, Permissions, Tasks, Settings; non-admin → none.
+- [x] T024 [US3] Implement `web-client/src/lib/task-display.ts`, add the Tasks link in `web-client/src/lib/admin-nav.ts`, create `web-client/src/pages/TasksPage.tsx` (`.data-table` with `data-label` cells: Task, Schedule (time input, enabled checkbox, Save), Last run (status and link to `/jobs/:id`), Next run, Run now → navigate to the job; inline errors), add the `/tasks` route in `web-client/src/App.tsx`, add the `TaskView` type in `web-client/src/api/types.ts`, and add any styles in `web-client/src/index.css`.
 
 ---
 

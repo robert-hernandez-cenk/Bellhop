@@ -10,6 +10,7 @@ import { JobView } from './pages/JobView';
 import { UsersPage } from './pages/UsersPage';
 import { PermissionsPage } from './pages/PermissionsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { TasksPage } from './pages/TasksPage';
 import { NetworkingPage } from './pages/NetworkingPage';
 import { ThemeProvider } from './lib/theme';
 import { WhoAmIProvider, useWhoAmI } from './lib/whoami';
@@ -39,6 +40,7 @@ function AppShell() {
           <Route path="/jobs/:id" element={<JobView />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/permissions" element={<PermissionsPage />} />
+          <Route path="/tasks" element={<TasksPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
