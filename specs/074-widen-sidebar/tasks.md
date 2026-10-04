@@ -25,10 +25,10 @@ None.
 
 **Independent Test**: quickstart.md steps 1-4.
 
-- [ ] T001 [US1] In `web-client/src/index.css`, change the desktop `.sidebar` rule from `width: 200px` to `width: 220px` and add `flex-shrink: 0` (research R2, R3); leave the 640px media query's `.sidebar` rule untouched
-- [ ] T002 [US1] In `web-client/src/index.css`, add `white-space: nowrap; overflow: hidden; text-overflow: ellipsis;` to the existing `.sidebar a` rule (research R3)
-- [ ] T003 [US1] Update the "static 200px column" sentence in the "Web UI responsiveness/theming" bullet of `CLAUDE.md` to describe the 220px column whose links never wrap (truncating with an ellipsis)
-- [ ] T004 [US1] Rebuild (`npm run web:build`) and run quickstart.md steps 1-4 against `npm run demo` at a 1920x1080 window: sidebar 220px, no link taller than one line, no scroll bar with the admin nav simulated, still one line when the window is short enough to scroll, no horizontal page scroll at 1280px
+- [x] T001 [US1] In `web-client/src/index.css`, change the desktop `.sidebar` rule from `width: 200px` to `width: 220px` and add `flex-shrink: 0` (research R2, R3); leave the 640px media query's `.sidebar` rule untouched
+- [x] T002 [US1] In `web-client/src/index.css`, add `white-space: nowrap; overflow: hidden; text-overflow: ellipsis;` to the existing `.sidebar a` rule (research R3)
+- [x] T003 [US1] Update the "static 200px column" sentence in the "Web UI responsiveness/theming" bullet of `CLAUDE.md` to describe the 220px column whose links never wrap (truncating with an ellipsis)
+- [x] T004 [US1] Rebuild (`npm run web:build`) and run quickstart.md steps 1-4 against `npm run demo` at a 1920x1080 window: sidebar 220px, no link taller than one line, no scroll bar with the admin nav simulated, still one line when the window is short enough to scroll, no horizontal page scroll at 1280px
 
 **Checkpoint**: US1 complete and verified.
 
@@ -38,7 +38,7 @@ None.
 
 **Independent Test**: quickstart.md step 5.
 
-- [ ] T005 [US2] Run quickstart.md step 5 at a 390px-wide viewport against `npm run demo` (built from T001-T002's `web-client/src/index.css`): drawer 240px wide, every link on one line, backdrop tap closes it
+- [x] T005 [US2] Run quickstart.md step 5 at a 390px-wide viewport against `npm run demo` (built from T001-T002's `web-client/src/index.css`): drawer 240px wide, every link on one line, backdrop tap closes it
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
