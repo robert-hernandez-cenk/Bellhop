@@ -88,9 +88,9 @@ Already done in Stage 1: worktree, `npm install`, baseline `npm run typecheck` a
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T018 Update `CLAUDE.md`'s "Shared operations layer" bullet: replace "the ordering that avoids the `withCapturedConsole` deadlock" with the current reason (preview logged at the top of the job log), and add one sentence that console captures are isolated by async context while `JobRunner` keeps jobs one at a time with its own queue. Update the `src/web/proxy-sync.ts` comment only if its wording is now wrong (it says provisioning-job callers run inside `withCapturedConsole`, which stays true).
-- [ ] T019 Run `npm run typecheck`, `npm test`, and `npm run web:build` in the worktree; paste the summaries.
-- [ ] T020 Quickstart manual check (`specs/078-job-queue-capture/quickstart.md`): only if the demo instance has an action slow enough to observe; otherwise record that the automated tests are the evidence.
+- [x] T018 Update `CLAUDE.md`'s "Shared operations layer" bullet: replace "the ordering that avoids the `withCapturedConsole` deadlock" with the current reason (preview logged at the top of the job log), and add one sentence that console captures are isolated by async context while `JobRunner` keeps jobs one at a time with its own queue. Update the `src/web/proxy-sync.ts` comment only if its wording is now wrong (it says provisioning-job callers run inside `withCapturedConsole`, which stays true) -- checked; it's still accurate (unchanged).
+- [x] T019 Run `npm run typecheck`, `npm test`, and `npm run web:build` in the worktree; paste the summaries. All green: typecheck clean; `npm test` 2795 tests, 2793 pass, 2 skipped, 0 fail; `npm run web:build` built successfully (tsc -b && vite build, 86 modules).
+- [x] T020 Quickstart manual check (`specs/078-job-queue-capture/quickstart.md`): **not run**. The demo instance was not started per the task's instructions (the demo's simulated SSH client answers instantly, so no provisioning action in it is slow enough to actually observe a job sitting `queued` behind a `running` one). The automated evidence stands in for it: `test/operations/core.test.ts`'s T016 test (gate-controlled, deterministic) proves `previewAndEnqueue` for a second operation resolves with its preview and a `queued` job row while a first job is still `running`, and `test/web/jobs/job-runner.test.ts`'s US2 tests prove a cancelled queued job never runs and does not hold up the next one.
 
 ---
 

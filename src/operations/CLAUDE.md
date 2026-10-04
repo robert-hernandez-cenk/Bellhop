@@ -8,7 +8,7 @@ The shared operations layer (`src/operations/`, #16): the one implementation of 
 - The web routes (`provisioning.ts`, `maintenance.ts`, and the Dashboard's guest PATCH via `src/operations/edit-guest.ts`) are thin adapters that keep only HTTP, permission, and attribution concerns.
 - Field builders in `src/operations/fields.ts` accept both the web form's string encoding (`'4'`, `'true'`, `''`) and typed JSON, so one shape serves both front ends.
 - A new web form field must also be added to its operation's `shape`, or schema parsing strips it. `test/operations/provisioning.test.ts` checks this for every `PROVISIONING_COMMANDS` field.
-- `previewAndEnqueue` (`src/operations/core.ts`) is the single implementation of "preview outside the job, then enqueue with the preview logged at the top": the ordering that avoids the `withCapturedConsole` deadlock.
+- `previewAndEnqueue` (`src/operations/core.ts`) is the single implementation of "preview outside the job, then enqueue with the preview logged at the top": the caller gets the preview back immediately, invalid input fails before any job row exists, and the preview is the first thing in the job's log. Console captures are isolated by async context (`src/web/console-capture.ts`) and `JobRunner` runs its jobs one at a time through its own per-runner queue (`src/web/jobs/job-runner.ts`), so a second action is accepted right away while a first job is still running; only the job itself waits its turn. A queued job's preview (and, for a `resolvesApp` operation, its pinned custom-repository commit) is therefore computed when it is queued, which may be well before it runs (issue #78).
 
 ### Pin-once source resolution (`resolvesApp`)
 
