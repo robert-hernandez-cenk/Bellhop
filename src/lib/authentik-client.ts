@@ -2,6 +2,7 @@ import type { AuthentikConfig } from './authentik-config.ts';
 import { authentikConfig } from './authentik-config.ts';
 import { configValue } from './config.ts';
 import { liveClient } from './live-client.ts';
+import { settingFix } from './settings-hint.ts';
 
 export interface AuthentikUser {
   id: string;
@@ -1002,7 +1003,11 @@ export class RealAuthentikClient implements AuthentikClient {
   }
 }
 
-export const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
+// Names the two settings and the Settings page (issue #64), the same shape
+// as npm-client.ts's NPM_UNCONFIGURED_MESSAGE.
+export const UNCONFIGURED_MESSAGE =
+  `Authentik API not configured -- set authentikApiUrl (${settingFix('authentikApiUrl', '<https://authentik.example.com>')}) ` +
+  `and authentikApiToken (${settingFix('authentikApiToken')})`;
 
 // Null-object fallback used when AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN
 // aren't set -- routes always get a real AuthentikClient instance to call,

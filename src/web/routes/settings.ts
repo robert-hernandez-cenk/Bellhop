@@ -15,8 +15,15 @@ import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
 import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
 import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
-import { configValueAt, type ConfigSource } from '../../lib/config.ts';
-import { SETTING_DEFS, type ConfigKey } from '../../lib/settings-defs.ts';
+import { clearSecret, configValueAt, writeSecret, type ConfigSource } from '../../lib/config.ts';
+import {
+  SECRET_SETTINGS_KEYS,
+  SETTING_DEFS,
+  isSecretSettingKey,
+  settingSchema,
+  type ConfigKey,
+  type SecretSettingKey,
+} from '../../lib/settings-defs.ts';
 
 // The keys an environment variable can override (issue #64): every moved
 // setting and every secret. Any other SETTINGS_KEYS entry lives only in the
@@ -27,7 +34,7 @@ function isConfigKey(key: string): key is ConfigKey {
 
 // The 400 a web write gets for a key its environment variable pins
 // (contracts/settings-api.md). Exported for its test: the no-file form only
-// applies to githubApiToken, a secret the PATCH route doesn't accept yet.
+// applies to githubApiToken, the one secret that never had a data/ file.
 export function envPinnedError(key: ConfigKey): string {
   const { envVar, envFile } = SETTING_DEFS[key];
   const where = envFile === undefined ? '' : ` (or remove it from data/${envFile})`;
@@ -63,6 +70,18 @@ function environmentPins(inventoryPath: string): Record<string, { variable: stri
     pins[key] = def.secret ? { variable: def.envVar } : { variable: def.envVar, value: effective.value };
   }
   return pins;
+}
+
+// Whether each secret has an effective value and where it comes from --
+// never the value, nor any part of it (issue #64, research R10). Read with
+// this route's own inventoryPath, like settingSources.
+function secretStatus(inventoryPath: string): Record<SecretSettingKey, { set: boolean; source: ConfigSource }> {
+  const status = {} as Record<SecretSettingKey, { set: boolean; source: ConfigSource }>; // safe: filled for every key below
+  for (const key of SECRET_SETTINGS_KEYS) {
+    const effective = configValueAt(inventoryPath, key);
+    status[key] = { set: effective.value !== undefined, source: effective.source };
+  }
+  return status;
 }
 
 function currentSettings(inv: Inventory): Settings {
@@ -132,6 +151,7 @@ function settingsResponse(inv: Inventory, inventoryPath: string) {
     // an environment variable currently pins.
     sources: settingSources(inv, inventoryPath),
     environment: environmentPins(inventoryPath),
+    secrets: secretStatus(inventoryPath),
   };
 }
 
@@ -145,7 +165,11 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
 
   router.patch('/', (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const unknown = Object.keys(body).filter((k) => !(SETTINGS_KEYS as string[]).includes(k));
+    // One unknown-key check over both lists (issue #64): a body may mix
+    // non-secret settings and secrets.
+    const unknown = Object.keys(body).filter(
+      (k) => !(SETTINGS_KEYS as string[]).includes(k) && !isSecretSettingKey(k)
+    );
     if (unknown.length > 0) {
       res.status(400).json({ error: `Unknown setting(s): ${unknown.join(', ')}` });
       return;
@@ -153,16 +177,32 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
 
     // null (or '') clears a setting; any other value must satisfy the same
     // schema set-config validates against, so both paths reject identically.
+    // Every key is validated before anything is written. An error names the
+    // key and the schema's fixed message, never the value: a secret pasted
+    // into the wrong field must not come back in a response.
     const updates: Partial<Settings> = {};
-    for (const [rawKey, value] of Object.entries(body)) {
-      const key = rawKey as keyof Settings;
-      if (value === null || value === '') {
-        updates[key] = undefined;
+    const secretUpdates = new Map<SecretSettingKey, string | undefined>();
+    for (const [rawKey, raw] of Object.entries(body)) {
+      const value = raw === null || raw === '' ? undefined : raw;
+      if (value !== undefined && typeof value !== 'string') {
+        res.status(400).json({ error: `${rawKey} must be a string or null` });
+        return;
+      }
+      if (isSecretSettingKey(rawKey)) {
+        if (value !== undefined) {
+          const parsed = settingSchema(rawKey).safeParse(value);
+          if (!parsed.success) {
+            res.status(400).json({ error: parsed.error.issues.map((i) => `${rawKey}: ${i.message}`).join('\n') });
+            return;
+          }
+        }
+        secretUpdates.set(rawKey, value);
         continue;
       }
-      if (typeof value !== 'string') {
-        res.status(400).json({ error: `${key} must be a string or null` });
-        return;
+      const key = rawKey as keyof Settings; // safe: the unknown-key check above admitted only SETTINGS_KEYS and secrets
+      if (value === undefined) {
+        updates[key] = undefined;
+        continue;
       }
       const parsed = SettingsSchema.safeParse({ [key]: value });
       if (!parsed.success) {
@@ -188,8 +228,16 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       // Partial<Settings> rather than Record<string, ...> so this spread
       // still produces something assignable to Inventory. An explicitly
       // undefined property is what clears the row in saveInventory.
-      const onDisk = loadInventory(inventoryPath);
-      saveInventory(inventoryPath, { ...onDisk, ...updates });
+      if (Object.keys(updates).length > 0) {
+        const onDisk = loadInventory(inventoryPath);
+        saveInventory(inventoryPath, { ...onDisk, ...updates });
+      }
+      // Secrets never pass through saveInventory: they live only in the
+      // secret_settings table (research R1).
+      for (const [key, value] of secretUpdates) {
+        if (value === undefined) clearSecret(inventoryPath, key);
+        else writeSecret(inventoryPath, key, value);
+      }
     } catch (err) {
       // Everything the request body itself could get wrong (unknown key,
       // wrong type, schema validation) is already rejected with 400 above

@@ -16,6 +16,8 @@ import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { SETTINGS_KEYS } from '../../../src/lib/inventory.ts';
 import { SECRET_SETTINGS_KEYS } from '../../../src/lib/settings-defs.ts';
 import { envPinnedError } from '../../../src/web/routes/settings.ts';
+import Database from 'better-sqlite3';
+import { configValueAt, writeSecret } from '../../../src/lib/config.ts';
 
 function baseInventory(): Inventory {
   return {
@@ -583,4 +585,108 @@ test('an admin impersonating a non-admin group gets 403 on GET and PATCH /api/se
   const patch = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '10.0.0.5' });
   assert.equal(patch.status, 403);
   assert.equal(loadInventory(inventoryPath).nfsServer, undefined);
+});
+
+// -- Issue #64 US2: secrets are write-only ------------------------------------
+
+// Reads the two tables directly, so a test can prove where a secret landed
+// without going through the accessor.
+function storedRows(inventoryPath: string): { meta: string[]; secrets: Record<string, string> } {
+  const db = new Database(inventoryPath, { readonly: true });
+  try {
+    const meta = (db.prepare('SELECT key FROM meta').all() as { key: string }[]).map((r) => r.key);
+    const secrets = Object.fromEntries(
+      (db.prepare('SELECT key, value FROM secret_settings').all() as { key: string; value: string }[]).map((r) => [r.key, r.value])
+    );
+    return { meta, secrets };
+  } finally {
+    db.close();
+  }
+}
+
+test('GET /api/settings reports every secret as { set, source } and never its value', async () => {
+  await withEnv({ GITHUB_API_TOKEN: 'example-github-ENV-MARKER' }, async () => {
+    const { app, inventoryPath } = testApp();
+    writeSecret(inventoryPath, 'authentikApiToken', 'example-authentik-STORED-MARKER');
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.secrets, {
+      authentikApiToken: { set: true, source: 'settings' },
+      cloudflareDnsApiToken: { set: false, source: 'none' },
+      npmApiPassword: { set: false, source: 'none' },
+      githubApiToken: { set: true, source: 'environment' },
+    });
+    const body = JSON.stringify(res.body);
+    assert.ok(!body.includes('STORED-MARKER') && !body.includes('ENV-MARKER'), 'no secret value in the response');
+  });
+});
+
+test('PATCH /api/settings stores a secret in secret_settings, not meta, and returns no value', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ cloudflareDnsApiToken: 'example-cf-PATCH-MARKER' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.secrets.cloudflareDnsApiToken, { set: true, source: 'settings' });
+  assert.ok(!JSON.stringify(res.body).includes('PATCH-MARKER'));
+  const rows = storedRows(inventoryPath);
+  assert.equal(rows.secrets.cloudflareDnsApiToken, 'example-cf-PATCH-MARKER');
+  assert.ok(!rows.meta.includes('cloudflareDnsApiToken'));
+  assert.equal(configValueAt(inventoryPath, 'cloudflareDnsApiToken', {}).value, 'example-cf-PATCH-MARKER');
+});
+
+test('PATCH /api/settings clears a secret with null or an empty string', async () => {
+  const { app, inventoryPath } = testApp();
+  writeSecret(inventoryPath, 'npmApiPassword', 'example npm password');
+  writeSecret(inventoryPath, 'githubApiToken', 'example-github-token');
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ npmApiPassword: null, githubApiToken: '' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.secrets.npmApiPassword, { set: false, source: 'none' });
+  assert.deepEqual(res.body.secrets.githubApiToken, { set: false, source: 'none' });
+  assert.deepEqual(storedRows(inventoryPath).secrets, {});
+});
+
+test('PATCH /api/settings writes a secret and a non-secret key from the same body', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    nfsServer: '192.0.2.5',
+    authentikApiToken: 'example-authentik-token',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.nfsServer, '192.0.2.5');
+  assert.deepEqual(res.body.secrets.authentikApiToken, { set: true, source: 'settings' });
+  assert.equal(loadInventory(inventoryPath).nfsServer, '192.0.2.5');
+});
+
+test('PATCH /api/settings rejects an invalid secret naming the key, never the value, and writes nothing', async () => {
+  const { app, inventoryPath } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({
+    nfsServer: '192.0.2.5',
+    githubApiToken: 'example token INVALID-MARKER',
+  });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error, 'githubApiToken: must not contain whitespace');
+  assert.ok(!JSON.stringify(res.body).includes('INVALID-MARKER'));
+  assert.equal(loadInventory(inventoryPath).nfsServer, undefined, 'the valid key in the same request is not written');
+  assert.deepEqual(storedRows(inventoryPath).secrets, {});
+});
+
+test('PATCH /api/settings rejects a non-string secret', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ npmApiPassword: 12345 });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error, 'npmApiPassword must be a string or null');
+});
+
+test('PATCH /api/settings refuses an env-pinned secret, and writes nothing', async () => {
+  await withEnv({ CLOUDFLARE_DNS_API_TOKEN: 'example-cf-ENV-MARKER' }, async () => {
+    const { app, inventoryPath } = testApp();
+    const res = await asAdmin(request(app).patch('/api/settings')).send({
+      nfsServer: '192.0.2.5',
+      cloudflareDnsApiToken: 'example-cf-stored',
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, envPinnedError('cloudflareDnsApiToken'));
+    assert.ok(!JSON.stringify(res.body).includes('ENV-MARKER'));
+    assert.deepEqual(storedRows(inventoryPath).secrets, {});
+    assert.equal(loadInventory(inventoryPath).nfsServer, undefined);
+  });
 });

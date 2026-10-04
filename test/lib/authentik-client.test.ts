@@ -11,7 +11,10 @@ import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
 import { writeSecret } from '../../src/lib/config.ts';
 import { saveInventory, loadInventory } from '../../src/lib/inventory.ts';
 
-const UNCONFIGURED_MESSAGE = 'Authentik API not configured (set AUTHENTIK_API_URL and AUTHENTIK_API_TOKEN)';
+// Issue #64: names the two settings and the Settings page, not an env file.
+const UNCONFIGURED_MESSAGE =
+  "Authentik API not configured -- set authentikApiUrl (run: bellhop set-config authentikApiUrl <https://authentik.example.com> --apply, or set it on the web UI's Settings page) " +
+  "and authentikApiToken (run: bellhop set-config authentikApiToken --stdin --apply, or set it on the web UI's Settings page)";
 
 // Redacted captures from a live Authentik 2026.8.2 instance (issue #22,
 // research.md R4) -- see test/fixtures/authentik/ and specs/010-oidc-mobile-

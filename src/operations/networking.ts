@@ -72,6 +72,10 @@ export const NETWORKING_OPERATIONS: Record<string, Operation> = {
     category: 'maintenance',
     description: `Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')}).`,
     shape: {
+      // SETTINGS_KEYS only, never a secret key (issue #64, research R10):
+      // runSetConfig would accept one, but over MCP its value would land in
+      // the job's persisted argsJson. Secrets are set from the CLI (--stdin)
+      // or the Settings page.
       key: z.enum(SETTINGS_KEYS as [string, ...string[]]).describe('Setting name'),
       // Deliberately not optStr: an empty string reaches SettingsSchema and is
       // rejected, same as the CLI. Clearing is unset: true.
@@ -88,7 +92,12 @@ export const NETWORKING_OPERATIONS: Record<string, Operation> = {
       const result = runSetConfig({ ...(i as any), apply: true }, deps);
       // runSetConfig only writes disk; keep the shared in-memory copy current.
       refreshInventory(deps.inventory, deps.inventoryPath);
-      console.log(result.value === undefined ? `Cleared ${result.key}` : `Set ${result.key} to ${result.value}`);
+      // result.value is never a secret's -- and the key enum above holds only
+      // non-secret keys anyway (issue #64), so a secret can never reach this
+      // job's argsJson or its log.
+      console.log(
+        result.cleared ? `Cleared ${result.key}` : result.secret ? `Set ${result.key}` : `Set ${result.key} to ${result.value}`
+      );
     },
   },
 };

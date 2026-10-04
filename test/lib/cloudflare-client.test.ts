@@ -51,10 +51,10 @@ test('UnconfiguredCloudflareClient reports unconfigured and rejects every call',
   await assert.rejects(client.deleteDnsRecord('z', 'r'), { message: CLOUDFLARE_UNCONFIGURED_MESSAGE });
 });
 
-test('CLOUDFLARE_UNCONFIGURED_MESSAGE names the env var and the file', () => {
+test('CLOUDFLARE_UNCONFIGURED_MESSAGE names the setting and the Settings page (issue #64)', () => {
   assert.equal(
     CLOUDFLARE_UNCONFIGURED_MESSAGE,
-    'Cloudflare API not configured (set CLOUDFLARE_DNS_API_TOKEN in data/cloudflare-api.env)'
+    "Cloudflare API not configured -- set cloudflareDnsApiToken (run: bellhop set-config cloudflareDnsApiToken --stdin --apply, or set it on the web UI's Settings page)"
   );
 });
 

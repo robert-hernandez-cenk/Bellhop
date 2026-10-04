@@ -15,7 +15,9 @@ import { runCheckAppUpdates, formatCheckAppUpdates } from './commands/maintenanc
 import { runGuestPower } from './commands/maintenance/guest-power.ts';
 import { runSyncSshKeys, formatSyncSshKeysResult } from './commands/maintenance/sync-ssh-keys.ts';
 import { runPushSshKey, formatPushSshKeyResult } from './commands/maintenance/push-ssh-key.ts';
-import { runSetConfig } from './commands/maintenance/set-config.ts';
+import { runSetConfig, resolveSetConfigValue } from './commands/maintenance/set-config.ts';
+import { promptHidden, readAllStdin } from './lib/secret-input.ts';
+import { SECRET_SETTINGS_KEYS } from './lib/settings-defs.ts';
 import { runBackfillGuestCreators, formatBackfillGuestCreators } from './commands/maintenance/backfill-guest-creators.ts';
 import { JobStore } from './web/jobs/job-store.ts';
 import { runSyncProxy } from './commands/networking/sync-proxy.ts';
@@ -151,18 +153,37 @@ program
 
 program
   .command('set-config')
-  .description(`Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')})`)
+  .description(
+    `Set or clear one inventory-wide setting (${SETTINGS_KEYS.join(', ')}) or secret ` +
+      `(${SECRET_SETTINGS_KEYS.join(', ')}; read from --stdin or a no-echo prompt, never an argument)`
+  )
   .argument('<key>', 'the setting to change')
-  .argument('[value]', 'the new value (omit with --unset)')
+  .argument('[value]', 'the new value (omit with --unset or --stdin; never given for a secret)')
+  .option('--stdin', 'read the value from standard input (one trailing newline is stripped)')
   .option('--unset', 'clear the setting instead of setting it')
   .option('--apply', 'write the change (default: dry run)')
   .action(
-    action(async (key: string, value: string | undefined, opts: { unset?: boolean; apply?: boolean }) => {
-      const invPath = inventoryPath();
-      const result = runSetConfig({ key, value, ...opts }, { inventoryPath: invPath });
-      if (!result.applied) return;
-      logInfo(result.value === undefined ? `Cleared ${result.key} in ${invPath}` : `Set ${result.key} to ${result.value} in ${invPath}`);
-    })
+    action(
+      async (key: string, rawValue: string | undefined, opts: { stdin?: boolean; unset?: boolean; apply?: boolean }) => {
+        const invPath = inventoryPath();
+        // A secret arrives on stdin or through a no-echo prompt (issue #64);
+        // resolveSetConfigValue refuses one given as an argument.
+        const value = await resolveSetConfigValue(
+          { key, value: rawValue, stdin: opts.stdin, unset: opts.unset },
+          { isTTY: process.stdin.isTTY === true, readStdin: () => readAllStdin(), prompt: (q) => promptHidden(q) }
+        );
+        const result = runSetConfig({ key, value, unset: opts.unset, apply: opts.apply }, { inventoryPath: invPath });
+        if (!result.applied) return;
+        // result.value is never a secret's (runSetConfig leaves it undefined).
+        logInfo(
+          result.cleared
+            ? `Cleared ${result.key} in ${invPath}`
+            : result.secret
+              ? `Set ${result.key} in ${invPath}`
+              : `Set ${result.key} to ${result.value} in ${invPath}`
+        );
+      }
+    )
   );
 
 program

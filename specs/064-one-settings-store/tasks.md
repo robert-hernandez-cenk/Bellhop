@@ -73,13 +73,13 @@ next request's `isAdminUser` uses it; with `AUTHENTIK_ADMIN_GROUP` set, the API 
 
 **Independent test**: set every secret to a unique marker; search every output for it (T024).
 
-- [ ] T021 [P] [US2] Tests in test/web/routes/settings.test.ts: GET `secrets` reports `{ set, source }` only; PATCH a secret stores it in `secret_settings` (not `meta`), returns no value, `null`/`''` clears; schema failure message has no value; env-pinned secret refused
-- [ ] T022 [US2] Implement secret handling in src/web/routes/settings.ts (`writeSecret`/`clearSecret`, combined unknown-key check over both key lists)
-- [ ] T023 [P] [US2] Tests in test/commands/set-config.test.ts and test/cli.test.ts: positional secret refused with the contract message; `--stdin` accepted (one trailing newline stripped, empty refused); no value + non-TTY + no `--stdin` refused; dry run prints `Would set <key> (value hidden)`; apply logs `Set <key> in <path>`; value never in any captured output; `--unset` clears
-- [ ] T024 [US2] Implement in src/commands/maintenance/set-config.ts (secret branch writes via `writeSecret`/`clearSecret`) and src/cli.ts (`--stdin`, no-echo TTY prompt, never logs a secret)
-- [ ] T025 [P] [US2] Test in test/mcp/build-server.test.ts: the `set_config` tool's key enum excludes every secret key, and no tool output contains a stored secret marker
-- [ ] T026 [US2] Leak test test/lib/secret-leak.test.ts: seed every secret with a unique marker in a temp store, then assert the marker is absent from GET/PATCH `/api/settings` bodies, `loadInventory` result and its YAML (`stringify`), `runRenderStatusPage` HTML (FakeSSHClient history), a job's `argsJson`/log for a `set-config` MCP job, and captured `logInfo`/`logWarn` output during import and settings writes
-- [ ] T027 [US2] Confirm `src/operations/networking.ts`'s `set-config` key enum stays `SETTINGS_KEYS` (non-secret only) and its apply log never prints a secret
+- [X] T021 [P] [US2] Tests in test/web/routes/settings.test.ts: GET `secrets` reports `{ set, source }` only; PATCH a secret stores it in `secret_settings` (not `meta`), returns no value, `null`/`''` clears; schema failure message has no value; env-pinned secret refused
+- [X] T022 [US2] Implement secret handling in src/web/routes/settings.ts (`writeSecret`/`clearSecret`, combined unknown-key check over both key lists)
+- [X] T023 [P] [US2] Tests in test/commands/set-config.test.ts and test/cli.test.ts: positional secret refused with the contract message; `--stdin` accepted (one trailing newline stripped, empty refused); no value + non-TTY + no `--stdin` refused; dry run prints `Would set <key> (value hidden)`; apply logs `Set <key> in <path>`; value never in any captured output; `--unset` clears
+- [X] T024 [US2] Implement in src/commands/maintenance/set-config.ts (secret branch writes via `writeSecret`/`clearSecret`) and src/cli.ts (`--stdin`, no-echo TTY prompt, never logs a secret)
+- [X] T025 [P] [US2] Test in test/mcp/build-server.test.ts: the `set_config` tool's key enum excludes every secret key, and no tool output contains a stored secret marker
+- [X] T026 [US2] Leak test test/lib/secret-leak.test.ts: seed every secret with a unique marker in a temp store, then assert the marker is absent from GET/PATCH `/api/settings` bodies, `loadInventory` result and its YAML (`stringify`), `runRenderStatusPage` HTML (FakeSSHClient history), a job's `argsJson`/log for a `set-config` MCP job, and captured `logInfo`/`logWarn` output during import and settings writes
+- [X] T027 [US2] Confirm `src/operations/networking.ts`'s `set-config` key enum stays `SETTINGS_KEYS` (non-secret only) and its apply log never prints a secret
 
 **Checkpoint**: US2 complete.
 

@@ -343,6 +343,14 @@ export interface SettingsResponse {
   // carries only its variable name, never a value.
   sources: Record<string, SettingSource>;
   environment: Record<string, { variable: string; value?: string }>;
+  // Each secret's status only -- the API never returns a secret's value.
+  secrets: Record<SecretSettingKey, SecretStatus>;
+}
+
+export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken';
+export interface SecretStatus {
+  set: boolean;
+  source: SettingSource;
 }
 
 export type SettingSource = 'environment' | 'settings' | 'none';

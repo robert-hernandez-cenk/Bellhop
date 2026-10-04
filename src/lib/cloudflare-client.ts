@@ -1,5 +1,6 @@
 import { configValue } from './config.ts';
 import { liveClient } from './live-client.ts';
+import { settingFix } from './settings-hint.ts';
 
 // Cloudflare REST access for prune-acme-challenges (issue #162). Modeled on
 // authentik-client.ts: an interface, a real fetch-backed implementation, and
@@ -8,8 +9,9 @@ import { liveClient } from './live-client.ts';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 
-export const CLOUDFLARE_UNCONFIGURED_MESSAGE =
-  'Cloudflare API not configured (set CLOUDFLARE_DNS_API_TOKEN in data/cloudflare-api.env)';
+// Names the setting and the Settings page (issue #64) rather than the
+// data/cloudflare-api.env file it used to come from.
+export const CLOUDFLARE_UNCONFIGURED_MESSAGE = `Cloudflare API not configured -- set cloudflareDnsApiToken (${settingFix('cloudflareDnsApiToken')})`;
 
 // Applied to every request via AbortSignal.timeout(): syncProxyLive awaits
 // this client inside the Dashboard guest-PATCH handler, so a Cloudflare
