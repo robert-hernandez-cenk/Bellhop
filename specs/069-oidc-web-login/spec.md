@@ -127,7 +127,7 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 - `WEB_UI_DEV_USER` set (dev/test only) still supplies an identity when no session is present, in either mode's place as today; it must never be set in production.
 - Expired sessions and login attempts are removed, so the store does not grow without bound.
 - The provider rotates refresh tokens on use, so two concurrent re-checks of one session with the same token would make the second fail and wrongly end the session; re-checks of one session are therefore shared.
-- A provider that returns no refresh token at sign-in: the session cannot be re-checked, so it is refused at its first re-check point and the user signs in again (logged as a configuration problem naming the missing `offline_access`/refresh-token support).
+- A provider that returns no refresh token at sign-in: no session is created, because it could never be re-checked; the sign-in failure page and a log line name the missing `offline_access` scope mapping and its fix (`sync-authentik --apply`).
 - A re-check that returns a different `sub` than the session's: treated as a refusal.
 
 ## Requirements *(mandatory)*
