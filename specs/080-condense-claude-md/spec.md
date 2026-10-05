@@ -98,7 +98,7 @@ Every rule, invariant, gotcha, rationale, and named file or function in the orig
 - **FR-006**: A topic spanning several subsystems MUST have exactly one primary home. Other affected subsystem files point to it rather than duplicating it.
 - **FR-007**: All relative links and heading anchors in the root file, `CONTRIBUTING.md`, `README.md`, and `docs/` MUST still resolve.
 - **FR-008**: `CONTRIBUTING.md` MUST stay consistent with any convention it restates. The constitution's reference to recording bash exceptions in `CLAUDE.md` MUST stay true.
-- **FR-009**: The change MUST NOT modify source code, tests, or user documentation, except to fix links that FR-007 requires.
+- **FR-009**: The change MUST NOT modify source code or tests. User documentation (`README.md`, `docs/`, `CONTRIBUTING.md`) changes ONLY where it describes or links to `CLAUDE.md` content and would otherwise become inaccurate.
 - **FR-010**: All guidance files MUST use example values only, per constitution Principle I.
 
 ### Key Entities
