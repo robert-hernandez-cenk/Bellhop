@@ -53,6 +53,13 @@ export class SessionService {
     });
   }
 
+  // A session no browser cookie will ever name (#65/#66): an MCP sign-in's
+  // identity, kept for its re-checks. Only the hash is returned -- the raw
+  // id is dropped here, so nothing anywhere can present it as a cookie.
+  createDetached(identity: LoginIdentity): string {
+    return hashId(this.create(identity));
+  }
+
   // Sign-out. Returns the deleted session (its idToken is the end-session
   // hint), or undefined if there was none.
   destroy(rawId: string): SessionRecord | undefined {
@@ -64,20 +71,26 @@ export class SessionService {
   // The signed-in user for a raw cookie value, or undefined when the
   // session is unknown, past 30 days, or refused on re-check.
   async resolve(rawId: string): Promise<AuthUser | undefined> {
-    const session = this.store.getSession(rawId);
+    if (rawId === '') return undefined;
+    return this.resolveHash(hashId(rawId));
+  }
+
+  // The same by the stored key, for an MCP grant (#65/#66), which holds only
+  // the hash. Shares the single-flight map, which was already keyed by hash.
+  async resolveHash(key: string): Promise<AuthUser | undefined> {
+    const session = this.store.getSessionByHash(key);
     if (!session) return undefined;
     if (!this.store.checkDue(session)) return toAuthUser(session);
-    const key = hashId(rawId);
     const pending = this.inflight.get(key);
     if (pending) return pending;
     // Registered synchronously, before the first await, so a second request
     // arriving while this one waits on the provider joins it.
-    const check = this.recheck(rawId, session).finally(() => this.inflight.delete(key));
+    const check = this.recheck(key, session).finally(() => this.inflight.delete(key));
     this.inflight.set(key, check);
     return check;
   }
 
-  private async recheck(rawId: string, session: SessionRecord): Promise<AuthUser | undefined> {
+  private async recheck(key: string, session: SessionRecord): Promise<AuthUser | undefined> {
     let cfg: WebLoginConfig;
     try {
       cfg = this.config();
@@ -86,14 +99,14 @@ export class SessionService {
       // operator mistake, not a verdict on this session -- treat it as
       // unreachable (keep the identity, retry after a minute). The message
       // names the key and env var, never the value (config.ts).
-      this.store.markCheckAttempt(rawId);
+      this.store.markCheckAttemptByHash(key);
       logWarn(`Web login re-check for ${session.username} skipped: ${err instanceof Error ? err.message : 'invalid web login settings'}; keeping the last-known identity`);
       return toAuthUser(session);
     }
     if (!cfg.configured) {
       // Controller ruling: with no client configured nothing can vouch for
       // the session any more, so it is treated as refused.
-      this.store.deleteSession(rawId);
+      this.store.deleteSessionByHash(key);
       logInfo(`Signed out ${session.username}: web login is no longer configured, so the session cannot be re-checked`);
       return undefined;
     }
@@ -111,7 +124,7 @@ export class SessionService {
     switch (result.kind) {
       case 'ok': {
         const { identity } = result;
-        this.store.updateAfterCheck(rawId, {
+        this.store.updateAfterCheckByHash(key, {
           username: identity.username,
           email: identity.email ?? null,
           groups: identity.groups,
@@ -121,18 +134,18 @@ export class SessionService {
         // Re-read rather than build from `identity`: a sign-out that landed
         // while the provider was answering has deleted the row, and the
         // update above then matched nothing.
-        const updated = this.store.getSession(rawId);
+        const updated = this.store.getSessionByHash(key);
         return updated ? toAuthUser(updated) : undefined;
       }
       case 'refused':
-        this.store.deleteSession(rawId);
+        this.store.deleteSessionByHash(key);
         // `reason` names the issuer and an OAuth error code only (oidc-client.ts).
         logInfo(`Signed out ${session.username}: ${result.reason}`);
         return undefined;
       case 'unreachable':
         // Persist any token the grant already rotated (see RecheckResult),
         // keeping the identity as it was.
-        this.store.markCheckAttempt(rawId, {
+        this.store.markCheckAttemptByHash(key, {
           ...(result.refreshToken !== undefined ? { refreshToken: result.refreshToken } : {}),
           ...(result.idToken !== undefined ? { idToken: result.idToken } : {}),
         });
@@ -140,7 +153,7 @@ export class SessionService {
         logWarn(`${result.reason}; keeping the last-known identity for ${session.username} and retrying in a minute`);
         // As in the `ok` path: a sign-out that landed while the provider was
         // unreachable must not be answered with the stale identity.
-        return this.store.getSession(rawId) ? toAuthUser(session) : undefined;
+        return this.store.getSessionByHash(key) ? toAuthUser(session) : undefined;
     }
   }
 }

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { createHash, randomBytes } from 'node:crypto';
-import { openDb } from '../../lib/sqlite.ts';
+import { ensureColumn, openDb } from '../../lib/sqlite.ts';
 
 // Server-side state for Bellhop's own web login (#69; data-model.md,
 // research R3): signed-in sessions and pending sign-in attempts, in
@@ -72,6 +72,10 @@ export interface LoginAttemptInput {
   nonce: string;
   codeVerifier: string;
   returnTo: string;
+  // Set when MCP consent started this sign-in (#65/#66): the pending
+  // authorization's hash, so the callback finishes that instead of setting
+  // a browser session cookie.
+  mcpPendingHash?: string;
 }
 
 export interface LoginAttemptRecord extends LoginAttemptInput {
@@ -96,6 +100,7 @@ interface AttemptRow {
   code_verifier: string;
   return_to: string;
   created_at: number;
+  mcp_pending_hash: string | null;
 }
 
 // Exported for SessionService's single-flight map, keyed like the table.
@@ -111,6 +116,7 @@ export class SessionStore {
     private readonly now: () => number = Date.now
   ) {
     this.db = openDb(path, SCHEMA);
+    ensureColumn(this.db, 'login_attempts', 'mcp_pending_hash', 'mcp_pending_hash TEXT');
     this.purgeExpired();
   }
 
@@ -144,7 +150,13 @@ export class SessionStore {
   // 30 days (in which case the row is deleted on the spot).
   getSession(id: string): SessionRecord | undefined {
     if (id === '') return undefined;
-    const idHash = hashId(id);
+    return this.getSessionByHash(hashId(id));
+  }
+
+  // The same, by the stored key. An MCP grant (#65/#66) holds only this
+  // hash, never the raw id, so a leaked database cannot be replayed as a
+  // cookie. Every cookie-keyed method below is a wrapper over its ByHash twin.
+  getSessionByHash(idHash: string): SessionRecord | undefined {
     const row = this.db.prepare('SELECT * FROM sessions WHERE id_hash = ?').get(idHash) as SessionRow | undefined;
     if (!row) return undefined;
     if (this.now() >= row.created_at + SESSION_MAX_AGE_MS) {
@@ -176,6 +188,10 @@ export class SessionStore {
   // A successful re-check: refresh identity and tokens (the refresh token
   // rotates every time), stamp last_checked_at, clear the failed-attempt mark.
   updateAfterCheck(id: string, refresh: SessionRefresh): void {
+    this.updateAfterCheckByHash(hashId(id), refresh);
+  }
+
+  updateAfterCheckByHash(idHash: string, refresh: SessionRefresh): void {
     this.db
       .prepare(
         `UPDATE sessions SET username = ?, email = ?, groups_json = ?, refresh_token = ?,
@@ -189,7 +205,7 @@ export class SessionStore {
         refresh.refreshToken,
         refresh.idToken ?? null,
         this.now(),
-        hashId(id)
+        idHash
       );
   }
 
@@ -200,18 +216,26 @@ export class SessionStore {
   // rotated one must be kept or the next attempt would be refused. An absent
   // field keeps the stored value.
   markCheckAttempt(id: string, tokens: { refreshToken?: string; idToken?: string } = {}): void {
+    this.markCheckAttemptByHash(hashId(id), tokens);
+  }
+
+  markCheckAttemptByHash(idHash: string, tokens: { refreshToken?: string; idToken?: string } = {}): void {
     this.db
       .prepare(
         `UPDATE sessions SET last_attempt_at = ?, refresh_token = COALESCE(?, refresh_token),
            id_token = COALESCE(?, id_token)
          WHERE id_hash = ?`
       )
-      .run(this.now(), tokens.refreshToken ?? null, tokens.idToken ?? null, hashId(id));
+      .run(this.now(), tokens.refreshToken ?? null, tokens.idToken ?? null, idHash);
   }
 
   // Sign-out, or a re-check the provider refused.
   deleteSession(id: string): void {
-    this.db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(hashId(id));
+    this.deleteSessionByHash(hashId(id));
+  }
+
+  deleteSessionByHash(idHash: string): void {
+    this.db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(idHash);
   }
 
   // Records a pending sign-in and returns the raw value for its login
@@ -223,9 +247,9 @@ export class SessionStore {
     this.db.prepare('DELETE FROM login_attempts WHERE created_at + ? <= ?').run(ATTEMPT_MAX_AGE_MS, this.now());
     this.db
       .prepare(
-        'INSERT INTO login_attempts (id_hash, state, nonce, code_verifier, return_to, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO login_attempts (id_hash, state, nonce, code_verifier, return_to, created_at, mcp_pending_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
       )
-      .run(hashId(id), input.state, input.nonce, input.codeVerifier, input.returnTo, this.now());
+      .run(hashId(id), input.state, input.nonce, input.codeVerifier, input.returnTo, this.now(), input.mcpPendingHash ?? null);
     return id;
   }
 
@@ -248,6 +272,7 @@ export class SessionStore {
       codeVerifier: row.code_verifier,
       returnTo: row.return_to,
       createdAt: row.created_at,
+      ...(row.mcp_pending_hash !== null ? { mcpPendingHash: row.mcp_pending_hash } : {}),
     };
   }
 

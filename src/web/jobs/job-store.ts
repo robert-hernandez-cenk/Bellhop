@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { ensureColumn } from '../../lib/sqlite.ts';
 
 export type JobStatus = 'queued' | 'running' | 'awaiting_input' | 'success' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -114,17 +115,6 @@ function formatLogFileName(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}-${pad(date.getMilliseconds(), 3)}`;
 }
 
-// Adds a column to an already-existing jobs table when it's missing --
-// covers a real, already-populated data/jobs.sqlite3 where the CREATE TABLE
-// IF NOT EXISTS below is a no-op and can't retroactively add a new column.
-// Mirrors src/lib/inventory.ts's own ensureColumn helper (not shared/
-// exported from there -- this is a separate SQLite database/table).
-function ensureColumn(db: Database.Database, table: string, column: string, ddl: string): void {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  if (!cols.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-  }
-}
 
 // process.kill(pid, 0) sends no signal -- it only checks the pid exists.
 // EPERM means it exists but belongs to another user, so it's still alive.

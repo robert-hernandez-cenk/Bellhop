@@ -5,6 +5,14 @@ import { escapeHtml } from '../../lib/html.ts';
 import { LOGIN_COOKIE_OPTIONS, loginCookieName, parseCookies, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from '../login/cookies.ts';
 import { WebLoginError, type WebLoginSettings } from '../login/oidc-client.ts';
 import type { SessionService } from '../login/sessions.ts';
+import type { LoginIdentity } from '../login/oidc-client.ts';
+
+// How an MCP sign-in (#65/#66) finishes: a callback whose attempt carries a
+// pending MCP authorization hands the identity here instead of creating a
+// browser session. Provided by the MCP authorization server (src/web/mcp).
+export interface McpSignInFinisher {
+  finishSignIn(pendingHash: string, identity: LoginIdentity, res: Response): void | Promise<void>;
+}
 
 // Bellhop's own sign-in (#69, contracts/http-auth.md): GET /auth/login starts
 // an authorization-code + PKCE sign-in with the configured provider, and GET
@@ -21,7 +29,7 @@ import type { SessionService } from '../login/sessions.ts';
 
 // Uses the session service's own client, so sign-in and re-checks always
 // talk to the provider through the same one.
-export function authRoutes(sessions: SessionService): Router {
+export function authRoutes(sessions: SessionService, mcp?: McpSignInFinisher): Router {
   const client = sessions.client;
   const router = Router();
 
@@ -32,64 +40,7 @@ export function authRoutes(sessions: SessionService): Router {
   });
 
   router.get('/login', async (req, res) => {
-    const returnTo = safeReturnTo(req.query.returnTo);
-    const retry = `/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
-
-    let cfg: WebLoginConfig;
-    try {
-      cfg = webLoginConfig();
-    } catch (err) {
-      // An invalid WEB_UI_OIDC_* environment value. The message names the
-      // key and the variable, never the value (config.ts).
-      sendPage(res, 200, 'Web login is not configured', [
-        `<p>${escapeHtml((err as Error).message)}</p>`,
-        fixesHtml(),
-      ]);
-      return;
-    }
-    if (!cfg.configured) {
-      sendPage(res, 200, 'Web login is not configured', [
-        '<p>Bellhop cannot send you to sign in until these settings are set:</p>',
-        `<ul>${cfg.missing.map((key) => `<li><code>${escapeHtml(key)}</code></li>`).join('')}</ul>`,
-        fixesHtml(),
-      ]);
-      return;
-    }
-
-    let started;
-    try {
-      started = await client.startLogin(cfg);
-    } catch (err) {
-      // Discovery is the only provider round trip here, so any failure is
-      // "could not reach it". WebLoginError messages already name the issuer
-      // and are secret-free; anything else gets fixed text.
-      const detail = err instanceof WebLoginError ? err.message : `Could not reach the identity provider at ${cfg.issuer}`;
-      logWarn(`Web sign-in could not start: ${detail}`);
-      sendPage(res, 502, 'Could not reach the identity provider', [
-        `<p>Could not reach the identity provider at <code>${escapeHtml(cfg.issuer)}</code>.</p>`,
-        `<p>${escapeHtml(detail)}</p>`,
-        `<p><a href="${escapeHtml(retry)}">Try again</a></p>`,
-      ]);
-      return;
-    }
-
-    const cookieName = loginCookieName(started.state);
-    if (cookieName === undefined) {
-      // Never from openid-client's randomState (43 base64url characters); a
-      // fake or future client that breaks that gets a clear failure instead of
-      // a sign-in that can never complete.
-      logWarn('Web sign-in could not start: the sign-in state is not usable as a cookie name');
-      sendPage(res, 500, 'Sign-in could not start', [`<p><a href="${escapeHtml(retry)}">Try again</a></p>`]);
-      return;
-    }
-    const attemptId = sessions.store.createAttempt({
-      state: started.state,
-      nonce: started.nonce,
-      codeVerifier: started.codeVerifier,
-      returnTo,
-    });
-    res.cookie(cookieName, attemptId, LOGIN_COOKIE_OPTIONS);
-    res.redirect(302, started.authorizationUrl);
+    await beginSignIn(sessions, res, { returnTo: safeReturnTo(req.query.returnTo) });
   });
 
   router.get('/callback', async (req, res) => {
@@ -151,6 +102,17 @@ export function authRoutes(sessions: SessionService): Router {
       return;
     }
 
+    // An MCP sign-in (#65/#66): no browser session, the MCP authorization
+    // server decides what the identity gets.
+    if (attempt.mcpPendingHash !== undefined) {
+      if (!mcp) {
+        fail('This sign-in was started for an MCP client, but MCP sign-in is not available here.');
+        return;
+      }
+      await mcp.finishSignIn(attempt.mcpPendingHash, identity, res);
+      return;
+    }
+
     // A browser signing in again (a stale tab, a second account) still carries
     // its previous cookie: delete that session so it does not linger as an
     // orphan until it expires.
@@ -198,6 +160,78 @@ export function authRoutes(sessions: SessionService): Router {
   return router;
 }
 
+// Starts an authorization-code + PKCE sign-in with the configured provider:
+// GET /auth/login, and the approve step of MCP consent (#65/#66), which
+// passes the pending authorization so the callback finishes MCP instead.
+// Answers with a redirect to the provider, or a page explaining why it
+// cannot.
+export async function beginSignIn(
+  sessions: SessionService,
+  res: Response,
+  opts: { returnTo: string; mcpPendingHash?: string }
+): Promise<void> {
+  const client = sessions.client;
+  const returnTo = opts.returnTo;
+  const retry = `/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
+
+  let cfg: WebLoginConfig;
+  try {
+    cfg = webLoginConfig();
+  } catch (err) {
+    // An invalid WEB_UI_OIDC_* environment value. The message names the
+    // key and the variable, never the value (config.ts).
+    sendPage(res, 200, 'Web login is not configured', [
+      `<p>${escapeHtml((err as Error).message)}</p>`,
+      fixesHtml(),
+    ]);
+    return;
+  }
+  if (!cfg.configured) {
+    sendPage(res, 200, 'Web login is not configured', [
+      '<p>Bellhop cannot send you to sign in until these settings are set:</p>',
+      `<ul>${cfg.missing.map((key) => `<li><code>${escapeHtml(key)}</code></li>`).join('')}</ul>`,
+      fixesHtml(),
+    ]);
+    return;
+  }
+
+  let started;
+  try {
+    started = await client.startLogin(cfg);
+  } catch (err) {
+    // Discovery is the only provider round trip here, so any failure is
+    // "could not reach it". WebLoginError messages already name the issuer
+    // and are secret-free; anything else gets fixed text.
+    const detail = err instanceof WebLoginError ? err.message : `Could not reach the identity provider at ${cfg.issuer}`;
+    logWarn(`Web sign-in could not start: ${detail}`);
+    sendPage(res, 502, 'Could not reach the identity provider', [
+      `<p>Could not reach the identity provider at <code>${escapeHtml(cfg.issuer)}</code>.</p>`,
+      `<p>${escapeHtml(detail)}</p>`,
+      `<p><a href="${escapeHtml(retry)}">Try again</a></p>`,
+    ]);
+    return;
+  }
+
+  const cookieName = loginCookieName(started.state);
+  if (cookieName === undefined) {
+    // Never from openid-client's randomState (43 base64url characters); a
+    // fake or future client that breaks that gets a clear failure instead of
+    // a sign-in that can never complete.
+    logWarn('Web sign-in could not start: the sign-in state is not usable as a cookie name');
+    sendPage(res, 500, 'Sign-in could not start', [`<p><a href="${escapeHtml(retry)}">Try again</a></p>`]);
+    return;
+  }
+  const attemptId = sessions.store.createAttempt({
+    state: started.state,
+    nonce: started.nonce,
+    codeVerifier: started.codeVerifier,
+    returnTo,
+    ...(opts.mcpPendingHash !== undefined ? { mcpPendingHash: opts.mcpPendingHash } : {}),
+  });
+  res.cookie(cookieName, attemptId, LOGIN_COOKIE_OPTIONS);
+  res.redirect(302, started.authorizationUrl);
+}
+
 // FR-011: only a same-origin path survives the round trip through the
 // provider, so a crafted sign-in link cannot bounce a freshly signed-in
 // browser to another site. A single leading "/" is required ("//host" and
@@ -240,7 +274,7 @@ function fixesHtml(): string {
   ].join('');
 }
 
-function sendPage(res: Response, status: number, title: string, body: string[]): void {
+export function sendPage(res: Response, status: number, title: string, body: string[]): void {
   res
     .status(status)
     .type('html')

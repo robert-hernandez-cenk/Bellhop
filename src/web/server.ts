@@ -14,6 +14,7 @@ import type { ImpersonationStore } from './impersonation.ts';
 import { SessionStore } from './login/session-store.ts';
 import { SessionService } from './login/sessions.ts';
 import { RealWebLoginClient } from './login/oidc-client.ts';
+import { McpAuthStore } from './mcp/auth-store.ts';
 import { JobStore } from './jobs/job-store.ts';
 import { createJobLog } from './jobs/job-log.ts';
 import { JobRunner } from './jobs/job-runner.ts';
@@ -95,6 +96,9 @@ try {
 // One service for requireAuth, the /auth routes and the job-log WebSocket,
 // so they share the store and the single-flight re-check map.
 const sessions = new SessionService({ store: sessionStore, client: new RealWebLoginClient() });
+// The MCP authorization server's clients, codes, grants and tokens (#65/#66),
+// in the same file: a grant's identity is one of these sessions.
+const mcpAuthStore = new McpAuthStore(sessionsPath);
 
 // Close out any job left running/queued/awaiting_input by a previous
 // process that died mid-job (e.g. a service restart) -- see issue #99 and
@@ -130,6 +134,7 @@ const app = buildApp({
   impersonationStore,
   taskScheduler,
   sessions,
+  mcpAuthStore,
 });
 
 const clientDist = path.join(REPO_ROOT, 'web-client', 'dist');

@@ -256,3 +256,27 @@ test('sessions persist across reopening a file-backed store', () => {
   assert.equal(second.getSession(id)?.uid, 'uid-1');
   second.close();
 });
+
+// #65/#66: a sign-in started from MCP consent carries its pending
+// authorization through Authentik, so the callback finishes MCP instead of
+// setting a cookie. A browser sign-in carries none.
+test('an attempt carries an optional MCP pending hash through consume', () => {
+  const { store } = storeWithClock();
+  const mcp = store.createAttempt({ ...ATTEMPT, mcpPendingHash: 'a'.repeat(64) });
+  assert.equal(store.consumeAttempt(mcp)?.mcpPendingHash, 'a'.repeat(64));
+  const browser = store.createAttempt(ATTEMPT);
+  assert.equal(store.consumeAttempt(browser)?.mcpPendingHash, undefined);
+});
+
+test('a sessions file from before #65 gains the mcp_pending_hash column on open', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-sessions-old-'));
+  const file = path.join(dir, 'sessions.sqlite3');
+  const old = new Database(file);
+  old.exec(`CREATE TABLE login_attempts (id_hash TEXT PRIMARY KEY, state TEXT NOT NULL, nonce TEXT NOT NULL,
+    code_verifier TEXT NOT NULL, return_to TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+  old.close();
+  const store = new SessionStore(file);
+  const id = store.createAttempt({ ...ATTEMPT, mcpPendingHash: 'b'.repeat(64) });
+  assert.equal(store.consumeAttempt(id)?.mcpPendingHash, 'b'.repeat(64));
+  store.close();
+});
