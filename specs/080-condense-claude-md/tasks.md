@@ -141,16 +141,16 @@ The nested files are written first, so that nothing is lost when the root file i
 
 **Independent Test**: quickstart step 7.
 
-- [ ] T016 [US3] Independent review. For each destination, a reviewer that did not write it compares the original ranges against the new text and lists every dropped rule, gotcha, identifier, or rationale. Each finding is restored in its destination file.
-- [ ] T017 [US3] Citation check: every name in data-model.md's "Citation names to preserve" table resolves with `grep -r --include=CLAUDE.md` (quickstart step 5).
+- [x] T016 [US3] Independent review. For each destination, a reviewer that did not write it compares the original ranges against the new text and lists every dropped rule, gotcha, identifier, or rationale. Each finding is restored in its destination file.
+- [x] T017 [US3] Citation check: every name in data-model.md's "Citation names to preserve" table resolves with `grep -r --include=CLAUDE.md` (quickstart step 5).
 
 ---
 
 ## Phase 5: Polish & Verification
 
-- [ ] T018 Run quickstart steps 1-3: root line count, total bytes at most 200,305, and every destination file exists.
-- [ ] T019 Run `node --import tsx --test test/docs/links.test.ts` (quickstart step 6).
-- [ ] T020 Confirm that no code or tests changed (quickstart step 8).
+- [x] T018 Run quickstart steps 1-3: root line count, total bytes at most 200,305, and every destination file exists.
+- [x] T019 Run `node --import tsx --test test/docs/links.test.ts` (quickstart step 6).
+- [x] T020 Confirm that no code or tests changed (quickstart step 8).
 
 ---
 

@@ -31,7 +31,7 @@ Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.
 `driver.ts` defines:
 
 - `id`; `label` (the Settings page dropdown's option text).
-- `capabilities`: `authModes`, and `acmeDns01ViaCloudflare`, which is `(inventory: Inventory) => boolean` (#51), not a fixed boolean, because a driver's Cloudflare DNS-01 usage can depend on a setting (Caddy's `proxyCaddyTls`, Traefik's `proxyCertResolver`). It decides whether `syncProxyLive` runs `prune-acme-challenges` (see the "Cloudflare prune decision" in `prune-acme-challenges`, `src/commands/networking/CLAUDE.md`).
+- `capabilities`: `authModes`, and `acmeDns01ViaCloudflare`, which is `(inventory: Inventory) => boolean` (#51), not a fixed boolean, because a driver's Cloudflare DNS-01 usage can depend on a setting (Caddy's `proxyCaddyTls`, Traefik's `proxyCertResolver`). It decides whether `syncProxyLive` runs `prune-acme-challenges` (see `src/commands/networking/CLAUDE.md` › "prune-acme-challenges" › "When it runs").
 - `defaultConfigPath: string | null` (`null` = driver uses no configuration file).
 - `statusPage: { suggestedPath: string } | null` (`null` = serves no status page).
 - Six optional Settings-page hints: `usesSharedCertificate` (page shows `proxyTlsCertificate`/`proxyTlsKey`; nginx only); `usesCertResolver`/`usesApiUrl` (page shows Proxy cert resolver/Proxy API URL; Traefik only, #35); `usesCaddyTls` (page shows the Caddy TLS dropdown and, with value `files`, the TLS path fields; both Caddy drivers, #51); `usesNpmApi` (page shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` on the Proxy tab; Nginx Proxy Manager only, #73); `configPathNote` (a sentence appended to the Proxy config path help).

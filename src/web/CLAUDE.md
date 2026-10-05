@@ -1,193 +1,176 @@
 # Web service
 
-The Express web service under `src/web/`: authentication, admin gating, per-resource permissions, impersonation, the Dashboard guest-edit rules, the push-live step, and the server half of the Settings page.
+The Express service under `src/web/`: auth, permissions, impersonation, guest-edit rules, push-live, Settings API.
 
-Related nested files:
-
-- Job runner, prompt relay, cross-process job watching/control, job attribution columns: see `src/web/jobs/CLAUDE.md`.
-- Scheduler and the Tasks route (`src/web/routes/tasks.ts`): see `src/web/tasks/CLAUDE.md`.
-- OIDC credentials and adoption routes (`src/web/routes/oidc.ts`): see `src/commands/networking/CLAUDE.md` (OIDC credentials and adoption).
-- Shared operations (`commitGuestEdit`, `editDeletesOidcClient`, `previewAndEnqueue`): see `src/operations/CLAUDE.md`.
-- Browser side (whoami store, Sidebar, Settings page UI, Advanced modal): see `web-client/CLAUDE.md`.
-- Authorization rigor for the web UI is a root rule: see root `CLAUDE.md`, Project philosophy.
+Elsewhere: jobs/prompt relay/attribution in `src/web/jobs/CLAUDE.md`; scheduler and `routes/tasks.ts` in `src/web/tasks/CLAUDE.md`; `routes/oidc.ts` in `src/commands/networking/CLAUDE.md`; `previewAndEnqueue` in `src/operations/CLAUDE.md`; browser side in `web-client/CLAUDE.md`; authz rigor in root `CLAUDE.md`.
 
 ## Web UI authentication
 
-`src/web/auth.ts`. A global `requireAuth` middleware, mounted in `src/web/app.ts` ahead of every route, trusts the `X-authentik-*` identity headers that the `proxy: true` entry's proxy adds after checking the request against Authentik (Caddy's `forward_auth`, nginx's `auth_request`). There is no OIDC client, login page, or session store in this repo: Authentik and the proxy own the session; the app only reads already-verified headers (`resolveAuthUser`, exported standalone for the WebSocket path). Forward-auth at the proxy was chosen deliberately over an app-embedded OIDC client.
+`src/web/auth.ts`. Global `requireAuth`, mounted in `src/web/app.ts` ahead of every route, trusts the `X-authentik-*` headers the `proxy: true` entry's proxy adds after checking Authentik (Caddy `forward_auth`, nginx `auth_request`). No OIDC client, login page, or session store here: Authentik and the proxy own the session (chosen over an app-embedded OIDC client); the app only reads verified headers (`resolveAuthUser`, exported for the WebSocket path).
 
-- `req.user.groups` is the one field an active impersonation can overlay after `requireAuth`; every other `req.user` field and `req.realUser` (when set) stay the real, header-verified identity.
-- `resolveAuthUser` reads `x-authentik-uid` into `AuthUser.uid` when present and non-empty: Authentik's stable per-user id (usernames do get renamed). Absent for dev/test identities and the local operator. `Actor` (`src/lib/pve-acl.ts`) carries an optional `uid` copied by `resolveActor` so `creatorFromActor` can record it; `applyImpersonation` leaves `uid` alone (it only replaces `groups` and sets `impersonating`), because `isGuestCreator` keys off `impersonating`, not a missing `uid`.
+- Only `req.user.groups` may be overlaid (by impersonation) after `requireAuth`; other `req.user` fields and `req.realUser` stay the real identity.
+- `resolveAuthUser` reads non-empty `x-authentik-uid` into `AuthUser.uid` (stable; usernames get renamed). Absent for dev/test identities and the local operator. `Actor` (`src/lib/pve-acl.ts`) gets it via `resolveActor` for `creatorFromActor`. `applyImpersonation` only replaces `groups` and sets `impersonating`, leaving `uid`; `isGuestCreator` keys off `impersonating`.
 
 ### webUiAuthMode
 
-The `webUiAuthMode` setting (`WEB_UI_AUTH_MODE` env var overrides it), read through the config accessor on every request by `authMode()`:
+Setting `webUiAuthMode` (env `WEB_UI_AUTH_MODE` overrides), read per request by `authMode()` via the config accessor: `auto` (default) falls back to a synthetic always-admin local operator without trusted headers; `authentik` requires them (401 otherwise); `none` ignores headers.
 
-- `auto` (default): falls back to a synthetic always-admin local operator when no trusted headers are present.
-- `authentik`: requires the headers, 401 otherwise.
-- `none`: ignores headers entirely.
+**Production must store `webUiAuthMode=authentik`** (or pin the env var): under `auto`, a proxy config that lost forward-auth serves everyone as full-admin instead of failing closed. Stored, deleting `data/authentik.env` keeps sign-in required.
 
-**The production deployment must store `webUiAuthMode=authentik`** (or pin it with the env var). Under `auto`, a proxy config that lost its forward-auth directive silently serves every request as a full-admin local operator instead of failing closed. With it stored, deleting `data/authentik.env` after the import keeps sign-in required.
+Lockout guards (web-editable setting):
 
-Lockout guards (the setting is web-editable):
+- `AuthUser.viaForwardAuth` is set only on the `x-authentik-username` branch (never dev user/local operator) and survives the impersonation overlay.
+- A Settings PATCH setting `authentik` re-parses the request's headers with `forwardAuthIdentity` (regardless of mode; in `none` mode `req.user` is the local operator even with headers) and refuses (409) unless they name a user passing `isAdminOf` under the admin groups that PATCH leaves. The server `logWarn`s who left `authentik`; the page confirms first.
+- CLI/MCP writes are unrestricted (host trust), the recovery path: `set-config webUiAuthMode auto --apply`, or the env var (`docs/authentik.md`, "Locked out").
 
-- `AuthUser.viaForwardAuth` is set by `resolveAuthUser` only on the `x-authentik-username` branch (never for the dev user or local operator) and survives the impersonation overlay.
-- A Settings PATCH that sets `authentik` re-parses the request's own headers with `forwardAuthIdentity` (same parse, regardless of mode: in `none` mode `req.user` is the local operator even when the proxy sent headers) and refuses (409) unless they name a user who passes `isAdminOf` under the admin groups that same PATCH leaves in place. The server `logWarn`s who left `authentik`; the page confirms first.
-- CLI/MCP writes are unrestricted (host-level trust), which is the recovery path: `set-config webUiAuthMode auto --apply` on the host, or the env var (`docs/authentik.md`, "Locked out").
-
-`WEB_UI_DEV_USER` simulates a specific non-admin group membership (the local operator can't). It takes effect in every mode, even `authentik`, so it must stay unset in the production service environment (`scripts/windows-service.ts`'s `buildService()` never sets it).
+`WEB_UI_DEV_USER` simulates a specific non-admin group membership (the local operator can't). It applies in every mode, even `authentik`, so it must stay unset in production. `scripts/windows-service.ts`'s `buildService()` sets only `PORT`/`USERPROFILE`, so any other override reaches production only through the dotenv-loaded `data/*.env` files; never set `WEB_UI_DEV_USER` there.
 
 ### Admin predicate
 
-`isAdminUser` (`src/web/auth.ts`) is the single admin predicate. Its groups are the `authentikAdminGroup`/`authentikBuiltinAdminGroup` settings (overridden by `AUTHENTIK_ADMIN_GROUP`/`AUTHENTIK_BUILTIN_ADMIN_GROUP`), read via `authentikConfig()` (`src/lib/authentik-config.ts`), defaulting to `bellhop-admins`/`authentik Admins`. Membership in either is sufficient, so the built-in Authentik admin group is always a path into the admin pages without an out-of-band group edit. These gate this app's own admin pages and are unrelated to `AUTHENTIK_GROUP_LADDER` (whose top rung is the admin-only tier for a gated inventory entry; see `src/commands/networking/CLAUDE.md`).
+`isAdminUser` (`src/web/auth.ts`) is the single admin predicate: membership in `authentikAdminGroup` or `authentikBuiltinAdminGroup` (env `AUTHENTIK_ADMIN_GROUP`/`AUTHENTIK_BUILTIN_ADMIN_GROUP`) via `authentikConfig()`, defaults `bellhop-admins`/`authentik Admins`; the built-in one guarantees admin access without an out-of-band group edit. Unrelated to `AUTHENTIK_GROUP_LADDER` (gated-entry tiers).
 
 ### WebSocket path
 
-The `/ws/jobs/:id` upgrade handler (`src/web/routes/jobs.ts`) is wired onto the raw `http.Server`, so Express middleware never sees it. It calls `resolveAuthUser` itself at the top of its `'upgrade'` listener, and duplicates `applyImpersonation`'s overlay and the creator map inline (kept in sync by hand; no shared helper until a third bypass point exists). Without this the job-log WebSocket would be unauthenticated.
+`/ws/jobs/:id` (`src/web/routes/jobs.ts`) is on the raw `http.Server`, bypassing Express middleware, so its `'upgrade'` listener calls `resolveAuthUser` itself and duplicates `applyImpersonation`'s overlay and the creator map inline (synced by hand; no shared helper until a third bypass exists). Otherwise the job-log socket would be unauthenticated.
 
 ### Firewall scope and HAProxy
 
-None of this is safe on its own: it depends on the Windows firewall rule `scripts/windows-service.ts`'s `addFirewallRule` installs being scoped to `remoteip=<proxy host's IP>`. `resolveProxyIp` derives that from `findProxyEntry`/`proxy: true` (errors name `'proxy: true'`), so the rule follows the proxy if it moves. That scope is what stops anything but the proxy from reaching the app and spoofing the trusted headers. Whichever driver runs on the `proxy: true` entry fronts the web UI; the scope follows the entry, not the driver.
+None of this is safe alone: it relies on `scripts/windows-service.ts`'s `addFirewallRule` scoping to `remoteip=<proxy host's IP>`, so only the proxy can reach the app and nothing can spoof the headers. `resolveProxyIp` derives it from `findProxyEntry`/`proxy: true` (errors name `'proxy: true'`), so it follows the entry, not the driver.
 
-Under the HAProxy driver Bellhop cannot forward-gate the web UI's own subdomain, and every Bellhop backend strips `X-authentik-*`, so routing the web UI through a Bellhop HAProxy backend under `webUiAuthMode: authentik` only gets 401s. The operator must mark that entry `proxyManual` and hand-author its routing with their own Authentik forward-auth (e.g. the community Lua integration), which must overwrite, never pass through, the `X-authentik-*` headers. Production still keeps `authentik` (see "Limits" in `docs/reverse-proxy/haproxy.md`).
+HAProxy can't forward-gate and its Bellhop backends strip `X-authentik-*`, so serving the web UI through one under `authentik` mode only 401s. Instead mark that entry `proxyManual` and hand-author its routing with Authentik forward-auth (e.g. community Lua) that overwrites, never passes through, `X-authentik-*`; production keeps `authentik` ("Limits", `docs/reverse-proxy/haproxy.md`).
 
 ## Inventory reload
 
-The service loads `inventory` once at startup (`src/web/server.ts`), then a global middleware in `buildApp` (`src/web/app.ts`) calls `refreshInventory(deps.inventory, deps.inventoryPath)` (`src/lib/inventory.ts`) on every `/api` request. It `loadInventory`s and `Object.assign`s every field onto the *existing* object, so every route closure over it sees fresh data; a direct DB edit or a CLI run shows up without a restart (#98). A failed reload (e.g. a transient lock) is `logWarn`ed and swallowed; the request uses the last good copy. The same middleware also invalidates the config snapshot (see `src/lib/CLAUDE.md`, Settings store).
+`inventory` loads once at startup (`src/web/server.ts`); a global middleware in `buildApp` (`src/web/app.ts`) calls `refreshInventory(deps.inventory, deps.inventoryPath)` per `/api` request, `Object.assign`ing a fresh `loadInventory` onto the *existing* object so route closures see DB/CLI edits without restart. A failed reload (e.g. lock) is `logWarn`ed; the last good copy is used. It also invalidates the config snapshot (`src/lib/CLAUDE.md`).
 
-Gotcha: `inventory` is shared and mutable across `await`s (e.g. `syncProxyLive` in `src/web/proxy-sync.ts` reads `deps.inventory` across an SSH + Authentik round trip), so a concurrent request's reload can change it mid-handler. Snapshot it locally if a handler needs it constant across an `await`.
+Gotcha: `inventory` is shared and mutable across `await`s (e.g. `syncProxyLive` in `src/web/proxy-sync.ts` across an SSH + Authentik round trip); snapshot it locally if a handler needs it constant.
 
 ## Users and groups
 
-`src/web/routes/users.ts`, `src/web/routes/groups.ts`: full CRUD on Authentik users/groups, gated by `requireAdminGroup` (checks `req.user.groups` via `isAdminUser`) plus `requireUserDirectory` (both in `src/web/auth.ts`). See "Running without Authentik" in `docs/authentik.md` for the no-URL/token case.
+`src/web/routes/users.ts`, `groups.ts`: Authentik user/group CRUD behind `requireAdminGroup` (`isAdminUser` on `req.user.groups`) plus `requireUserDirectory` (`src/web/auth.ts`). No URL/token: "Running without Authentik" in `docs/authentik.md`.
 
-- `GET /api/whoami` (`src/web/routes/dashboard.ts`) returns `isAdmin`, `adminGroups`, and `capabilities` (including `capabilities.userDirectory`); the admin group names have exactly one definition (`authentikConfig()`), and the client reads them from this route instead of duplicating them. Client store: see `web-client/CLAUDE.md` (`WhoAmIProvider`).
-- Creating a user never collects a password: `POST /api/users` immediately calls Authentik's recovery-link endpoint and returns the link for the admin to share. The same recovery-link generation is exposed standalone for a locked-out user.
-- Self-lockout guard: `DELETE /api/users/:id` and `POST /api/users/:id/deactivate` return 400 when the target is the requesting admin's own account.
-- This is administration only; what a user may see elsewhere is the permissions layer below.
+- `GET /api/whoami` (`src/web/routes/dashboard.ts`) returns `isAdmin`, `adminGroups`, `capabilities` (incl. `userDirectory`); admin group names are defined once (`authentikConfig()`), the client reads them here.
+- `POST /api/users` never takes a password: it returns an Authentik recovery link (also exposed standalone for a locked-out user).
+- `DELETE /api/users/:id` and `POST /api/users/:id/deactivate` 400 on the requester's own account (self-lockout guard).
 
 ### AuthentikClient
 
-`src/lib/authentik-client.ts` wraps Authentik REST API v3 in the `SSHClient` injection pattern: `RealAuthentikClient` when the `authentikApiUrl` setting and `authentikApiToken` secret (or `AUTHENTIK_API_URL`/`AUTHENTIK_API_TOKEN`) are both set (`authentikConfigured()`), otherwise `UnconfiguredAuthentikClient`, which fails every call with the same clear "not configured" error so call sites need no null check. `buildAuthentikClient()` returns a live client (`liveClient`) that re-decides on every method call, so the web service and MCP server build it once and still follow a later save; `isConfigured()` follows too, and with it `requireUserDirectory` and `capabilities.userDirectory`. `data/authentik.env` is now only a one-time import source and, while present, an override.
+`src/lib/authentik-client.ts` wraps REST v3 (`SSHClient` injection pattern): `RealAuthentikClient` when `authentikApiUrl` + secret `authentikApiToken` (or `AUTHENTIK_API_URL`/`AUTHENTIK_API_TOKEN`) are set (`authentikConfigured()`), else `UnconfiguredAuthentikClient`, failing every call with one "not configured" error. `buildAuthentikClient()` returns a `liveClient` re-deciding per call, so a once-built client (and `isConfigured()`, `requireUserDirectory`, `capabilities.userDirectory`) follows later saves. `data/authentik.env` is only a one-time import source and, while present, an override.
 
-`RealAuthentikClient` has no live-instance test (verify manually). `test/lib/authentik-client.test.ts` pins request bodies/response mapping with a stubbed `fetch` (`withStubbedFetch`). `listOAuth2Providers()` in particular is tested because it must filter: in Authentik (2026.8, verified live) a proxy provider is a subclass of OAuth2Provider, so `GET /api/v3/providers/oauth2/` also returns every proxy provider, with `meta_model_name`/`component` reporting OAuth2 values. Only membership in `GET /api/v3/providers/proxy/` tells them apart, so `listOAuth2Providers` fetches that list and drops its pks. Callers (`ownedProviderKind`, `planProviderName`, `adopt-oidc-client.ts`, `oidc-credentials.ts`) rely on that and never re-check.
+No live test (verify manually); `test/lib/authentik-client.test.ts` pins bodies/mapping via `withStubbedFetch`. Quirk (2026.8, live-verified): proxy providers subclass OAuth2Provider, so `GET /api/v3/providers/oauth2/` returns them too, with OAuth2 `meta_model_name`/`component`; only `GET /api/v3/providers/proxy/` membership tells them apart. `listOAuth2Providers()` drops those pks, so callers (`ownedProviderKind`, `planProviderName`, `adopt-oidc-client.ts`, `oidc-credentials.ts`) never re-check.
 
 ### web:dev admin caveat
 
-`npm run web:dev` sets `WEB_UI_DEV_GROUPS=bellhop-admins` with `WEB_UI_DEV_USER` (both read by `resolveAuthUser`'s dev fallback) so `/users` is reachable without Authentik. The script hardcodes the *default* admin group name. If the checkout's effective `authentikAdminGroup` (or `AUTHENTIK_ADMIN_GROUP`) is anything else, the dev session is **not** admin: the auth-group dropdown's `canLower` comes back `false` and widening/clearing a tier is refused as for a real non-admin. Fix locally by changing `authentikAdminGroup`/`AUTHENTIK_ADMIN_GROUP` or overriding `WEB_UI_DEV_GROUPS` to match.
+`npm run web:dev` sets `WEB_UI_DEV_USER` and `WEB_UI_DEV_GROUPS=bellhop-admins` (`resolveAuthUser`'s dev fallback) so `/users` works without Authentik. That hardcodes the *default* admin group: if the effective `authentikAdminGroup`/`AUTHENTIK_ADMIN_GROUP` differs, the session is **not** admin (`canLower` is `false`; widening/clearing a tier refused). Fix by aligning that setting or `WEB_UI_DEV_GROUPS`.
 
 ## Per-resource permissions
 
-`src/web/access.ts`, `src/web/routes/permissions.ts`, over the pure `isAllowed` in `src/lib/permissions.ts` (see `src/lib/CLAUDE.md`). Tables `permission_groups`/`permission_rules` in `inventory/bellhop.db` sit outside `saveInventory`'s delete-and-reinsert and record each group's mode (`allow-list` or `block-list`) and its host/guest list. A group with no `permission_groups` row is unrestricted. The admin-only Permissions page edits them.
+`src/web/access.ts`, `src/web/routes/permissions.ts`, over pure `isAllowed` (`src/lib/permissions.ts`). Tables `permission_groups`/`permission_rules` (outside `saveInventory`'s replace; edited on the admin-only Permissions page) hold each group's mode (`allow-list`/`block-list`) and host/guest list; no `permission_groups` row = unrestricted.
 
-- `isResourceAllowed`/`filterInventoryForUser` add an admin bypass (`isAdminUser`) on top of `isAllowed`. Multi-group access is an intersection: the most restrictive group wins, never widened by a more permissive one.
-- Enforcement: read-filtering on `GET /api/inventory` and `GET /api/guests/status`; `requireResourceAccess` (middleware or inline) on every route that mutates a specific host/guest: the Dashboard guest PATCH, `guest-power`/`set-guest-vpn`, `update-app`, the VPN gateway proxy routes, and every provisioning command's `preview`/`apply`.
-- Fleet-wide actions with no single target (`update-all`, `audit-nfs-mounts`, `sync-ssh-keys`, `push-ssh-key`, `sync-inventory`, `sync-proxy`) stay admin-only via `requireAdminGroup`, not filtered.
-- External sites are out of scope (not exposed by `GET /api/inventory`, not on the Dashboard).
-- Host and guest rules are independent: blocking a host hides only the host entry, never its guests.
+- `isResourceAllowed`/`filterInventoryForUser` add an admin bypass (`isAdminUser`). Multi-group access is an intersection: the most restrictive group wins.
+- Enforcement: read-filtering on `GET /api/inventory`, `GET /api/guests/status`; `requireResourceAccess` (middleware or inline) on every route mutating a specific host/guest: Dashboard guest PATCH, `guest-power`/`set-guest-vpn`, `update-app`, VPN gateway proxy routes, every provisioning `preview`/`apply`.
+- Untargeted fleet actions (`update-all`, `audit-nfs-mounts`, `sync-ssh-keys`, `push-ssh-key`, `sync-inventory`, `sync-proxy`) stay `requireAdminGroup`.
+- External sites: out of scope (not exposed in the web UI).
+- Host and guest rules are independent: blocking a host hides only the host entry, not its guests.
 
 ### Job visibility (`isJobVisible`)
 
-`GET /api/jobs(/:id)` and cancel/answer/dismiss-prompt filter in `src/web/routes/jobs.ts`. A job's `target` (`src/web/jobs/job-store.ts`) is a bare name with no resource type, so `isJobVisible` matches group rules by name alone instead of reusing `isResourceAllowed` (which needs a type). Do not check the name as both host and guest and OR the results: a block-list rule tagged with the "other" type would leak the job, since a missing row under the untagged type defaults to allowed.
+`GET /api/jobs(/:id)` and cancel/answer/dismiss-prompt filter in `src/web/routes/jobs.ts`. A job `target` (`src/web/jobs/job-store.ts`) is an untyped name, so `isJobVisible` matches rules by name alone rather than `isResourceAllowed` (needs a type). Never check it as host and guest and OR the results: a block rule tagged with the other type would leak, since a missing row under the untagged type defaults to allowed.
 
 ### Creator access
 
-A user in an allow-list-restricted group keeps access to a guest they created through the web UI (#58).
+An allow-list-restricted user keeps access to a guest they created in the web UI (#58).
 
-- `isGuestCreator(creator, caller)` (`src/lib/permissions.ts`): `false` while impersonating (an admin's creator access never leaks into an impersonated view); `false` with no recorded `creator`; uid comparison when both sides carry a uid; username comparison otherwise.
-- `isAllowed`'s `opts.isCreator`: for a `guest` ref only, an allow-list group treats the guest as listed. A block-list group is unchanged: an explicit block wins regardless of creator.
-- `isResourceAllowed`/`filterInventoryForUser` take an `AccessCaller` (structural subset of `AuthUser`: `groups`/`username`/`uid`/`impersonating`), not bare `groups[]`, and resolve the creator from the in-memory `Inventory`.
-- `isJobVisible` takes the job row (`{ target, startedAt }`) and `creators: Map<guestName, GuestCreator>` from `guestCreators(inventory, hosts)`, built once per request, so a job targeting a guest the caller created is visible and controllable. Two limits keep the lift on the caller's own guest:
-  - `guestCreators` omits any guest whose name equals a host name, since guest-creating commands record the *host* as job target and such a guest would expose every job on that host (deliberately not a `validateInventory` rule, which could make a saved inventory unloadable).
-  - Only a job that started at or after the creator's `since` (ISO-8601, `created_by_since` column) is lifted, so a guest re-created under a reused name never exposes the old guest's jobs. No `since`, or a job not yet started: no job lift (fail closed). Guest access itself never reads `since`.
-- Writers: `recordProvisionedGuest`'s `create-lxc`/`create-vm`/`install-app` paths and `deploy-vpn-gateway`'s operation (`src/operations/provisioning.ts`) set `creator` from `creatorFromActor(deps.actor, deps.now?.())`. `deps.actor` is the real, never-impersonated person, or `undefined` for MCP/CLI/local operator, so only those get no record. `since` comes from that clock (`OperationDeps.now`) or, for `backfill-guest-creators`, the creating job's `startedAt` (see `src/commands/maintenance/CLAUDE.md`).
-- Preservation: `upsertGuestEntry` keeps an existing `creator` on a repeat apply with no actor and replaces it on one with an actor; `sync-inventory`'s `{ ...existing }` merge and `migrate-guest`'s rewrite keep it; it disappears with the guest row.
-- Not editable: `applyGuestEdits` (`src/operations/edit-guest.ts`) copies only named fields, so a `creator` in a Dashboard PATCH is ignored; MCP `edit_guest`'s `EDIT_GUEST_SHAPE` strips unknown keys. The Advanced modal shows a read-only "Created by" username; the uid is never shown.
+- `isGuestCreator(creator, caller)` (`src/lib/permissions.ts`): `false` while impersonating (no leak into an impersonated view) or with no `creator`; uid comparison when both have one, else username.
+- `isAllowed`'s `opts.isCreator`: for `guest` refs only, allow-list groups treat the guest as listed; block-list unchanged (explicit block wins).
+- `isResourceAllowed`/`filterInventoryForUser` take an `AccessCaller` (`groups`/`username`/`uid`/`impersonating` subset of `AuthUser`) and resolve the creator from the in-memory `Inventory`.
+- `isJobVisible` takes the job row (`{ target, startedAt }`) and `creators: Map<guestName, GuestCreator>` (`guestCreators(inventory)`, taking `Pick<Inventory, 'guests' | 'hosts'>`, per request), lifting jobs on the caller's guests, with two limits:
+  - `guestCreators` omits a guest named like a host: guest-creating commands record the *host* as target, so it would expose that host's jobs. (Not a `validateInventory` rule, which could make a saved inventory unloadable.)
+  - Only jobs started at or after the creator's `since` (ISO-8601, `created_by_since`) are lifted, so a re-created reused name never exposes the old guest's jobs. No `since` or unstarted job: no lift (fail closed). Guest access never reads `since`.
+- Writers: `recordProvisionedGuest` and `deploy-vpn-gateway`'s operation (`src/operations/provisioning.ts`) use `creatorFromActor(deps.actor, deps.now?.())`; `deps.actor` is the real never-impersonated person, `undefined` (no record) for MCP/CLI/local operator. `since` is that clock, or the creating job's `startedAt` for `backfill-guest-creators` (`src/commands/maintenance/CLAUDE.md`).
+- Preservation: `upsertGuestEntry` keeps `creator` on a repeat apply without an actor, replaces it with one; `sync-inventory`'s merge and `migrate-guest` keep it; it goes with the guest row.
+- Not editable: `applyGuestEdits` (`src/operations/edit-guest.ts`) copies named fields only; MCP `EDIT_GUEST_SHAPE` strips unknown keys. The Advanced modal shows "Created by" username, never the uid.
 
 ### Filtered inventory and used MIDs
 
-Because `GET /api/inventory` is filtered, nothing that must account for *every* guest may be computed from it in the browser (#54). The provisioning MID suggestion, migrate-guest's preferred-MID collision check, and the MID collision warning read `GET /api/provisioning/used-mids`: occupied MID numbers per visible host, from the unfiltered inventory, never guest names. The warning names a guest only if it is visible to the caller. Likewise `checkVmidAvailable` takes an optional `canSeeGuest` (`OperationDeps.canSeeGuest`, built per request by the provisioning routes from `isResourceAllowed`) and drops the occupying guest's name when the caller can't see it; CLI and MCP pass none.
+`GET /api/inventory` is filtered, so nothing needing *every* guest may be computed from it in the browser (#54). The MID suggestion, migrate-guest's preferred-MID check, and the MID collision warning use `GET /api/provisioning/used-mids` (occupied MIDs per visible host, from the unfiltered inventory, no names); the warning names a guest only if visible. `checkVmidAvailable`'s optional `canSeeGuest` (`OperationDeps.canSeeGuest`, from `isResourceAllowed`) omits an invisible occupant's name; CLI/MCP pass none.
 
 ## Admin impersonation
 
-`src/web/impersonation.ts`, `src/web/routes/impersonation.ts` (#101). An admin views/acts as if they belonged only to one chosen non-admin group, to test that group's rules without a second login.
+`src/web/impersonation.ts`, `routes/impersonation.ts` (#101): an admin acts as if only in one non-admin group, to test its rules.
 
-- State is in-memory only: `ImpersonationStore`, a `Map<realUsername, groupName>` keyed by the trusted `X-authentik-username` header. No cookie, no secret, nothing on disk; a restart clears it.
-- `applyImpersonation`, mounted in `app.ts` right after `requireAuth`, overlays `req.user.groups` with the impersonated group and stashes the real identity on `req.realUser`. Every permission check (`isResourceAllowed`, `requireResourceAccess`, `isJobVisible`, `requireAdminGroup`) reads only `req.user.groups`, so this single overlay point is the whole mechanism.
-- `POST`/`DELETE /api/impersonate` (the only routes touching the store) use a separate `requireRealAdminGroup` that checks `(req.realUser ?? req.user).groups`. This is load-bearing: with `requireAdminGroup` an impersonating admin would get 403 on the endpoint that turns impersonation off, locked in until restart.
-- The two admin groups are excluded from the picker and rejected server-side (impersonating one is a no-op).
-- `resolveTriggeredBy(req)`/`resolveActor(req)` (`src/web/impersonation.ts`) use the real user (`req.realUser ?? req.user`); `resolveActor` returns `undefined` for the local operator. Job attribution columns (`triggered_by_*`): see `src/web/jobs/CLAUDE.md`. Sidebar start/stop and its `refresh()` behavior: see `web-client/CLAUDE.md`.
+- In-memory `ImpersonationStore`, `Map<realUsername, groupName>` keyed by trusted `X-authentik-username`; no cookie/secret/disk; restart clears it.
+- `applyImpersonation`, right after `requireAuth` in `app.ts`, overlays `req.user.groups` and stashes the real identity on `req.realUser`. All checks (`isResourceAllowed`, `requireResourceAccess`, `isJobVisible`, `requireAdminGroup`) read only `req.user.groups`, so this one overlay is the whole mechanism.
+- `POST`/`DELETE /api/impersonate` (the only store writers) use `requireRealAdminGroup`, checking `(req.realUser ?? req.user).groups`; with `requireAdminGroup` an impersonating admin would 403 on turning it off, locked in until restart.
+- The two admin groups are excluded from the picker and rejected server-side (no-op).
+- `resolveTriggeredBy(req)` (`src/web/impersonation.ts`), the attribution helper, uses `req.realUser ?? req.user`, giving the real admin even while impersonating; `resolveActor(req)` follows the same rule but is `undefined` for the local operator.
 
 ## Dashboard guest edits
 
-The guest PATCH handler is in `src/web/routes/dashboard.ts`; the shared commit logic (`commitGuestEdit`, the OIDC client deletion confirmation `editDeletesOidcClient`/`OIDC_CLIENT_DELETION_CONFIRMATION_ERROR`, conflict/skip echoes) is in `src/operations/edit-guest.ts` (see `src/operations/CLAUDE.md`). Authentik-side reconcile: see `src/commands/networking/CLAUDE.md` (sync-authentik).
+Handler: `src/web/routes/dashboard.ts`. Shared commit (`commitGuestEdit`, `editDeletesOidcClient`/`OIDC_CLIENT_DELETION_CONFIRMATION_ERROR`): `src/operations/CLAUDE.md`. Authentik reconcile: `src/commands/networking/CLAUDE.md`.
 
 ### authGroup raise/lower
 
-Changing an entry's tier is asymmetric, enforced server-side in the handler via `isAdminUser` (so with the same impersonation behavior as everywhere else):
-
-- Anyone with resource access may *raise* it: a narrower rung, or gating an ungated entry.
-- Only an admin may *lower* it: a broader rung, or clearing the gate.
-
-`GET /api/auth-groups` (`src/web/routes/auth-groups.ts`) supplies the rung options; it is authenticated but deliberately not admin-gated, since a non-admin needs the rungs to raise a tier.
+Asymmetric, enforced in the handler via `isAdminUser` (same impersonation behavior): anyone with resource access may *raise* (narrower rung, or gating an ungated entry); only an admin may *lower* (broader rung, or clearing). `GET /api/auth-groups` (`src/web/routes/auth-groups.ts`) lists rungs; authenticated but not admin-gated, since non-admins need it to raise.
 
 ### unauthenticatedPaths add rule
 
-Adding a path exemption is the privileged operation (only adding can make something reachable without permission):
+Adding an exemption is privileged (only adding can expose something):
 
-- Anyone with resource access may narrow: remove paths, clear the list, or reorder. Order is compared as a set, so reordering is never an addition.
-- Adding a path to an entry whose *resulting* `authGroup` (after this request's own `authGroup` edit) is set requires the caller to reach that app: admin, or member of that rung or any rung above (`rungsAtOrAbove`); otherwise 403.
-- On an entry with no `authGroup` it is unchecked: the field is inert there (drivers only render exemptions for a forward-gated route), so there is nothing to widen.
+- Anyone with resource access may narrow: remove, clear, or reorder (compared as a set, so reordering isn't an addition).
+- Adding to an entry whose *resulting* `authGroup` (after this request's own edit) is set requires reaching that app: admin, or member of that rung or above (`rungsAtOrAbove`); else 403.
+- Unchecked with no `authGroup`: drivers only render exemptions for forward-gated routes, so nothing widens.
 
-Known consequence: a non-admin may add exemptions to an ungated entry and then gate it (a "raise"), yielding a gated entry with every path exempt. Not an escalation (the app was already public; the caller only fails to narrow), but a "raise" alone does not guarantee an app is protected.
+So a non-admin can exempt every path on an ungated entry, then gate it (a "raise"). Not an escalation (it was public), but a "raise" doesn't guarantee protection.
 
 ### OIDC field edits (`oidcEditChangeError`)
 
-Changing `authMode`, `oidcRedirectUris`, or `oidcMobileRedirectUris` is admin-only in both directions, with no raise/lower exception: switching to OIDC removes the proxy's forward-auth gate, and a callback URL (web or mobile) decides where a completed login is sent, so no such edit is purely narrowing. `oidcEditChangeError` enforces it whenever the body touches any of the three, comparing the *parsed* current vs. updated entries (order-sensitive) rather than the raw body, so resending an unchanged value is not a change.
+Changing `authMode`, `oidcRedirectUris`, or `oidcMobileRedirectUris` is admin-only both ways, no raise/lower exception: switching to OIDC drops the proxy's forward-auth gate, and a (web or mobile) callback URL decides where a login lands, so no such edit is purely narrowing. `oidcEditChangeError` fires when the body touches any of them, comparing *parsed* current vs. updated entries (order-sensitive), so resending an unchanged value isn't a change.
 
 ### Live TLS-backend probe
 
-The handler probes with `probeInsecureBackendTls` (`src/lib/tls-probe.ts`; see `src/lib/CLAUDE.md`) single-shot (no retries; an edited guest is presumed running), only when the edit changed `subdomains`/`port` and the resulting entry isn't `proxyManual`. A conclusive result overwrites any `insecureBackendTls` the same request submitted; an inconclusive one leaves the submitted/stored value. The probe never throws.
+`probeInsecureBackendTls` (`src/lib/tls-probe.ts`; `src/lib/CLAUDE.md`) runs single-shot (no retries; edited guest presumed running), only when `subdomains`/`port` changed and the result isn't `proxyManual` (whose proxy config, and so `insecureBackendTls`, is never generated). Conclusive overwrites the request's `insecureBackendTls`; inconclusive leaves the submitted/stored value. Never throws.
 
 ## Push-live step (`syncProxyLive`)
 
-`src/web/proxy-sync.ts`'s `syncProxyLive` runs `sync-proxy`, `render-status-page`, `sync-authentik`, then `prune-acme-challenges`, as one step. Every Dashboard subdomain/`authGroup`/OIDC edit and the provisioning applies with subdomains trigger it, so an OIDC client is created/updated/deleted in the same request.
+`src/web/proxy-sync.ts`'s `syncProxyLive` runs `sync-proxy`, `render-status-page`, `sync-authentik`, `prune-acme-challenges` as one step, triggered by every Dashboard subdomain/`authGroup`/OIDC edit and provisioning applies with subdomains, so an OIDC client changes in the same request.
 
-- When `sync-proxy` throws (failed write/validate, or a route the Nginx Proxy Manager driver reports as a conflict on every sync), the step warns, skips `render-status-page` and `prune-acme-challenges`, still runs `sync-authentik` normally, then rethrows the original `sync-proxy` error (an operator decision). So a lasting proxy conflict elsewhere never stops a save from reconciling Authentik, while callers still report the failure (`proxySynced: false`/`proxyError` from `commitGuestEdit`, a failed provisioning job). A `sync-authentik` error on that path is only warned, never masking the proxy error. Applies to every driver; the CLI's `sync-proxy` is unchanged.
-- Ordering consequence: proxy config is written *before* Authentik sync, so switching to OIDC drops the `forward_auth` gate first; a skipped or failed Authentik sync leaves the app ungated at the edge until the next successful one. A failed proxy sync does not cause this, since `sync-authentik` still runs.
-- Results surfaced to callers include `authentikConflicts`, `authentikAdoptableConflicts`, `authentikOidcSkipped`, `authentikForwardSkipped`, OIDC discovery failures, and `authentikMobileConsentProblems`; `commitGuestEdit` narrows them to the edited guest. The guest PATCH runs outside any job, so returning these is how they reach the user rather than a `logWarn` to stderr. Status-page and prune skip/failure rules: see `src/commands/networking/CLAUDE.md`.
+- If `sync-proxy` throws (failed write/validate, or an Nginx Proxy Manager route conflicting every sync): warn, skip `render-status-page`/`prune-acme-challenges`, still run `sync-authentik` (its error only warned), then rethrow the proxy error (operator decision). So one lasting proxy conflict never blocks Authentik reconcile, and callers still report it (`proxySynced: false`/`proxyError`, a failed provisioning job). All drivers; CLI `sync-proxy` unchanged.
+- Proxy config is written *before* Authentik sync: switching to OIDC drops `forward_auth` first, so a skipped/failed Authentik sync leaves the app ungated at the edge until the next success.
+- Returns `authentikConflicts`, `authentikAdoptableConflicts`, `authentikOidcSkipped`, `authentikForwardSkipped`, OIDC discovery failures, `authentikMobileConsentProblems`; `commitGuestEdit` narrows them to the edited guest. The PATCH runs outside a job, so returning them (not `logWarn` to stderr) is how they reach the user. Status-page/prune skips: `src/commands/networking/CLAUDE.md`.
 
 ## Provisioning routes: inventory upsert
 
-`src/web/routes/provisioning.ts`. The CLI's `create-lxc`/`create-vm`/`install-app` never touch `inventory/bellhop.db`; the web route layer does (the command functions stay inventory-agnostic). On a successful apply, `recordProvisionedGuest` upserts the new guest immediately (name/type/vmid/host/ip from the resolved MID, plus any `subdomains` from the form) instead of waiting for Sync Inventory. With `subdomains`, it also awaits `syncProxyLive` in the same job, so the apply succeeds only once they are live.
+`src/web/routes/provisioning.ts`. CLI `create-lxc`/`create-vm`/`install-app` never touch `inventory/bellhop.db`; the route layer does (commands stay inventory-agnostic). On success `recordProvisionedGuest` upserts the guest at once (name/type/vmid/host/ip from the MID, plus form `subdomains`); with `subdomains` it awaits `syncProxyLive` in the same job, so apply succeeds only once they're live.
 
-When the entry has a concrete `ip` + `port` + non-empty `subdomains`, `recordProvisionedGuest` runs the TLS-backend probe with a ~3-minute budget (6 retries, 30s apart, one job-log line per attempt). In practice only `install-app` hits this, since the `create-lxc`/`create-vm` forms collect no `port`; those guests are probed the first time a Dashboard edit sets `port` + `subdomains`. A conclusive result overwrites the submitted `insecureBackendTls`. The CLI has no per-guest hook, so it stays fully manual.
+With `ip` + `port` + non-empty `subdomains` it runs the TLS probe, ~3-minute budget (6 retries, 30s apart, a job-log line each). In practice only `install-app` (the other forms collect no `port`; those guests are probed when a Dashboard edit first sets `port` + `subdomains`). Conclusive overwrites the submitted `insecureBackendTls`. The CLI has no hook: manual.
 
-The provisioning router's `deps()` sets `actor` via `resolveActor(req)` and `canSeeGuest` from `isResourceAllowed`.
+The router's `deps()` sets `actor` (`resolveActor(req)`) and `canSeeGuest`.
 
 ## App updates route
 
-`GET /api/app-updates` (`src/web/routes/app-updates.ts`) reads every `app_update_status` row and drops one whose guest is no longer an eligible `lxc` + `app` guest in the live inventory, whose stored `app` differs from the guest's recorded `app` (a repurposed guest never shows the old app's result), or whose guest the caller can't see. Visibility is one `filterInventoryForUser` call per request, so the route needs no admin gate. The check itself: see `src/commands/maintenance/CLAUDE.md` (check-app-updates).
+`GET /api/app-updates` (`src/web/routes/app-updates.ts`) returns `app_update_status` rows minus any whose guest is no longer an eligible `lxc` + `app` guest, whose stored `app` differs from the guest's (repurposed guest), or that the caller can't see (one `filterInventoryForUser` per request; no admin gate). The check: `src/commands/maintenance/CLAUDE.md`.
 
 ## Settings page (API)
 
-`GET`/`PATCH /api/settings` (`src/web/routes/settings.ts`), gated by `requireAdminGroup` like Users/Permissions; non-admins and impersonating admins get 403 on both. Unlike Users/Permissions, the Settings nav shows for any admin even without Authentik's user directory: it needs only an identity, not Authentik's REST API. Storage, precedence, and secrets: see `src/lib/CLAUDE.md` (Settings store). Page UI (`proxyDriverOptions`, `caddyTlsOptions`, `proxyFieldView`, field show/hide, `SETTINGS_TABS`, confirmations, `adminNavLinks`): see `web-client/CLAUDE.md` (Settings page).
+`GET`/`PATCH /api/settings` (`src/web/routes/settings.ts`), `requireAdminGroup` (non-admins and impersonating admins get 403). Unlike Users/Permissions it needs no Authentik user directory, only an identity. Storage/secrets: `src/lib/CLAUDE.md` (Settings store); UI: `web-client/CLAUDE.md` (Settings page).
 
 ### settingsResponse()
 
-Shared by GET and PATCH so the two never disagree. Fields:
+Shared by GET and PATCH so they never disagree:
 
-- `settings`: only *stored* non-secret values (what the inputs edit).
-- `proxyDrivers`: every driver from `listDrivers()` in registration order, each `{ id, label, defaultConfigPath, suggestedStatusPagePath, managesProxy, usesSharedCertificate, usesCertResolver, usesApiUrl, usesCaddyTls, usesNpmApi, configPathNote }` (built by `proxyDriversInfo()`; the `uses*` flags default `false`).
+- `settings`: only *stored* non-secret values (what inputs edit).
+- `proxyDrivers`: `listDrivers()` in registration order, each `{ id, label, defaultConfigPath, suggestedStatusPagePath, managesProxy, usesSharedCertificate, usesCertResolver, usesApiUrl, usesCaddyTls, usesNpmApi, configPathNote }` (`proxyDriversInfo()`; `uses*` default `false`).
 - `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`), `caddyTlsModes` (`[...CADDY_TLS_MODES]`), `defaultCaddyTls` (`DEFAULT_CADDY_TLS`).
-- `sources`: every non-secret key's `environment`/`settings`/`none`.
-- `environment`: only keys an env var currently pins, `{ variable, value?, stored, storedValue? }`. `value` is the effective value for a non-secret key and never present for a secret; `stored` (and `storedValue` for a non-secret) lets the page show a "Stored copy" line, which is how an operator confirms the import before deleting a `data/*.env` file.
+- `sources`: each non-secret key's `environment`/`settings`/`none`.
+- `environment`: only env-pinned keys, `{ variable, value?, stored, storedValue? }`; `value` is the effective non-secret value, never present for a secret; `stored`/`storedValue` drive the "Stored copy" line operators check before deleting a `data/*.env` file.
 - `secrets`: `{ set, source }` per secret, never the value.
-- `derived` (built by `derivedValues()`): read-only values the toolkit resolves, not settings: each host's `midScheme.gateway`, and the `proxy: true` entry's `ip` via `findProxyEntry` (shown as "Proxy IP (firewall scope)").
+- `derived` (`derivedValues()`): read-only resolved values: each host's `midScheme.gateway`, and the `proxy: true` entry's `ip` via `findProxyEntry` ("Proxy IP (firewall scope)").
 
 ### PATCH validation and refusals
 
-Non-secret values validate against the exported `SettingsSchema`, the same schema `set-config` uses, so the CLI and the page reject identically; `null`/`''` clears like `set-config --unset`. Secret keys are accepted too: a string sets via `writeSecret`, `null`/`''` clears via `clearSecret`. Before writing anything, PATCH refuses:
+Non-secrets validate against exported `SettingsSchema` (shared with `set-config`, so both reject identically); `null`/`''` clears like `--unset`. Secrets: string sets via `writeSecret`, `null`/`''` clears via `clearSecret`. Before writing anything, refuses:
 
-- an env-pinned key: 400, naming the variable and its `data/*.env` file, and telling the operator to unset it *and restart the service* (the CLI instead stores and warns, since its environment isn't necessarily the service's);
-- an admin-group change under which the real requester (`req.realUser ?? req.user`; never blocks the local operator) would stop passing `isAdminUser` (`adminGroupsWith`, `src/lib/authentik-config.ts`): 409;
-- `webUiAuthMode: 'authentik'` unless the request's forward-auth headers name an admin under the post-save groups: 409, with two messages (no headers, or a non-admin identity). See Web UI authentication above.
+- an env-pinned key: 400 naming the variable and its `data/*.env` file, telling the operator to unset it *and restart the service* (the CLI stores and warns instead, its environment not necessarily the service's);
+- an admin-group change under which the real requester (`req.realUser ?? req.user`; never blocks the local operator) would fail `isAdminUser` (`adminGroupsWith`, `src/lib/authentik-config.ts`): 409;
+- `webUiAuthMode: 'authentik'` unless the forward-auth headers name an admin under the post-save groups: 409, two messages (no headers, or non-admin identity). See Web UI authentication.
