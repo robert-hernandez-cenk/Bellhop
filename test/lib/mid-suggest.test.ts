@@ -8,8 +8,8 @@ function host(name: string, midScheme?: HostEntry['midScheme']): HostEntry {
 }
 
 test('suggests the bridge network: prefix, CIDR and gateway, with vmidBase 1000 on the first host', () => {
-  const suggestion = suggestMidScheme({ address: '192.168.1.10', prefixLength: 24, gateway: '192.168.1.1' }, []);
-  assert.deepEqual(suggestion, { vmidBase: 1000, ipPrefix: '192.168.1.', cidrSuffix: 24, gateway: '192.168.1.1' });
+  const suggestion = suggestMidScheme({ address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, []);
+  assert.deepEqual(suggestion, { vmidBase: 1000, ipPrefix: '192.0.2.', cidrSuffix: 24, gateway: '192.0.2.1' });
   assert.equal(MidSchemeSchema.safeParse(suggestion).success, true);
 });
 
@@ -30,9 +30,9 @@ test('in a network wider than /24, a prefix another host uses moves to the next 
 });
 
 test('in a /24, a prefix another host uses is still suggested (saving it names the clash)', () => {
-  const others = [host('pve1', { vmidBase: 1000, ipPrefix: '192.168.1.', gateway: '192.168.1.1' })];
-  const suggestion = suggestMidScheme({ address: '192.168.1.11', prefixLength: 24, gateway: '192.168.1.1' }, others);
-  assert.equal(suggestion?.ipPrefix, '192.168.1.');
+  const others = [host('pve1', { vmidBase: 1000, ipPrefix: '192.0.2.', gateway: '192.0.2.1' })];
+  const suggestion = suggestMidScheme({ address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' }, others);
+  assert.equal(suggestion?.ipPrefix, '192.0.2.');
 });
 
 test('no bridge address means no suggestion', () => {

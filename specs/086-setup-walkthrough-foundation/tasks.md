@@ -57,6 +57,7 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 - [x] T021 [US2] Implement `src/web/setup/proxmox.ts` (installKey, testHost, saveHost: upsert, then `MAINTENANCE_OPERATIONS['sync-inventory'].apply`, then peers via `/cluster/status` and network for the suggestion) and wire the routes into `src/web/routes/setup.ts` with zod bodies per data-model.md ("`address`: non-empty, no whitespace", "`user` default 'root'", "`port` integer 1–65535 default 22", "`password` non-empty, no control characters")
 - [x] T022 [US2] Step 1 panel in `web-client/src/pages/SetupPage.tsx`: key choice and public key with a copy button and the manual `authorized_keys` instructions; endpoint form; install-with-password (masked input, cleared after use); test; save; peer list with add/skip per peer (reusing the same form, prefilled); a `midScheme` editor per host prefilled with the suggestion; errors shown inline
 - [ ] T023 [US2] Manual verification of `Ssh2SSHClient`'s password path against a lab Proxmox node (constitution III), recorded for the PR body; if no lab node is available, record it as unverified
+  - **Unverified**: no lab Proxmox node was used; the password path in `Ssh2SSHClient` is covered only by `FakeSSHClient` tests and must be checked by the operator.
 
 **Checkpoint**: Step 1 works against the fakes; the host and guests land in inventory.
 
@@ -103,10 +104,10 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 ## Phase 9: Polish and cross-cutting
 
 - [x] T036 Add a setup walkthrough doc page `docs/setup.md` (what each step does, where the token comes from, the security notes) and link it from the README documentation index
-- [ ] T037 `npm run typecheck`, `npm test`, `npm run web:build`, all green
-- [ ] T038 Browser verification of `/setup` (every step state, errors, peer list, key box) and the Settings domain field at desktop width and at ≤640px, against a demo/fake-backed instance; confirm no horizontal overflow
-- [ ] T039 Principle I sweep of the full diff (`git diff main...HEAD`): example values only in fixtures, specs, docs and commit messages
-- [ ] T040 Run the quickstart.md scenarios that need no real hosts, and record the rest as unverified for the PR
+- [x] T037 `npm run typecheck`, `npm test`, `npm run web:build`, all green
+- [x] T038 Browser verification of `/setup` (every step state, errors, peer list, key box) and the Settings domain field at desktop width and at ≤640px, against a demo/fake-backed instance; confirm no horizontal overflow
+- [x] T039 Principle I sweep of the full diff (`git diff main...HEAD`): example values only in fixtures, specs, docs and commit messages
+- [x] T040 Run the quickstart.md scenarios that need no real hosts, and record the rest as unverified for the PR
 
 ## Dependencies
 
