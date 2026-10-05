@@ -2397,3 +2397,17 @@ test('loadInventory rejects an out-of-list tlsSource or acmeDnsProvider written 
     assert.throws(() => loadInventory(dest), /./, key);
   }
 });
+
+// issue #72 (US2): an unsupported driver/TLS-source pairing is not a load or
+// validation error -- it is only refused where configuration is produced
+// (sync-proxy, convert-caddyfile), so switching drivers can't strand the
+// database.
+test('an inventory with nginx and tlsSource internal loads and validates clean', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, { ...FIXTURE_INVENTORY, proxyDriver: 'nginx', tlsSource: 'internal' });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.proxyDriver, 'nginx');
+  assert.equal(loaded.tlsSource, 'internal');
+  assert.deepEqual(validateInventory(loaded), []);
+});

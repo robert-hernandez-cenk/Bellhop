@@ -156,6 +156,18 @@ lists when written (`set-config`, the Settings page), never against the
 active driver, so switching drivers never makes the inventory unloadable.
 Bellhop itself never issues or renews a certificate.
 
+A source the active driver can't serve is refused where configuration is
+produced — `sync-proxy` (dry run and `--apply`, before any SSH call),
+`convert-caddyfile`, and so the web UI's push-live step, which reports it
+as a proxy failure while the guest edit itself is still saved:
+
+```text
+tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page
+```
+
+The fix always names the driver's own default. Under `proxyDriver: none`
+nothing is rendered, so nothing is refused.
+
 How each driver serves each source:
 
 - **Caddy and Caddy (admin API)** obtain or issue their own per-site

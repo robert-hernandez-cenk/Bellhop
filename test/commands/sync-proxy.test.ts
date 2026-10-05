@@ -839,3 +839,36 @@ test('sync-proxy (caddy-api driver) previews the admin-API plan without needing 
   assert.match(result.preview, /^\+ route media\.example\.com, movies\.example\.com -> 192\.168\.1\.50:8080$/m);
   assert.equal(ssh.history.length, 1);
 });
+
+// --- TLS source refusal (issue #72, US2) ---
+const REFUSAL =
+  "tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page";
+
+test('sync-proxy refuses a TLS source the driver cannot serve, dry run and --apply, before any SSH call (issue #72)', async () => {
+  for (const apply of [false, true]) {
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    await assert.rejects(
+      () => runSyncProxy({ apply }, { ssh, inventory: { ...inventory, proxyDriver: 'nginx', tlsSource: 'internal' } }),
+      (err: unknown) => (err as Error).message === REFUSAL
+    );
+    assert.deepEqual(ssh.history, [], `apply=${apply}`);
+  }
+});
+
+test('sync-proxy under the none driver ignores tlsSource and returns the no-proxy message (issue #72)', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runSyncProxy({ apply: true }, { ssh, inventory: { ...inventory, proxyDriver: 'none', tlsSource: 'external' } });
+  assert.equal(result.preview, NO_PROXY_SYNC_MESSAGE);
+  assert.deepEqual(ssh.history, []);
+});
+
+test('sync-proxy with tlsSource unset passes the TLS check on every driver (issue #72)', async () => {
+  for (const proxyDriver of ['caddy', 'caddy-api', 'nginx', 'traefik', 'haproxy'] as const) {
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    try {
+      await runSyncProxy({}, { ssh, inventory: { ...inventory, proxyDriver } });
+    } catch (err) {
+      assert.doesNotMatch((err as Error).message, /tlsSource/, proxyDriver);
+    }
+  }
+});

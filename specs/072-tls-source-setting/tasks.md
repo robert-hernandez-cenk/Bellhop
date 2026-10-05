@@ -61,10 +61,10 @@ description: "Task list for the driver-independent TLS source setting (#72)"
 
 **Independent Test**: unsupported `tlsSource` makes `sync-proxy` refuse (dry run and apply) before any SSH call; the inventory still loads.
 
-- [ ] T015 [US2] In `src/commands/networking/sync-proxy.ts` (`runSyncProxy`), call `checkTlsSource(inventory, driver)` right after the `managesProxy` short-circuit and before `driverDeps`/`buildRoutes`, throwing its message. TDD in `test/commands/sync-proxy.test.ts`: nginx + `internal` refuses with the exact contract message for dry run and `--apply`, `FakeSSHClient.history` empty; `none` driver with any `tlsSource` still returns `NO_PROXY_SYNC_MESSAGE`; unset `tlsSource` on every driver passes.
-- [ ] T016 [US2] Call `checkTlsSource` in `src/commands/networking/convert-caddyfile.ts` before rendering; test in its existing test file that `tlsSource: external` with `caddy-api` refuses before any SSH call.
-- [ ] T017 [US2] Tests proving the check never runs on load/edit: in `test/lib/inventory.test.ts` an inventory with nginx + `tlsSource: internal` loads and `validateInventory` returns no error; in `test/operations/edit-guest.test.ts` a guest edit under that combination saves and reports `proxySynced: false` with the refusal message.
-- [ ] T018 [P] [US2] Document the refusal in `src/lib/proxy/CLAUDE.md` "Capability enforcement" (TLS source check: where it runs, where it never runs, message) and in `docs/reverse-proxy/README.md`.
+- [x] T015 [US2] In `src/commands/networking/sync-proxy.ts` (`runSyncProxy`), call `checkTlsSource(inventory, driver)` right after the `managesProxy` short-circuit and before `driverDeps`/`buildRoutes`, throwing its message. TDD in `test/commands/sync-proxy.test.ts`: nginx + `internal` refuses with the exact contract message for dry run and `--apply`, `FakeSSHClient.history` empty; `none` driver with any `tlsSource` still returns `NO_PROXY_SYNC_MESSAGE`; unset `tlsSource` on every driver passes.
+- [x] T016 [US2] Call `checkTlsSource` in `src/commands/networking/convert-caddyfile.ts` before rendering; test in its existing test file that `tlsSource: external` with `caddy-api` refuses before any SSH call.
+- [x] T017 [US2] Tests proving the check never runs on load/edit: in `test/lib/inventory.test.ts` an inventory with nginx + `tlsSource: internal` loads and `validateInventory` returns no error; in `test/operations/edit-guest.test.ts` a guest edit under that combination saves and reports `proxySynced: false` with the refusal message.
+- [x] T018 [P] [US2] Document the refusal in `src/lib/proxy/CLAUDE.md` "Capability enforcement" (TLS source check: where it runs, where it never runs, message) and in `docs/reverse-proxy/README.md`.
 
 **Checkpoint**: green. Commit `Refuse a TLS source the proxy driver cannot serve (#72, US2)`.
 
