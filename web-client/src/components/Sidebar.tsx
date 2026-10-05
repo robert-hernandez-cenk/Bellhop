@@ -136,12 +136,10 @@ export function Sidebar() {
           // below (FR-008) so the retry stays reachable even when the
           // "stop impersonating" banner can't be shown because the failed
           // lookup means the current impersonation state isn't known.
-          // Retry reloads the page rather than calling refresh(): a plain
-          // fetch can never recover an expired Authentik forward-auth
-          // session (Caddy's login redirect only works on a top-level
-          // navigation), and this banner only appears when the identity
-          // couldn't be loaded at all, so the page is already fail-closed
-          // and there's no in-page state a reload would lose.
+          // Retry reloads the page rather than calling refresh(): this banner
+          // only appears when the identity could not be loaded at all (a 401
+          // already redirected to sign-in), so the page is fail-closed and
+          // there is no in-page state a reload would lose.
           <div className="warning-banner">
             Couldn't load your sign-in details: {whoamiError}
             <br />
@@ -200,8 +198,13 @@ export function Sidebar() {
             {whoami && (
               <div className="signed-in-as">
                 Signed in as {whoami.username}
-                {/* Authentik's own sign-out endpoint -- meaningless without it. */}
-                {!whoami.localOperator && <a href="/outpost.goauthentik.io/sign_out">Sign out</a>}
+                {/* Bellhop's own sign-out (POST, so a cross-site link cannot trigger it);
+                    the local operator has no session to end. */}
+                {!whoami.localOperator && (
+                  <form method="post" action="/auth/logout">
+                    <button type="submit" className="link-button">Sign out</button>
+                  </form>
+                )}
               </div>
             )}
           </>

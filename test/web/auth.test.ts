@@ -449,3 +449,10 @@ test('a file-backed session survives the service restarting', async () => {
     }
   });
 });
+
+// #69 US5 (T043): a stored value the schema rejects is reported by the config
+// accessor, whose error points at set-config rather than at the env variable.
+test('authMode: a stored invalid webUiAuthMode throws an error naming set-config', () => {
+  tempConfigStore({ webUiAuthMode: 'bogus' as never });
+  assert.throws(() => authMode({}), /set-config webUiAuthMode/);
+});

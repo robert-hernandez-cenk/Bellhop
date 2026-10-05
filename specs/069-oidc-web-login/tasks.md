@@ -147,14 +147,14 @@ description: "Task list for web UI login through Bellhop's own OIDC client (#69)
 
 ### Tests first
 
-- [ ] T043 [P] [US5] Tests in test/web/auth.test.ts: unset mode → `none`; env `auto`/`authentik` throw naming `oidc`/`none`; stored invalid value error names `set-config`
-- [ ] T044 [P] [US5] Tests in test/web-client (new test/web-client/api-client.test.ts or existing pattern): a 401 from `apiGet`/`apiPost`/`apiPatch`/`apiPut` sets `location.href` to `/auth/login?returnTo=<encoded path+search>`; Sidebar renders a POST form to `/auth/logout` for non-local-operator users and nothing for the local operator (test/web-client/admin-nav.test.ts or a Sidebar test following the repo's existing web-client test style)
+- [x] T043 [P] [US5] Tests in test/web/auth.test.ts: unset mode → `none`; env `auto`/`authentik` throw naming `oidc`/`none`; stored invalid value error names `set-config`
+- [x] T044 [P] [US5] Tests in test/web-client (new test/web-client/api-client.test.ts or existing pattern): a 401 from `apiGet`/`apiPost`/`apiPatch`/`apiPut` sets `location.href` to `/auth/login?returnTo=<encoded path+search>`; Sidebar renders a POST form to `/auth/logout` for non-local-operator users and nothing for the local operator (test/web-client/admin-nav.test.ts or a Sidebar test following the repo's existing web-client test style)
 
 ### Implementation
 
-- [ ] T045 [US5] 401 redirect in web-client/src/api/client.ts
-- [ ] T046 [US5] Sign out form button in web-client/src/components/Sidebar.tsx (styled as the previous link; works at ≤640px)
-- [ ] T047 [US5] Mode default/labels in web-client/src/lib/settings-display.ts (`effectiveWebUiAuthMode` falls back to `none`)
+- [x] T045 [US5] 401 redirect in web-client/src/api/client.ts
+- [x] T046 [US5] Sign out form button in web-client/src/components/Sidebar.tsx (styled as the previous link; works at ≤640px)
+- [x] T047 [US5] Mode default/labels in web-client/src/lib/settings-display.ts (`effectiveWebUiAuthMode` falls back to `none`)
 
 ---
 
