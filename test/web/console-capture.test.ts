@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withCapturedConsole } from '../../src/web/console-capture.ts';
+import { gate } from '../support/gate.ts';
 
 test('captures console.log/console.error output and restores the originals', async () => {
   const origLog = console.log;
@@ -37,16 +38,6 @@ test('two concurrent calls never interleave — each only sees its own lines', a
   assert.equal(a.text, 'A1\nA2');
   assert.equal(b.text, 'B1');
 });
-
-// Test-controlled gates (constitution Principle III): every ordering below is
-// forced by resolving one of these, never by a wall-clock wait.
-function gate(): { promise: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    open = resolve;
-  });
-  return { promise, open };
-}
 
 // Swaps console.log for a collector for the duration of `fn` (before any
 // capture starts, so the capture saves the collector as its fallback), and
@@ -289,4 +280,41 @@ test('outside-capture lines reach the console in place when the capture started,
     assert.equal(console.log, collector);
     assert.equal(console.error, origError);
   });
+});
+
+test('a capture started after console.log was replaced mid-capture still captures, and the replacement becomes the fallback (#78)', { timeout: 5000 }, async () => {
+  const origLog = console.log;
+  const origError = console.error;
+  const collected: string[] = [];
+  const collector = (...args: unknown[]) => {
+    collected.push(args.map(String).join(' '));
+  };
+  const aStarted = gate();
+  const releaseA = gate();
+  try {
+    const runA = withCapturedConsole(async () => {
+      aStarted.open();
+      await releaseA.promise;
+    });
+    await aStarted.promise;
+    // Replaced while A is still active, e.g. by a test or library.
+    console.log = collector;
+
+    const b = await withCapturedConsole(async () => {
+      console.log('inside B');
+    });
+    assert.equal(b.text, 'inside B');
+    assert.deepEqual(collected, []);
+
+    console.log('outside after B');
+    assert.deepEqual(collected, ['outside after B']);
+
+    releaseA.open();
+    const a = await runA;
+    assert.equal(a.text, '');
+    assert.equal(console.log, collector);
+  } finally {
+    console.log = origLog;
+    console.error = origError;
+  }
 });

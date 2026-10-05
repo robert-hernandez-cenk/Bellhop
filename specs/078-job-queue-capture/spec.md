@@ -43,7 +43,7 @@ Accepting actions right away does not change how jobs run: only one job runs at 
 **Acceptance Scenarios**:
 
 1. **Given** a job is running and a second is queued, **Then** the second job does not start any work until the first has finished.
-2. **Given** a queued job is cancelled before it starts, **Then** it is marked `cancelled`, none of its work runs, and the next queued job still starts when its turn comes.
+2. **Given** a queued job is cancelled before it starts, **Then** it is marked `cancelled` immediately, none of its work runs, and the next queued job still starts when its turn comes.
 
 ---
 
@@ -65,7 +65,7 @@ Output a job produces still ends up in that job's log, including output from wor
 ### Edge Cases
 
 - A callback scheduled during a job fires after the job has finished: its output goes to the normal console, not into the finished job's log.
-- A job is cancelled while it is `queued`: it is marked `cancelled` without running, and the jobs queued behind it are not held up.
+- A job is cancelled while it is `queued`: it is marked `cancelled` immediately, without running, and the jobs queued behind it are not held up.
 - A job fails or throws: the next queued job still starts.
 - Code that temporarily replaces the console itself (tests do this) is still respected while no capture is active, and a capture does not permanently replace it.
 
@@ -76,7 +76,7 @@ Output a job produces still ends up in that job's log, including output from wor
 - **FR-001**: Applying an action MUST create its job (status `queued` or `running`) and return to the caller without waiting for any other job to finish.
 - **FR-002**: Producing a dry-run preview MUST NOT wait for a running job to finish.
 - **FR-003**: At most one job per job runner MUST be running at any time. Queued jobs MUST start in the order they were queued.
-- **FR-004**: Cancelling a `queued` job MUST mark it `cancelled` without starting any of its work, and MUST NOT delay the jobs queued after it.
+- **FR-004**: Cancelling a `queued` job MUST mark it `cancelled` immediately, without starting any of its work, and MUST NOT delay the jobs queued after it.
 - **FR-005**: A job that fails, throws, or is cancelled while running MUST NOT stop the next queued job from starting.
 - **FR-006**: Output produced during a job, including output from callbacks the job's work schedules, MUST go to that job's log.
 - **FR-007**: Captures running at the same time (a job and a preview, or two previews) MUST each receive only their own output.

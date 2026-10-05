@@ -76,19 +76,19 @@ export class JobRunner {
   readonly events = new EventEmitter();
   readonly owner: string;
   // Only holds an entry while a job is queued or actually running -- cancel()
-  // uses this to both stop an in-flight job (abort() ends its current SSH
-  // connection, see Ssh2SSHClient) and skip one that hasn't started yet
-  // (execute() checks signal.aborted before doing anything). Removed in
-  // execute()'s finally, so a stale id can never be "cancelled" after the
-  // fact.
+  // uses this to stop an in-flight job (abort() ends its current SSH
+  // connection, see Ssh2SSHClient) or finish a queued one on the spot.
+  // Removed once the job is finished (finishCleanup), so a stale id can never
+  // be "cancelled" after the fact.
   private controllers = new Map<number, AbortController>();
-  // Keeps jobs running one at a time, per runner (FR-003) -- each enqueue
-  // chains its execute() call onto this promise, so the next job never
-  // starts until the previous one's execute() has settled, independent of
-  // withCapturedConsole's own serialization (which no longer serializes
-  // anything, see src/web/console-capture.ts). The web service and each MCP
-  // server already have separate runners in separate processes, so this is
-  // the same "one at a time" scope production always had.
+  // Ids whose execute() has begun. cancel() finishes a job not in here
+  // without waiting for its turn, and execute() skips a job that is no
+  // longer in `controllers` when its turn comes.
+  private started = new Set<number>();
+  // Runs this runner's jobs one at a time (FR-003): each enqueue chains its
+  // execute() call onto this promise, so the next job starts only once the
+  // previous one's execute() has settled. Separate runners (the web service
+  // and each MCP server) do not wait on each other.
   private queue: Promise<void> = Promise.resolve();
   private pendingPrompts = new Map<number, { write: (text: string) => void; resume: () => void }>();
   private abandonTimers = new Map<number, NodeJS.Timeout>();
@@ -133,13 +133,16 @@ export class JobRunner {
     const controller = new AbortController();
     this.controllers.set(id, controller);
     this.ensureControlPoller();
-    // Chained onto the queue rather than fired directly (void this.execute(...))
-    // -- this is what keeps jobs one at a time per runner now that console
-    // capture no longer serializes anything on its own (FR-003). execute()
-    // already turns every failure into a stored job status and never
-    // rejects in practice, but the .catch(() => {}) guards the chain itself
-    // so a future change there can't silently break every job queued after it.
-    this.queue = this.queue.then(() => this.execute(id, logFile, def, controller)).catch(() => {});
+    // Chained onto the queue so this runner runs one job at a time (FR-003).
+    // execute() turns every failure into a stored job status, so it should
+    // never reject; if it does, the catch logs it and keeps the chain alive
+    // for every job queued after this one.
+    this.queue = this.queue
+      .then(() => this.execute(id, logFile, def, controller))
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logWarn(`Job ${id} failed outside its own error handling: ${message}`);
+      });
     return id;
   }
 
@@ -216,11 +219,20 @@ export class JobRunner {
 
   // Returns false when the job isn't queued/running (already finished, or
   // never existed) -- both are "nothing to cancel", not an error, so the
-  // route layer decides what that means for the HTTP response.
+  // route layer decides what that means for the HTTP response. A job still
+  // waiting in the queue is finished as cancelled right here (FR-004), so it
+  // never sits `queued` behind a long-running job; execute() later skips it.
   cancel(id: number): boolean {
     const controller = this.controllers.get(id);
     if (!controller) return false;
     controller.abort();
+    if (!this.started.has(id)) {
+      const job = this.store.get(id);
+      if (job) this.emitLogChunk(id, job.logFile, 'Job cancelled by operator', 'stderr');
+      this.store.markFinished(id, { status: 'cancelled', exitCode: 1, errorMessage: 'Cancelled by operator' });
+      this.events.emit('status', { jobId: id, status: 'cancelled' });
+      this.finishCleanup(id);
+    }
     return true;
   }
 
@@ -273,7 +285,7 @@ export class JobRunner {
   // them to settle as 'cancelled', then closes out any row it still owns in
   // a non-terminal status the same way a restart would.
   async shutdown(timeoutMs = 5000): Promise<void> {
-    for (const controller of this.controllers.values()) controller.abort();
+    for (const id of [...this.controllers.keys()]) this.cancel(id);
     const deadline = Date.now() + timeoutMs;
     while (this.controllers.size > 0 && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -324,12 +336,12 @@ export class JobRunner {
       this.events.emit('prompt-cleared', { jobId: id });
     };
 
+    // A job cancelled while queued was already finished by cancel(); there is
+    // nothing left to run or record.
+    if (!this.controllers.has(id)) return;
+    this.started.add(id);
+
     try {
-      // A job can be cancelled while it's still waiting its turn in this
-      // runner's own queue (see the `queue` field and enqueue() above) --
-      // skip it entirely rather than starting work that's already been
-      // called off, and before it's ever marked running.
-      if (controller.signal.aborted) throw new Error('Job cancelled');
       await withCapturedConsole(
         async () => {
           this.store.markRunning(id);
@@ -362,32 +374,38 @@ export class JobRunner {
       });
       this.events.emit('status', { jobId: id, status: cancelled ? 'cancelled' : 'failed' });
     } finally {
-      this.controllers.delete(id);
-      this.pendingPrompts.delete(id);
-      const timer = this.abandonTimers.get(id);
-      if (timer) {
-        clearTimeout(timer);
-        this.abandonTimers.delete(id);
+      this.finishCleanup(id);
+    }
+  }
+
+  // Drops a finished job's in-memory state -- called from execute()'s finally
+  // and from cancel() for a job cancelled while still queued.
+  private finishCleanup(id: number): void {
+    this.controllers.delete(id);
+    this.started.delete(id);
+    this.pendingPrompts.delete(id);
+    const timer = this.abandonTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.abandonTimers.delete(id);
+    }
+    if (this.controllers.size === 0) {
+      // Fix wave (#6): an answer/cancel/dismiss control request can be
+      // written to job_control_requests in the gap between this job
+      // becoming this runner's last active one and this cleanup running --
+      // with the poller about to stop (see clearControlPoller just below),
+      // nothing would ever pick that row up again, leaving it pending (with
+      // answer text still attached) indefinitely. One last sweep here
+      // closes it out the same way reconcileOrphanedJobs/shutdown already
+      // do, guarded the same way processControlRequests guards its own call
+      // so a failure here can never take the rest of this cleanup down.
+      try {
+        this.store.closeStaleControlRequests();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logWarn(`closeStaleControlRequests failed: ${message}`);
       }
-      if (this.controllers.size === 0) {
-        // Fix wave (#6): an answer/cancel/dismiss control request can be
-        // written to job_control_requests in the gap between this job
-        // becoming this runner's last active one and this finally block
-        // running -- with the poller about to stop (see clearControlPoller
-        // just below), nothing would ever pick that row up again, leaving
-        // it pending (with answer text still attached) indefinitely. One
-        // last sweep here closes it out the same way reconcileOrphanedJobs/
-        // shutdown already do, guarded the same way processControlRequests
-        // guards its own call so a failure here can never take the whole
-        // finally block (and therefore this job's own cleanup) down with it.
-        try {
-          this.store.closeStaleControlRequests();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logWarn(`closeStaleControlRequests failed: ${message}`);
-        }
-        this.clearControlPoller();
-      }
+      this.clearControlPoller();
     }
   }
 }

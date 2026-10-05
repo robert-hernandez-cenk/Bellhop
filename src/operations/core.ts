@@ -83,7 +83,9 @@ function enqueue(
 // logs the preview at the top of the job's own log. Console captures don't
 // wait on each other (src/web/console-capture.ts) and JobRunner runs its jobs
 // one at a time (src/web/jobs/job-runner.ts), so this never waits for a
-// running job.
+// running job. A queued job's preview -- and, for a resolvesApp operation,
+// its pinned custom-repository commit -- is therefore computed when the job
+// is queued, which may be well before it runs.
 export async function previewAndEnqueue(
   op: Operation,
   raw: unknown,

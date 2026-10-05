@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { logInfo } from '../../../src/lib/log.ts';
 import { withCapturedConsole } from '../../../src/web/console-capture.ts';
+import { gate } from '../../support/gate.ts';
+import { captureWarnings } from '../../support/capture-warnings.ts';
 import type { ExecResult, SSHClient, SshTarget } from '../../../src/lib/ssh-client.ts';
 import Database from 'better-sqlite3';
 
@@ -213,9 +215,9 @@ test('run() receives the job signal, which aborts on cancel()', async () => {
   store.close();
 });
 
-test('cancel() skips a job that is still waiting its turn behind another running job', async () => {
+test('cancel() skips a job that is still waiting its turn behind another running job', { timeout: 5000 }, async () => {
   const { store, dir, runner } = makeRunner();
-  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const release = gate();
   let secondRan = false;
 
   const firstId = runner.enqueue({
@@ -223,7 +225,7 @@ test('cancel() skips a job that is still waiting its turn behind another running
     category: 'maintenance',
     argsJson: '{}',
     run: async () => {
-      await delay(30);
+      await release.promise;
     },
   });
   const secondId = runner.enqueue({
@@ -235,9 +237,10 @@ test('cancel() skips a job that is still waiting its turn behind another running
     },
   });
 
+  const finished = Promise.all([waitForFinished(runner, firstId), waitForFinished(runner, secondId)]);
   assert.equal(runner.cancel(secondId), true);
-  await waitForFinished(runner, firstId);
-  await waitForFinished(runner, secondId);
+  release.open();
+  await finished;
 
   assert.equal(store.get(secondId)?.status, 'cancelled');
   assert.equal(secondRan, false);
@@ -293,9 +296,8 @@ test('a second enqueue while one job is running is queued, not run concurrently'
   store.close();
 });
 
-// Issue #78 US2 (T001): JobRunner now keeps jobs one at a time via its own
-// queue, independent of withCapturedConsole (which no longer serializes
-// anything since #78's US3). A test-controlled gate,
+// Issue #78 US2 (T001): JobRunner runs one job at a time through its own
+// queue. A test-controlled gate,
 // not delay(), proves B genuinely waits for A rather than merely losing a
 // race.
 test('a second enqueue while a job runs stays queued until released, then both run and succeed (#78 US2)', async () => {
@@ -338,14 +340,12 @@ test('a second enqueue while a job runs stays queued until released, then both r
   store.close();
 });
 
-// Issue #78 US2 (T002): a job cancelled while still queued behind a running
-// one never runs and does not hold up the job queued after it.
-test('a cancelled queued job never runs and does not hold up the next queued job (#78 US2)', async () => {
+// Issue #78 US2 (T002/FR-004): a job cancelled while still queued behind a
+// running one is finished as cancelled at once -- not when its turn comes --
+// never runs, and does not hold up the job queued after it.
+test('a cancelled queued job is marked cancelled immediately, never runs, and does not hold up the next queued job (#78 US2, FR-004)', { timeout: 5000 }, async () => {
   const { store, log, dir, runner } = makeRunner();
-  let releaseA!: () => void;
-  const gateA = new Promise<void>((resolve) => {
-    releaseA = resolve;
-  });
+  const releaseA = gate();
   let bRunCalled = false;
   let cRunCalled = false;
 
@@ -354,7 +354,7 @@ test('a cancelled queued job never runs and does not hold up the next queued job
     category: 'maintenance',
     argsJson: '{}',
     run: async () => {
-      await gateA;
+      await releaseA.promise;
     },
   });
   await waitForStatus(runner, aId, 'running');
@@ -376,17 +376,32 @@ test('a cancelled queued job never runs and does not hold up the next queued job
     },
   });
 
+  const bStatuses: string[] = [];
+  runner.events.on('status', (payload: any) => {
+    if (payload.jobId === bId) bStatuses.push(payload.status);
+  });
+  const finished = Promise.all([waitForFinished(runner, aId), waitForFinished(runner, cId)]);
+
   assert.equal(runner.cancel(bId), true);
-  releaseA();
-
-  await waitForFinished(runner, bId);
+  // Still before A is released: B is already over.
   assert.equal(store.get(bId)?.status, 'cancelled');
-  assert.equal(bRunCalled, false);
-  assert.match(log.read(store.get(bId)!.logFile), /Job cancelled by operator/);
+  assert.equal(store.get(bId)?.errorMessage, 'Cancelled by operator');
+  assert.deepEqual(bStatuses, ['cancelled']);
+  assert.equal(store.get(aId)?.status, 'running');
+  assert.equal(runner.cancel(bId), false);
 
-  await waitForFinished(runner, cId);
+  releaseA.open();
+  await finished;
+
+  assert.equal(bRunCalled, false);
+  assert.deepEqual(bStatuses, ['cancelled']);
+  assert.equal(store.get(bId)?.status, 'cancelled');
+  const bLog = log.read(store.get(bId)!.logFile);
+  assert.equal(bLog.match(/Job cancelled by operator/g)?.length, 1);
+  assert.equal(store.get(aId)?.status, 'success');
   assert.equal(store.get(cId)?.status, 'success');
   assert.equal(cRunCalled, true);
+  assert.equal(runner.hasControlPoller(), false);
   rmSync(dir, { recursive: true, force: true });
   store.close();
 });
@@ -419,6 +434,32 @@ test('a job whose run throws ends failed, and the job queued after it still star
   assert.equal(store.get(firstId)?.status, 'failed');
   assert.equal(store.get(secondId)?.status, 'success');
   assert.equal(secondRan, true);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// If execute() itself rejects (here: the store cannot record the job's end),
+// the queue logs a warning naming the job and still runs the next job.
+test('an execute() rejection is logged with the job id and does not stop the queue (#78)', { timeout: 5000 }, async () => {
+  const { store, dir, runner } = makeRunner();
+  let brokenId = -1;
+  const realMarkFinished = store.markFinished.bind(store);
+  store.markFinished = (id, result) => {
+    if (id === brokenId) throw new Error('store write failed');
+    realMarkFinished(id, result);
+  };
+
+  const { warnings } = await captureWarnings(async () => {
+    brokenId = runner.enqueue({ command: 'a', category: 'maintenance', argsJson: '{}', run: async () => {} });
+    const secondId = runner.enqueue({ command: 'b', category: 'maintenance', argsJson: '{}', run: async () => {} });
+    await waitForFinished(runner, secondId);
+    assert.equal(store.get(secondId)?.status, 'success');
+  });
+
+  assert.ok(
+    warnings.some((w) => w.includes(`Job ${brokenId}`) && w.includes('store write failed')),
+    `expected a warning naming job ${brokenId}, got: ${JSON.stringify(warnings)}`
+  );
   rmSync(dir, { recursive: true, force: true });
   store.close();
 });
@@ -1229,15 +1270,6 @@ test('execute() finally closes a control request left pending when its job finis
   rmSync(dir, { recursive: true, force: true });
   rmSync(logDir, { recursive: true, force: true });
 });
-
-// Test-controlled gate (constitution Principle III) for the #78 tests below.
-function gate(): { promise: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    open = resolve;
-  });
-  return { promise, open };
-}
 
 test('two separate JobRunners do not serialize against each other (#78)', { timeout: 5000 }, async () => {
   const one = makeRunner();

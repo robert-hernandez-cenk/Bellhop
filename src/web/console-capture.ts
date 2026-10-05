@@ -8,26 +8,24 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 // capture's sink and no other. Captures therefore run concurrently instead of
 // one at a time, and a nested capture gets the inner lines only.
 //
-// The console wrappers are installed by reference count rather than once at
-// module load: when the first concurrent capture starts, whatever
-// console.log/console.error are at that moment are saved as the fallback for
-// lines logged outside any capture, and they are put back when the last
-// capture ends -- but only if the wrappers are still the ones installed, so
-// code that replaced the console in between keeps its replacement. Two
+// The console wrappers are installed when a capture starts, not at module
+// load. Every capture start checks console.log and console.error separately:
+// if one is not our wrapper, it becomes the fallback for lines logged outside
+// any capture and the wrapper is put (back) in its place. So a console
+// replaced while a capture is active is captured again by the next capture.
+// When the last active capture ends, each fallback is restored, but only if
+// our wrapper is still installed, so a replacement made since stays. Two
 // reasons for this:
 //   - src/mcp/server.ts sets `console.log = console.error` in its module body,
 //     which runs after every import is evaluated. Wrappers installed at import
 //     time would be overwritten there and MCP job output would go to stderr
-//     instead of the job log; installed at first capture, that redirect
+//     instead of the job log; installed at capture start, that redirect
 //     becomes the fallback instead, keeping stdout clean.
 //   - Many tests swap console.log for a collector and restore it afterwards.
-//     Restoring at count 0 puts back the pre-capture console, unless code
-//     replaced it during a capture, in which case the replacement stays.
 //
-// Code that saved console.log while a capture was active holds a wrapper and
-// may assign it back after the capture ends, so install() never snapshots one
-// of its own wrappers as the fallback: that would make every later
-// outside-capture line recurse into the wrapper forever.
+// The fallback is only ever taken from a console function that is not our
+// wrapper, so code that saved a wrapper and assigns it back later can never
+// make an outside-capture line recurse into the wrapper forever.
 
 interface CaptureSink {
   lines: string[];
@@ -62,11 +60,13 @@ const logWrapper = wrap(() => fallbackLog);
 const errorWrapper = wrap(() => fallbackError);
 
 function install(): void {
-  if (activeCaptures === 0) {
-    // Never snapshot our own wrappers as the fallback (see the header).
-    if (console.log !== logWrapper) fallbackLog = console.log;
-    if (console.error !== errorWrapper) fallbackError = console.error;
+  // Runs on every capture start, not only the first (see the header).
+  if (console.log !== logWrapper) {
+    fallbackLog = console.log;
     console.log = logWrapper;
+  }
+  if (console.error !== errorWrapper) {
+    fallbackError = console.error;
     console.error = errorWrapper;
   }
   activeCaptures += 1;

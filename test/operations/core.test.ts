@@ -15,6 +15,7 @@ import { saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { reqStr, optStr } from '../../src/operations/fields.ts';
 import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE } from '../../src/lib/app-source.ts';
 import { withCapturedConsole } from '../../src/web/console-capture.ts';
+import { gate } from '../support/gate.ts';
 import {
   parseOperationInput,
   redactSecrets,
@@ -76,16 +77,6 @@ function waitForStatus(store: JobStore, id: number, status: string): Promise<voi
     };
     check();
   });
-}
-
-// Test-controlled gate (constitution Principle III): T016 below forces its
-// ordering by resolving this, never by a wall-clock wait.
-function gate(): { promise: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    open = resolve;
-  });
-  return { promise, open };
 }
 
 test('parseOperationInput names the invalid fields', () => {

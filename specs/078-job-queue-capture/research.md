@@ -49,6 +49,8 @@ The chain was also process-wide rather than per runner: in the test suite every 
 
 **Decision**: Replace the deadlock warning with the reason previews still run before enqueue: the preview text is logged at the top of the job log, and a bad input fails the request before any job row exists. A preview inside a job would no longer deadlock, but nothing moves into the job.
 
+**Consequence**: because `previewAndEnqueue` no longer waits behind a running job, a queued job's preview -- and, for a `resolvesApp` operation, its pinned custom-repository commit -- is computed when the job is queued, which may be well before it runs.
+
 ## R8. Documentation
 
 `CLAUDE.md`'s "Shared operations layer" bullet calls the ordering "the ordering that avoids the `withCapturedConsole` deadlock"; it is reworded. No user docs under `docs/` describe the queue, and Job History already shows `queued` jobs, so no user-facing page changes.
