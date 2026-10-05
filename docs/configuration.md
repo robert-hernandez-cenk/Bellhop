@@ -2,46 +2,24 @@
 
 How the inventory is set up, the inventory-wide settings Bellhop reads from it, and the integration settings and secrets stored alongside them.
 
-## Hand-editing the inventory
+## Creating the inventory
 
-To hand-edit real Proxmox hosts and guests before importing them, copy
-`inventory/hosts.yaml.example` to `inventory/hosts.yaml` first and edit
-that copy. See the comments in the example file for the schema (`domain`,
-`hosts[]` — each with an `ssh_user` (the SSH login user for that host —
-Proxmox generally only allows `root`) and an optional `midScheme`
-(`vmidBase`/`ipPrefix`/`gateway`) used by `--mid` (see [Commands](commands.md)) — `guests[]`, optional
-`subdomains`/`ip`/`port`/`proxy`/`insecureBackendTls` fields —
-`subdomains` is a list, so one host/guest can front more than one;
-`insecureBackendTls` is for a backend that serves HTTPS with a
-self-signed cert. A top-level `externalSites[]` covers reverse-proxy
-targets that aren't a Proxmox host or guest at all, e.g. a NAS — see the
-example file). `inventory/hosts.yaml` itself is never read by any command
-other than `import-yaml-inventory` — everything else reads
-`inventory/bellhop.db`, so re-run the import command in [Setup](../README.md#setup) any time you
-change the hand-edited `hosts.yaml` copy.
+A fresh install creates its inventory through the web UI's first-run setup
+walkthrough (see [First-run setup](setup.md)): it adds your Proxmox hosts,
+discovers their bridges, storage and guests with `sync-inventory`, and
+sets the domain and the other values below. After setup, `sync-inventory`
+keeps hosts and guests in step with Proxmox, the Dashboard edits each
+guest, and `set-config` or the Settings page changes the inventory-wide
+values. Set `nfsServer` before a `sync-inventory` that should discover NFS
+mounts, or it skips that scan and prints a reminder.
 
-## Inventory-wide settings (before your first sync)
-
-A few operator-specific values — your NAS's `nfsServer` IP chief among
-them — live in the inventory database rather than in code, and are unset
-by default. Set them before your first `sync-inventory`, so it can do
-things like discover NFS mounts right away instead of skipping that scan
-and printing a reminder:
-
-```bash
-npm run bellhop -- set-config nfsServer <ip> --apply
-```
-
-The web UI's Settings page sets the same values, for anyone who'd rather
-not use the CLI. See [Inventory-wide settings](#inventory-wide-settings) below for the full list and
-what happens when a value stays unset. If you're hand-editing
-`inventory/hosts.yaml` for `import-yaml-inventory` instead, these keys can
-go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
-`statusPagePath` keys in `inventory/hosts.yaml.example`.
+For a sample inventory to explore the CLI against, write the demo inventory
+to a throwaway database with `npm run demo:seed -- <path>` and point
+`INVENTORY_FILE` at it (see [Environment variables](environment-variables.md)).
 
 ## Inventory-wide settings
 
-Fifteen values live in the inventory database rather than in code, because
+Sixteen values live in the inventory database rather than in code, because
 they are specific to your network (the integration settings are covered
 separately, under [Integration settings and
 secrets](#integration-settings-and-secrets)). Set them with `set-config`:
@@ -72,6 +50,7 @@ value — see
 
 | Setting | Used by | When unset |
 |---|---|---|
+| `domain` | `sync-proxy`, `sync-authentik`, `prune-acme-challenges`, `set-guest-vpn` | No entry can have subdomains (the inventory refuses them), so there is nothing to route; commands that need it fail naming `set-config domain` |
 | `nfsServer` | `sync-inventory`, `migrate-nfs-mount` | `sync-inventory` skips its NFS scan; `migrate-nfs-mount` fails |
 | `backupStorage` | `migrate-guest` | `--backup-storage` becomes required |
 | `dnsServer` | `set-guest-vpn` | `set-guest-vpn` fails |

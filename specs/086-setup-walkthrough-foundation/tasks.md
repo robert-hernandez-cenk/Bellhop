@@ -95,9 +95,9 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 
 **Independent Test**: The command is unknown, the seed script writes a loadable DB, and the docs link test passes.
 
-- [ ] T032 [P] [US6] Write a failing test in `test/scripts/demo/seed-db.test.ts`: `seedDemoDb(path)` writes a DB that `loadInventory` accepts and that matches the demo inventory's hosts and guests; a second call without `force` refuses to overwrite
-- [ ] T033 [US6] Implement `scripts/demo/seed-db.ts` (exporting `seedDemoDb`, with a CLI entry taking `<path> [--force]`) and an `npm run demo:seed` script in `package.json`
-- [ ] T034 [US6] Delete `src/commands/maintenance/import-yaml-inventory.ts`, `test/commands/import-yaml-inventory.test.ts` and `inventory/hosts.yaml.example`; remove the CLI registration in `src/cli.ts`; remove the remaining code references (`src/lib/config-import.ts`, `src/lib/proxy/legacy-tls.ts`, `src/commands/maintenance/sync-inventory.ts` comments, `test/web/routes/provisioning.test.ts`)
+- [x] T032 [P] [US6] Write a failing test in `test/scripts/demo/seed-db.test.ts`: `seedDemoDb(path)` writes a DB that `loadInventory` accepts and that matches the demo inventory's hosts and guests; a second call without `force` refuses to overwrite
+- [x] T033 [US6] Implement `scripts/demo/seed-db.ts` (exporting `seedDemoDb`, with a CLI entry taking `<path> [--force]`) and an `npm run demo:seed` script in `package.json`
+- [x] T034 [US6] Delete `src/commands/maintenance/import-yaml-inventory.ts`, `test/commands/import-yaml-inventory.test.ts` and `inventory/hosts.yaml.example`; remove the CLI registration in `src/cli.ts`; remove the remaining code references (`src/lib/config-import.ts`, `src/lib/proxy/legacy-tls.ts`, `src/commands/maintenance/sync-inventory.ts` comments, `test/web/routes/provisioning.test.ts`)
 - [ ] T035 [US6] Update the docs: the README quickstart says to install, then open the setup address with the setup token (stay under 200 lines); `CONTRIBUTING.md` and `docs/environment-variables.md` use `npm run demo:seed`; `docs/configuration.md` and `docs/reverse-proxy/README.md` lose their import references, and `docs/configuration.md` documents `domain` as a setting; the root `CLAUDE.md` testing bullet and fresh-worktree bullet; `src/commands/maintenance/CLAUDE.md`; `src/lib/CLAUDE.md` (setup_state table, domain setting, Bellhop key); `src/web/CLAUDE.md` gets a "First-run setup" section (gate, token, cookie, single-operator note: one service process, setup over plain HTTP)
 
 ## Phase 9: Polish and cross-cutting

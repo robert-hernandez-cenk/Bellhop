@@ -88,7 +88,7 @@ After a successful web/MCP `update-app` apply, the same job calls `checkOneGuest
 
 ## `backfill-guest-creators`
 
-`src/commands/maintenance/backfill-guest-creators.ts` (#58) is a one-time, **CLI-only** migration that attributes a `creator` (see `src/web/CLAUDE.md`, per-resource group permissions) to a guest created before that field existed, by mining `data/jobs.sqlite3`'s job history rather than touching live infrastructure. CLI-only is deliberate, same reasoning as `import-yaml-inventory`/`convert-caddyfile`: a one-time operator migration with no ongoing use, and an `Operation` would expose a fleet-wide inventory rewrite to the web UI/MCP server for nothing.
+`src/commands/maintenance/backfill-guest-creators.ts` (#58) is a one-time, **CLI-only** migration that attributes a `creator` (see `src/web/CLAUDE.md`, per-resource group permissions) to a guest created before that field existed, by mining `data/jobs.sqlite3`'s job history rather than touching live infrastructure. CLI-only is deliberate, same reasoning as `convert-caddyfile`: a one-time operator migration with no ongoing use, and an `Operation` would expose a fleet-wide inventory rewrite to the web UI/MCP server for nothing.
 
 `bellhop backfill-guest-creators [--map <old=new>]... [--apply]`, dry-run by default.
 

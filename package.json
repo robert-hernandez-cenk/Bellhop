@@ -47,6 +47,7 @@
     "service:install": "tsx scripts/windows-service.ts install",
     "service:uninstall": "tsx scripts/windows-service.ts uninstall",
     "demo": "tsx scripts/demo/serve.ts",
+    "demo:seed": "tsx scripts/demo/seed-db.ts",
     "docs:screenshots": "tsx scripts/capture-screenshots.ts"
   },
   "dependencies": {

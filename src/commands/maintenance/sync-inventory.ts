@@ -48,7 +48,7 @@ interface PveStorage {
 
 // Proxmox lets you set a free-text "Comment" on a network interface (Datacenter
 // -> node -> System -> Network); we surface that as the bridge's alias rather
-// than asking the operator to hand-maintain a second copy of it in hosts.yaml.
+// than asking the operator to hand-maintain a second copy of it in inventory.
 // Falls back to this when a bridge has no comment set yet.
 const DEFAULT_BRIDGE_ALIAS = 'LAN';
 
@@ -71,7 +71,7 @@ const PVE_TYPES: Array<['lxc' | 'qemu', 'lxc' | 'vm']> = [
 // 'rootdir'/'images') -- a storage that supports none of these (backup-only,
 // iso-only, snippets-only, ...) is never a candidate for anything this
 // toolkit does with a storage pool, so it's dropped instead of cluttering
-// hosts.yaml with pools that will never actually be picked.
+// the inventory with pools that will never actually be picked.
 const RELEVANT_STORAGE_CONTENT_TYPES = ['vztmpl', 'rootdir', 'images'];
 
 export async function runSyncInventory(

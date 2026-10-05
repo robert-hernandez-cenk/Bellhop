@@ -50,11 +50,6 @@ const CADDY_TLS_TO_SOURCE = new Map<string, LegacyTarget>([
   ['files', 'files'],
 ]);
 
-// Every value the removed proxyCaddyTls setting accepted -- what the
-// pre-#72 schema enum allowed, so import-yaml-inventory can still reject a
-// typo in a hosts.yaml rather than silently dropping it.
-export const LEGACY_CADDY_TLS_VALUES: readonly string[] = [...CADDY_TLS_TO_SOURCE.keys()];
-
 export function convertLegacyTlsSettings(input: LegacyTlsInput): LegacyTlsConversion {
   const driver = input.proxyDriver ?? DEFAULT_PROXY_DRIVER_ID;
   const remove: LegacyTlsConversion['remove'] = [];

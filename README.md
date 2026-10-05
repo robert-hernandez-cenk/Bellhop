@@ -19,12 +19,12 @@ Proxmox Server Solutions GmbH.
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 24
-- Passwordless SSH key access to every Proxmox host in your inventory. By
-  default this reads a default identity file directly (`~/.ssh/id_ed25519`,
-  `id_ecdsa`, or `id_rsa` — first match wins), the same as a plain `ssh`
-  client with no agent running — **no SSH agent is required**. An agent
-  (OpenSSH agent on Linux/macOS, Pageant on Windows) is only used as a
-  fallback, when none of those identity files exist.
+- SSH access to your Proxmox hosts. The setup walkthrough gives Bellhop
+  its own key and installs it on each host for you, using the host's root
+  password once or a line you paste into `authorized_keys` yourself. A
+  host without its own key file falls back to a default identity file
+  (`~/.ssh/id_ed25519`, `id_ecdsa`, or `id_rsa`, first match wins), and
+  only then to an SSH agent (Pageant on Windows).
 - `npm`
 
 ## Setup
@@ -39,55 +39,41 @@ npm link   # exposes the `bellhop` command globally; optional, you can
 of this package) — no separate install step is needed to run `npm run
 web:dev`/`web:build`.
 
-First-time inventory setup only (skip this if `inventory/bellhop.db` already
-exists):
-
-```bash
-npm run bellhop -- import-yaml-inventory --yaml-path inventory/hosts.yaml.example --db-path inventory/bellhop.db --apply
-```
-
-(or, once you have a real `hosts.yaml` hand-edited from the example,
-`--yaml-path inventory/hosts.yaml` instead — see `import-yaml-inventory
---help`).
-
-The example file's hosts are placeholders, so importing it only lets you
-look around. To manage your own Proxmox hosts, copy it to
-`inventory/hosts.yaml`, replace its hosts with yours, and import that
-copy before continuing — the file's schema is in
-[Hand-editing the inventory](docs/configuration.md#hand-editing-the-inventory).
-
-A few operator-specific values — your NAS's `nfsServer` IP chief among
-them — live in the inventory database rather than in code, and are unset
-by default. Set them before your first `sync-inventory`, so it can do
-things like discover NFS mounts right away instead of skipping that scan
-and printing a reminder:
-
-```bash
-npm run bellhop -- set-config nfsServer <ip> --apply
-```
-
-The web UI's Settings page sets the same values. See
-[Configuration](docs/configuration.md) for the full list and what happens
-when a value stays unset.
-
-With your own hosts imported, pull their real guests into the inventory —
-a dry run first, then `--apply` to write them:
-
-```bash
-npm run bellhop -- sync-inventory
-npm run bellhop -- sync-inventory --apply
-```
-
-Finally, start the web UI on port 3001:
+Then build and start the web UI on port 3001:
 
 ```bash
 npm run web:build
 npm run web:start
 ```
 
-See [Web UI](docs/web-ui.md) for the development server, authentication,
-and what each page does. To see the web UI without any of the above, run
-`npm run demo` instead — a throwaway instance with built-in example data.
+On a fresh install (no inventory yet) the service log prints a one-time
+setup address:
+
+```text
+Setup is pending: open http://localhost:3001/setup?token=<token> ...
+```
+
+Open it (from another device, use this machine's address instead of
+`localhost`). The setup walkthrough installs Bellhop's SSH key on your
+first Proxmox host, discovers the host's cluster, bridges, storage and
+guests, and sets your domain and other inventory-wide values. Until it
+finishes, the rest of the web UI is unavailable. See
+[First-run setup](docs/setup.md) for each step.
+
+After setup, `sync-inventory` pulls in guests created outside Bellhop — a
+dry run first, then `--apply` to write them:
+
+```bash
+npm run bellhop -- sync-inventory
+npm run bellhop -- sync-inventory --apply
+```
+
+The Settings page and `set-config` change any inventory-wide value later.
+See [Configuration](docs/configuration.md) for the full list and what
+happens when a value stays unset, and [Web UI](docs/web-ui.md) for the
+development server, authentication, and what each page does. To see the
+web UI without any of the above, run `npm run demo` instead — a throwaway
+instance with built-in example data.
 
 ## Commands
 
@@ -119,6 +105,8 @@ behaves.
 
 ## Documentation
 
+- [First-run setup](docs/setup.md) — the walkthrough a fresh install starts
+  with, and its setup token.
 - [Commands](docs/commands.md) — every command, with examples.
 - [Configuration](docs/configuration.md) — the inventory file, inventory-wide
   settings, integration settings and secrets, and installing apps from your
