@@ -100,9 +100,9 @@ description: "Task list for MCP over HTTPS with sign-in and an API-key fallback"
 
 - [x] T030 [P] Docs: `docs/mcp-server.md` (remote connection: sign-in flow, API key, admins only, proxy route must pass `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/.well-known/*`; loopback `[::1]` limitation), `docs/configuration.md` (MCP tab, `mcpApiKey`), `docs/environment-variables.md` (`MCP_API_KEY`), README main-commands/doc index line if needed (stay ≤ 200 lines)
 - [x] T031 [P] Guidance: `src/mcp/CLAUDE.md` (two transports, actor, shared tracker), `src/web/CLAUDE.md` (MCP HTTP host, authorization server, consent, single-operator assumptions: in-process sessions and tracker), `src/lib/CLAUDE.md` (fifth→sixth secret, `mcp` group), `web-client/CLAUDE.md` (MCP tab, Generate), `src/web/jobs/CLAUDE.md` (`triggered_via`)
-- [ ] T032 Run `npm run typecheck`, `npm test`, `npm run web:build`; paste results
-- [ ] T033 Browser check of the Settings MCP tab and job list at desktop and ≤ 640px (quickstart §2, §4)
-- [ ] T034 Live verification with a real MCP client through the proxy (quickstart §3) — requires the deployed service; record as unverified in the PR if not done
+- [x] T032 Run `npm run typecheck`, `npm test`, `npm run web:build`; paste results
+- [x] T033 Browser check of the Settings MCP tab and job list at desktop and ≤ 640px (quickstart §2, §4)
+- [ ] T034 Live verification with a real MCP client through the proxy (quickstart §3) — requires the deployed service; record as unverified in the PR if not done. **Not done on this branch**: needs the branch deployed to the production service; listed as unverified in the PR.
 
 ## Dependencies
 
