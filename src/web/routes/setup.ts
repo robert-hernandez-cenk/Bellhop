@@ -1,5 +1,18 @@
 import express, { type Request, type Response } from 'express';
+import { z } from 'zod';
+import { ensureBellhopKey, keyFromFile } from '../../lib/bellhop-key.ts';
+import type { OperationDeps } from '../../operations/types.ts';
 import {
+  HostEndpointSchema,
+  InstallKeyRequestSchema,
+  SetupActionError,
+  installKey,
+  saveHost,
+  suggestMidSchemeFor,
+  testHost,
+} from '../setup/proxmox.ts';
+import {
+  MidSchemeSchema,
   SettingsSchema,
   assignSetting,
   loadInventory,
@@ -18,6 +31,8 @@ export interface HostSummary {
   user: string;
   port: number;
   midScheme?: MidScheme;
+  // A host with no midScheme yet: what the walkthrough offers to start from.
+  suggestedMidScheme?: MidScheme;
 }
 
 export function hostSummary(host: HostEntry): HostSummary {
@@ -44,7 +59,13 @@ export function basicsSettings(inventory: Inventory): Partial<Pick<Inventory, (t
 // contracts/http-setup.md): the token exchange at GET /setup and the
 // /api/setup API. Mounted ahead of requireAuth, since there is no sign-in
 // during setup; the setup cookie is the authorization.
-export function setupRoutes(setup: SetupService): express.Router {
+export type SetupRouteDeps = Pick<OperationDeps, 'ssh' | 'authentik' | 'cloudflare'>;
+
+function zodMessage(error: z.ZodError): string {
+  return error.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('\n');
+}
+
+export function setupRoutes(setup: SetupService, routeDeps?: SetupRouteDeps): express.Router {
   const router = express.Router();
 
   // The setup address. A valid token becomes the setup cookie and the
@@ -83,16 +104,144 @@ export function setupRoutes(setup: SetupService): express.Router {
     next();
   });
 
-  api.get('/state', (_req, res) => {
-    const { inventory } = setup.opts!; // safe: see above
-    res.json({
-      completedSteps: setup.state().completedSteps,
-      requiredSteps: [...REQUIRED_SETUP_STEPS],
-      hosts: inventory.hosts.map(hostSummary),
-      settings: basicsSettings(inventory),
-      storages: [...new Set(inventory.hosts.flatMap((h) => (h.storages ?? []).map((s) => s.name)))].sort(),
-    });
-  });
+  // The deps the step-1 actions run with: the shared inventory plus the
+  // service's SSH client (the one transport).
+  const opDeps = (): OperationDeps => {
+    const opts = setup.opts!; // safe: see above
+    if (!routeDeps) throw new Error('setup routes were mounted without SSH access');
+    return { ...routeDeps, inventory: opts.inventory, inventoryPath: opts.inventoryPath };
+  };
+
+  // A SetupActionError carries its own status and a message that is safe to
+  // show; anything else is a bug and goes to the error handler.
+  const handle =
+    (fn: (req: Request, res: Response) => Promise<void> | void) =>
+    async (req: Request, res: Response, next: express.NextFunction) => {
+      try {
+        await fn(req, res);
+      } catch (err) {
+        if (err instanceof SetupActionError) res.status(err.status).json({ error: err.message });
+        else next(err);
+      }
+    };
+
+  // The message names the field and never echoes a value, so a password in
+  // the body can't leak through a validation error.
+  const parseBody = <T extends z.ZodTypeAny>(schema: T, req: Request): z.infer<T> => {
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new SetupActionError(zodMessage(parsed.error), 400);
+    return parsed.data;
+  };
+
+  const requireKey = () => {
+    const key = setup.key();
+    if (!key) throw new SetupActionError("choose or generate Bellhop's SSH key first", 400);
+    return key;
+  };
+
+  api.get(
+    '/state',
+    handle(async (_req, res) => {
+      const { inventory } = setup.opts!; // safe: see above
+      const key = setup.key();
+      const hosts: HostSummary[] = [];
+      for (const host of inventory.hosts) {
+        const summary = hostSummary(host);
+        if (!host.midScheme && routeDeps) {
+          const suggested = await suggestMidSchemeFor(routeDeps.ssh, inventory, host);
+          if (suggested) summary.suggestedMidScheme = suggested;
+        }
+        hosts.push(summary);
+      }
+      res.json({
+        completedSteps: setup.state().completedSteps,
+        requiredSteps: [...REQUIRED_SETUP_STEPS],
+        hosts,
+        settings: basicsSettings(inventory),
+        key: key ? { mode: key.mode, path: key.path, publicKey: key.authorizedKeysLine } : null,
+        storages: [...new Set(inventory.hosts.flatMap((h) => (h.storages ?? []).map((s) => s.name)))].sort(),
+      });
+    })
+  );
+
+  // Step 1 (FR-008): Bellhop's own key, generated or a named file.
+  api.post(
+    '/key',
+    handle((req, res) => {
+      const body = parseBody(
+        z.discriminatedUnion('mode', [
+          z.object({ mode: z.literal('generated') }),
+          z.object({ mode: z.literal('file'), path: z.string().trim().min(1, 'is required') }),
+        ]),
+        req
+      );
+      let key;
+      try {
+        key = body.mode === 'generated' ? ensureBellhopKey(setup.opts!.dataDir) : keyFromFile(body.path);
+      } catch (err) {
+        throw new SetupActionError((err as Error).message, 400);
+      }
+      setup.setKey(key);
+      res.json({
+        mode: key.mode,
+        path: key.path,
+        publicKey: key.authorizedKeysLine,
+        authorizedKeysLine: key.authorizedKeysLine,
+      });
+    })
+  );
+
+  api.post(
+    '/hosts/install-key',
+    handle(async (req, res) => {
+      const key = requireKey();
+      const { password, ...endpoint } = parseBody(InstallKeyRequestSchema, req);
+      await installKey(opDeps().ssh, endpoint, password, key.authorizedKeysLine);
+      res.json({ installed: true });
+    })
+  );
+
+  api.post(
+    '/hosts/test',
+    handle(async (req, res) => {
+      const key = requireKey();
+      res.json(await testHost(opDeps().ssh, parseBody(HostEndpointSchema, req), key.path));
+    })
+  );
+
+  api.post(
+    '/hosts',
+    handle(async (req, res) => {
+      const key = requireKey();
+      const saved = await saveHost(opDeps(), parseBody(HostEndpointSchema, req), key.path);
+      const host = hostSummary(saved.host);
+      if (!saved.host.midScheme && saved.suggestedMidScheme) host.suggestedMidScheme = saved.suggestedMidScheme;
+      res.json({ host, peers: saved.peers });
+    })
+  );
+
+  // Step 1 is complete once a host has a midScheme (FR-016).
+  api.put(
+    '/hosts/:name/mid-scheme',
+    handle((req, res) => {
+      const opts = setup.opts!; // safe: see above
+      const name = String(req.params.name);
+      if (!opts.inventory.hosts.some((h) => h.name === name)) {
+        throw new SetupActionError(`no host named "${name}" in the inventory`, 404);
+      }
+      const midScheme = parseBody(MidSchemeSchema, req);
+      const updated = loadInventory(opts.inventoryPath);
+      updated.hosts = updated.hosts.map((h) => (h.name === name ? { ...h, midScheme } : h));
+      try {
+        saveInventory(opts.inventoryPath, updated);
+      } catch (err) {
+        throw new SetupActionError((err as Error).message, 400);
+      }
+      refreshInventory(opts.inventory, opts.inventoryPath);
+      const { completedSteps } = setup.completeStep('proxmox');
+      res.json({ host: hostSummary(opts.inventory.hosts.find((h) => h.name === name)!), completedSteps });
+    })
+  );
 
   // Step 2 (FR-017): the same SettingsSchema rules set-config and the
   // Settings page apply, saved through the same load-assign-save path. An

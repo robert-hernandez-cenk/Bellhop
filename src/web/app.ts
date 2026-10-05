@@ -111,7 +111,7 @@ export function buildApp(deps: AppDeps): express.Express {
   });
   // The /auth routes, ahead of requireAuth: signing in must never need a
   // session (#69, contracts/http-auth.md).
-  app.use(setupRoutes(setup));
+  app.use(setupRoutes(setup, { ssh: deps.baseSsh, authentik: deps.authentik, cloudflare }));
   app.use('/auth', authRoutes(sessions));
   app.use(requireAuth(sessions));
   app.use(applyImpersonation(impersonationStore));

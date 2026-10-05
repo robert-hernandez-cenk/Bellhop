@@ -1,4 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { ensureBellhopKey, generatedKeyPath, type BellhopKey } from '../../lib/bellhop-key.ts';
 import type { Inventory } from '../../lib/inventory.ts';
 import {
   completeSetupStep,
@@ -42,6 +44,7 @@ function digest(value: string): Buffer {
 export class SetupService {
   private currentPhase: SetupPhase;
   private token: string | null = null;
+  private chosenKey: BellhopKey | null = null;
 
   constructor(readonly opts: SetupServiceOptions | null) {
     this.currentPhase = opts ? setupPhase(opts.inventoryPath, opts.inventory) : 'not-applicable';
@@ -59,6 +62,22 @@ export class SetupService {
     if (this.currentPhase !== 'pending' || !this.opts) return undefined;
     this.token = ensurePendingSetup(this.opts.inventoryPath).token;
     return this.token ?? undefined;
+  }
+
+  // The key step 1 is using (FR-008), chosen through POST /key. After a
+  // restart the generated key is picked up again if it already exists, so a
+  // resumed walkthrough still shows it. A named key file is not remembered
+  // (the hosts saved with it carry it as their ssh_identity_file).
+  key(): BellhopKey | null {
+    if (this.chosenKey) return this.chosenKey;
+    if (this.opts && existsSync(generatedKeyPath(this.opts.dataDir))) {
+      this.chosenKey = ensureBellhopKey(this.opts.dataDir);
+    }
+    return this.chosenKey;
+  }
+
+  setKey(key: BellhopKey): void {
+    this.chosenKey = key;
   }
 
   phase(): SetupPhase {
