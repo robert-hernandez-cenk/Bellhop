@@ -113,7 +113,7 @@ guests:
 # tells sync-proxy to skip TLS certificate verification for that backend
 # (the caddy driver emits `transport http { tls_insecure_skip_verify }`) so
 # the proxy doesn't refuse to connect to it. Every generated route still
-# gets front-end TLS from whatever the active proxyDriver/proxyCaddyTls
+# gets front-end TLS from whatever the active proxyDriver/tlsSource
 # setting issues it regardless; this only affects the *backend* connection.
 #   insecureBackendTls: true
 

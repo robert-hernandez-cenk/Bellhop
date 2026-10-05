@@ -11,6 +11,9 @@ import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
 import { runPruneAcmeChallenges } from '../commands/networking/prune-acme-challenges.ts';
 import { getDriver } from '../lib/proxy/index.ts';
+import { managesProxy } from '../lib/proxy/driver.ts';
+import { effectiveTlsSource, usesCloudflareDns01 } from '../lib/proxy/tls.ts';
+import type { TlsSource } from '../lib/proxy/ids.ts';
 
 export interface SyncProxyLiveResult {
   // Slug conflicts reported by sync-authentik: entries with an authGroup set
@@ -54,16 +57,20 @@ export interface SyncProxyLiveResult {
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
 
-// The prune only ever makes sense for a driver/mode combination that issues
-// certificates via ACME DNS-01 through Cloudflare -- the two Caddy drivers'
-// default caddyTls mode, or Traefik's certResolver when it names one (issue
-// #51; before that, Caddy's TLS_BLOCK was the only, non-configurable path).
-// A driver/mode that never touches Cloudflare's DNS never leaves stale
-// _acme-challenge TXT records behind in the first place, so there is
-// nothing here for this step to clean up.
-export function pruneAcmeDriverSkipMessage(driverId: string): string {
-  return `prune-acme-challenges: skipped, the '${driverId}' proxy driver is not configured to use ACME DNS-01 via Cloudflare`;
+// The prune only ever makes sense when certificates are obtained over ACME
+// DNS-01 through Cloudflare (issue #72: effective tlsSource 'acme-dns' with
+// the cloudflare provider, see usesCloudflareDns01). Any other source never
+// leaves stale _acme-challenge TXT records behind in the first place, so
+// there is nothing here for this step to clean up.
+export function pruneAcmeTlsSkipMessage(tlsSource: TlsSource): string {
+  return `prune-acme-challenges: skipped, the TLS source is '${tlsSource}' (only acme-dns with the cloudflare DNS provider leaves challenge records)`;
 }
+
+// Under proxyDriver 'none' any challenge records belong to the operator's
+// own proxy, whatever tlsSource is stored, so the prune never runs -- the
+// same skip shape the status page step logs for 'none'.
+export const PRUNE_ACME_NO_PROXY_SKIP_MESSAGE =
+  "prune-acme-challenges: skipped, proxyDriver is 'none' (Bellhop manages no reverse proxy, so its challenge records are not Bellhop's)";
 
 // Last step of the push-live sequence (issue #162). Every failure is turned
 // into a warning: a stale TXT record is harmless, so a Cloudflare outage or a
@@ -72,8 +79,12 @@ export function pruneAcmeDriverSkipMessage(driverId: string): string {
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
   const driver = getDriver(inventory);
-  if (!driver.capabilities.acmeDns01ViaCloudflare(inventory)) {
-    logInfo(pruneAcmeDriverSkipMessage(driver.id));
+  if (!managesProxy(driver)) {
+    logInfo(PRUNE_ACME_NO_PROXY_SKIP_MESSAGE);
+    return;
+  }
+  if (!usesCloudflareDns01(inventory, driver)) {
+    logInfo(pruneAcmeTlsSkipMessage(effectiveTlsSource(inventory, driver)));
     return;
   }
   if (!cloudflare.isConfigured()) {

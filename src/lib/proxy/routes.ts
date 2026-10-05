@@ -2,7 +2,11 @@ import type { Inventory } from '../inventory.ts';
 import { effectiveAuth, isValidUnauthenticatedPath, UNAUTHENTICATED_PATH_MESSAGE } from '../inventory.ts';
 import { publicHostname } from '../hostname.ts';
 import { authentikConfig } from '../authentik-config.ts';
-import type { CaddyTlsMode } from './ids.ts';
+import type { AcmeDnsProvider, TlsSource } from './ids.ts';
+// Type-only, so this file never imports the driver registry (routes.ts ->
+// index.ts -> drivers -> routes.ts would be a cycle; research R3).
+import type { ReverseProxyDriver } from './driver.ts';
+import { acmeDnsProvider, effectiveTlsSource } from './tls.ts';
 
 // Every site this toolkit's proxy fronts is reached externally over HTTPS on
 // 443 -- not inventory-configurable, one operator, one deployment.
@@ -29,64 +33,45 @@ export interface ProxyContext {
   // its own per-site certificate (nginx, issue #30) writes into every
   // server block. Always present -- buildProxyContext can always derive it,
   // since domain is mandatory -- so a driver never has to handle "no
-  // certificate". The two Caddy drivers read it only in caddyTls 'files'
-  // mode (issue #51); in every other mode Caddy obtains or issues its own
-  // per-site certificate (see tlsClause in src/lib/proxy/drivers/caddy.ts).
+  // certificate". The Caddy and Traefik drivers read it only when tlsSource
+  // is 'files' (issues #51, #72); under any other source they obtain, issue
+  // or leave out their own certificates (tlsClause in
+  // src/lib/proxy/drivers/caddy.ts, routerTls in drivers/traefik.ts).
   tls: { certificatePath: string; keyPath: string };
   // The ACME certificate resolver name the Traefik driver (issue #35) sets
   // on every rendered router's tls.certResolver -- inventory.proxyCertResolver
   // when set, else DEFAULT_CERT_RESOLVER (certResolverName). Always present, the same
   // "never handle the unset case" precedent as tls above. Ignored by every
-  // other driver, which either obtains its own certificate (Caddy) or
-  // shares the ctx.tls pair instead (nginx).
+  // other driver. The Traefik driver names it only when tlsSource is
+  // 'acme-dns' or 'acme-http' (issue #72).
   certResolver: string;
-  // Which of the four ways the two Caddy drivers obtain a certificate
-  // (issue #51) -- inventory.proxyCaddyTls when set, else DEFAULT_CADDY_TLS,
-  // resolved by caddyTlsMode(inventory) below. Always present, the same
-  // "never handle the unset case" precedent as tls/certResolver above.
-  // Ignored by every other driver, which either always obtains its own
-  // certificate one fixed way (nginx, HAProxy, Nginx Proxy Manager) or reads
-  // certResolver instead (Traefik).
-  caddyTls: CaddyTlsMode;
+  // Where certificates come from (issue #72) -- the tlsSource setting when
+  // set, else the active driver's own defaultTlsSource, resolved by
+  // effectiveTlsSource (./tls.ts). Always present, the same "never handle
+  // the unset case" precedent as tls/certResolver above. Not filtered by the
+  // driver's support: checkTlsSource refuses an unsupported source before
+  // anything is rendered, and each renderer throws a programming error on
+  // one it cannot render.
+  tlsSource: TlsSource;
+  // The DNS provider tlsSource 'acme-dns' uses -- acmeDnsProvider when set,
+  // else DEFAULT_ACME_DNS_PROVIDER. Read only under 'acme-dns'.
+  acmeDnsProvider: AcmeDnsProvider;
 }
 
 // research.md R10: a stock Traefik install has no certificate resolver
 // named this by default, but it is what the driver's own live-verified
 // research setup used, and it is a safe, memorable default for an operator
 // who names their own resolver 'cloudflare' too (the same DNS provider
-// Caddy's own default 'cloudflare' TLS mode uses).
+// tlsSource 'acme-dns' uses by default).
 export const DEFAULT_CERT_RESOLVER = 'cloudflare';
 
-// issue #51, User Story 3: the reserved proxyCertResolver value meaning "no
-// certificate resolver" -- the Traefik driver renders every router with an
-// empty tls: {} instead of naming one, so Traefik serves whatever
-// default/static-config certificate applies rather than requesting one
-// through a resolver. Lives here beside DEFAULT_CERT_RESOLVER so both
-// proxyCertResolver constants are defined in one place; the Traefik
-// driver's render() and its prune capability both import it from here.
-export const NO_CERT_RESOLVER = 'none';
-
 // inventory.proxyCertResolver when set, else DEFAULT_CERT_RESOLVER -- the
-// one place this fold-in happens (the caddyTlsMode precedent below), read
-// by buildProxyContext for ctx.certResolver and by the Traefik driver's
-// acmeDns01ViaCloudflare capability, so the two can never disagree about
-// which resolver is active.
+// one place this fold-in happens, read by buildProxyContext for
+// ctx.certResolver. Since issue #72 no value is reserved: 'none' (which
+// used to mean "no resolver") is an ordinary name, replaced by tlsSource
+// 'external'.
 export function certResolverName(inventory: Inventory): string {
   return inventory.proxyCertResolver ?? DEFAULT_CERT_RESOLVER;
-}
-
-// issue #51: the Caddy drivers' own default TLS mode -- Cloudflare DNS-01,
-// the only behavior that existed before proxyCaddyTls did, so an unset
-// setting changes nothing for an existing deployment.
-export const DEFAULT_CADDY_TLS: CaddyTlsMode = 'cloudflare';
-
-// inventory.proxyCaddyTls when set, else DEFAULT_CADDY_TLS -- the one place
-// this fold-in happens, so ProxyContext.caddyTls (buildProxyContext below)
-// and any other future reader can never disagree about which mode is
-// active, the same precedent as effectiveAuth() folding authGroup/authMode
-// together.
-export function caddyTlsMode(inventory: Inventory): CaddyTlsMode {
-  return inventory.proxyCaddyTls ?? DEFAULT_CADDY_TLS;
 }
 
 // A stored unauthenticatedPaths string -> its parsed form (data-model.md
@@ -247,9 +232,11 @@ export function buildRouteForEntry(inventory: Inventory, owner: ProxyRoute['owne
 // external port every site is reached on, and the shared TLS certificate/key
 // pair (issue #30) -- proxyTlsCertificate/proxyTlsKey when set, else the
 // domain-derived default path each falls back to independently -- and
-// (issue #51) which of the four ways the Caddy drivers obtain a
-// certificate, from caddyTlsMode(inventory).
-export function buildProxyContext(inventory: Inventory): ProxyContext {
+// (issue #72) the effective TLS source for the active driver plus the ACME
+// DNS provider. Takes the driver because an unset tlsSource means that
+// driver's own default; both callers (runSyncProxy, convert-caddyfile)
+// already hold it.
+export function buildProxyContext(inventory: Inventory, driver: ReverseProxyDriver): ProxyContext {
   const authentikEntry = findAuthentikEntry(inventory);
   const ctx: ProxyContext = {
     externalPort: EXTERNAL_PORT,
@@ -258,7 +245,8 @@ export function buildProxyContext(inventory: Inventory): ProxyContext {
       keyPath: inventory.proxyTlsKey ?? `/etc/letsencrypt/live/${inventory.domain}/privkey.pem`,
     },
     certResolver: certResolverName(inventory),
-    caddyTls: caddyTlsMode(inventory),
+    tlsSource: effectiveTlsSource(inventory, driver),
+    acmeDnsProvider: acmeDnsProvider(inventory),
   };
   if (authentikEntry?.ip) {
     ctx.outpost = { ip: authentikEntry.ip, port: authentikConfig().outpostPort };

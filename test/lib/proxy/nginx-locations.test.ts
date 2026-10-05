@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Inventory } from '../../../src/lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../../src/lib/proxy/routes.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 import { renderServerBody } from '../../../src/lib/proxy/nginx-locations.ts';
 
 const NPM_VARS = { host: '$http_host', connection: '$http_connection' };
@@ -65,7 +66,7 @@ test('renderServerBody for a forward-gated route with exempt paths: the NPM vari
   withPinnedOutpostPort(() => {
     const inventory = gatedInventory();
     const routes = buildRoutes(inventory);
-    const ctx = buildProxyContext(inventory);
+    const ctx = buildProxyContext(inventory, nginxDriver);
     const route = routes.find((r) => r.owner.name === 'app-lxc')!;
     const body = renderServerBody(route, ctx, NPM_VARS).join('\n');
 
@@ -104,7 +105,7 @@ test('renderServerBody for an ungated route uses the supplied host variable and 
     guests: [{ name: 'app-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.10', port: 8080, subdomains: ['app'] }],
   });
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, nginxDriver);
   const body = renderServerBody(routes[0], ctx, NPM_VARS).join('\n');
 
   assert.match(body, /proxy_set_header Host \$http_host;/);

@@ -89,13 +89,10 @@ export const nginxDriver = fileDriver({
   id: 'nginx',
   label: 'nginx',
   // nginx cannot obtain its own certificates the way Caddy does (research
-  // R1), so it has no ACME DNS-01-via-Cloudflare capability of its own --
-  // the shared certificate every server block references (ctx.tls) is
-  // provisioned by the operator (certbot or similar) outside this toolkit.
-  // Always false, unaffected by any inventory setting -- the function
-  // wrapper here exists only to satisfy the updated DriverCapabilities
-  // type (issue #51).
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
+  // R1), so its only TLS source is 'files' -- the shared certificate every
+  // server block references (ctx.tls) is provisioned by the operator
+  // (certbot or similar) outside this toolkit.
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
   defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf',
   // The Debian/Ubuntu nginx package's default document root -- the same
   // platform this driver already assumes for its upstream CA bundle path --
@@ -103,7 +100,6 @@ export const nginxDriver = fileDriver({
   // operator's own hand-authored server block's job, the same way Caddy's
   // status page block is hand-authored.
   statusPage: { suggestedPath: '/var/www/html/index.html' },
-  usesSharedCertificate: true,
   configPathNote: "nginx replaces this whole file on every apply, and refuses to replace a file it didn't generate.",
   render,
   validateCommand: () => 'nginx -t',

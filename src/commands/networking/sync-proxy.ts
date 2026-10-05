@@ -4,6 +4,7 @@ import { buildRoutes, buildProxyContext } from '../../lib/proxy/routes.ts';
 import { getDriver, driverDeps } from '../../lib/proxy/index.ts';
 import { checkCapabilities, managesProxy, NO_PROXY_SYNC_MESSAGE } from '../../lib/proxy/driver.ts';
 import type { DriverDeps } from '../../lib/proxy/driver.ts';
+import { checkTlsSource } from '../../lib/proxy/tls.ts';
 
 export interface SyncProxyOptions {
   apply?: boolean;
@@ -46,6 +47,13 @@ export async function runSyncProxy(
     return { proxyHost: null, driver: driver.id, preview: NO_PROXY_SYNC_MESSAGE, applied: false };
   }
 
+  // Issue #72 (US2): refuse a TLS source this driver cannot serve before
+  // driverDeps, buildRoutes, a preview or any SSH call -- dry run and
+  // --apply alike. Never run on load or on a settings write, so switching
+  // drivers can't make the database unusable.
+  const tlsError = checkTlsSource(deps.inventory, driver);
+  if (tlsError) throw new Error(tlsError);
+
   const resolvedDeps: DriverDeps = driverDeps(deps.inventory, deps.ssh, driver);
 
   // Only a driver that can forward-auth needs an outpost to address. For one
@@ -65,7 +73,7 @@ export async function runSyncProxy(
     throw new Error(capabilityErrors.map((e) => e.message).join('\n'));
   }
 
-  const ctx = buildProxyContext(deps.inventory);
+  const ctx = buildProxyContext(deps.inventory, driver);
   const plan = await driver.plan(routes, ctx, resolvedDeps);
 
   if (opts.apply) {

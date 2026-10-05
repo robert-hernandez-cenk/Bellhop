@@ -7,12 +7,12 @@ import {
   buildProxyContext,
   buildRouteForEntry,
   DEFAULT_CERT_RESOLVER,
-  NO_CERT_RESOLVER,
   certResolverName,
-  DEFAULT_CADDY_TLS,
-  caddyTlsMode,
   type ProxyRoute,
 } from '../../../src/lib/proxy/routes.ts';
+import { caddyDriver } from '../../../src/lib/proxy/drivers/caddy.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
+import { haproxyDriver } from '../../../src/lib/proxy/drivers/haproxy.ts';
 
 // buildProxyContext reads authentikConfig().outpostPort from
 // AUTHENTIK_OUTPOST_PORT -- pinned for the duration of a test the same way
@@ -284,13 +284,14 @@ const DEFAULT_TLS = {
 
 test('buildProxyContext: returns the outpost address and port when an authentik entry with an ip exists', () => {
   withPinnedOutpostPort(() => {
-    const ctx = buildProxyContext(fixtureInventory());
+    const ctx = buildProxyContext(fixtureInventory(), caddyDriver);
     assert.deepEqual(ctx, {
       outpost: { ip: '192.0.2.9', port: 9000 },
       externalPort: 443,
       tls: DEFAULT_TLS,
       certResolver: 'cloudflare',
-      caddyTls: 'cloudflare',
+      tlsSource: 'acme-dns',
+      acmeDnsProvider: 'cloudflare',
     });
   });
 });
@@ -301,8 +302,14 @@ test('buildProxyContext: omits outpost when no authentik entry has an ip', () =>
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [],
   };
-  const ctx = buildProxyContext(inv);
-  assert.deepEqual(ctx, { externalPort: 443, tls: DEFAULT_TLS, certResolver: 'cloudflare', caddyTls: 'cloudflare' });
+  const ctx = buildProxyContext(inv, caddyDriver);
+  assert.deepEqual(ctx, {
+    externalPort: 443,
+    tls: DEFAULT_TLS,
+    certResolver: 'cloudflare',
+    tlsSource: 'acme-dns',
+    acmeDnsProvider: 'cloudflare',
+  });
   assert.ok(!('outpost' in ctx));
 });
 
@@ -312,7 +319,7 @@ test('buildProxyContext: tls defaults to /etc/letsencrypt/live/<domain>/{fullcha
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [],
   };
-  assert.deepEqual(buildProxyContext(inv).tls, DEFAULT_TLS);
+  assert.deepEqual(buildProxyContext(inv, caddyDriver).tls, DEFAULT_TLS);
 });
 
 test('buildProxyContext: tls uses the configured proxyTlsCertificate/proxyTlsKey when both are set', () => {
@@ -323,7 +330,7 @@ test('buildProxyContext: tls uses the configured proxyTlsCertificate/proxyTlsKey
     proxyTlsCertificate: '/opt/certs/example.crt',
     proxyTlsKey: '/opt/certs/example.key',
   };
-  assert.deepEqual(buildProxyContext(inv).tls, {
+  assert.deepEqual(buildProxyContext(inv, caddyDriver).tls, {
     certificatePath: '/opt/certs/example.crt',
     keyPath: '/opt/certs/example.key',
   });
@@ -336,7 +343,7 @@ test('buildProxyContext: proxyTlsCertificate and proxyTlsKey default independent
     guests: [],
     proxyTlsCertificate: '/opt/certs/example.crt',
   };
-  assert.deepEqual(buildProxyContext(withCertOnly).tls, {
+  assert.deepEqual(buildProxyContext(withCertOnly, caddyDriver).tls, {
     certificatePath: '/opt/certs/example.crt',
     keyPath: DEFAULT_TLS.keyPath,
   });
@@ -347,7 +354,7 @@ test('buildProxyContext: proxyTlsCertificate and proxyTlsKey default independent
     guests: [],
     proxyTlsKey: '/opt/certs/example.key',
   };
-  assert.deepEqual(buildProxyContext(withKeyOnly).tls, {
+  assert.deepEqual(buildProxyContext(withKeyOnly, caddyDriver).tls, {
     certificatePath: DEFAULT_TLS.certificatePath,
     keyPath: '/opt/certs/example.key',
   });
@@ -363,7 +370,7 @@ test('buildProxyContext: certResolver defaults to DEFAULT_CERT_RESOLVER when pro
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [],
   };
-  assert.equal(buildProxyContext(inv).certResolver, DEFAULT_CERT_RESOLVER);
+  assert.equal(buildProxyContext(inv, caddyDriver).certResolver, DEFAULT_CERT_RESOLVER);
   assert.equal(DEFAULT_CERT_RESOLVER, 'cloudflare');
 });
 
@@ -374,45 +381,46 @@ test('buildProxyContext: certResolver uses the configured proxyCertResolver when
     guests: [],
     proxyCertResolver: 'my-resolver',
   };
-  assert.equal(buildProxyContext(inv).certResolver, 'my-resolver');
+  assert.equal(buildProxyContext(inv, caddyDriver).certResolver, 'my-resolver');
 });
 
-// issue #51: caddyTls is the Caddy drivers' own setting, inert for every
-// other driver -- same "always present, defaults independently" precedent
-// as tls/certResolver above.
+// issue #72: tlsSource is resolved against the active driver -- the
+// tlsSource setting when set, else that driver's own defaultTlsSource -- and
+// acmeDnsProvider defaults to cloudflare, the same "always present, never
+// handle the unset case" precedent as tls/certResolver above.
 
-test('buildProxyContext: caddyTls defaults to DEFAULT_CADDY_TLS when proxyCaddyTls is unset', () => {
+test("buildProxyContext: tlsSource defaults to the driver's own defaultTlsSource when tlsSource is unset", () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [],
   };
-  assert.equal(buildProxyContext(inv).caddyTls, DEFAULT_CADDY_TLS);
-  assert.equal(DEFAULT_CADDY_TLS, 'cloudflare');
+  assert.equal(buildProxyContext(inv, caddyDriver).tlsSource, 'acme-dns');
+  assert.equal(buildProxyContext(inv, nginxDriver).tlsSource, 'files');
+  assert.equal(buildProxyContext(inv, haproxyDriver).tlsSource, 'external');
 });
 
-test('buildProxyContext: caddyTls uses the configured proxyCaddyTls when set', () => {
+test('buildProxyContext: tlsSource uses the configured tlsSource when set, for any driver', () => {
   const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [],
-    proxyCaddyTls: 'internal',
+    tlsSource: 'internal',
   };
-  assert.equal(buildProxyContext(inv).caddyTls, 'internal');
+  assert.equal(buildProxyContext(inv, caddyDriver).tlsSource, 'internal');
+  // Not filtered by the driver's support -- checkTlsSource refuses an
+  // unsupported source before buildProxyContext ever runs (issue #72, US2).
+  assert.equal(buildProxyContext(inv, nginxDriver).tlsSource, 'internal');
 });
 
-test('caddyTlsMode: matches buildProxyContext(inv).caddyTls for every mode, including unset', () => {
-  const base: Inventory = {
+test('buildProxyContext: acmeDnsProvider defaults to cloudflare and uses the configured acmeDnsProvider when set', () => {
+  const inv: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [],
   };
-  assert.equal(caddyTlsMode(base), buildProxyContext(base).caddyTls);
-  for (const mode of ['cloudflare', 'letsencrypt', 'internal', 'files'] as const) {
-    const inv: Inventory = { ...base, proxyCaddyTls: mode };
-    assert.equal(caddyTlsMode(inv), mode);
-    assert.equal(caddyTlsMode(inv), buildProxyContext(inv).caddyTls);
-  }
+  assert.equal(buildProxyContext(inv, caddyDriver).acmeDnsProvider, 'cloudflare');
+  assert.equal(buildProxyContext({ ...inv, acmeDnsProvider: 'cloudflare' }, caddyDriver).acmeDnsProvider, 'cloudflare');
 });
 
 // Sanity check that the exported ProxyRoute type shape lines up with what
@@ -455,10 +463,10 @@ test('buildRouteForEntry: undefined for an entry with no route or no such entry'
   assert.equal(buildRouteForEntry(inv, { type: 'host', name: 'web-lxc' }), undefined);
 });
 
-// Final-review F8: one fold-in for proxyCertResolver, shared by
-// buildProxyContext and the Traefik driver's prune capability, with the
-// reserved 'none' value living beside the default it pairs with.
-test('certResolverName: proxyCertResolver when set, else DEFAULT_CERT_RESOLVER; NO_CERT_RESOLVER is the reserved none', () => {
+// Final-review F8: one fold-in for proxyCertResolver. Since issue #72 no
+// value is reserved -- 'none' is an ordinary resolver name (tlsSource:
+// 'external' replaced it).
+test('certResolverName: proxyCertResolver when set, else DEFAULT_CERT_RESOLVER; none is not reserved', () => {
   const base: Inventory = {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
@@ -466,6 +474,5 @@ test('certResolverName: proxyCertResolver when set, else DEFAULT_CERT_RESOLVER; 
   };
   assert.equal(certResolverName(base), DEFAULT_CERT_RESOLVER);
   assert.equal(certResolverName({ ...base, proxyCertResolver: 'my-resolver' }), 'my-resolver');
-  assert.equal(NO_CERT_RESOLVER, 'none');
-  assert.equal(certResolverName({ ...base, proxyCertResolver: NO_CERT_RESOLVER }), 'none');
+  assert.equal(certResolverName({ ...base, proxyCertResolver: 'none' }), 'none');
 });

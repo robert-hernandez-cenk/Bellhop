@@ -14,8 +14,7 @@ import {
 } from '../../lib/inventory.ts';
 import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
-import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
-import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
+import { ACME_DNS_PROVIDERS, DEFAULT_ACME_DNS_PROVIDER } from '../../lib/proxy/ids.ts';
 import { clearSecret, configValueAt, storedSecretKeys, writeSecret, type ConfigSource } from '../../lib/config.ts';
 import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
@@ -144,12 +143,14 @@ function proxyDriversInfo() {
     defaultConfigPath: driver.defaultConfigPath,
     suggestedStatusPagePath: driver.statusPage?.suggestedPath ?? null,
     managesProxy: managesProxy(driver),
-    usesSharedCertificate: driver.usesSharedCertificate ?? false,
+    // Which TLS sources this driver can serve, in TLS_SOURCES order, and the
+    // one an unset tlsSource means for it (issue #72) -- the Settings page
+    // derives the TLS source dropdown, its unsupported warning, and which
+    // certificate fields to show from these alone.
+    tlsSources: [...driver.capabilities.tlsSources],
+    defaultTlsSource: driver.capabilities.defaultTlsSource,
     usesCertResolver: driver.usesCertResolver ?? false,
     usesApiUrl: driver.usesApiUrl ?? false,
-    // true only for the two Caddy drivers (issue #51) -- the Settings page
-    // shows the Caddy TLS dropdown only for a driver that sets this.
-    usesCaddyTls: driver.usesCaddyTls ?? false,
     // true only for the Nginx Proxy Manager driver (issue #73) -- the
     // Settings page shows its npmApiUrl/npmApiEmail/npmApiPassword fields
     // on the Proxy tab only for a driver that sets this.
@@ -168,13 +169,13 @@ function settingsResponse(inv: Inventory, inventoryPath: string) {
     derived: derivedValues(inv),
     proxyDrivers: proxyDriversInfo(),
     defaultProxyDriver: DEFAULT_PROXY_DRIVER_ID,
-    // The four ways the two Caddy drivers can obtain a certificate (issue
-    // #51) and which one an unset proxyCaddyTls resolves to -- same
-    // "independent of inventory, same on every call" shape as
-    // proxyDrivers/defaultProxyDriver above, so the Settings page's Caddy
-    // TLS dropdown is populated from this rather than a hardcoded list.
-    caddyTlsModes: [...CADDY_TLS_MODES],
-    defaultCaddyTls: DEFAULT_CADDY_TLS,
+    // The DNS providers tlsSource 'acme-dns' can use and the one an unset
+    // acmeDnsProvider means (issue #72) -- same "independent of inventory,
+    // same on every call" shape as proxyDrivers/defaultProxyDriver above, so
+    // the Settings page's dropdown is populated from this rather than a
+    // hardcoded list.
+    acmeDnsProviders: [...ACME_DNS_PROVIDERS],
+    defaultAcmeDnsProvider: DEFAULT_ACME_DNS_PROVIDER,
     // Issue #64: `settings` above stays the *stored* values (what the inputs
     // edit); these say where each effective value comes from, and which keys
     // an environment variable currently pins.

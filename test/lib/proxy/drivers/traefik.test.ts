@@ -38,7 +38,8 @@ function ctx(overrides: Partial<ProxyContext> = {}): ProxyContext {
       keyPath: '/etc/letsencrypt/live/example.com/privkey.pem',
     },
     certResolver: 'cloudflare',
-    caddyTls: 'cloudflare',
+    tlsSource: 'acme-dns',
+    acmeDnsProvider: 'cloudflare',
     ...overrides,
   };
 }
@@ -308,7 +309,7 @@ test('render via buildRoutes/buildProxyContext: proxyCertResolver flows into eve
     proxyCertResolver: 'my-resolver',
     guests: [{ name: 'app-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.10', port: 8080, subdomains: ['app'] }],
   });
-  const content = render(buildRoutes(inventory), buildProxyContext(inventory), CONFIG_PATH)[0].content;
+  const content = render(buildRoutes(inventory), buildProxyContext(inventory, traefikDriver), CONFIG_PATH)[0].content;
   const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> } };
   assert.equal(doc.http.routers['bellhop-route-app-example-com'].tls.certResolver, 'my-resolver');
 });
@@ -317,30 +318,141 @@ test('render via buildRoutes/buildProxyContext: an unset proxyCertResolver falls
   const inventory = inv({
     guests: [{ name: 'app-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.10', port: 8080, subdomains: ['app'] }],
   });
-  const content = render(buildRoutes(inventory), buildProxyContext(inventory), CONFIG_PATH)[0].content;
+  const content = render(buildRoutes(inventory), buildProxyContext(inventory, traefikDriver), CONFIG_PATH)[0].content;
   const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> } };
   assert.equal(doc.http.routers['bellhop-route-app-example-com'].tls.certResolver, 'cloudflare');
 });
 
-// issue #51, User Story 3: proxyCertResolver: 'none' is a reserved value
-// meaning "no certificate resolver" -- every router this driver renders
-// (main, outpost, exempt) gets an empty tls: {} instead of naming one, so
-// Traefik serves whatever default/static-config certificate applies rather
-// than requesting one through a named resolver.
-test('render: proxyCertResolver \'none\' renders tls: {} on every router (main, outpost, exempt)', () => {
-  const content = renderOne(mediaRoute(), gatedCtx({ certResolver: 'none' }));
-  const doc = parse(content) as { http: { routers: Record<string, { tls: Record<string, unknown> }> } };
+// issues #51, #72: tlsSource 'external' (formerly the reserved
+// proxyCertResolver: 'none') means "no certificate resolver" -- every router
+// this driver renders (main, outpost, exempt) gets an empty tls: {} instead
+// of naming one, so Traefik serves whatever default/static-config
+// certificate applies rather than requesting one through a named resolver.
+// Output identical to the old 'none' rendering (FR-007).
+test('render: tlsSource external renders tls: {} on every router (main, outpost, exempt)', () => {
+  const content = renderOne(mediaRoute(), gatedCtx({ tlsSource: 'external' }));
+  const doc = parse(content) as { http: { routers: Record<string, { tls: Record<string, unknown> }> }; tls?: unknown };
   assert.deepEqual(doc.http.routers['bellhop-route-media-example-com'].tls, {});
   assert.deepEqual(doc.http.routers['bellhop-outpost-media-example-com'].tls, {});
   assert.deepEqual(doc.http.routers['bellhop-exempt-media-example-com'].tls, {});
+  // No certificates of Bellhop's own either -- that is 'files'.
+  assert.equal(doc.tls, undefined);
 });
 
-test('render: a named or unset proxyCertResolver still sets tls.certResolver on every router (unchanged)', () => {
-  const content = renderOne(mediaRoute(), gatedCtx());
+test('render: tlsSource external output is byte-identical to the old proxyCertResolver none rendering, whatever the resolver name', () => {
+  // The old rendering ignored the resolver name entirely under 'none'; so
+  // does 'external'.
+  assert.equal(
+    renderOne(mediaRoute(), gatedCtx({ tlsSource: 'external', certResolver: 'my-resolver' })),
+    renderOne(mediaRoute(), gatedCtx({ tlsSource: 'external' }))
+  );
+});
+
+test('render: tlsSource acme-dns and acme-http both set tls.certResolver on every router (unchanged)', () => {
+  for (const tlsSource of ['acme-dns', 'acme-http'] as const) {
+    const content = renderOne(mediaRoute(), gatedCtx({ tlsSource }));
+    const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> }; tls?: unknown };
+    assert.equal(doc.http.routers['bellhop-route-media-example-com'].tls.certResolver, 'cloudflare', tlsSource);
+    assert.equal(doc.http.routers['bellhop-outpost-media-example-com'].tls.certResolver, 'cloudflare', tlsSource);
+    assert.equal(doc.http.routers['bellhop-exempt-media-example-com'].tls.certResolver, 'cloudflare', tlsSource);
+    assert.equal(doc.tls, undefined, tlsSource);
+  }
+});
+
+test("render: a proxyCertResolver named 'none' is an ordinary resolver name since issue #72", () => {
+  const content = renderOne(mediaRoute(), gatedCtx({ certResolver: 'none' }));
   const doc = parse(content) as { http: { routers: Record<string, { tls: { certResolver: string } }> } };
-  assert.equal(doc.http.routers['bellhop-route-media-example-com'].tls.certResolver, 'cloudflare');
-  assert.equal(doc.http.routers['bellhop-outpost-media-example-com'].tls.certResolver, 'cloudflare');
-  assert.equal(doc.http.routers['bellhop-exempt-media-example-com'].tls.certResolver, 'cloudflare');
+  assert.equal(doc.http.routers['bellhop-route-media-example-com'].tls.certResolver, 'none');
+});
+
+// issue #72, research R5: tlsSource 'files' -- routers render tls: {} (as
+// for 'external') and the document gains a top-level tls.certificates entry
+// for the shared ctx.tls pair, after http:, which Traefik's file provider
+// adds to its default store and selects by SNI. Pinned whole, including the
+// generation-marker hash, which must cover the tls: section too.
+test('render: tlsSource files renders tls: {} routers and a top-level tls.certificates entry after http (exact file)', () => {
+  const wiki = route({
+    owner: { type: 'guest', name: 'wiki' },
+    hostnames: ['wiki.example.com', 'docs.example.com'],
+    backend: { ip: '192.0.2.20', port: 8080, insecureTls: false },
+  });
+  const httpBody = [
+    'http:',
+    '  routers:',
+    '    bellhop-route-wiki-example-com:',
+    '      rule: Host(`wiki.example.com`) || Host(`docs.example.com`)',
+    '      entryPoints:',
+    '        - websecure',
+    '      service: bellhop-route-wiki-example-com',
+    '      middlewares:',
+    '        - bellhop-strip-authentik-headers',
+    '        - bellhop-forwarded-port',
+    '      tls: {}',
+    '  services:',
+    '    bellhop-route-wiki-example-com:',
+    '      loadBalancer:',
+    '        servers:',
+    '          - url: http://192.0.2.20:8080',
+    '  middlewares:',
+    ...STRIP_MIDDLEWARE,
+    ...FORWARDED_PORT_MIDDLEWARE,
+  ];
+  const tlsSection = [
+    'tls:',
+    '  certificates:',
+    '    - certFile: /etc/letsencrypt/live/example.com/fullchain.pem',
+    '      keyFile: /etc/letsencrypt/live/example.com/privkey.pem',
+  ];
+  const hash = sha256First12([HEADER, ...httpBody, ...tlsSection, ''].join('\n'));
+  const expected = [
+    HEADER,
+    ...httpBody,
+    `    bellhop-generation-${hash}:`,
+    '      headers:',
+    '        customRequestHeaders:',
+    `          X-Bellhop-Generation: "${hash}"`,
+    ...tlsSection,
+    '',
+  ].join('\n');
+
+  assert.equal(renderOne(wiki, ctx({ tlsSource: 'files' })), expected);
+});
+
+test('render: tlsSource files uses proxyTlsCertificate/proxyTlsKey via ctx.tls, and the hash changes with them', () => {
+  const app = route({ owner: { type: 'guest', name: 'app' } });
+  const custom = renderOne(
+    app,
+    ctx({ tlsSource: 'files', tls: { certificatePath: '/etc/ssl/example/cert.pem', keyPath: '/etc/ssl/example/key.pem' } })
+  );
+  const doc = parse(custom) as { tls: { certificates: Array<{ certFile: string; keyFile: string }> } };
+  assert.deepEqual(doc.tls.certificates, [{ certFile: '/etc/ssl/example/cert.pem', keyFile: '/etc/ssl/example/key.pem' }]);
+  assert.notEqual(generationMarkerName(custom), generationMarkerName(renderOne(app, ctx({ tlsSource: 'files' }))));
+});
+
+test('render via buildRoutes/buildProxyContext: tlsSource files reads proxyTlsCertificate/proxyTlsKey', () => {
+  const inventory = inv({
+    tlsSource: 'files',
+    proxyTlsCertificate: '/etc/ssl/example/cert.pem',
+    proxyTlsKey: '/etc/ssl/example/key.pem',
+    guests: [{ name: 'app-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.10', port: 8080, subdomains: ['app'] }],
+  });
+  const content = render(buildRoutes(inventory), buildProxyContext(inventory, traefikDriver), CONFIG_PATH)[0].content;
+  const doc = parse(content) as {
+    http: { routers: Record<string, { tls: Record<string, unknown> }> };
+    tls: { certificates: Array<{ certFile: string; keyFile: string }> };
+  };
+  assert.deepEqual(doc.http.routers['bellhop-route-app-example-com'].tls, {});
+  assert.deepEqual(doc.tls.certificates, [{ certFile: '/etc/ssl/example/cert.pem', keyFile: '/etc/ssl/example/key.pem' }]);
+});
+
+// Renderer backstop (research R4): checkTlsSource refuses 'internal' for
+// traefik before anything renders, so reaching render() with it is a
+// programming error.
+test('render: tlsSource internal throws a programming error, which traefik does not support', () => {
+  assert.throws(
+    () => renderOne(route({ owner: { type: 'guest', name: 'app' } }), ctx({ tlsSource: 'internal' })),
+    /^Error: traefik driver cannot render tlsSource 'internal' \(checkTlsSource should have refused it\)$/
+  );
 });
 
 // --- render: forward-auth objects (User Story 2, contract "Rendered file:

@@ -42,7 +42,7 @@ function oidcOnlyDriver(): ReverseProxyDriver {
   return {
     id: 'fake-oidc-only' as ProxyDriverId,
     label: 'Fake',
-    capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: () => false },
+    capabilities: { authModes: ['oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {
@@ -657,5 +657,27 @@ test('runEditGuest still refuses an edit to either list that leaves a web/mobile
       runEditGuest({ name: 'media-lxc', ...edit }, duplicateDeps()),
       (err: unknown) => err instanceof GuestEditValidationError && /oidcMobileRedirectUris/.test((err as Error).message)
     );
+  }
+});
+
+// --- TLS source (issue #72, US2): the check never runs on load or edit ---
+test('commitGuestEdit saves an edit under an unsupported TLS source and reports the refusal as proxySynced:false (issue #72)', async () => {
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-tls-')), 'bellhop.db');
+  saveInventory(inventoryPath, { ...capabilityInventory, proxyDriver: 'nginx', tlsSource: 'internal' });
+  const loaded = loadInventory(inventoryPath); // loads: the TLS check never runs on load
+  assert.equal(loaded.tlsSource, 'internal');
+  const d: OperationDeps = {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loaded,
+    inventoryPath,
+    authentik: new UnconfiguredAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+  const current = d.inventory.guests.find((g) => g.name === 'ungated-app')!;
+  const result = await commitGuestEdit(d, 'ungated-app', applyGuestEdits(current, { subdomains: ['ungated'], port: 8080 }), true);
+  assert.deepEqual(loadInventory(inventoryPath).guests.find((g) => g.name === 'ungated-app')?.subdomains, ['ungated']);
+  assert.equal(result.proxySynced, false);
+  if (!result.proxySynced) {
+    assert.match(result.proxyError, /^tlsSource 'internal' is not supported by the 'nginx' proxy driver \(it supports: files\) -- to use its default \(files\), run: bellhop set-config tlsSource --unset --apply/);
   }
 });

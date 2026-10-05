@@ -10,7 +10,8 @@ import { readFileSync } from 'node:fs';
 import type { Inventory } from '../../../src/lib/inventory.ts';
 import { buildRoutes, buildProxyContext } from '../../../src/lib/proxy/routes.ts';
 import type { ProxyRoute } from '../../../src/lib/proxy/routes.ts';
-import type { CaddyTlsMode } from '../../../src/lib/proxy/ids.ts';
+import type { TlsSource } from '../../../src/lib/proxy/ids.ts';
+import { caddyApiDriver } from '../../../src/lib/proxy/drivers/caddy-api.ts';
 import type {
   CaddyConfigObject,
   CaddyConnectionPolicy,
@@ -100,7 +101,7 @@ function withPinnedOutpostPort<T>(fn: () => T): T {
 }
 
 function routesAndCtx() {
-  return withPinnedOutpostPort(() => ({ routes: buildRoutes(inventory), ctx: buildProxyContext(inventory) }));
+  return withPinnedOutpostPort(() => ({ routes: buildRoutes(inventory), ctx: buildProxyContext(inventory, caddyApiDriver) }));
 }
 
 function withoutId(obj: Record<string, unknown>): Record<string, unknown> {
@@ -299,27 +300,33 @@ test('the preview lists each change and ends with the Bellhop objects as written
   assert.deepEqual(objects, [...srv0(plan.config).routes, policiesOf(plan.config)[0]]);
 });
 
-// --- issue #51: TLS modes ---------------------------------------------------
-// Each proxyCaddyTls mode's Bellhop TLS objects are pinned against Caddy's
-// own adapter output for the same characterization block with that mode's
-// clause (test/fixtures/caddy/tls-*-adapted.json), the same way the routes
-// are pinned above (contracts/rendering-and-settings.md "Caddy JSON").
+// --- issues #51, #72: TLS sources -------------------------------------------
+// Each supported tlsSource's Bellhop TLS objects are pinned against Caddy's
+// own adapter output for the same characterization block with that
+// source's clause (test/fixtures/caddy/tls-*-adapted.json, unchanged since
+// the proxyCaddyTls modes they were captured for -- tls-letsencrypt is
+// acme-http), the same way the routes are pinned above
+// (specs/072-tls-source-setting/contracts/rendering-and-messages.md "Caddy
+// admin API").
 
-const MODES: CaddyTlsMode[] = ['cloudflare', 'letsencrypt', 'internal', 'files'];
-const FIXTURE_FOR: Record<CaddyTlsMode, string> = {
-  cloudflare: 'characterization-adapted.json',
-  letsencrypt: 'tls-letsencrypt-adapted.json',
+// The four sources the Caddy drivers support -- 'external' is refused.
+type CaddyTlsSource = Exclude<TlsSource, 'external'>;
+
+const MODES: CaddyTlsSource[] = ['acme-dns', 'acme-http', 'internal', 'files'];
+const FIXTURE_FOR: Record<CaddyTlsSource, string> = {
+  'acme-dns': 'characterization-adapted.json',
+  'acme-http': 'tls-letsencrypt-adapted.json',
   internal: 'tls-internal-adapted.json',
   files: 'tls-files-adapted.json',
 };
 
-function modeInventory(mode: CaddyTlsMode): Inventory {
-  return { ...inventory, proxyCaddyTls: mode };
+function modeInventory(mode: CaddyTlsSource): Inventory {
+  return { ...inventory, tlsSource: mode };
 }
 
-function modeRoutesAndCtx(mode: CaddyTlsMode) {
+function modeRoutesAndCtx(mode: CaddyTlsSource) {
   const inv = modeInventory(mode);
-  return withPinnedOutpostPort(() => ({ routes: buildRoutes(inv), ctx: buildProxyContext(inv) }));
+  return withPinnedOutpostPort(() => ({ routes: buildRoutes(inv), ctx: buildProxyContext(inv, caddyApiDriver) }));
 }
 
 // The TLS-relevant parts of a configuration -- apps.tls and the HTTPS
@@ -356,7 +363,7 @@ for (const mode of MODES) {
     const fixture = JSON.parse(readFileSync(new URL(FIXTURE_FOR[mode], FIXTURES), 'utf8'));
     assert.equal(canonicalJson(tlsParts(plan.config)), canonicalJson(tlsParts(fixture)));
     // Routes never vary by mode (research R1).
-    const cloudflare = modeRoutesAndCtx('cloudflare');
+    const cloudflare = modeRoutesAndCtx('acme-dns');
     assert.equal(
       canonicalJson(srv0(plan.config).routes),
       canonicalJson(srv0(planCaddyConfig(null, cloudflare.routes, cloudflare.ctx, 'pve1').config).routes)
@@ -364,8 +371,20 @@ for (const mode of MODES) {
   });
 }
 
-test('letsencrypt writes no tls app at all', () => {
-  const { routes, ctx } = modeRoutesAndCtx('letsencrypt');
+// Renderer backstop (research R4): checkTlsSource refuses 'external' for
+// caddy-api before planning, so reaching the planner with it is a
+// programming error -- both with routes to render and with none.
+test('external: planCaddyConfig and renderTlsObjects throw a programming error', () => {
+  const inv: Inventory = { ...inventory, tlsSource: 'external' };
+  const { routes, ctx } = withPinnedOutpostPort(() => ({ routes: buildRoutes(inv), ctx: buildProxyContext(inv, caddyApiDriver) }));
+  const message = /^Error: caddy-api driver cannot render tlsSource 'external' \(checkTlsSource should have refused it\)$/;
+  assert.throws(() => planCaddyConfig(null, routes, ctx, 'pve1'), message);
+  assert.throws(() => planCaddyConfig(null, [], ctx, 'pve1'), message);
+  assert.throws(() => renderTlsObjects(['web.example.com'], ctx), message);
+});
+
+test('acme-http writes no tls app at all', () => {
+  const { routes, ctx } = modeRoutesAndCtx('acme-http');
   const plan = planCaddyConfig(null, routes, ctx, 'pve1');
   assert.equal(plan.config?.apps?.tls, undefined);
   assert.equal(plan.config?.apps?.http?.servers?.srv0?.tls_connection_policies, undefined);
@@ -388,14 +407,14 @@ function srv0Policies(config: CaddyConfigObject | null): CaddyConnectionPolicy[]
   return policies;
 }
 
-function liveConfig(mode: CaddyTlsMode, base: unknown = null): CaddyConfigObject {
+function liveConfig(mode: CaddyTlsSource, base: unknown = null): CaddyConfigObject {
   const { routes, ctx } = modeRoutesAndCtx(mode);
   return JSON.parse(JSON.stringify(planCaddyConfig(base as CaddyConfigObject | null, routes, ctx, 'pve1').config));
 }
 
-test('switching cloudflare -> files removes bellhop-tls and adds the files objects', () => {
+test('switching acme-dns -> files removes bellhop-tls and adds the files objects', () => {
   const { routes, ctx } = modeRoutesAndCtx('files');
-  const plan = planCaddyConfig(liveConfig('cloudflare'), routes, ctx, 'pve1');
+  const plan = planCaddyConfig(liveConfig('acme-dns'), routes, ctx, 'pve1');
   assert.equal(plan.config?.apps?.tls?.automation, undefined);
   assert.deepEqual(plan.config?.apps?.tls?.certificates?.load_files?.map((f) => f['@id']), [BELLHOP_TLS_FILES_ID]);
   assert.deepEqual(
@@ -498,16 +517,16 @@ for (const mode of MODES) {
   });
 }
 
-test('untagged automation policies claim hostnames only in cloudflare and internal modes (research R4)', () => {
+test('untagged automation policies claim hostnames only under the acme-dns and internal sources (research R4)', () => {
   const live = JSON.parse(JSON.stringify(handAuthored));
   live.apps.tls = { automation: { policies: [{ subjects: ['media.example.com'] }] } };
-  const conflictsIn = (mode: CaddyTlsMode) => {
+  const conflictsIn = (mode: CaddyTlsSource) => {
     const { routes, ctx } = modeRoutesAndCtx(mode);
     return planCaddyConfig(live, routes, ctx, 'pve1').conflicts.map((c) => `${c.hostname} ${c.claimedBy}`);
   };
-  assert.deepEqual(conflictsIn('cloudflare'), ['media.example.com tls-policy']);
+  assert.deepEqual(conflictsIn('acme-dns'), ['media.example.com tls-policy']);
   assert.deepEqual(conflictsIn('internal'), ['media.example.com tls-policy']);
-  assert.deepEqual(conflictsIn('letsencrypt'), []);
+  assert.deepEqual(conflictsIn('acme-http'), []);
   assert.deepEqual(conflictsIn('files'), []);
 });
 
@@ -532,7 +551,7 @@ test('the preview prints the tls certificate files and tls connection policy lin
 
 test('a changed certificate path replaces the load_files entry', () => {
   const inv: Inventory = { ...modeInventory('files'), proxyTlsCertificate: '/etc/ssl/example/cert.pem' };
-  const { routes, ctx } = withPinnedOutpostPort(() => ({ routes: buildRoutes(inv), ctx: buildProxyContext(inv) }));
+  const { routes, ctx } = withPinnedOutpostPort(() => ({ routes: buildRoutes(inv), ctx: buildProxyContext(inv, caddyApiDriver) }));
   const plan = planCaddyConfig(liveConfig('files'), routes, ctx, 'pve1');
   assert.deepEqual(
     plan.changes.map((c) => `${c.kind} ${c.object}`),
@@ -572,7 +591,7 @@ test('stale bellhop-tls-connection/bellhop-tls-default on a server that is not t
   );
 
   // A mode with no connection policies: removed outright, from srv1 too.
-  const le = modeRoutesAndCtx('letsencrypt');
+  const le = modeRoutesAndCtx('acme-http');
   const asLe = planCaddyConfig(JSON.parse(JSON.stringify(live)), le.routes, le.ctx, 'pve1');
   assert.equal(asLe.config?.apps?.http?.servers?.srv1?.tls_connection_policies, undefined);
   assert.equal(asLe.config?.apps?.http?.servers?.srv0?.tls_connection_policies, undefined);

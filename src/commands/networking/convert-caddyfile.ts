@@ -5,6 +5,7 @@ import { runRemote } from '../../lib/targets.ts';
 import { singleQuote } from '../../lib/proxy/file-driver.ts';
 import { buildRoutes, buildProxyContext } from '../../lib/proxy/routes.ts';
 import { checkCapabilities } from '../../lib/proxy/driver.ts';
+import { checkTlsSource } from '../../lib/proxy/tls.ts';
 import { getDriver } from '../../lib/proxy/index.ts';
 import { caddyDriver, CADDYFILE_DEFAULT_PATH } from '../../lib/proxy/drivers/caddy.ts';
 import { caddyApiDriver } from '../../lib/proxy/drivers/caddy-api.ts';
@@ -110,6 +111,10 @@ export async function runConvertCaddyfile(
   if (!proxyHost) {
     throw new Error("No inventory entry has 'proxy: true'");
   }
+  // Issue #72 (US2): the conversion renders for caddy-api, so refuse a TLS
+  // source it cannot serve before any SSH call (not just before the write).
+  const tlsError = checkTlsSource(deps.inventory, caddyApiDriver);
+  if (tlsError) throw new Error(tlsError);
   const caddyfile = resolveCaddyfile(opts, deps.inventory);
   const adminDeps = { ssh: deps.ssh, inventory: deps.inventory, proxyHost };
 
@@ -153,7 +158,7 @@ export async function runConvertCaddyfile(
   if (capabilityErrors.length > 0) {
     throw new Error(capabilityErrors.map((e) => e.message).join('\n'));
   }
-  const plan = planCaddyConfig(adapted, routes, buildProxyContext(deps.inventory), proxyHost);
+  const plan = planCaddyConfig(adapted, routes, buildProxyContext(deps.inventory, caddyApiDriver), proxyHost);
   // The conversion writes the adapted configuration even when the planner
   // adds nothing to it (plan.config is null only when it equals `adapted`).
   const toWrite = plan.config ?? adapted;
