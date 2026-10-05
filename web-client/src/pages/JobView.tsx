@@ -6,6 +6,7 @@ import { JobStatusBadge } from '../components/JobStatusBadge';
 import { useJobStream } from '../api/useJobStream';
 import { PageDescription } from '../components/PageDescription';
 import { promptBannerView } from '../lib/prompt-banner';
+import { triggeredByLabel } from '../lib/job-display';
 
 const CANCELLABLE_STATUSES = ['queued', 'running', 'awaiting_input'];
 
@@ -91,7 +92,10 @@ export function JobView() {
             {job.command}
             {job.target ? ` · ${job.target}` : ''}
           </div>
-          <div className="job-subtitle">job #{job.id}</div>
+          <div className="job-subtitle">
+            job #{job.id}
+            {job.triggeredByUsername ? ` · started by ${triggeredByLabel(job)}` : ''}
+          </div>
         </div>
         <div className="job-header-actions">
           <JobStatusBadge status={job.status} />

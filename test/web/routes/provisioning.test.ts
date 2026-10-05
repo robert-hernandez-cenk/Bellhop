@@ -173,6 +173,7 @@ test('POST /api/provisioning/create-lxc/apply records who triggered the job', as
   await waitForFinished(jobStore, res.body.jobId);
   const job = jobStore.get(res.body.jobId);
   assert.equal(job?.triggeredByUsername, 'admin');
+  assert.equal(job?.triggeredVia, 'web');
   assert.equal(job?.triggeredByImpersonating, null);
 });
 

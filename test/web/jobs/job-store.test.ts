@@ -518,3 +518,13 @@ test('JobStore turns on secure_delete so cleared answer text is scrubbed, not ju
   assert.equal(db.pragma('secure_delete', { simple: true }), 1);
   store.close();
 });
+
+// #65/#66: which front end started a job, beside who.
+test('createJob records triggeredVia when given, null otherwise', () => {
+  const store = new JobStore(':memory:');
+  const plain = store.createJob({ command: 'create-lxc', category: 'provisioning', argsJson: '{}' });
+  const viaMcp = store.createJob({ command: 'create-lxc', category: 'provisioning', argsJson: '{}', triggeredByUsername: 'admin', triggeredVia: 'mcp' });
+  assert.equal(store.get(plain)?.triggeredVia, null);
+  assert.equal(store.get(viaMcp)?.triggeredVia, 'mcp');
+  store.close();
+});

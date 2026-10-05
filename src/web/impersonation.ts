@@ -36,9 +36,10 @@ export function applyImpersonation(store: ImpersonationStore) {
 // enqueue() object literal.
 export function resolveTriggeredBy(
   req: Request,
-): { triggeredByUsername?: string; triggeredByImpersonating?: string } {
+): { triggeredByUsername?: string; triggeredByImpersonating?: string; triggeredVia: 'web' } {
   const real = req.realUser ?? req.user;
-  return { triggeredByUsername: real?.username, triggeredByImpersonating: req.user?.impersonating };
+  // Every caller is a web route, so the front end is always the web UI (#65/#66).
+  return { triggeredByUsername: real?.username, triggeredByImpersonating: req.user?.impersonating, triggeredVia: 'web' };
 }
 
 // The person a job is run for, for anything that acts on their behalf

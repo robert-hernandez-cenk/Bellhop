@@ -20,3 +20,15 @@ export function openDb(path: string, schema: string): Database.Database {
   db.exec(schema);
   return db;
 }
+
+// Adds a column an older database file lacks: CREATE TABLE IF NOT EXISTS is a
+// no-op on an existing table, so a new column needs an ALTER TABLE. Cheap and
+// idempotent (a PRAGMA read, then a skipped ALTER once the column exists), so
+// callers run it on every open. Shared by inventory.ts, the job store and the
+// web-login session store (#65 made that the third copy, so it moved here).
+export function ensureColumn(db: Database.Database, table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}

@@ -656,7 +656,8 @@ test('set_config accepts no secret key, in its schema or at call time', async ()
 
 test('no tool output contains a stored secret', async () => {
   const h = await setup();
-  const markers = SECRET_SETTINGS_KEYS.map((key) => `leak-marker-${key}-7f3a`);
+  // Padded to clear mcpApiKey's 32-character minimum (#66).
+  const markers = SECRET_SETTINGS_KEYS.map((key) => `leak-marker-${key}-7f3a-0123456789`);
   SECRET_SETTINGS_KEYS.forEach((key, i) => writeSecret(h.inventoryPath, key, markers[i]));
   // Registered so every consumer that reads a secret through the accessor
   // sees the stored ones, as in the real MCP server.
@@ -681,4 +682,32 @@ test('no tool output contains a stored secret', async () => {
   } finally {
     resetConfigStore();
   }
+});
+
+// #65/#66: a server built for a known caller (an HTTP MCP session's
+// signed-in admin, or the stdio server's OS user) records that caller on
+// every job it starts; without one it keeps the old generic 'mcp'.
+test('apply records the server actor as the job triggeredByUsername', async () => {
+  const { call, jobStore } = await setup({ serverOptions: { actor: { username: 'admin' } } });
+  const started = parse(await call('create_lxc', { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12', apply: true }));
+  await waitForFinished(jobStore, started.jobId);
+  assert.equal(jobStore.get(started.jobId)?.triggeredByUsername, 'admin');
+  assert.equal(jobStore.get(started.jobId)?.triggeredVia, 'mcp');
+  // ...and the job tools report both.
+  const job = parse(await call('get_job', { id: started.jobId }));
+  assert.equal(job.job.triggeredByUsername, 'admin');
+  assert.equal(job.job.triggeredVia, 'mcp');
+});
+
+test('apply without an actor still records mcp', async () => {
+  const { call, jobStore } = await setup();
+  const started = parse(await call('create_lxc', { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12', apply: true }));
+  await waitForFinished(jobStore, started.jobId);
+  assert.equal(jobStore.get(started.jobId)?.triggeredByUsername, 'mcp');
+});
+
+test('over stdio the apply tools still warn that jobs end with the server', async () => {
+  const { client } = await setup();
+  const { tools } = await client.listTools();
+  assert.match(tools.find((tool) => tool.name === 'create_lxc')!.description!, /interrupted/);
 });

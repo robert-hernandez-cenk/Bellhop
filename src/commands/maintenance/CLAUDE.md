@@ -94,7 +94,7 @@ After a successful web/MCP `update-app` apply, the same job calls `checkOneGuest
 
 ### Which jobs count
 
-Only job rows whose `command` is `create-lxc`/`create-vm`/`install-app`/`deploy-vpn-gateway`, whose `status` is `success`, and whose `triggered_by_username` is non-null and is neither the literal `mcp` (what MCP jobs are recorded under) nor the synthetic local operator's username (`localOperatorUsername()`, `src/web/auth.ts`, `WEB_UI_LOCAL_USER`, default `local`, passed in as the run function's `localOperator` option). Never a failed/cancelled/interrupted job, never one with no recorded human triggerer.
+Only job rows whose `command` is `create-lxc`/`create-vm`/`install-app`/`deploy-vpn-gateway`, whose `status` is `success`, and whose `triggered_by_username` is non-null whose `triggered_via` is not `mcp` (MCP never records a creator; since #65 its jobs carry the real caller), and is neither the literal `mcp` (what MCP jobs were recorded under before #65) nor the synthetic local operator's username (`localOperatorUsername()`, `src/web/auth.ts`, `WEB_UI_LOCAL_USER`, default `local`, passed in as the run function's `localOperator` option). Never a failed/cancelled/interrupted job, never one with no recorded human triggerer.
 
 ### Matching
 

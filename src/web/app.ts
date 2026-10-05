@@ -31,6 +31,8 @@ import { authRoutes } from './routes/auth.ts';
 import { SessionStore } from './login/session-store.ts';
 import { SessionService } from './login/sessions.ts';
 import { RealWebLoginClient, type WebLoginClient } from './login/oidc-client.ts';
+import { buildMcpHttp } from './mcp/index.ts';
+import { McpAuthStore } from './mcp/auth-store.ts';
 
 export interface AppDeps {
   inventory: Inventory;
@@ -76,6 +78,10 @@ export interface AppDeps {
   // `sessions` is not given (the default service is built around it); a
   // test can inject a fake here.
   webLogin?: WebLoginClient;
+  // The MCP authorization server's clients, codes, grants and tokens
+  // (#65/#66). server.ts passes one backed by data/sessions.sqlite3;
+  // defaulted to an in-memory store for tests that don't sign MCP clients in.
+  mcpAuthStore?: McpAuthStore;
 }
 
 export function buildApp(deps: AppDeps): express.Express {
@@ -93,13 +99,38 @@ export function buildApp(deps: AppDeps): express.Express {
   // requireAuth, not beside refreshInventory below, because requireAuth
   // itself reads settings (webUiAuthMode, the admin group names). Sign-in
   // reads the OIDC settings, so /auth gets the same fresh read.
-  app.use(['/api', '/auth'], (_req, _res, next) => {
+  // /mcp and the MCP authorization server's paths (#65/#66) read the API
+  // key and the web-login settings too.
+  app.use(['/api', '/auth', '/mcp', '/.well-known', '/register', '/authorize', '/token', '/revoke'], (_req, _res, next) => {
     invalidateConfigSnapshot();
     next();
   });
+  // MCP over HTTP (#65/#66), ahead of requireAuth: it authenticates with its
+  // own bearer credential, never the session cookie. Its jobs run on this
+  // service's JobRunner, so they are owned by 'web'.
+  const mcpHttp = buildMcpHttp({
+    sessions,
+    authStore: deps.mcpAuthStore ?? new McpAuthStore(':memory:'),
+    mcp: {
+      ssh: deps.baseSsh,
+      inventory: deps.inventory,
+      inventoryPath: deps.inventoryPath,
+      authentik: deps.authentik,
+      cloudflare,
+      goBuilder: deps.goBuilder,
+      fetchImpl: deps.fetchImpl,
+      tlsProbeSleepFn: deps.tlsProbeSleepFn,
+      jobStore: deps.jobStore,
+      jobLog: deps.jobLog,
+      jobRunner: deps.jobRunner,
+    },
+  });
   // The /auth routes, ahead of requireAuth: signing in must never need a
-  // session (#69, contracts/http-auth.md).
-  app.use('/auth', authRoutes(sessions));
+  // session (#69, contracts/http-auth.md). An MCP sign-in's consent step
+  // lives under it, and its callback finishes through mcpHttp.signIn.
+  app.use('/auth/mcp', mcpHttp.consentRouter);
+  app.use('/auth', authRoutes(sessions, mcpHttp.signIn));
+  app.use(mcpHttp.router);
   app.use(requireAuth(sessions));
   app.use(applyImpersonation(impersonationStore));
   // Reload inventory from disk before every /api request so a change

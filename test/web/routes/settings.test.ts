@@ -664,6 +664,7 @@ test('GET /api/settings reports every secret as { set, source } and never its va
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: true, source: 'environment' },
       webUiOidcClientSecret: { set: false, source: 'none' },
+      mcpApiKey: { set: false, source: 'none' },
     });
     const body = JSON.stringify(res.body);
     assert.ok(!body.includes('STORED-MARKER') && !body.includes('ENV-MARKER'), 'no secret value in the response');
@@ -1185,4 +1186,24 @@ test('PATCH /api/settings logs nothing about sign-in mode for a change that does
   const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
   assert.equal(res.status, 200);
   assert.ok(!errors.some((line) => line.includes('Sign-in mode changed')));
+});
+
+// #66: the HTTP MCP endpoint's key follows every secret rule here: stored
+// write-only, too-short refused naming the key only, cleared with null.
+test('PATCH /api/settings stores, validates and clears mcpApiKey without ever returning it', async () => {
+  const { app, inventoryPath } = testApp();
+  const short = await asAdmin(request(app).patch('/api/settings')).send({ mcpApiKey: 'SHORT-MARKER' });
+  assert.equal(short.status, 400);
+  assert.equal(short.body.error, 'mcpApiKey: must be at least 32 characters');
+  assert.ok(!JSON.stringify(short.body).includes('SHORT-MARKER'));
+
+  const key = 'example-mcp-key-KEY-MARKER-0123456789';
+  const saved = await asAdmin(request(app).patch('/api/settings')).send({ mcpApiKey: key });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.secrets.mcpApiKey, { set: true, source: 'settings' });
+  assert.ok(!JSON.stringify(saved.body).includes('KEY-MARKER'));
+  assert.equal(storedRows(inventoryPath).secrets.mcpApiKey, key);
+
+  const cleared = await asAdmin(request(app).patch('/api/settings')).send({ mcpApiKey: null });
+  assert.deepEqual(cleared.body.secrets.mcpApiKey, { set: false, source: 'none' });
 });

@@ -21,6 +21,7 @@ import {
   type SettingsFieldKey,
   type SettingsTab,
   type FieldState,
+  generateApiKey,
 } from '../lib/settings-display';
 
 type SettingKey = keyof SettingsValues;
@@ -138,6 +139,10 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
     label: 'OIDC client secret',
     help: "The client secret Bellhop signs in with. Write-only: never shown. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
   },
+  mcpApiKey: {
+    label: 'MCP API key',
+    help: "Lets an MCP client that cannot sign in through a browser reach Bellhop's MCP endpoint at https://<this Bellhop's address>/mcp, by sending the header Authorization: Bearer <key>. It acts with full admin trust and its jobs are recorded as api-key. Generate makes a strong key in your browser and shows it until you save -- copy it then, because it is never shown again. Unset: only clients that sign in (as a Bellhop admin) can use /mcp. See docs/mcp-server.md.",
+  },
   authentikApiUrl: {
     label: 'Authentik API URL',
     placeholder: 'https://auth.example.com',
@@ -234,6 +239,9 @@ function SecretField({
   onSave: (value: string | null) => Promise<boolean>;
 }) {
   const [value, setValue] = useState('');
+  // #66: a key this browser just generated stays visible until it is saved,
+  // so the admin can copy it -- the server never sends it back afterwards.
+  const [revealed, setRevealed] = useState(false);
   const field = FIELDS[settingKey];
   const status = data.secrets[settingKey];
   const pinned = state.kind === 'env-pinned';
@@ -255,11 +263,14 @@ function SecretField({
         <input
           id={`setting-${settingKey}`}
           className="field-input"
-          type="password"
+          type={revealed ? 'text' : 'password'}
           autoComplete="new-password"
           value={value}
           placeholder={status.set ? 'Enter a new value to replace it' : 'Enter a value'}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setRevealed(false);
+          }}
         />
       )}
       <p className="settings-help">{field.help}</p>
@@ -270,11 +281,27 @@ function SecretField({
             className="button"
             disabled={saving || value === ''}
             onClick={async () => {
-              if (await onSave(value)) setValue('');
+              if (await onSave(value)) {
+                setValue('');
+                setRevealed(false);
+              }
             }}
           >
             {saving ? 'Saving...' : status.set ? 'Replace' : 'Save'}
           </button>
+          {settingKey === 'mcpApiKey' && (
+            <button
+              type="button"
+              className="button"
+              disabled={saving}
+              onClick={() => {
+                setValue(generateApiKey());
+                setRevealed(true);
+              }}
+            >
+              Generate
+            </button>
+          )}
           <button
             type="button"
             className="button button-danger"
@@ -566,7 +593,7 @@ export function SettingsPage() {
       <h2>Settings</h2>
       <PageDescription>
         Settings are grouped by integration, and every one is optional -- each field says what
-        happens while it is unset. Secrets (API tokens and passwords) are write-only: the page shows
+        happens while it is unset. Secrets (API tokens, passwords and keys) are write-only: the page shows
         only whether one is set and where it comes from, and never shows the value again. A field
         set by an environment variable is read-only here until that variable is removed. The same
         values can be set from the CLI with{' '}
