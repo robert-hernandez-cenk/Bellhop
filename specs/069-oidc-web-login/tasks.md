@@ -181,9 +181,9 @@ description: "Task list for web UI login through Bellhop's own OIDC client (#69)
 - [x] T052 [P] Docs: docs/authentik.md (web login setup sequence from quickstart §4, modes, "Locked out" recovery via `set-config webUiAuthMode none --apply` or the env var, group freshness of 5 minutes, sessions file), docs/environment-variables.md, docs/configuration.md (new keys; `data/authentik.env`'s `WEB_UI_AUTH_MODE` values), docs/web-ui.md, docs/reverse-proxy/haproxy.md "Limits" (no `proxyManual` needed for Bellhop), docs/commands.md (`configure-web-login`), SECURITY.md, README.md commands table if it lists networking commands; also any other docs page `git grep -n "WEB_UI_AUTH_MODE\|forward-auth headers\|remoteip"` finds
 - [x] T053 [P] Guidance files: rewrite "Web UI authentication", "webUiAuthMode", "WebSocket path", "Firewall scope and HAProxy", impersonation and Settings-guard bullets in src/web/CLAUDE.md; add `configure-web-login` and the `offline_access` mapping to src/commands/networking/CLAUDE.md; settings keys in src/lib/CLAUDE.md; Sign out/401 in web-client/CLAUDE.md; root CLAUDE.md mental-model line if it mentions headers; add a "Single-operator assumptions" note that sessions and re-check single-flighting assume one service process; CONTRIBUTING.md if it restates header auth for tests
 - [x] T054 Regenerate screenshots with `npm run docs:screenshots` for changed screens (Sidebar, Settings General) and check them by eye for example-only values
-- [ ] T055 Run `npm run typecheck`, `npm test`, `npm run web:build`; `git grep -n "x-authentik" src/web web-client/src` returns nothing
-- [ ] T056 Browser check (desktop width and ≤640px) of the Sidebar Sign out button, Settings General fields, the not-configured and sign-in-failed pages
-- [ ] T057 Live verification per quickstart §4 where possible on the deployment checkout, recording results for the PR (never seeding real values into tracked files)
+- [x] T055 Run `npm run typecheck`, `npm test`, `npm run web:build`; `git grep -n "x-authentik" src/web web-client/src` returns nothing
+- [x] T056 Browser check (desktop width and ≤640px) of the Sidebar Sign out button, Settings General fields, the not-configured and sign-in-failed pages
+- [ ] T057 Live verification per quickstart §4 where possible on the deployment checkout, recording results for the PR (never seeding real values into tracked files) — **Open**: needs production changes (sync-authentik --apply on the live Authentik, Bellhop-live mode and route); left for the operator, listed as unverified in the PR
 
 ---
 
