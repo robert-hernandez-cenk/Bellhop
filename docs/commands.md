@@ -54,7 +54,7 @@ get `type`/`ip` refreshed; newly discovered guests are added (with no
 `subdomains`/`port`/`proxy` — add those by hand); guests no longer present
 on their host are removed. `--apply` writes the reconciled `hosts[]`/
 `guests[]` back to `inventory/bellhop.db`, a SQLite database (see
-`CLAUDE.md`) — `domain` and `externalSites[]` are left untouched.
+`src/lib/CLAUDE.md`) — `domain` and `externalSites[]` are left untouched.
 
 `check-app-updates` compares each `lxc` guest's installed community-scripts
 app version against its latest stable GitHub release, the same way the
@@ -179,7 +179,7 @@ host-relay bind-mount as an optional step at creation time, but
 It attaches an `lxc`
 guest to an already-existing Proxmox `nfs:` storage entry (`pvesm add nfs
 <id> --server ... --export ...`, created manually once per share, not per
-guest — see the cluster note in `CLAUDE.md`) via a host-relay bind-mount
+guest — see the cluster note in `src/lib/CLAUDE.md`) via a host-relay bind-mount
 (`pct set ... mpN`) on the guest's *parent host*; the guest itself never
 mounts NFS directly. `--storage <id>` names that already-existing storage;
 `--mount-point` is the absolute path inside the guest to bind-mount it at

@@ -152,7 +152,7 @@ Fill in the pull request template: a summary, the linked issue, and its
 checklist. Review your full diff for real operational data before you
 submit. A user-visible behavior change updates `README.md` or the
 relevant page under `docs/` in the same pull request, and a change to architecture or conventions updates
-`CLAUDE.md`.
+`CLAUDE.md` (the root file, or the nested one in the directory it concerns).
 
 ## Security
 

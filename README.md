@@ -142,9 +142,9 @@ behaves.
   [Traefik](docs/reverse-proxy/traefik.md).
 - [Troubleshooting](docs/troubleshooting.md) — running the checks, and known
   hardware issues.
-- `CLAUDE.md` — architecture reference (inventory schema, `resolveTarget`/
-  `runRemote`, the Machine ID scheme, dry-run conventions, per-command
-  design notes).
+- `CLAUDE.md` — the root orientation file (commands, architecture map,
+  cross-cutting rules, workflow); nested `CLAUDE.md` files in `src/…` and
+  `web-client/` hold subsystem detail.
 
 ## Contributing
 

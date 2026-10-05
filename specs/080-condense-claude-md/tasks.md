@@ -25,7 +25,7 @@ Shared bullets are split exactly as data-model.md says, so no two tasks write th
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm that `git show 6cd2f90:CLAUDE.md | wc -l` prints 4175 and that the worktree's `CLAUDE.md` is unchanged from it. This is the source of truth for every task below.
+- [x] T001 Confirm that `git show 6cd2f90:CLAUDE.md | wc -l` prints 4175 and that the worktree's `CLAUDE.md` is unchanged from it. This is the source of truth for every task below.
 
 ---
 
@@ -37,7 +37,7 @@ Shared bullets are split exactly as data-model.md says, so no two tasks write th
 
 The nested files are written first, so that nothing is lost when the root file is cut down in Phase 3.
 
-- [ ] T002 [P] [US2] Write `src/lib/CLAUDE.md`. Sources:
+- [x] T002 [P] [US2] Write `src/lib/CLAUDE.md`. Sources:
   - 55-273: inventory schema and cluster note.
   - 274-450: DB read/write, `sortInventoryForFile`, migrations.
   - 451-540: target resolution details, qm envelopes, `Ssh2SSHClient`, phantom-success.
@@ -48,16 +48,16 @@ The nested files are written first, so that nothing is lost when the root file i
   - 3708-3788: Settings store.
 
   Add pointers to `npm-client.ts`, `script-catalog.ts`, `app-source.ts`, `authentik-client.ts`, and `permissions.ts`. Point the cross-cutting rules back to the root file.
-- [ ] T003 [P] [US2] Write `src/lib/proxy/CLAUDE.md` from 646-935: the driver interface, `getDriver`/`driverDeps`, the none driver, capability enforcement, and `fileDriver`. Add pointers for `nginx-locations.ts` and for `caddy-json.ts`/`caddy-admin.ts` (detail in the drivers file).
-- [ ] T004 [P] [US2] Write `src/lib/proxy/drivers/CLAUDE.md` from 936-1579: Caddy, nginx, Nginx Proxy Manager, HAProxy, Traefik, and the Caddy admin API, including `convert-caddyfile`.
-- [ ] T005 [P] [US2] Write `src/commands/networking/CLAUDE.md`. Sources:
+- [x] T003 [P] [US2] Write `src/lib/proxy/CLAUDE.md` from 646-935: the driver interface, `getDriver`/`driverDeps`, the none driver, capability enforcement, and `fileDriver`. Add pointers for `nginx-locations.ts` and for `caddy-json.ts`/`caddy-admin.ts` (detail in the drivers file).
+- [x] T004 [P] [US2] Write `src/lib/proxy/drivers/CLAUDE.md` from 936-1579: Caddy, nginx, Nginx Proxy Manager, HAProxy, Traefik, and the Caddy admin API, including `convert-caddyfile`.
+- [x] T005 [P] [US2] Write `src/commands/networking/CLAUDE.md`. Sources:
   - 1580-1619 and 1666-1965: the sync-authentik core, OIDC, mode switches, outpost, discovery, mobile consent, API quirks.
   - 2049-2093: OIDC credentials and adoption.
   - 2094-2176: prune-acme-challenges.
   - 2177-2238: render-status-page.
 
   Add pointers to the WEB tier rules (1620-1665), the OPS confirmation rule, the PROXY `runSyncProxy` behavior, and the DRIVERS `convert-caddyfile`.
-- [ ] T006 [P] [US2] Write `src/commands/provisioning/CLAUDE.md`. Sources:
+- [x] T006 [P] [US2] Write `src/commands/provisioning/CLAUDE.md`. Sources:
   - 2239-2269: attach-nfs-mount.
   - 2321-2339: migrate-nfs-mount, including the `--storage` note.
   - 2340-2412: migrate-guest.
@@ -68,15 +68,15 @@ The nested files are written first, so that nothing is lost when the root file i
   - 3949-3982: VPN gateway creds.
 
   Add pointers to JOBS (prompt relay), LIB (pve-acl, package managers), and OPS (pin-once).
-- [ ] T007 [P] [US2] Write `src/commands/maintenance/CLAUDE.md`. Sources: 2270-2293 (sync-inventory), 2294-2320 (audit-nfs-mounts), 2898-3001 (check-app-updates), and 3608-3655 (backfill-guest-creators). Add pointers to LIB (update-all targeting, package managers) and TASKS (scheduler).
-- [ ] T008 [P] [US2] Write `src/operations/CLAUDE.md`. Sources:
+- [x] T007 [P] [US2] Write `src/commands/maintenance/CLAUDE.md`. Sources: 2270-2293 (sync-inventory), 2294-2320 (audit-nfs-mounts), 2898-3001 (check-app-updates), and 3608-3655 (backfill-guest-creators). Add pointers to LIB (update-all targeting, package managers) and TASKS (scheduler).
+- [x] T008 [P] [US2] Write `src/operations/CLAUDE.md`. Sources:
   - 3135-3157: the operations layer.
   - The `editDeletesOidcClient`/`commitGuestEdit` part of 1987-2048.
   - The pin-once / `resolvesApp` part of 2761-2793.
   - From 2094-2176, the rule that `cloudflare` is required on `OperationDeps`.
   - From 2981-2992, the post-update-app re-check.
   - From 3002-3070, `OperationDeps.actor`.
-- [ ] T009 [P] [US2] Write `src/web/CLAUDE.md`. Sources:
+- [x] T009 [P] [US2] Write `src/web/CLAUDE.md`. Sources:
   - 1620-1665: tier raise/lower and the unauthenticatedPaths add rule.
   - The `syncProxyLive` part of 1966-1986.
   - The `oidcEditChangeError` part of 1987-2048.
@@ -91,10 +91,10 @@ The nested files are written first, so that nothing is lost when the root file i
   - The `/api/app-updates` part of 2964-2980.
 
   Add pointers to `src/web/routes/oidc.ts` (NET), JOBS, and TASKS.
-- [ ] T010 [P] [US2] Write `src/web/jobs/CLAUDE.md`. Sources: 2526-2621 (prompt relay, detection tiers, OutputActivity, pre-scan) and 3209-3247 (cross-process job watching and control), plus job attribution columns from 3656-3707.
-- [ ] T011 [P] [US2] Write `src/web/tasks/CLAUDE.md` from 2833-2897, the scheduler framework and tasks route. Point to MAINT for check-app-updates.
-- [ ] T012 [P] [US2] Write `src/mcp/CLAUDE.md` from 3158-3208 and 3248-3292. Add pointers to JOBS (cross-process control) and NET (`oidc-credentials`).
-- [ ] T013 [P] [US2] Write `web-client/CLAUDE.md`. Sources:
+- [x] T010 [P] [US2] Write `src/web/jobs/CLAUDE.md`. Sources: 2526-2621 (prompt relay, detection tiers, OutputActivity, pre-scan) and 3209-3247 (cross-process job watching and control), plus job attribution columns from 3656-3707.
+- [x] T011 [P] [US2] Write `src/web/tasks/CLAUDE.md` from 2833-2897, the scheduler framework and tasks route. Point to MAINT for check-app-updates.
+- [x] T012 [P] [US2] Write `src/mcp/CLAUDE.md` from 3158-3208 and 3248-3292. Add pointers to JOBS (cross-process control) and NET (`oidc-credentials`).
+- [x] T013 [P] [US2] Write `web-client/CLAUDE.md`. Sources:
   - 3071-3113: responsive layout, theming, FieldHelp.
   - The dropdown part of 1966-1986.
   - The Advanced modal tabs, `accessFieldsFor`, and banners from 1987-2048.
@@ -113,7 +113,7 @@ The nested files are written first, so that nothing is lost when the root file i
 
 **Independent Test**: quickstart steps 1 and 5. The root file alone states every FR-003 rule.
 
-- [ ] T014 [US1] Rewrite `CLAUDE.md` with these sections:
+- [x] T014 [US1] Rewrite `CLAUDE.md` with these sections:
   - Opening lines that say "CLAUDE.md" means this file plus the nested files, and that a change updates whichever file describes it (research R5).
   - Commands and testing (1-49).
   - An architecture map with one paragraph per area, naming each nested file.
@@ -129,7 +129,7 @@ The nested files are written first, so that nothing is lost when the root file i
   - Project philosophy (3983-4001).
   - Workflow conventions (4002-4154).
   - Windows development notes (4155-4175).
-- [ ] T015 [US1] Update the `CLAUDE.md` description in `README.md` (line 145) and the two "see `CLAUDE.md`" pointers in `docs/commands.md` (lines 57 and 182) so they name the right nested file. Add "(the root file or the nested one for that directory)" to `CONTRIBUTING.md` line 155.
+- [x] T015 [US1] Update the `CLAUDE.md` description in `README.md` (line 145) and the two "see `CLAUDE.md`" pointers in `docs/commands.md` (lines 57 and 182) so they name the right nested file. Add "(the root file or the nested one for that directory)" to `CONTRIBUTING.md` line 155.
 
 **Checkpoint**: root file size target met.
 
