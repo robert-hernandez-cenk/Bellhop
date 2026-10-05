@@ -68,7 +68,7 @@ Once Bellhop manages the Proxmox cluster from inside one of its guests, some act
 2. **Given** the same setting, **When** the same actions are attempted from the web UI or the MCP server, **Then** they are refused with the same message.
 3. **Given** the same setting, **When** the operator runs `update-all` over a set of guests that includes `bellhop`, **Then** every other guest is processed and `bellhop` is reported as skipped, with the reason.
 4. **Given** the setting is unset, **When** any of these actions run, **Then** they behave exactly as they do today.
-5. **Given** a fresh container install, **When** the installer finishes, **Then** the setting already holds the container's hostname, so the guest is protected as soon as `sync-inventory` adds it under that name.
+5. **Given** a fresh container install, **When** the installer finishes, **Then** its final output gives the exact command that sets the setting to the container's hostname, and the first-run documentation includes that step right after the inventory import, so the guest is protected once `sync-inventory` adds it under that name.
 6. **Given** the operator wants to change or clear the setting, **When** they use `set-config` or the Settings page, **Then** the new value takes effect for the next action.
 
 ---
@@ -125,7 +125,7 @@ A new container starts with no inventory. The documentation takes the operator f
 - **FR-006**: The installer MUST generate an ed25519 SSH key for the service account when the account has none, without prompting, and MUST print the public key at the end of the install with instructions to trust it on every Proxmox host.
 - **FR-007**: The installer MUST register a system service that runs the web service as the service account on port 3000, starts at boot, and restarts on failure.
 - **FR-008**: The installer MUST install a `bellhop` command inside the container that runs the CLI as the service account, with the same environment as the service.
-- **FR-009**: The installer MUST record the container's hostname as Bellhop's own guest (FR-013).
+- **FR-009**: The installer's final output MUST give the exact command that records the container's hostname as Bellhop's own guest (FR-013), and the first-run documentation MUST include that step after the inventory import. The installer cannot set it itself: a fresh install has no inventory to write a setting into (an inventory needs a `domain`), and `import-yaml-inventory` replaces every setting with what the YAML file holds.
 - **FR-010**: The installer MUST NOT prompt for anything beyond the standard container-creation prompts, and MUST NOT ask for or write any secret.
 - **FR-011**: The script's update MUST check for a newer Bellhop release and, only if one exists, stop the service, replace the application directory with the new release, reinstall dependencies, rebuild the web client and start the service. It MUST NOT modify the data location.
 - **FR-012**: The installer's final output MUST show the web UI address, the SSH public key, and a pointer to Bellhop's container documentation.
@@ -147,7 +147,7 @@ A new container starts with no inventory. The documentation takes the operator f
 
 ### Key Entities
 
-- **Own-guest setting**: the inventory name of the guest Bellhop itself runs in. One optional value. Read by the guarded commands. Written by `set-config`, the Settings page, and the installer.
+- **Own-guest setting**: the inventory name of the guest Bellhop itself runs in. One optional value. Read by the guarded commands. Written by `set-config`, the Settings page, or a `bellhopGuest` key in the YAML file the inventory is imported from.
 - **Data location**: the directory holding the inventory database, the data directory (job history, job logs, sessions, optional env files) and the service account's SSH key. Survives every update.
 - **Application directory**: the deployed release's code and built web client. Replaced on every update.
 
@@ -171,5 +171,5 @@ A new container starts with no inventory. The documentation takes the operator f
 - **The MCP server's second service unit is out of scope.** It waits on #65, which gives the MCP server a network transport. Until then the MCP server runs over stdio from wherever the operator's MCP client runs.
 - **The Windows service is not removed here.** Removal is tracked in #68.
 - **The own-guest mark is a setting, not a per-entry inventory flag.** The existing per-entry role flags (`proxy`, `authentik`) can only be set by importing a YAML file. A setting is editable from the CLI and the Settings page, and the installer can seed it. A guest is matched by name, which is how every other command addresses guests.
-- **The container's hostname is the guest's inventory name.** `sync-inventory` names guests after their Proxmox hostname, and the installer's default hostname is the app name, so seeding the setting with the hostname protects the guest once it is synced.
+- **The container's hostname is the guest's inventory name.** `sync-inventory` names guests after their Proxmox hostname, and the installer's default hostname is the app name, so setting it to the hostname protects the guest once it is synced.
 - **Upstreaming the installer to community-scripts is out of scope.**

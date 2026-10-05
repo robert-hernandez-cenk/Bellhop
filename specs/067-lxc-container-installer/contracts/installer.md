@@ -44,7 +44,7 @@ In order:
    exec node /opt/bellhop/bin/bellhop.js "$@"
    ```
 
-9. `bellhop set-config bellhopGuest "$(hostname)" --apply`.
+9. (No setting is written: a fresh install has no inventory yet, see research R7.)
 10. Write `/etc/systemd/system/bellhop.service`:
 
     ```ini
@@ -68,7 +68,7 @@ In order:
     ```
 
     then `systemctl enable -q --now bellhop`.
-11. Print the public key with instructions (append to `/root/.ssh/authorized_keys` on a Proxmox host, which is cluster-wide).
+11. Print the public key with instructions (append to `/root/.ssh/authorized_keys` on a Proxmox host, which is cluster-wide), and the exact `bellhop set-config bellhopGuest <hostname> --apply` line to run once the inventory is imported.
 12. `motd_ssh`, `customize`, `cleanup_lxc`.
 
 No `read`, no secret, no prompt anywhere.

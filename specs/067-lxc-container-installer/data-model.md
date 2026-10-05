@@ -7,9 +7,9 @@
 | `bellhopGuest` | string | unset | non-empty when set (`z.string().min(1).optional()`), same as `nfsServer` |
 
 - Stored as a row in the inventory database's `meta` table, through the existing `SettingsSchema`/`SETTINGS_KEYS` path. It is not a secret.
-- Written by `set-config` (CLI, MCP `set_config`), the Settings page (General tab), and the installer (seeded with the container hostname).
+- Written by `set-config` (CLI, MCP `set_config`), the Settings page (General tab), and a `bellhopGuest` key in an imported YAML file. The installer prints the command to set it to the container hostname (research R7).
 - Read by `isBellhopGuest`/`assertNotBellhopGuest` (`src/lib/bellhop-guest.ts`). It matches a guest by exact `name`. A value that names no inventory entry guards nothing and is not an error (FR-017).
-- Never validated against the current inventory, because the installer seeds it before `sync-inventory` has created the guest.
+- Never validated against the current inventory, because it is normally set right after the import, before `sync-inventory` has created the guest.
 
 ## `UpdateAllResult` (extended)
 
