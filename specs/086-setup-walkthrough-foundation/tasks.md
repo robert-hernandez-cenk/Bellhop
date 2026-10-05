@@ -66,8 +66,8 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 
 **Independent Test**: Save basics, finish, then confirm the token is refused, the state route answers 404, and pages are served normally.
 
-- [ ] T024 [US3] Write failing tests in `test/web/setup/finish.test.ts`: `PUT /api/setup/basics` validates with `SettingsSchema` (an invalid domain gives 400 naming `domain`), saves, and marks `basics` complete; `POST /api/setup/finish` answers 409 naming the first incomplete step, otherwise 200 `{ redirect: '/' }`, clears the cookie, nulls the token in the DB, and afterwards the gate is off and the old token is refused; a new `SetupService` over the same DB with every host deleted still reports finished
-- [ ] T025 [US3] Implement the basics and finish routes in `src/web/routes/setup.ts` (basics saved via `loadInventory` + `assignSetting` + `saveInventory`, the same path `set-config` uses)
+- [x] T024 [US3] Write failing tests in `test/web/setup/finish.test.ts`: `PUT /api/setup/basics` validates with `SettingsSchema` (an invalid domain gives 400 naming `domain`), saves, and marks `basics` complete; `POST /api/setup/finish` answers 409 naming the first incomplete step, otherwise 200 `{ redirect: '/' }`, clears the cookie, nulls the token in the DB, and afterwards the gate is off and the old token is refused; a new `SetupService` over the same DB with every host deleted still reports finished
+- [x] T025 [US3] Implement the basics and finish routes in `src/web/routes/setup.ts` (basics saved via `loadInventory` + `assignSetting` + `saveInventory`, the same path `set-config` uses)
 - [ ] T026 [US3] Step 2 panel (domain required; dnsServer, backupStorage with suggestions from the discovered storages, nfsServer) and the Finish panel (disabled until both steps are done; navigates to `/` on success) in `web-client/src/pages/SetupPage.tsx`
 
 ## Phase 6: User Story 4: Resume an interrupted walkthrough (P2)

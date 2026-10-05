@@ -1,8 +1,16 @@
 import express, { type Request, type Response } from 'express';
-import { refreshInventory, type HostEntry, type Inventory } from '../../lib/inventory.ts';
+import {
+  SettingsSchema,
+  assignSetting,
+  loadInventory,
+  refreshInventory,
+  saveInventory,
+  type HostEntry,
+  type Inventory,
+} from '../../lib/inventory.ts';
 import type { MidScheme } from '../../lib/inventory.ts';
 import { SETUP_COOKIE, SETUP_COOKIE_OPTIONS, requireSetupAuth } from '../setup/gate.ts';
-import { REQUIRED_SETUP_STEPS, type SetupService } from '../setup/service.ts';
+import { REQUIRED_SETUP_STEPS, SetupIncompleteError, type SetupService } from '../setup/service.ts';
 
 export interface HostSummary {
   name: string;
@@ -84,6 +92,54 @@ export function setupRoutes(setup: SetupService): express.Router {
       settings: basicsSettings(inventory),
       storages: [...new Set(inventory.hosts.flatMap((h) => (h.storages ?? []).map((s) => s.name)))].sort(),
     });
+  });
+
+  // Step 2 (FR-017): the same SettingsSchema rules set-config and the
+  // Settings page apply, saved through the same load-assign-save path. An
+  // empty optional value clears it.
+  api.put('/basics', (req, res) => {
+    const opts = setup.opts!; // safe: see above
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const values: Record<string, string | undefined> = {};
+    for (const key of BASICS_KEYS) {
+      const raw = body[key];
+      if (raw !== undefined && raw !== null && typeof raw !== 'string') {
+        res.status(400).json({ error: `${key}: must be a string` });
+        return;
+      }
+      values[key] = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : undefined;
+    }
+    if (values.domain === undefined) {
+      res.status(400).json({ error: 'domain: is required' });
+      return;
+    }
+    const parsed = SettingsSchema.pick({ domain: true, dnsServer: true, backupStorage: true, nfsServer: true }).safeParse(values);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('\n') });
+      return;
+    }
+    const updated = { ...loadInventory(opts.inventoryPath) };
+    for (const key of BASICS_KEYS) assignSetting(updated, key, values[key]);
+    saveInventory(opts.inventoryPath, updated);
+    refreshInventory(opts.inventory, opts.inventoryPath);
+    const { completedSteps } = setup.completeStep('basics');
+    res.json({ settings: basicsSettings(opts.inventory), completedSteps });
+  });
+
+  // Finish (FR-019/FR-007): refused while a required step is incomplete;
+  // otherwise setup ends for good and the setup cookie is cleared.
+  api.post('/finish', (_req, res) => {
+    try {
+      setup.finish();
+    } catch (err) {
+      if (err instanceof SetupIncompleteError) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+    res.clearCookie(SETUP_COOKIE, SETUP_COOKIE_OPTIONS);
+    res.json({ redirect: '/' });
   });
 
   router.use('/api/setup', api);
