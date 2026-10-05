@@ -122,4 +122,4 @@ Every rule, invariant, gotcha, rationale, and named file or function in the orig
 - The assistant's tool loads a guidance file named `CLAUDE.md` from a subdirectory when it reads files within that subdirectory. Working in a subsystem therefore surfaces its detail without an explicit pointer.
 - The operator chose nested guidance files over a `docs/architecture/` reference set, and chose tightening over a verbatim move (decided during brainstorming).
 - This is a documentation-only change. The full automated test suite is not run, at the operator's direction. Only the documentation link check is run.
-- Adding an automated line budget for the root guidance file, like the existing README budget, is a follow-up and out of scope here.
+- An automated line budget for the root guidance file (like the README budget), and link checking for the nested guidance files, were added after the PR opened, at the operator's request (tasks T021-T022).

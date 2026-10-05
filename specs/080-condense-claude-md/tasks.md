@@ -177,3 +177,10 @@ There is one deliverable, and it is committed per phase:
 4. Verification.
 
 The MVP is Phases 2 and 3 together. Cutting the root without the nested files would lose content.
+
+---
+
+## Phase 6: Follow-ups (added after the PR opened, at the operator's request)
+
+- [x] T021 Add a 250-line budget test for the root `CLAUDE.md` to `test/docs/links.test.ts` (`CLAUDE_MD_LINE_LIMIT`, matching FR-001), and describe it in the root file's README/docs workflow bullet.
+- [x] T022 Extend `markdownFiles()` in `test/docs/links.test.ts` to scan every nested `CLAUDE.md` under `src/` and `web-client/` (skipping `node_modules`), with a guard test that `src/lib/CLAUDE.md` and `web-client/CLAUDE.md` are scanned. Verified by planting a broken link in `src/mcp/CLAUDE.md`: the test failed naming it, and the file was then restored.
