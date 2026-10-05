@@ -17,6 +17,7 @@ import { managesProxy } from '../../lib/proxy/driver.ts';
 import { CADDY_TLS_MODES } from '../../lib/proxy/ids.ts';
 import { DEFAULT_CADDY_TLS } from '../../lib/proxy/routes.ts';
 import { clearSecret, configValueAt, storedSecretKeys, writeSecret, type ConfigSource } from '../../lib/config.ts';
+import { WEB_LOGIN_KEYS } from '../login/config.ts';
 import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
   SECRET_SETTINGS_KEYS,
@@ -285,28 +286,46 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       }
     }
 
-    // Refuse switching webUiAuthMode to oidc unless the real requester (never
-    // an impersonated view) is signed in through Bellhop's own web login and
-    // is an administrator under the admin groups this request leaves in place
-    // (#69, was the issue #64 forward-auth check). Otherwise every later
+    // Refuse switching webUiAuthMode to oidc until an administrator has
+    // proved they can sign in (#69 US4, FR-020): otherwise every later
     // request, including the one needed to undo it, would be refused or lose
-    // this page. A session is honored in none mode too (research R6), which
-    // is what lets the operator prove they can sign in before turning it on.
-    // Clearing it or setting none needs no such check: confirming that
-    // leaving oidc is deliberate is the Settings page's job (client-side).
-    // TODO(#69 US4, T039/T041): add the OIDC-settings completeness check and
-    // skip the guard when the effective mode is already oidc.
-    if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'oidc') {
-      const requester = req.realUser ?? req.user;
-      if (!requester?.viaOidc) {
+    // this page. Checked in the contract's order -- the four OIDC settings
+    // are complete once this request is saved, then the real requester
+    // (never an impersonated view) has a web-login session. A session is
+    // honored in none mode too (research R6), which is what lets the operator
+    // prove they can sign in before turning it on. Clearing the mode or
+    // setting none needs no such check: confirming that leaving oidc is
+    // deliberate is the Settings page's job (client-side). A resend of oidc
+    // while it is already in force changes nothing, so it is not refused.
+    //
+    // There is deliberately no "would not be an admin after this change"
+    // check: requireAdminGroup already admitted this requester under the
+    // current admin groups, and the lockout guard above refuses any change to
+    // those groups that would drop them, so the post-save admin check is
+    // already done by the time we get here.
+    if (
+      'webUiAuthMode' in updates &&
+      updates.webUiAuthMode === 'oidc' &&
+      configValueAt(inventoryPath, 'webUiAuthMode').value !== 'oidc'
+    ) {
+      // The effective value of each login setting after this request: the
+      // value it sets or clears, else what is in force now. No key in the
+      // body can be env-pinned (refused above), so a body key's effective
+      // value is exactly what it writes.
+      const missing = WEB_LOGIN_KEYS.filter((key) => {
+        if (isSecretSettingKey(key) && secretUpdates.has(key)) return secretUpdates.get(key) === undefined;
+        if (key in updates) return updates[key as keyof Settings] === undefined;
+        return configValueAt(inventoryPath, key).value === undefined;
+      });
+      if (missing.length > 0) {
         res.status(409).json({
-          error: 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change',
+          error: `Web login is not configured: set ${missing.join(', ')} first (bellhop configure-web-login <entry> --apply)`,
         });
         return;
       }
-      if (!isAdminOf(requester.groups, adminGroupsAfter)) {
+      if (!(req.realUser ?? req.user)?.viaOidc) {
         res.status(409).json({
-          error: `You are signed in as ${requester.username}, who would not be an admin after this change`,
+          error: 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change',
         });
         return;
       }
@@ -347,6 +366,10 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       logWarn(
         `Sign-in mode changed from oidc to ${updates.webUiAuthMode ?? 'none'} by ${who} -- the web UI no longer requires sign-in`
       );
+    }
+    if (authModeBefore !== 'oidc' && 'webUiAuthMode' in updates && updates.webUiAuthMode === 'oidc') {
+      const who = (req.realUser ?? req.user)?.username ?? 'unknown';
+      logWarn(`webUiAuthMode set to oidc by ${who}`);
     }
     // Reflect the write in the shared in-memory object immediately rather
     // than waiting for the next request's reload middleware.

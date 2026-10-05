@@ -11,12 +11,12 @@ export type WebLoginConfig =
   // Key names only -- a secret's value must never reach an error or a log.
   | { configured: false; missing: ConfigKey[] };
 
-const KEYS = ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'] as const;
+export const WEB_LOGIN_KEYS = ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'] as const;
 
 export function webLoginConfig(env: NodeJS.ProcessEnv = process.env): WebLoginConfig {
   const values = new Map<ConfigKey, string>();
   const missing: ConfigKey[] = [];
-  for (const key of KEYS) {
+  for (const key of WEB_LOGIN_KEYS) {
     const { value, source } = configValue(key, env);
     // configValue validates a stored value on read but passes an environment
     // override through untouched, so a malformed WEB_UI_OIDC_* would only

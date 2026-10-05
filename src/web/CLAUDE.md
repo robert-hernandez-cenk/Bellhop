@@ -173,4 +173,4 @@ Non-secrets validate against exported `SettingsSchema` (shared with `set-config`
 
 - an env-pinned key: 400 naming the variable and its `data/*.env` file, telling the operator to unset it *and restart the service* (the CLI stores and warns instead, its environment not necessarily the service's);
 - an admin-group change under which the real requester (`req.realUser ?? req.user`; never blocks the local operator) would fail `isAdminUser` (`adminGroupsWith`, `src/lib/authentik-config.ts`): 409;
-- `webUiAuthMode: 'authentik'` unless the forward-auth headers name an admin under the post-save groups: 409, two messages (no headers, or non-admin identity). See Web UI authentication.
+- `webUiAuthMode: 'oidc'` (when not already in force): 409 unless, in order, all four `webUiOidc*` values are set after the PATCH (same-request values and env overrides count) and the real requester (`realUser ?? user`) has a session (`viaOidc`). No third "not an admin" check: `requireAdminGroup` plus the admin-group lockout guard already guarantee it. Success logs `webUiAuthMode set to oidc by <user>`. The CLI's `set-config` is unrestricted.

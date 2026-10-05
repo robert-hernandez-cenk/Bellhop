@@ -129,13 +129,13 @@ description: "Task list for web UI login through Bellhop's own OIDC client (#69)
 
 ### Tests first
 
-- [ ] T039 [P] [US4] Tests in test/web/routes/settings.test.ts: PATCH `webUiAuthMode: 'oidc'` refused (409) with each of the three messages in contracts/cli-and-settings.md (incomplete settings, counting values set in the same PATCH; no session (dev user / local operator); session user non-admin under post-save groups); accepted for a session admin with a `logWarn` naming them; already-`oidc` resend not refused; impersonating admin judged by the real identity; set-config unrestricted (test/commands/set-config.test.ts)
-- [ ] T040 [P] [US4] Tests in test/web-client/settings-display.test.ts: confirm prompt fires when leaving `oidc` and its text says the web UI will be reachable without sign-in
+- [x] T039 [P] [US4] Tests in test/web/routes/settings.test.ts: PATCH `webUiAuthMode: 'oidc'` refused (409) with each of the three messages in contracts/cli-and-settings.md (incomplete settings, counting values set in the same PATCH; no session (dev user / local operator); session user non-admin under post-save groups); accepted for a session admin with a `logWarn` naming them; already-`oidc` resend not refused; impersonating admin judged by the real identity; set-config unrestricted (test/commands/set-config.test.ts)
+- [x] T040 [P] [US4] Tests in test/web-client/settings-display.test.ts: confirm prompt fires when leaving `oidc` and its text says the web UI will be reachable without sign-in
 
 ### Implementation
 
-- [ ] T041 [US4] Replace the `authentik` guard in src/web/routes/settings.ts with the `oidc` guard (uses `webLoginConfig` on post-PATCH values and `(req.realUser ?? req.user).viaOidc`)
-- [ ] T042 [US4] Update the leave-mode confirm in web-client/src/lib/settings-display.ts and its use in web-client/src/pages/SettingsPage.tsx
+- [x] T041 [US4] Replace the `authentik` guard in src/web/routes/settings.ts with the `oidc` guard (uses `webLoginConfig` on post-PATCH values and `(req.realUser ?? req.user).viaOidc`)
+- [x] T042 [US4] Update the leave-mode confirm in web-client/src/lib/settings-display.ts and its use in web-client/src/pages/SettingsPage.tsx
 
 ---
 
