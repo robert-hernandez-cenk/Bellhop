@@ -22,14 +22,14 @@
 
 ## R4. Service account and SSH identity
 
-- **Decision**: a system user `bellhop` with home `/var/lib/bellhop` and shell `/bin/bash` (so the operator can `su` to it for debugging). The installer runs `ssh-keygen -t ed25519 -N "" -C bellhop@<hostname> -f /var/lib/bellhop/.ssh/id_ed25519` only if that file does not exist.
-- **Rationale**: `resolvePrivateKey` (`src/lib/ssh-client.ts`) looks in `os.homedir()/.ssh/` for `id_ed25519` first, and `os.homedir()` is the account's home on Linux. With the home set to the data location, the default lookup finds the key without a per-host `ssh_identity_file`, and the key survives updates along with the rest of the data.
+- **Decision (revised during implementation)**: no service user. The service runs as root, and the installer runs `ssh-keygen -q -t ed25519 -N "" -C bellhop@<hostname> -f /root/.ssh/id_ed25519` only if that file does not exist. The fork's `AGENTS.md` lists a dedicated system user as anti-pattern 9 ("LXC containers run as root, no separate user needed") and `sudo -u` as anti-pattern 12. The issue asked for a dedicated user only "if practical", and the repository the scripts live in rules it out.
+- **Rationale**: `resolvePrivateKey` (`src/lib/ssh-client.ts`) looks in `os.homedir()/.ssh/` for `id_ed25519` first, so root's key is found with no per-host `ssh_identity_file`. Updates never touch `/root/.ssh`.
 - **Host trust**: the docs tell the operator to append the printed public key to `/root/.ssh/authorized_keys` on a Proxmox host. In a Proxmox cluster that file is a symlink to the cluster-shared `/etc/pve/priv/authorized_keys`, so one append covers every node. `push-ssh-key` cannot bootstrap this, because it needs SSH access already.
-- **Alternatives considered**: running as root, which is what most community scripts do (`User=root`), but the issue asks for a dedicated user where practical, and nothing Bellhop does locally needs root; having the operator supply a key (breaks unattended installs).
+- **Alternatives considered**: a dedicated `bellhop` user with its home in the data location (the original plan; against the fork's rules); having the operator supply a key (breaks unattended installs).
 
 ## R5. The `bellhop` CLI inside the container
 
-- **Decision**: `/usr/local/bin/bellhop` is a small shell wrapper. It sources `/etc/default/bellhop` with `set -a`, then runs `node /opt/bellhop/bin/bellhop.js "$@"`, through `runuser -u bellhop --` when invoked as root.
+- **Decision**: `/usr/local/bin/bellhop` is a small shell wrapper. It sources `/etc/default/bellhop` with `set -a`, then runs `node /opt/bellhop/bin/bellhop.js "$@"`.
 - **Finding (bug)**: `bin/bellhop.js` spawns `node --import tsx <cli>`. Node resolves a bare `--import` specifier against the current working directory, so the shim fails with `ERR_MODULE_NOT_FOUND` when run from outside the repository. Reproduced on this branch by running the shim from a temp directory. This already breaks an `npm link`ed `bellhop` used outside the checkout.
 - **Fix**: resolve `tsx` relative to the shim (`import.meta.resolve('tsx')`) and pass that URL to `--import`. The wrapper can then run from any directory, and relative path arguments still resolve against the caller's directory.
 - **Alternatives considered**: `cd /opt/bellhop` in the wrapper (breaks relative path arguments such as `--yaml-path ./hosts.yaml`).

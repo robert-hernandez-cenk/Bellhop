@@ -6,7 +6,7 @@
 
 ## Summary
 
-Bellhop gets a Linux deployment: a community-scripts installer in the operator's ProxmoxVED fork creates a Debian 13 container. The container runs the latest Bellhop release as a systemd service under a dedicated `bellhop` account, keeps all state in `/var/lib/bellhop` (pointed at through the existing `INVENTORY_FILE`/`WEB_DATA_DIR` variables), generates the account's SSH key, and updates in place through build.func's release helpers.
+Bellhop gets a Linux deployment: a community-scripts installer in the operator's ProxmoxVED fork creates a Debian 13 container. The container runs the latest Bellhop release as a systemd service (as root, the fork's convention), keeps all state in `/var/lib/bellhop` (pointed at through the existing `INVENTORY_FILE`/`WEB_DATA_DIR` variables), generates root's SSH key, and updates in place through build.func's release helpers.
 
 Inside Bellhop, four changes:
 

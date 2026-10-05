@@ -33,7 +33,7 @@ The operator runs the Bellhop installer on a Proxmox host, the way they install 
 2. **Given** an unattended install (all `var_*` values supplied), **When** the installer runs, **Then** it never stops for input and never asks for a secret.
 3. **Given** a finished install, **When** the operator reads the installer's final output, **Then** it shows the web UI address, the container's SSH public key, and a pointer to the container documentation.
 4. **Given** a finished install, **When** the operator runs `bellhop <command>` inside the container, **Then** the command runs against the same inventory database and data directory the web service uses.
-5. **Given** a finished install, **When** the operator inspects the running service, **Then** it runs as a dedicated non-root account, not as root.
+5. **Given** a finished install, **When** the operator inspects the running service, **Then** it runs under systemd as root inside the unprivileged container, the convention for the fork's app scripts.
 
 ---
 
@@ -120,11 +120,11 @@ A new container starts with no inventory. The documentation takes the operator f
 - **FR-001**: The fork MUST provide `ct/bellhop.sh`, `install/bellhop-install.sh` and `json/bellhop.json` that follow the fork's existing community-scripts conventions and build on the shared container build engine, so Bellhop is installable and updatable like the fork's other apps, including through Bellhop's own custom script source.
 - **FR-002**: The default container MUST be Debian 13, unprivileged, with 2 CPU cores, 2048 MB RAM and an 8 GB disk, each overridable through the standard `var_*` variables.
 - **FR-003**: The installer MUST install the Node version Bellhop's `engines` field requires (24) and the build toolchain its native SQLite module needs, deploy the latest published Bellhop release to the application directory, install its dependencies from the lockfile, and build the production web client.
-- **FR-004**: The installer MUST create a dedicated non-root system account for the service, whose home directory is the data location.
+- **FR-004**: The service MUST run as root inside an unprivileged container, following the fork's convention that app containers have no dedicated service user (its `AGENTS.md` anti-patterns 9 and 12). The issue asked for a dedicated user only "if practical", and the fork's rules settle that.
 - **FR-005**: The inventory database and the data directory MUST live in the data location, outside the application directory, so an update that replaces the application directory never touches them. The service and the CLI MUST be pointed at them through Bellhop's existing inventory-path and data-directory environment variables.
-- **FR-006**: The installer MUST generate an ed25519 SSH key for the service account when the account has none, without prompting, and MUST print the public key at the end of the install with instructions to trust it on every Proxmox host.
-- **FR-007**: The installer MUST register a system service that runs the web service as the service account on port 3000, starts at boot, and restarts on failure.
-- **FR-008**: The installer MUST install a `bellhop` command inside the container that runs the CLI as the service account, with the same environment as the service.
+- **FR-006**: The installer MUST generate an ed25519 SSH key for root when root has none, without prompting, and MUST print the public key at the end of the install with instructions to trust it on every Proxmox host.
+- **FR-007**: The installer MUST register a system service that runs the web service on port 3000, starts at boot, and restarts on failure.
+- **FR-008**: The installer MUST install a `bellhop` command inside the container that runs the CLI with the same environment as the service.
 - **FR-009**: The installer's final output MUST give the exact command that records the container's hostname as Bellhop's own guest (FR-013), and the first-run documentation MUST include that step after the inventory import. The installer cannot set it itself: a fresh install has no inventory to write a setting into (an inventory needs a `domain`), and `import-yaml-inventory` replaces every setting with what the YAML file holds.
 - **FR-010**: The installer MUST NOT prompt for anything beyond the standard container-creation prompts, and MUST NOT ask for or write any secret.
 - **FR-011**: The script's update MUST check for a newer Bellhop release and, only if one exists, stop the service, replace the application directory with the new release, reinstall dependencies, rebuild the web client and start the service. It MUST NOT modify the data location.
@@ -148,7 +148,7 @@ A new container starts with no inventory. The documentation takes the operator f
 ### Key Entities
 
 - **Own-guest setting**: the inventory name of the guest Bellhop itself runs in. One optional value. Read by the guarded commands. Written by `set-config`, the Settings page, or a `bellhopGuest` key in the YAML file the inventory is imported from.
-- **Data location**: the directory holding the inventory database, the data directory (job history, job logs, sessions, optional env files) and the service account's SSH key. Survives every update.
+- **Data location**: the directory holding the inventory database, the data directory (job history, job logs, sessions, optional env files). Survives every update, as does root's SSH key.
 - **Application directory**: the deployed release's code and built web client. Replaced on every update.
 
 ## Success Criteria *(mandatory)*
