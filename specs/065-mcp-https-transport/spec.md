@@ -104,7 +104,7 @@ An admin starts an `install-app` over HTTP MCP, waits on it, answers an installe
 
 ### Edge Cases
 
-- Neither web sign-in nor an API key is configured: `/mcp` refuses every request with an error naming both ways to enable it (configure web sign-in, or set `mcpApiKey`), and the discovery documents say sign-in is unavailable. The web UI itself still starts and works.
+- Neither web sign-in nor an API key is configured: `/mcp` refuses every request with an error naming both ways to enable it (configure web sign-in, or set `mcpApiKey`), and the sign-in discovery documents are not served. The web UI itself still starts and works.
 - Web sign-in is configured but its redirect address is plain `http://` on loopback (development): sign-in works on loopback only, as for the web UI.
 - A client registers with a return address Bellhop has not seen before: allowed (that is how MCP clients register), but the consent page always shows that address so the person can spot an unexpected one.
 - A client presents a token that expired, was revoked, or was never issued: 401, and the client starts sign-in again.
@@ -137,7 +137,7 @@ An admin starts an `install-app` over HTTP MCP, waits on it, answers an installe
 - **FR-011**: Only a person who is an admin (Bellhop's admin predicate) at sign-in MAY receive a token; anyone else MUST be shown a page explaining MCP access is limited to admins.
 - **FR-012**: An MCP identity MUST be re-checked against Authentik on the same schedule and with the same outcomes as web sessions (at most every 5 minutes; refused ends access; unreachable keeps the last-known identity). A request whose re-checked identity is no longer an admin MUST be refused with 403.
 - **FR-013**: Access tokens MUST expire after 1 hour; refresh tokens MUST rotate on use and expire 30 days after sign-in. Authorization codes MUST be single-use and expire after 10 minutes.
-- **FR-014**: Tokens, codes and client secrets MUST be stored only as hashes, and MUST survive a service restart.
+- **FR-014**: Access tokens, refresh tokens, authorization codes and consent ids MUST be stored only as hashes and MUST survive a service restart, as MUST client registrations. (A registered client's own secret is kept as registered, because the client-authentication check compares it directly; it grants nothing without a refresh token.)
 - **FR-015**: Bellhop's public address for discovery MUST come from the configured web-login redirect address; no new address setting is introduced.
 
 **API key**
@@ -153,7 +153,7 @@ An admin starts an `install-app` over HTTP MCP, waits on it, answers an installe
 
 **Attribution**
 
-- **FR-021**: Every job MUST record the front end it came from (`web` or `mcp`) alongside the existing username. Jobs over HTTP MCP record the signed-in person's username or `api-key`; jobs from the stdio server record the operating-system user.
+- **FR-021**: Every job started from a front end MUST record it (`web` or `mcp`) alongside the existing username; the scheduler's own daily run keeps the username `scheduler` and records no front end. Jobs over HTTP MCP record the signed-in person's username or `api-key`; jobs from the stdio server record the operating-system user.
 - **FR-022**: The web UI's job list and detail, and the MCP `list_jobs`/`get_job` tools, MUST show the front end next to the username. Jobs recorded before this change show no front end.
 
 **Documentation**
