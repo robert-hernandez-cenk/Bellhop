@@ -13,6 +13,7 @@
 - **Rationale**: upstream Node 24 scripts (for example `install/chartdb-install.sh` on upstream `main`) use the same helper and sequence. `npm ci` installs dev dependencies too, which Bellhop needs at runtime: the server runs TypeScript through `tsx`, a dev dependency. `web-client` is an npm workspace, so the root `npm ci` covers it.
 - **Alternatives considered**: `npm ci --omit=dev` (breaks `tsx` at runtime); moving `tsx` to dependencies (a packaging change with no other benefit here). `node-windows` has no `os` restriction in its manifest, so it installs harmlessly on Linux.
 - **Note**: unlike chartdb, `node_modules` stays in place. The service runs from source.
+- **Verified on Linux (implementation)**: the build was simulated in WSL with Node 24.21.0 / npm 11.19.0, against a `git archive` of this branch (what a release tarball holds). Without a C compiler, `npm ci` fails: `better-sqlite3@13` has no install script of its own but ships a `binding.gyp`, and npm implicitly runs `node-gyp rebuild` for it. With `gcc`/`make`/`python3` present, `npm ci` and `npm run web:build` succeed. At runtime the package's bundled `prebuilds/linux-x64.node` is what loads. So `build-essential` and `python3` are required for `npm ci` to finish, not a fallback. npm skips `ssh2`'s optional install script (its `install-scripts` approval warning); `ssh2` still loads and works without it.
 
 ## R3. Data location and environment
 
@@ -50,7 +51,7 @@
 
 - **Decision**: one helper in `src/lib/` (`bellhop-guest.ts`): `isBellhopGuest(inventory, name)` and `assertNotBellhopGuest(inventory, name, action)`. The assert throws the refusal message. It is called first thing in `runUpdateApp`, `runDeleteGuest`, `runMigrateGuest` and `runGuestPower`, before any remote call or argument resolution that touches the network. The `delete-guest` operation's apply also calls it before its Authentik teardown, which runs before `runDeleteGuest` (same place as its existing `proxy: true` refusal). `runUpdateAll` filters the guest out of its targets and returns it in a new `skippedSelf` list. `formatUpdateAll` prints it only when non-empty, so existing output is unchanged. The `update-all` operation's preview names it as skipped.
 - **Rationale**: CLI, web and MCP all reach these four `run*` functions through `src/operations/` or `src/cli.ts`, so one check per function covers every front end (FR-015). Routes that enqueue without a preview (`guest-power`) report the refusal as a failed job carrying the same message.
-- **Message**: `Refusing to <action> '<name>': it is Bellhop's own guest (the bellhopGuest setting), and <action> would disrupt the running Bellhop service. Act on it in Proxmox directly, or update Bellhop with its own update script. If the setting names the wrong guest, change it with "bellhop set-config bellhopGuest <name> --apply" or on the Settings page.`
+- **Message**: `Refusing to <action> '<name>': it is Bellhop's own guest (the bellhopGuest setting), so doing that would disrupt the running Bellhop service. Act on it in Proxmox directly, or update Bellhop with its own update script. If the setting names the wrong guest, change it with "bellhop set-config bellhopGuest <name> --apply" or on the Settings page.`
 
 ## R9. Windows service deprecation
 

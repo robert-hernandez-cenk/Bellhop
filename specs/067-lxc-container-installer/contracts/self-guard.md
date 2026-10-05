@@ -13,7 +13,7 @@ Applies when the `bellhopGuest` setting is set to a value `<self>`.
 The refusal message (one string, shared by all actions; `<action>` is `update`, `delete`, `migrate`, `start` or `shut down`):
 
 ```text
-Refusing to <action> '<self>': it is Bellhop's own guest (the bellhopGuest setting), and <action> would disrupt the running Bellhop service. Act on it in Proxmox directly, or update Bellhop with its own update script. If the setting names the wrong guest, change it with "bellhop set-config bellhopGuest <name> --apply" or on the Settings page.
+Refusing to <action> '<self>': it is Bellhop's own guest (the bellhopGuest setting), so doing that would disrupt the running Bellhop service. Act on it in Proxmox directly, or update Bellhop with its own update script. If the setting names the wrong guest, change it with "bellhop set-config bellhopGuest <name> --apply" or on the Settings page.
 ```
 
 With the setting unset, or for any other target, every entry point behaves exactly as before.
