@@ -112,7 +112,8 @@ The web login client is four more settings, written by `bellhop
 configure-web-login` (see [Web login](authentik.md#web-login)):
 `webUiOidcIssuer` (`WEB_UI_OIDC_ISSUER`), `webUiOidcClientId`
 (`WEB_UI_OIDC_CLIENT_ID`), `webUiOidcRedirectUri`
-(`WEB_UI_OIDC_REDIRECT_URI`, ending in `/auth/callback`) and the secret
+(`WEB_UI_OIDC_REDIRECT_URI`, an `https://` URL ending in `/auth/callback`;
+`http://` only for `localhost`) and the secret
 `webUiOidcClientSecret` (`WEB_UI_OIDC_CLIENT_SECRET`).
 
 ### Group ladder upgrades

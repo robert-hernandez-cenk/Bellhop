@@ -295,32 +295,43 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // deliberate is the Settings page's job (client-side). A resend of oidc
     // while it is already in force changes nothing, so it is not refused.
     //
+    // The completeness check also runs on every save while oidc stays in
+    // force: clearing a login setting then would make sign-in impossible
+    // and lock everyone out of this page within one re-check interval.
+    // Changing a value is allowed (only the provider could tell whether the
+    // new one works); the CLI remains the recovery path (FR-021).
+    //
     // The admin check is on the real identity under the post-save admin
     // groups, and is not redundant with requireAdminGroup or the lockout
     // guard: requireAdminGroup judges the impersonation-overlaid groups, and
     // the lockout guard only runs when this request changes admin groups, so a
     // real non-admin whose impersonation entry names an admin group (entries
     // persist until restart) passes both.
-    if (
-      'webUiAuthMode' in updates &&
-      updates.webUiAuthMode === 'oidc' &&
-      configValueAt(inventoryPath, 'webUiAuthMode').value !== 'oidc'
-    ) {
+    const modeBefore = configValueAt(inventoryPath, 'webUiAuthMode').value;
+    const modeAfter = 'webUiAuthMode' in updates ? updates.webUiAuthMode : modeBefore;
+    const switchingToOidc = modeAfter === 'oidc' && modeBefore !== 'oidc';
+    if (modeAfter === 'oidc') {
       // The effective value of each login setting after this request: the
       // value it sets or clears, else what is in force now. No key in the
       // body can be env-pinned (refused above), so a body key's effective
-      // value is exactly what it writes.
+      // value is exactly what it writes. While oidc merely stays in force,
+      // only a key this request clears counts, so an unrelated save is never
+      // refused for a gap it did not make.
       const missing = WEB_LOGIN_KEYS.filter((key) => {
         if (isSecretSettingKey(key) && secretUpdates.has(key)) return secretUpdates.get(key) === undefined;
         if (key in updates) return updates[key as keyof Settings] === undefined;
-        return configValueAt(inventoryPath, key).value === undefined;
+        return switchingToOidc && configValueAt(inventoryPath, key).value === undefined;
       });
       if (missing.length > 0) {
         res.status(409).json({
-          error: `Web login is not configured: set ${missing.join(', ')} first (bellhop configure-web-login <entry> --apply)`,
+          error: switchingToOidc
+            ? `Web login is not configured: set ${missing.join(', ')} first (bellhop configure-web-login <entry> --apply)`
+            : `Refusing to clear ${missing.join(', ')} while webUiAuthMode is oidc: nobody could sign in. Set webUiAuthMode to none first`,
         });
         return;
       }
+    }
+    if (switchingToOidc) {
       if (!(req.realUser ?? req.user)?.viaOidc) {
         res.status(409).json({
           error: 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change',

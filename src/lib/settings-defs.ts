@@ -58,14 +58,18 @@ const webUiAuthMode = z
 
 // The redirect URI Bellhop registers with the provider: the callback route is
 // fixed at /auth/callback, so any other path could never complete a sign-in.
+// It must be https:// because the sign-in cookies are Secure, which a browser
+// drops over plain http -- except on loopback, the one place it accepts them.
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const webUiOidcRedirectUri = z.string().refine((value) => {
   try {
     const url = new URL(value);
-    return (url.protocol === 'http:' || url.protocol === 'https:') && url.pathname === '/auth/callback';
+    const schemeOk = url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname));
+    return schemeOk && url.pathname === '/auth/callback';
   } catch {
     return false;
   }
-}, 'must be an http:// or https:// URL whose path is /auth/callback');
+}, 'must be an https:// URL (http:// only for localhost) whose path is /auth/callback');
 
 // API tokens never contain whitespace, so a stray space or newline from a
 // copy-paste is caught here rather than surfacing later as an opaque 401.

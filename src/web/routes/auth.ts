@@ -1,8 +1,9 @@
 import { Router, type Response } from 'express';
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { webLoginConfig, type WebLoginConfig } from '../login/config.ts';
-import { LOGIN_COOKIE, LOGIN_COOKIE_OPTIONS, parseCookies, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from '../login/cookies.ts';
-import { WebLoginError, type WebLoginClient, type WebLoginSettings } from '../login/oidc-client.ts';
+import { escapeHtml } from '../../lib/html.ts';
+import { LOGIN_COOKIE_OPTIONS, loginCookieName, parseCookies, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from '../login/cookies.ts';
+import { WebLoginError, type WebLoginSettings } from '../login/oidc-client.ts';
 import type { SessionService } from '../login/sessions.ts';
 
 // Bellhop's own sign-in (#69, contracts/http-auth.md): GET /auth/login starts
@@ -18,9 +19,10 @@ import type { SessionService } from '../login/sessions.ts';
 // construction, oidc-client.ts), fixed text, or the provider's OAuth error
 // code; an unexpected error's message is never shown or logged.
 
-// `client` defaults to the session service's own client: one provider
-// conversation for sign-in and re-checks. AppDeps.webLogin overrides it.
-export function authRoutes(sessions: SessionService, client: WebLoginClient = sessions.client): Router {
+// Uses the session service's own client, so sign-in and re-checks always
+// talk to the provider through the same one.
+export function authRoutes(sessions: SessionService): Router {
+  const client = sessions.client;
   const router = Router();
 
   // These pages carry one-time state; never let a cache keep them.
@@ -71,22 +73,34 @@ export function authRoutes(sessions: SessionService, client: WebLoginClient = se
       return;
     }
 
+    const cookieName = loginCookieName(started.state);
+    if (cookieName === undefined) {
+      // Never from openid-client's randomState (43 base64url characters); a
+      // fake or future client that breaks that gets a clear failure instead of
+      // a sign-in that can never complete.
+      logWarn('Web sign-in could not start: the sign-in state is not usable as a cookie name');
+      sendPage(res, 500, 'Sign-in could not start', [`<p><a href="${escapeHtml(retry)}">Try again</a></p>`]);
+      return;
+    }
     const attemptId = sessions.store.createAttempt({
       state: started.state,
       nonce: started.nonce,
       codeVerifier: started.codeVerifier,
       returnTo,
     });
-    res.cookie(LOGIN_COOKIE, attemptId, LOGIN_COOKIE_OPTIONS);
+    res.cookie(cookieName, attemptId, LOGIN_COOKIE_OPTIONS);
     res.redirect(302, started.authorizationUrl);
   });
 
   router.get('/callback', async (req, res) => {
     // Consume the attempt first, whatever happens next: it is single use
-    // (FR-010), so even a failed callback cannot be replayed.
-    const attemptId = parseCookies(req.headers.cookie)[LOGIN_COOKIE];
+    // (FR-010), so even a failed callback cannot be replayed. The callback's
+    // own state names the cookie (loginCookieName), so each tab's sign-in
+    // finds its own attempt; the stored state is still compared below.
+    const cookieName = loginCookieName(queryString(req.query.state) ?? '');
+    const attemptId = cookieName ? parseCookies(req.headers.cookie)[cookieName] : undefined;
     const attempt = attemptId ? sessions.store.consumeAttempt(attemptId) : undefined;
-    res.clearCookie(LOGIN_COOKIE, clearOptions(LOGIN_COOKIE_OPTIONS));
+    if (cookieName) res.clearCookie(cookieName, clearOptions(LOGIN_COOKIE_OPTIONS));
 
     const fail = (reason: string): void => {
       const returnTo = attempt?.returnTo ?? '/';
@@ -243,14 +257,5 @@ function sendPage(res: Response, status: number, title: string, body: string[]):
         '</body></html>',
       ].join('\n')
     );
-}
-
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 

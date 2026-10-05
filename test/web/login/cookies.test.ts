@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   LOGIN_COOKIE,
   LOGIN_COOKIE_OPTIONS,
+  loginCookieName,
   SESSION_COOKIE,
   SESSION_COOKIE_OPTIONS,
   parseCookies,
@@ -56,4 +57,13 @@ test('login cookie options: HttpOnly, Secure, SameSite=Lax, path /auth, 10 minut
     path: '/auth',
     maxAge: 600 * 1000,
   });
+});
+
+// Each pending sign-in has its own cookie, named after its OAuth state, so
+// parallel sign-ins from one browser don't overwrite each other.
+test('loginCookieName names a cookie after a base64url state, and refuses anything else', () => {
+  assert.equal(loginCookieName('abcXYZ019_-'), 'bellhop_login_abcXYZ019_-');
+  for (const bad of ['', 'has space', 'semi;colon', 'equals=', 'x'.repeat(129)]) {
+    assert.equal(loginCookieName(bad), undefined, bad);
+  }
 });

@@ -33,7 +33,7 @@ Rules:
 
 | Column | Type | Notes |
 |---|---|---|
-| `id_hash` | TEXT PK | SHA-256 hex of the `bellhop_login` cookie value |
+| `id_hash` | TEXT PK | SHA-256 hex of the `bellhop_login_<state>` cookie value |
 | `state` | TEXT NOT NULL | OAuth `state` |
 | `nonce` | TEXT NOT NULL | OIDC `nonce` |
 | `code_verifier` | TEXT NOT NULL | PKCE verifier (S256) |
@@ -67,7 +67,7 @@ active --POST /auth/logout--> deleted
 | `webUiAuthMode` | setting | `WEB_UI_AUTH_MODE` | `oidc` \| `none` | general |
 | `webUiOidcIssuer` | setting | `WEB_UI_OIDC_ISSUER` | http(s) URL | general |
 | `webUiOidcClientId` | setting | `WEB_UI_OIDC_CLIENT_ID` | non-empty | general |
-| `webUiOidcRedirectUri` | setting | `WEB_UI_OIDC_REDIRECT_URI` | http(s) URL whose path is `/auth/callback` | general |
+| `webUiOidcRedirectUri` | setting | `WEB_UI_OIDC_REDIRECT_URI` | https URL (http only on loopback) whose path is `/auth/callback` | general |
 | `webUiOidcClientSecret` | secret | `WEB_UI_OIDC_CLIENT_SECRET` | non-empty, no whitespace | general |
 
 All four OIDC keys set (effective value, env or stored) = **OIDC configured**.

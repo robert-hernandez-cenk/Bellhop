@@ -115,14 +115,20 @@ test('webUiOidcIssuer is an http(s) URL; webUiOidcClientId is non-empty', () => 
   assert.ok(!accepts(SettingsSchema, 'webUiOidcClientId', ''));
 });
 
-test('webUiOidcRedirectUri is an http(s) URL whose path is /auth/callback', () => {
+// https:// only, since the sign-in cookies are Secure and a browser drops them
+// over plain http everywhere but loopback.
+test('webUiOidcRedirectUri is an https URL (http only on loopback) whose path is /auth/callback', () => {
   assert.ok(accepts(SettingsSchema, 'webUiOidcRedirectUri', 'https://bellhop.example.com/auth/callback'));
-  assert.ok(accepts(SettingsSchema, 'webUiOidcRedirectUri', 'http://192.0.2.10:3000/auth/callback'));
+  for (const loopback of ['http://localhost:3000/auth/callback', 'http://127.0.0.1:3000/auth/callback', 'http://[::1]:3000/auth/callback']) {
+    assert.ok(accepts(SettingsSchema, 'webUiOidcRedirectUri', loopback), loopback);
+  }
   for (const bad of [
     'https://bellhop.example.com/callback',
     'https://bellhop.example.com/auth/callback/extra',
     'https://bellhop.example.com',
     'ftp://bellhop.example.com/auth/callback',
+    'http://192.0.2.10:3000/auth/callback',
+    'http://bellhop.example.com/auth/callback',
     'not a url',
     '',
   ]) {
@@ -130,7 +136,7 @@ test('webUiOidcRedirectUri is an http(s) URL whose path is /auth/callback', () =
   }
   const result = SettingsSchema.safeParse({ webUiOidcRedirectUri: 'https://bellhop.example.com/x' });
   assert.ok(!result.success);
-  assert.deepEqual(result.error.issues.map((i) => i.message), ['must be an http:// or https:// URL whose path is /auth/callback']);
+  assert.deepEqual(result.error.issues.map((i) => i.message), ['must be an https:// URL (http:// only for localhost) whose path is /auth/callback']);
 });
 
 test('the four tokens must be non-empty with no whitespace', () => {

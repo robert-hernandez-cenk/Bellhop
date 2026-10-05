@@ -214,10 +214,13 @@ export class SessionStore {
     this.db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(hashId(id));
   }
 
-  // Records a pending sign-in and returns the raw value for the
-  // bellhop_login cookie.
+  // Records a pending sign-in and returns the raw value for its login
+  // cookie. /auth/login needs no session, so abandoned attempts (a crawler,
+  // a sign-in never finished) would otherwise pile up until the next
+  // restart: each new one first drops the expired ones.
   createAttempt(input: LoginAttemptInput): string {
     const id = newId();
+    this.db.prepare('DELETE FROM login_attempts WHERE created_at + ? <= ?').run(ATTEMPT_MAX_AGE_MS, this.now());
     this.db
       .prepare(
         'INSERT INTO login_attempts (id_hash, state, nonce, code_verifier, return_to, created_at) VALUES (?, ?, ?, ?, ?, ?)'

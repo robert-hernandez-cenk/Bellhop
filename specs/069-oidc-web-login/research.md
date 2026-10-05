@@ -40,7 +40,7 @@ Re-checks are single-flighted per session hash with an in-process `Map<hash, Pro
 
 ## R5. Pending sign-ins
 
-**Decision**: `/auth/login` creates a `login_attempts` row (state, PKCE verifier, nonce, return path, created time) keyed by SHA-256 of a random attempt id, and sets cookie `bellhop_login` (HttpOnly, Secure, SameSite=Lax, Path=/auth, Max-Age 600). `/auth/callback` requires that cookie, loads and deletes the row in one transaction (single use), rejects rows older than 10 minutes, and passes the stored `state`/`nonce`/verifier to the code exchange.
+**Decision**: `/auth/login` creates a `login_attempts` row (state, PKCE verifier, nonce, return path, created time) keyed by SHA-256 of a random attempt id, and sets cookie `bellhop_login` (HttpOnly, Secure, SameSite=Lax, Path=/auth, Max-Age 600). `/auth/callback` requires that cookie, loads and deletes the row in one transaction (single use), rejects rows older than 10 minutes, and passes the stored `state`/`nonce`/verifier to the code exchange. *Code review*: the cookie is named per attempt, `bellhop_login_<state>`, and the callback looks it up by the `state` it arrives with — one shared name let parallel sign-ins (several tabs hitting a 401) overwrite each other until every tab failed. The state is random and already public in the redirect URL. Each new attempt also purges expired ones, since `/auth/login` needs no session.
 
 **Rationale**: binds the callback to the browser that started it (login CSRF protection), survives a restart mid-login, single use. `SameSite=Lax` cookies are sent on Authentik's top-level GET redirect back.
 

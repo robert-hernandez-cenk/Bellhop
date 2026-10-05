@@ -205,6 +205,26 @@ test('a new sign-in purges expired rows', () => {
   assert.equal(n, 1);
 });
 
+// /auth/login needs no session, so abandoned attempts must not pile up
+// between restarts.
+test('a new sign-in attempt purges expired attempts and keeps live ones', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-sessions-'));
+  const file = path.join(dir, 'sessions.sqlite3');
+  const clock = { now: 1_000_000 };
+  const store = new SessionStore(file, () => clock.now);
+  store.createAttempt(ATTEMPT);
+  clock.now += 5 * MIN;
+  const live = store.createAttempt(ATTEMPT);
+  clock.now += 6 * MIN;
+  store.createAttempt(ATTEMPT);
+  const db = new Database(file, { readonly: true });
+  const n = (db.prepare('SELECT COUNT(*) AS n FROM login_attempts').get() as { n: number }).n;
+  db.close();
+  assert.equal(n, 2, 'the 11-minute-old attempt is gone; the 6-minute-old one and the new one remain');
+  assert.ok(store.consumeAttempt(live));
+  store.close();
+});
+
 test('login attempts are single-use', () => {
   const { store } = storeWithClock();
   const id = store.createAttempt(ATTEMPT);

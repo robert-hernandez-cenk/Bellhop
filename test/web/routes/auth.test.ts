@@ -82,10 +82,13 @@ function cookieNamed(res: request.Response, name: string): string | undefined {
   return setCookies(res).find((c) => c.startsWith(`${name}=`));
 }
 
-// The bellhop_login value /auth/login set, as the browser would send it back.
-function loginCookieFrom(res: request.Response): string {
-  const cookie = cookieNamed(res, 'bellhop_login');
-  assert.ok(cookie, `expected a bellhop_login cookie, got: ${setCookies(res).join(' | ')}`);
+// Each sign-in attempt has its own cookie, named after its state.
+const LOGIN_COOKIE_NAME = 'bellhop_login_example-state';
+
+// The login cookie /auth/login set, as the browser would send it back.
+function loginCookieFrom(res: request.Response, state = 'example-state'): string {
+  const cookie = cookieNamed(res, `bellhop_login_${state}`);
+  assert.ok(cookie, `expected a bellhop_login_${state} cookie, got: ${setCookies(res).join(' | ')}`);
   return cookie.split(';')[0]!;
 }
 
@@ -100,7 +103,7 @@ async function startLogin(app: ReturnType<typeof testApp>['app'], sessions: Test
   const url = returnTo === undefined ? '/auth/login' : `/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
   const res = await request(app).get(url);
   assert.equal(res.status, 302, res.text);
-  return loginCookieFrom(res);
+  return loginCookieFrom(res, state);
 }
 
 // --- GET /auth/login ----------------------------------------------------------
@@ -158,18 +161,18 @@ test('GET /auth/login answers 502 naming the issuer when discovery fails, with a
   assert.ok(res.text.includes(`Could not reach the identity provider at ${ISSUER}`), res.text);
   assert.ok(res.text.includes('href="/auth/login?returnTo=%2Fjobs"'), res.text);
   assert.match(res.text, /Try again/);
-  assert.equal(cookieNamed(res, 'bellhop_login'), undefined);
+  assert.equal(cookieNamed(res, LOGIN_COOKIE_NAME), undefined);
   assertNoSecrets(res);
 });
 
-test('GET /auth/login redirects to the provider and sets the bellhop_login cookie', async () => {
+test("GET /auth/login redirects to the provider and sets a login cookie named after the attempt's state", async () => {
   configureWebLogin();
   const { app, sessions } = testApp();
   sessions.client.startLoginResults.push(started());
   const res = await request(app).get('/auth/login');
   assert.equal(res.status, 302);
   assert.equal(res.headers.location, AUTHORIZATION_URL);
-  const cookie = cookieNamed(res, 'bellhop_login');
+  const cookie = cookieNamed(res, LOGIN_COOKIE_NAME);
   assert.ok(cookie);
   assert.match(cookie, /HttpOnly/i);
   assert.match(cookie, /Secure/i);
@@ -219,7 +222,7 @@ for (const [returnTo, expected] of [
 
 // --- GET /auth/callback -----------------------------------------------------------
 
-test('GET /auth/callback signs the user in: bellhop_session set, bellhop_login cleared, redirect to returnTo', async () => {
+test('GET /auth/callback signs the user in: bellhop_session set, login cookie cleared, redirect to returnTo', async () => {
   configureWebLogin();
   const { app, sessions } = testApp();
   const loginCookie = await startLogin(app, sessions, '/jobs');
@@ -235,7 +238,7 @@ test('GET /auth/callback signs the user in: bellhop_session set, bellhop_login c
   assert.match(session, /SameSite=Lax/i);
   assert.match(session, /Path=\/(;|$)/);
   assert.match(session, /Max-Age=2592000/);
-  const cleared = cookieNamed(res, 'bellhop_login');
+  const cleared = cookieNamed(res, LOGIN_COOKIE_NAME);
   assert.ok(cleared, 'the login cookie is cleared');
   assert.match(cleared, /Expires=Thu, 01 Jan 1970/);
 
@@ -274,7 +277,7 @@ async function assertSignInFailed(res: request.Response, retryReturnTo: string, 
   assertNoSecrets(res);
 }
 
-test('GET /auth/callback with no bellhop_login cookie fails with a retry link', async () => {
+test('GET /auth/callback with no login cookie fails with a retry link', async () => {
   configureWebLogin();
   const { app, sessions } = testApp();
   const res = await request(app).get('/auth/callback?code=example-code&state=example-state');
@@ -287,7 +290,7 @@ test('GET /auth/callback with an unknown attempt fails', async () => {
   const { app } = testApp();
   const res = await request(app)
     .get('/auth/callback?code=example-code&state=example-state')
-    .set('Cookie', 'bellhop_login=not-a-real-attempt');
+    .set('Cookie', `${LOGIN_COOKIE_NAME}=not-a-real-attempt`);
   await assertSignInFailed(res, '/');
 });
 
@@ -313,17 +316,46 @@ test('GET /auth/callback is single use: replaying a successful callback fails', 
   await assertSignInFailed(replay, '/');
 });
 
-test('GET /auth/callback with a state mismatch fails and still consumes the attempt', async () => {
+// A callback's state names the cookie it looks for, so a state this browser
+// never started (a forged or crossed-over callback) finds no attempt: it fails
+// without reaching the provider, and leaves the browser's real attempt usable.
+test('GET /auth/callback with a state this browser never started fails, and the real attempt still completes', async () => {
   configureWebLogin();
   const { app, sessions } = testApp();
   const loginCookie = await startLogin(app, sessions, '/jobs');
   const res = await request(app).get('/auth/callback?code=example-code&state=other-state').set('Cookie', loginCookie);
-  await assertSignInFailed(res, '/jobs', /state/);
+  await assertSignInFailed(res, '/', /missing/);
   assert.equal(sessions.client.callsTo('completeLogin').length, 0);
-  assert.ok(cookieNamed(res, 'bellhop_login'), 'the login cookie is cleared on failure too');
 
-  const retry = await request(app).get('/auth/callback?code=example-code&state=example-state').set('Cookie', loginCookie);
-  await assertSignInFailed(retry, '/');
+  sessions.client.completeLoginResults.push(identity);
+  const real = await request(app).get('/auth/callback?code=example-code&state=example-state').set('Cookie', loginCookie);
+  assert.equal(real.status, 302, real.text);
+  assert.equal(real.headers.location, '/jobs');
+});
+
+test('GET /auth/callback with a state unusable as a cookie name fails without reaching the provider', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  const res = await request(app).get('/auth/callback?code=example-code&state=bad%3Bstate');
+  await assertSignInFailed(res, '/', /missing/);
+  assert.equal(sessions.client.callsTo('completeLogin').length, 0);
+});
+
+// Several tabs hitting a 401 at once each start a sign-in; each has its own
+// cookie, so every one of them can complete, in any order.
+test('sign-ins started in parallel from one browser each complete', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  const cookieA = await startLogin(app, sessions, '/jobs', 'state-tab-a');
+  const cookieB = await startLogin(app, sessions, '/settings', 'state-tab-b');
+  const jar = `${cookieA}; ${cookieB}`;
+  sessions.client.completeLoginResults.push(identity, identity);
+  const b = await request(app).get('/auth/callback?code=code-b&state=state-tab-b').set('Cookie', jar);
+  assert.equal(b.status, 302, b.text);
+  assert.equal(b.headers.location, '/settings');
+  const a = await request(app).get('/auth/callback?code=code-a&state=state-tab-a').set('Cookie', jar);
+  assert.equal(a.status, 302, a.text);
+  assert.equal(a.headers.location, '/jobs');
 });
 
 test('GET /auth/callback with a provider error fails without exchanging a code, escaping the error', async () => {

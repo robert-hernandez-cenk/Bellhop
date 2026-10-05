@@ -72,8 +72,9 @@ export interface AppDeps {
   // Defaulted to an in-memory store so tests that do not sign anyone in need
   // no changes; tests that do pass test/support/web-session.ts's service.
   sessions?: SessionService;
-  // The provider client for /auth/login and /auth/callback. Defaults to the
-  // session service's own client; a test can inject a fake here.
+  // The provider client for sign-in and re-checks, used only when
+  // `sessions` is not given (the default service is built around it); a
+  // test can inject a fake here.
   webLogin?: WebLoginClient;
 }
 
@@ -90,19 +91,15 @@ export function buildApp(deps: AppDeps): express.Express {
   // CLI, the MCP server, a direct DB edit) applies on this very request
   // rather than up to the snapshot's TTL later. It runs ahead of
   // requireAuth, not beside refreshInventory below, because requireAuth
-  // itself reads settings (webUiAuthMode, the admin group names).
-  app.use('/api', (_req, _res, next) => {
+  // itself reads settings (webUiAuthMode, the admin group names). Sign-in
+  // reads the OIDC settings, so /auth gets the same fresh read.
+  app.use(['/api', '/auth'], (_req, _res, next) => {
     invalidateConfigSnapshot();
     next();
   });
-  // Sign-in reads the OIDC settings, so it gets the same fresh read. Then
-  // the /auth routes themselves, ahead of requireAuth: signing in must never
-  // need a session (#69, contracts/http-auth.md).
-  app.use('/auth', (_req, _res, next) => {
-    invalidateConfigSnapshot();
-    next();
-  });
-  app.use('/auth', authRoutes(sessions, deps.webLogin ?? sessions.client));
+  // The /auth routes, ahead of requireAuth: signing in must never need a
+  // session (#69, contracts/http-auth.md).
+  app.use('/auth', authRoutes(sessions));
   app.use(requireAuth(sessions));
   app.use(applyImpersonation(impersonationStore));
   // Reload inventory from disk before every /api request so a change

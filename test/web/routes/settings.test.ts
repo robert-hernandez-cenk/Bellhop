@@ -1071,6 +1071,46 @@ test('PATCH webUiAuthMode: oidc while already oidc is not refused, even without 
   }
 });
 
+// While oidc is in force, clearing a login setting would make sign-in
+// impossible and lock everyone out within one re-check interval.
+test('PATCH while oidc is in force refuses clearing a login setting or the secret', async () => {
+  const { app, inventoryPath } = loginConfiguredApp({ webUiAuthMode: 'oidc' });
+  try {
+    const clearedSetting = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: null });
+    assert.equal(clearedSetting.status, 409);
+    assert.equal(
+      clearedSetting.body.error,
+      'Refusing to clear webUiOidcClientId while webUiAuthMode is oidc: nobody could sign in. Set webUiAuthMode to none first'
+    );
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, LOGIN_SETTINGS.webUiOidcClientId);
+
+    const clearedSecret = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientSecret: null });
+    assert.equal(clearedSecret.status, 409);
+    assert.match(clearedSecret.body.error, /Refusing to clear webUiOidcClientSecret while webUiAuthMode is oidc/);
+    assert.equal(configValueAt(inventoryPath, 'webUiOidcClientSecret').value, 'example-client-secret');
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH while oidc is in force allows changing a login value, unrelated saves, and clearing after leaving oidc', async () => {
+  const { app, inventoryPath } = loginConfiguredApp({ webUiAuthMode: 'oidc' });
+  try {
+    const changed = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: 'example-client-id-2' });
+    assert.equal(changed.status, 200, changed.body.error);
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, 'example-client-id-2');
+
+    const unrelated = await asAdmin(request(app).patch('/api/settings')).send({ dnsServer: '10.0.0.53' });
+    assert.equal(unrelated.status, 200, unrelated.body.error);
+
+    const leaving = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none', webUiOidcClientId: null });
+    assert.equal(leaving.status, 200, leaving.body.error);
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
 test('PATCH webUiAuthMode: auto and authentik are rejected as unknown modes (400)', async () => {
   const { app, inventoryPath } = testApp();
   for (const mode of ['auto', 'authentik']) {

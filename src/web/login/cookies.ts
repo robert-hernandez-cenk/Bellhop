@@ -30,6 +30,16 @@ export const LOGIN_COOKIE_OPTIONS: CookieOptions = {
   maxAge: 600 * 1000,
 };
 
+// Each pending sign-in gets its own cookie, named after its OAuth `state`, so
+// sign-ins started in parallel (several tabs hitting a 401 at once) don't
+// overwrite each other's attempt. The state is random and already travels in
+// the provider redirect URL, so naming a cookie after it reveals nothing. A
+// state outside base64url (the provider's alphabet for it, and a safe cookie
+// name) yields undefined: no cookie to look up.
+export function loginCookieName(state: string): string | undefined {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(state) ? `${LOGIN_COOKIE}_${state}` : undefined;
+}
+
 function decode(value: string): string {
   try {
     return decodeURIComponent(value);

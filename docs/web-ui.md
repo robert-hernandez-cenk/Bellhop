@@ -167,7 +167,8 @@ the selected driver.
   refused unless all four are set, you have signed in through
   `/auth/login`, and you would still be an administrator (under the admin
   groups as they will be after the save) — otherwise your next request
-  would send you to a sign-in you cannot complete. Switching away from
+  would send you to a sign-in you cannot complete. While `oidc` is in
+  force, clearing any of the four is refused for the same reason. Switching away from
   `oidc` asks for confirmation, since the web UI then becomes reachable
   without signing in, and the service log records who did it. If a wrong
   value locks you out anyway, see [Locked out](authentik.md#locked-out).

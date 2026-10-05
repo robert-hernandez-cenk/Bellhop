@@ -172,7 +172,7 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 
 **Lockout guard**
 
-- **FR-020**: A Settings page save that sets the mode to `oidc` MUST be refused unless every OIDC setting is set and the request carries a valid session whose user is an admin under the admin-group settings as they will be after the save; the refusal MUST say which condition failed. A successful switch away from `none` MUST be logged naming the user.
+- **FR-020**: A Settings page save that sets the mode to `oidc` MUST be refused unless every OIDC setting is set and the request carries a valid session whose user is an admin under the admin-group settings as they will be after the save; the refusal MUST say which condition failed. While `oidc` is in force, a Settings page save that clears any OIDC setting MUST be refused (code review). A successful switch away from `none` MUST be logged naming the user.
 - **FR-021**: Setting the mode from the CLI or MCP MUST remain unrestricted.
 
 **Web client**

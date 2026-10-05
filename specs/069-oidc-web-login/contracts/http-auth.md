@@ -9,14 +9,14 @@ Query: `returnTo` (optional).
 - `returnTo` is kept only if it starts with a single `/` (not `//`, not `/\`) and parses as a same-origin path; otherwise `/`.
 - OIDC not configured → **200** HTML "Web login is not configured", listing the missing setting keys and the fixes (`bellhop configure-web-login <entry> --apply`, or `bellhop set-config webUiAuthMode none --apply`).
 - Discovery fails → **502** HTML "Could not reach the identity provider at `<issuer>`" with a "Try again" link.
-- Otherwise → creates a login attempt, sets `bellhop_login` (HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=600), **302** to the provider's authorization endpoint with `response_type=code`, `client_id`, `redirect_uri` (the `webUiOidcRedirectUri` setting), `scope=openid profile email offline_access`, `state`, `nonce`, `code_challenge`, `code_challenge_method=S256`.
+- Otherwise → creates a login attempt (purging expired ones), sets `bellhop_login_<state>` — one cookie per attempt, so parallel sign-ins from several tabs each complete — (HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=600), **302** to the provider's authorization endpoint with `response_type=code`, `client_id`, `redirect_uri` (the `webUiOidcRedirectUri` setting), `scope=openid profile email offline_access`, `state`, `nonce`, `code_challenge`, `code_challenge_method=S256`.
 
 ## GET /auth/callback
 
 Query: `code`, `state` or `error`, `error_description`.
 
-- Missing/unknown/expired/used attempt (via `bellhop_login`), `state` mismatch, provider `error`, token exchange failure, ID-token validation failure, missing `preferred_username`, or no refresh token → **400** HTML "Sign-in failed" with a reason (never a token or secret) and a link to `/auth/login?returnTo=<attempt's returnTo>`. The attempt is consumed either way; `bellhop_login` cleared.
-- Success → session created, `bellhop_session` set (HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000), `bellhop_login` cleared, **302** to the attempt's `returnTo`.
+- Missing/unknown/expired/used attempt (via the `bellhop_login_<state>` cookie named by the callback's `state`; a state the browser never started finds none), `state` mismatch, provider `error`, token exchange failure, ID-token validation failure, missing `preferred_username`, or no refresh token → **400** HTML "Sign-in failed" with a reason (never a token or secret) and a link to `/auth/login?returnTo=<attempt's returnTo>`. The attempt is consumed either way; its cookie cleared.
+- Success → session created, `bellhop_session` set (HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000), `bellhop_login_<state>` cleared, **302** to the attempt's `returnTo`.
 
 ## POST /auth/logout
 

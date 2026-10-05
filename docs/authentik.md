@@ -50,7 +50,7 @@ The callback URL must be HTTPS (the session cookie is `Secure`), and Bellhop mus
 
 ## Locked out
 
-The Settings page guards the values that decide who can use the web UI: it refuses an admin-group change that would remove your own administrator access, refuses switching to `oidc` unless sign-in is configured and you have signed in and would stay an administrator, and asks before you leave `oidc`. If you are locked out anyway — Authentik is down, the stored client was rotated, or sign-in is `oidc` with no working login — recover from the host the service runs on, with no web UI needed:
+The Settings page guards the values that decide who can use the web UI: it refuses an admin-group change that would remove your own administrator access, refuses switching to `oidc` unless sign-in is configured and you have signed in and would stay an administrator, refuses clearing a sign-in setting while `oidc` is in force, and asks before you leave `oidc`. If you are locked out anyway — Authentik is down, the stored client was rotated, or sign-in is `oidc` with no working login — recover from the host the service runs on, with no web UI needed:
 
 - Run `bellhop set-config webUiAuthMode none --apply` (or fix the admin group with `bellhop set-config authentikAdminGroup <group> --apply`) in the checkout the service runs from. The web service picks the change up on its next request.
 - Or set `WEB_UI_AUTH_MODE=none` (or `AUTHENTIK_ADMIN_GROUP=...`) in the service's environment and restart it; the environment overrides the stored setting until you remove it again.
