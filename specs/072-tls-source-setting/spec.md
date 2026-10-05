@@ -280,9 +280,11 @@ check which fields appear and the warning.
   `cloudflare`→`acme-dns`, `letsencrypt`→`acme-http`,
   `internal`→`internal`, `files`→`files` for the Caddy drivers or an unset
   driver; `proxyCertResolver: none`→`external` for Traefik), unless
-  `tlsSource` is already set or the converted value is unsupported by the
-  active driver; every legacy value is removed; one log line is written
-  only when something changed.
+  `tlsSource` is already set; a legacy value the active driver did not
+  read is not converted; every legacy value is removed; one log line is
+  written only when something changed. (Each conversion targets only the
+  driver that read the value, and that driver supports every converted
+  value, so a migration can never produce an unsupported combination.)
 - **FR-012**: Importing a `hosts.yaml` inventory MUST apply the same
   conversion to legacy values in the file.
 - **FR-013**: The Settings page's Proxy tab MUST show one TLS source
