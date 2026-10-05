@@ -39,7 +39,7 @@ export interface SetupState {
   hosts: SetupHost[];
   settings: SetupBasics;
   storages: string[];
-  key: SetupKey | null;
+  key: Omit<SetupKey, "authorizedKeysLine"> | null;
 }
 
 export interface SetupPeer {
@@ -80,7 +80,7 @@ export const setupApi = {
     call<{ installed: true }>('POST', '/hosts/install-key', endpoint),
   testHost: (endpoint: HostEndpoint) => call<{ nodeName: string; version: string }>('POST', '/hosts/test', endpoint),
   saveHost: (endpoint: HostEndpoint) =>
-    call<{ host: SetupHost; peers: SetupPeer[]; syncSummary: string }>('POST', '/hosts', endpoint),
+    call<{ host: SetupHost; peers: SetupPeer[] }>('POST', '/hosts', endpoint),
   saveMidScheme: (name: string, midScheme: MidScheme) =>
     call<{ host: SetupHost; completedSteps: string[] }>('PUT', `/hosts/${encodeURIComponent(name)}/mid-scheme`, midScheme),
   saveBasics: (basics: SetupBasics) =>

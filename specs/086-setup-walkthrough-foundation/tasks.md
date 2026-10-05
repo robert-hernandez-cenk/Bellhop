@@ -55,7 +55,7 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 - [x] T019 [US2] Add an optional `password` to `SshTarget` and the password / keyboard-interactive auth in `Ssh2SSHClient.connectConfig` (`src/lib/ssh-client.ts`, research R6; no key or agent when a password is set); add the optional `sshDir` argument (default `/root/.ssh`) to `buildAuthorizedKeysEnsurePresentScript` in `src/lib/authorized-keys.ts`, with a test in `test/lib/authorized-keys.test.ts` that existing output is unchanged and a custom dir is used
 - [x] T020 [US2] Write failing route tests in `test/web/setup/proxmox.test.ts` (setup cookie, `FakeSSHClient` responder on fixtures): `POST /api/setup/key` for generated and file modes; `install-key` sends the ensure-present script over a target carrying the password and never returns or logs the password (assert on response bodies and captured console); a password failure gives 502 with fixed text; `hosts/test` returns nodeName and version and 502 for a non-Proxmox answer; `POST /api/setup/hosts` saves the host under its node name with `ssh_identity_file`, runs the sync-inventory apply (guests land), returns peers from the cluster fixture, and is idempotent on repeat (one host, guests kept); a name collision with a guest gives 409; `PUT hosts/:name/mid-scheme` validates, saves and marks `proxmox` complete; the state route returns the suggested midScheme
 - [x] T021 [US2] Implement `src/web/setup/proxmox.ts` (installKey, testHost, saveHost: upsert, then `MAINTENANCE_OPERATIONS['sync-inventory'].apply`, then peers via `/cluster/status` and network for the suggestion) and wire the routes into `src/web/routes/setup.ts` with zod bodies per data-model.md ("`address`: non-empty, no whitespace", "`user` default 'root'", "`port` integer 1–65535 default 22", "`password` non-empty, no control characters")
-- [ ] T022 [US2] Step 1 panel in `web-client/src/pages/SetupPage.tsx`: key choice and public key with a copy button and the manual `authorized_keys` instructions; endpoint form; install-with-password (masked input, cleared after use); test; save; peer list with add/skip per peer (reusing the same form, prefilled); a `midScheme` editor per host prefilled with the suggestion; errors shown inline
+- [x] T022 [US2] Step 1 panel in `web-client/src/pages/SetupPage.tsx`: key choice and public key with a copy button and the manual `authorized_keys` instructions; endpoint form; install-with-password (masked input, cleared after use); test; save; peer list with add/skip per peer (reusing the same form, prefilled); a `midScheme` editor per host prefilled with the suggestion; errors shown inline
 - [ ] T023 [US2] Manual verification of `Ssh2SSHClient`'s password path against a lab Proxmox node (constitution III), recorded for the PR body; if no lab node is available, record it as unverified
 
 **Checkpoint**: Step 1 works against the fakes; the host and guests land in inventory.
@@ -68,7 +68,7 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 
 - [x] T024 [US3] Write failing tests in `test/web/setup/finish.test.ts`: `PUT /api/setup/basics` validates with `SettingsSchema` (an invalid domain gives 400 naming `domain`), saves, and marks `basics` complete; `POST /api/setup/finish` answers 409 naming the first incomplete step, otherwise 200 `{ redirect: '/' }`, clears the cookie, nulls the token in the DB, and afterwards the gate is off and the old token is refused; a new `SetupService` over the same DB with every host deleted still reports finished
 - [x] T025 [US3] Implement the basics and finish routes in `src/web/routes/setup.ts` (basics saved via `loadInventory` + `assignSetting` + `saveInventory`, the same path `set-config` uses)
-- [ ] T026 [US3] Step 2 panel (domain required; dnsServer, backupStorage with suggestions from the discovered storages, nfsServer) and the Finish panel (disabled until both steps are done; navigates to `/` on success) in `web-client/src/pages/SetupPage.tsx`
+- [x] T026 [US3] Step 2 panel (domain required; dnsServer, backupStorage with suggestions from the discovered storages, nfsServer) and the Finish panel (disabled until both steps are done; navigates to `/` on success) in `web-client/src/pages/SetupPage.tsx`
 
 ## Phase 6: User Story 4: Resume an interrupted walkthrough (P2)
 
@@ -77,7 +77,7 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 **Independent Test**: Complete step 1, rebuild the app over the same DB, and confirm the state shows step 1 complete with its hosts.
 
 - [x] T027 [US4] Test in `test/web/setup/proxmox.test.ts` (or `finish.test.ts`): after step 1, a fresh `buildApp` + `SetupService` over the same DB returns `completedSteps: ['proxmox']` and the saved hosts and `midScheme`
-- [ ] T028 [US4] `SetupPage.tsx` opens on the first incomplete step, lets the operator go back to a completed one, and shows its saved values
+- [x] T028 [US4] `SetupPage.tsx` opens on the first incomplete step, lets the operator go back to a completed one, and shows its saved values
 
 ## Phase 7: User Story 5: The domain is an ordinary setting (P3)
 
