@@ -91,8 +91,8 @@ description: "Task list for MCP over HTTPS with sign-in and an API-key fallback"
 
 **Independent Test**: two sessions waiting on one prompting job; one dialog; disconnect leaves the job running.
 
-- [ ] T028 [US5] Test over HTTP in `test/web/mcp/http-host.test.ts`: two sessions call `wait_for_job` on one job that pauses (HangingSSHClient / scripted prompt): exactly one elicitation request; the answer resumes the job; closing both transports leaves the job running and owned by the web runner
-- [ ] T029 [US5] Test the 30-minute idle sweep closes a session and a later request with its id gets 404, in `test/web/mcp/http-host.test.ts`
+- [x] T028 [US5] Test over HTTP in `test/web/mcp/http-host.test.ts`: two sessions call `wait_for_job` on one job that pauses (HangingSSHClient / scripted prompt): exactly one elicitation request; the answer resumes the job; closing both transports leaves the job running and owned by the web runner
+- [x] T029 [US5] Test the 30-minute idle sweep closes a session and a later request with its id gets 404, in `test/web/mcp/http-host.test.ts`
 
 ---
 
