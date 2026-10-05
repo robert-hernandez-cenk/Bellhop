@@ -298,11 +298,12 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // deliberate is the Settings page's job (client-side). A resend of oidc
     // while it is already in force changes nothing, so it is not refused.
     //
-    // There is deliberately no "would not be an admin after this change"
-    // check: requireAdminGroup already admitted this requester under the
-    // current admin groups, and the lockout guard above refuses any change to
-    // those groups that would drop them, so the post-save admin check is
-    // already done by the time we get here.
+    // The admin check is on the real identity under the post-save admin
+    // groups, and is not redundant with requireAdminGroup or the lockout
+    // guard: requireAdminGroup judges the impersonation-overlaid groups, and
+    // the lockout guard only runs when this request changes admin groups, so a
+    // real non-admin whose impersonation entry names an admin group (entries
+    // persist until restart) passes both.
     if (
       'webUiAuthMode' in updates &&
       updates.webUiAuthMode === 'oidc' &&
@@ -326,6 +327,13 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       if (!(req.realUser ?? req.user)?.viaOidc) {
         res.status(409).json({
           error: 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change',
+        });
+        return;
+      }
+      const requester = (req.realUser ?? req.user)!; // safe: viaOidc above proved a user exists
+      if (!isAdminOf(requester.groups, adminGroupsAfter)) {
+        res.status(409).json({
+          error: `You are signed in as ${requester.username}, who would not be an admin after this change`,
         });
         return;
       }

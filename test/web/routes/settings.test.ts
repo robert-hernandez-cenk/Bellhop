@@ -933,11 +933,43 @@ test('PATCH webUiAuthMode: oidc from a non-admin session never reaches the guard
   }
 });
 
-// The contract's third message ("You are signed in as <u>, who would not be an
-// admin after this change") is unreachable and was removed from the route:
-// requireAdminGroup admits only current admins, and the lockout guard refuses
-// the one request shape that changes the admin groups under them -- exercised
-// here with the oidc switch riding along.
+// The contract's third message: requireAdminGroup judges the impersonation
+// overlay and the lockout guard only runs on admin-group changes, so a real
+// non-admin whose (persisting) impersonation entry names an admin group
+// reaches the oidc guard and is refused by its own admin check.
+test('PATCH webUiAuthMode: oidc is refused for a real non-admin passing requireAdminGroup via an impersonation entry', async () => {
+  const inv = { ...baseInventory(), ...LOGIN_SETTINGS };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  useConfigStore(inventoryPath);
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const app = buildApp({
+    sessions,
+    inventory: inv,
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner: new JobRunner(jobStore, jobLog, ssh),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    impersonationStore: new Map([['someone', 'bellhop-admins']]),
+  });
+  try {
+    const res = await request(app)
+      .patch('/api/settings')
+      .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }))
+      .send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, 'You are signed in as someone, who would not be an admin after this change');
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
 test('PATCH webUiAuthMode: oidc together with admin groups that drop the session user is refused by the lockout guard', async () => {
   const { app, inventoryPath } = loginConfiguredApp();
   try {
