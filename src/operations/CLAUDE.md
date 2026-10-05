@@ -20,7 +20,7 @@ An `Operation` may set `resolvesApp: true` (`install-app`, `update-app`; #11). `
 - This is narrower than "preview and apply always match": the web UI's standalone Preview button (`POST /api/provisioning/:id/preview`, which calls `op.preview` directly) and the App check (`GET .../check-app`) each pin their own commit at whatever moment they're called. A push between a standalone Preview/check and a later Apply is the case this can't cover; the job log's own preview line shows the commit apply actually used.
 - The CLI has no shared pin: a dry run and a separate `--apply` each resolve independently, like every other live lookup (authorized_keys, NFS storage paths).
 
-See `src/lib/CLAUDE.md` (`resolveAppSource` and the custom-repository mechanism).
+See `src/commands/provisioning/CLAUDE.md` (`resolveAppSource` and the custom-repository mechanism).
 
 ### `OperationDeps`
 

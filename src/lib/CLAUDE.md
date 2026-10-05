@@ -24,7 +24,7 @@ On hosts, guests, and external sites (`ExternalSiteSchema`: a proxy target that 
 - `subdomains`: one route per entry, all to the same `ip`/`port`; the first is canonical.
 - `ip`, `port`, `insecureBackendTls` (rendering: `src/lib/proxy/CLAUDE.md`).
 - `proxyManual` (hosts, guests): config hand-authored outside the managed markers; `buildRoutes` skips it (no route, no forward-auth), `subdomains[]` still drives the Dashboard link. Hosts: set by hand; guests: Dashboard "read-only proxy" checkbox. Does **not** silence `sync-authentik`, which still maintains its Provider/Application/bindings (the hand-authored block may use forward-auth).
-- `proxy: true` on exactly one entry: where the reverse proxy runs.
+- `proxy: true` on at most one entry: where the reverse proxy runs.
 - `authentik: true`: the entry running Authentik; forward-auth addresses it.
 
 ### Auth fields
@@ -48,7 +48,9 @@ On hosts, guests, and external sites (`ExternalSiteSchema`: a proxy target that 
 
 ### `validateInventory()` cross-field rules
 
-- exactly one `proxy: true` entry;
+- at most one `proxy: true` entry (zero is valid, e.g. the `none` driver);
+- at most one `authentik: true` entry;
+- if any entry is forward-gated (`effectiveAuth() === 'forward'`, incl. external sites), an `authentik: true` entry exists and has an `ip` (OIDC-gated entries need neither);
 - every guest's `host` exists;
 - non-empty `subdomains` requires `ip` unless `proxyManual`;
 - no subdomain claimed twice;

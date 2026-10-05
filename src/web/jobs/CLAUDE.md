@@ -44,7 +44,7 @@ The pre-scan reads `install/<slug>-install.sh`, the file `build.func` downloads 
 
 Measured 2026-09-10: 75 of 584 install scripts prompt (128 prompts); the two heuristics alone caught 61 and missed 67, and 33 scripts missed their *first* prompt, so a web-triggered apply stalled immediately. The web UI is now the equal path for a prompting app, with three residual gaps that fall back to the heuristic and stall tiers: the 14 `ct/` scripts with no conventionally-named install script, a pasted full script URL (no derivable counterpart), and a prompt whose text is built from a variable rather than a literal string.
 
-See `src/commands/provisioning/CLAUDE.md` (`install-app`) for how a source is resolved and pinned for the pre-scan.
+Pin-once (`resolvesApp`/`previewAndEnqueue`): `src/operations/CLAUDE.md`; source resolution: `src/commands/provisioning/CLAUDE.md`.
 
 ## Job owner stamp and orphan cleanup
 

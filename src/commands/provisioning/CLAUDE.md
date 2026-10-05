@@ -2,7 +2,7 @@
 
 Commands that create, move, mount storage into, or install apps onto guests: `attach-nfs-mount`, `migrate-nfs-mount`, `migrate-guest`, `install-app` (and `update-app`, in `src/commands/maintenance/`), `deploy-vpn-gateway`.
 
-See also: `src/lib/CLAUDE.md` (`resolveMid`, package-manager detection, `pve-acl.ts`, `script-catalog.ts`, `app-source.ts`); `src/web/jobs/CLAUDE.md` (prompt relay/detection); `src/operations/CLAUDE.md` (pin-once source via `previewAndEnqueue`/`resolvesApp`); `src/web/CLAUDE.md` (`/api/provisioning` inventory upsert, `syncProxyLive`).
+See also: `src/lib/CLAUDE.md` (`resolveMid`, package-manager detection, `pve-acl.ts`); `src/web/jobs/CLAUDE.md` (prompt relay/detection); `src/operations/CLAUDE.md` (pin-once source via `previewAndEnqueue`/`resolvesApp`); `src/web/CLAUDE.md` (`/api/provisioning` inventory upsert, `syncProxyLive`).
 
 ## NFS: host-relay bind-mounts
 

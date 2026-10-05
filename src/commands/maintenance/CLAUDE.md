@@ -5,6 +5,8 @@ Guidance for `src/commands/maintenance/`: `sync-inventory`, `audit-nfs-mounts`, 
 Other commands here have their detail elsewhere:
 
 - `update-all` targeting (`selectUpdateTargets`, VM exclusion) and package-manager detection: see `src/lib/CLAUDE.md` (targets, package managers).
+- `update-app`: `src/commands/provisioning/CLAUDE.md` (install-app/update-app). It re-runs the same `ct/<app>.sh` inside the guest via `runRemote`, exporting `TERM`/`PHS_SILENT` but not `mode`; the inner `bash -c` is deliberate (community-scripts needs it).
+- `set-config`: Settings store in `src/lib/CLAUDE.md`; secrets rule in the root CLAUDE.md.
 - The daily scheduler that runs `check-app-updates`: see `src/web/tasks/CLAUDE.md` (scheduler).
 
 ## `sync-inventory`
@@ -51,7 +53,7 @@ It deliberately mirrors `check_for_gh_release` from community-scripts' own `misc
 - Unpinned and unprefixed: tries `/releases/latest` directly.
 - Anything else (a prefix, or any non-clean response to a pin's direct `/releases/tags/<pin>` lookup: a 404, a 200 that is a draft/pre-release, anything but 403/429): falls back to walking the full `/releases?per_page=100` list and re-deriving the candidate there, matching upstream's "never trust a single direct hit blindly".
 - 403/429 from either path is always `GITHUB_RATE_LIMIT_MESSAGE`, with no fallback. It is reported per guest and never retried within the same run.
-- The optional `githubApiToken` secret authenticates every `api.github.com` request via `githubApiHeaders` (see root CLAUDE.md, Settings store, and `src/lib/CLAUDE.md`). Without a token, one run a day plus the caches below keeps a homelab-sized inventory under GitHub's anonymous 60-requests-per-hour limit.
+- The optional `githubApiToken` secret authenticates every `api.github.com` request via `githubApiHeaders` (see `src/lib/CLAUDE.md`, Settings store). Without a token, one run a day plus the caches below keeps a homelab-sized inventory under GitHub's anonymous 60-requests-per-hour limit.
 
 ### Outcome and installed version
 
@@ -86,7 +88,7 @@ After a successful web/MCP `update-app` apply, the same job calls `checkOneGuest
 
 ## `backfill-guest-creators`
 
-`src/commands/maintenance/backfill-guest-creators.ts` (#58) is a one-time, **CLI-only** migration that attributes a `creator` (see root CLAUDE.md / `src/web/CLAUDE.md`, per-resource group permissions) to a guest created before that field existed, by mining `data/jobs.sqlite3`'s job history rather than touching live infrastructure. CLI-only is deliberate, same reasoning as `import-yaml-inventory`/`convert-caddyfile`: a one-time operator migration with no ongoing use, and an `Operation` would expose a fleet-wide inventory rewrite to the web UI/MCP server for nothing.
+`src/commands/maintenance/backfill-guest-creators.ts` (#58) is a one-time, **CLI-only** migration that attributes a `creator` (see `src/web/CLAUDE.md`, per-resource group permissions) to a guest created before that field existed, by mining `data/jobs.sqlite3`'s job history rather than touching live infrastructure. CLI-only is deliberate, same reasoning as `import-yaml-inventory`/`convert-caddyfile`: a one-time operator migration with no ongoing use, and an `Operation` would expose a fleet-wide inventory rewrite to the web UI/MCP server for nothing.
 
 `bellhop backfill-guest-creators [--map <old=new>]... [--apply]`, dry-run by default.
 

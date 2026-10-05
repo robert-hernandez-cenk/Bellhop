@@ -36,7 +36,7 @@ The guest Advanced modal's field explanations (#34) live in `web-client/src/lib/
 
 ### Prompt banner (`promptBannerView`)
 
-The job-prompt banner's hint text, dismiss-button label, and which controls get the quiet/outline treatment per origin all come from one `Record<PromptOrigin | 'none', ...>` table, `promptBannerView()` in `web-client/src/lib/prompt-banner.ts` (#4), so a new origin cannot ship without banner copy. Every pause carries its origin (`expected`/`heuristic`/`stall`) through the job row and WebSocket; `JobView` numbers a known prompt ("question 2 of up to 4") and flags a stall as a guess rather than a detected question. Detection itself is server-side (`src/web/CLAUDE.md`).
+The job-prompt banner's hint text, dismiss-button label, and which controls get the quiet/outline treatment per origin all come from one `Record<PromptOrigin | 'none', ...>` table, `promptBannerView()` in `web-client/src/lib/prompt-banner.ts` (#4), so a new origin cannot ship without banner copy. Every pause carries its origin (`expected`/`heuristic`/`stall`) through the job row and WebSocket; `JobView` numbers a known prompt ("question 2 of up to 4") and flags a stall as a guess rather than a detected question. Detection itself is server-side (`src/web/jobs/CLAUDE.md`).
 
 ## Who-am-I, Sidebar, impersonation
 

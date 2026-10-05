@@ -27,9 +27,9 @@ Every command imports from `src/lib/`, the single place that knows how to reach 
 | File | Covers |
 |---|---|
 | `src/lib/CLAUDE.md` | Inventory schema and validation, the SQLite read/write path (`sortInventoryForFile`, migrations), target resolution and `Ssh2SSHClient`, Machine ID, `update-all` targeting and package-manager detection, TLS-backend probing, Proxmox ACLs for VM creators, the Settings store/config accessor, and the cluster note |
-| `src/lib/proxy/CLAUDE.md` | The reverse-proxy driver interface: `buildRoutes`/`buildProxyContext`, `getDriver`/`driverDeps`, the `none` driver, capability enforcement, `fileDriver` |
-| `src/lib/proxy/drivers/CLAUDE.md` | Each shipped driver: Caddy, Caddy admin API, nginx, Nginx Proxy Manager, HAProxy, Traefik |
-| `src/commands/networking/CLAUDE.md` | `sync-proxy`, `sync-authentik` (forward and OIDC reconcile, mobile consent), OIDC credentials/adoption, `prune-acme-challenges`, `render-status-page`, `convert-caddyfile` |
+| `src/lib/proxy/CLAUDE.md` | The reverse-proxy driver interface, `sync-proxy`/`runSyncProxy`: `buildRoutes`/`buildProxyContext`, `getDriver`/`driverDeps`, the `none` driver, capability enforcement, `fileDriver` |
+| `src/lib/proxy/drivers/CLAUDE.md` | Each shipped driver: Caddy, Caddy admin API (incl. `convert-caddyfile`), nginx, Nginx Proxy Manager, HAProxy, Traefik |
+| `src/commands/networking/CLAUDE.md` | `sync-authentik` (forward and OIDC reconcile, mobile consent), OIDC credentials/adoption, `prune-acme-challenges`, `render-status-page` |
 | `src/commands/provisioning/CLAUDE.md` | `install-app`/`update-app`, script catalog and custom script sources, `attach-nfs-mount`, `migrate-nfs-mount`, `migrate-guest`, VPN gateway deploy credentials |
 | `src/commands/maintenance/CLAUDE.md` | `sync-inventory`, `audit-nfs-mounts`, `check-app-updates`, `backfill-guest-creators` |
 | `src/operations/CLAUDE.md` | The shared `Operation` layer used by web and MCP, `previewAndEnqueue`, `commitGuestEdit` |
@@ -39,7 +39,7 @@ Every command imports from `src/lib/`, the single place that knows how to reach 
 | `src/mcp/CLAUDE.md` | MCP server tools, `wait_for_job` elicitation, job ownership |
 | `web-client/CLAUDE.md` | React client: responsive layout, theming, field help, Advanced modal, Settings page UI |
 
-Mental model: `inventory/bellhop.db` is a gitignored SQLite database of Proxmox hosts, their LXC/VM guests, and external sites, validated by the zod schema in `src/lib/inventory.ts`. A guest has no SSH login of its own and is always reached via its parent host. Exactly one entry has `proxy: true` (where the reverse proxy runs), and exactly one proxy driver is active per deployment (`proxyDriver`). Authentik gating is per entry via `authGroup`, one rung of an ordered group ladder; `effectiveAuth()` says whether an entry is ungated, forward-auth gated, or OIDC gated. Web UI and MCP actions share `src/operations/`; the CLI does not. Settings and secrets live in one store, always read through `src/lib/config.ts`.
+Mental model: `inventory/bellhop.db` is a gitignored SQLite database of Proxmox hosts, their LXC/VM guests, and external sites, validated by the zod schema in `src/lib/inventory.ts`. A guest has no SSH login of its own and is always reached via its parent host. At most one entry has `proxy: true` (where the reverse proxy runs), and exactly one proxy driver is active per deployment (`proxyDriver`). Authentik gating is per entry via `authGroup`, one rung of an ordered group ladder; `effectiveAuth()` says whether an entry is ungated, forward-auth gated, or OIDC gated. Web UI and MCP actions share `src/operations/`; the CLI does not. Settings and secrets live in one store, always read through `src/lib/config.ts`.
 
 ## Rules that apply everywhere
 
