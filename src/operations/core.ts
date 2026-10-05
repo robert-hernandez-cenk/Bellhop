@@ -78,14 +78,12 @@ function enqueue(
 }
 
 // The web apply routes' and MCP apply tools' shared sequence. The preview
-// still runs here, before enqueue, rather than inside the job (research R7):
-// the preview text is logged at the top of the job's own log (see enqueue()
-// below), and a bad input fails the request before any job row ever exists.
-// Console captures no longer serialize against each other (see
-// src/web/console-capture.ts) and JobRunner now keeps jobs one at a time
-// through its own queue (src/web/jobs/job-runner.ts) -- so a preview inside
-// the job would no longer deadlock the way it once did, but nothing would
-// move into the job log for a caller to see before the job actually ran.
+// runs here, before enqueue, so the caller gets the preview text back
+// immediately, invalid input fails before any job row exists, and enqueue()
+// logs the preview at the top of the job's own log. Console captures don't
+// wait on each other (src/web/console-capture.ts) and JobRunner runs its jobs
+// one at a time (src/web/jobs/job-runner.ts), so this never waits for a
+// running job.
 export async function previewAndEnqueue(
   op: Operation,
   raw: unknown,

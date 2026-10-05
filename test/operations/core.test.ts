@@ -155,7 +155,7 @@ test('enqueueWithoutPreview runs apply without a preview banner', async () => {
 // preview (which itself uses withCapturedConsole, like almost every real
 // preview() does) must resolve with its preview text and a queued job row
 // while the first job is still running, not wait behind it.
-test('T016: previewAndEnqueue for a second operation resolves right away while a first job is still running, and the second job only runs once the first finishes', async () => {
+test('T016: previewAndEnqueue for a second operation resolves right away while a first job is still running', { timeout: 5000 }, async () => {
   const { store, log, runner, deps } = setup();
   const firstJobGate = gate();
   const firstOp: Operation = {

@@ -181,15 +181,18 @@ test('console.log replaced during a capture stays replaced after the capture end
   const origLog = console.log;
   const origError = console.error;
   const collected: string[] = [];
+  const replacement = (...args: unknown[]) => {
+    collected.push(args.map(String).join(' '));
+  };
   try {
     await withCapturedConsole(async () => {
       console.log('before replace');
       // Replaces console.log mid-capture, directly, the way a library
       // outside this module's control might -- uninstall() must not stomp
       // this back to the fallback once the capture ends.
-      console.log = (...args: unknown[]) => collected.push(args.map(String).join(' '));
+      console.log = replacement;
     });
-    assert.notEqual(console.log, origLog);
+    assert.strictEqual(console.log, replacement);
     console.log('after capture');
     assert.deepEqual(collected, ['after capture']);
   } finally {
@@ -219,17 +222,20 @@ test('install() does not capture its own wrapper as the fallback when a saved wr
   try {
     let savedWrapper: typeof console.log | undefined;
     const collectedWhileOverridden: string[] = [];
+    const override = (...args: unknown[]) => {
+      collectedWhileOverridden.push(args.map(String).join(' '));
+    };
 
     await withCapturedConsole(async () => {
       // console.log is logWrapper here (the capture just started). Some
       // code saves that reference, believing it's saving "the original"...
       savedWrapper = console.log;
       // ...then installs its own replacement mid-capture.
-      console.log = (...args: unknown[]) => collectedWhileOverridden.push(args.map(String).join(' '));
+      console.log = override;
     });
     // The capture has settled; uninstall() found console.log !== logWrapper
-    // (it's the collector above) and correctly left it alone.
-    assert.notEqual(console.log, origLog);
+    // (it's the override above) and correctly left it alone.
+    assert.strictEqual(console.log, override);
 
     // The saved reference is reassigned back onto console.log -- it's
     // actually logWrapper, not "the original".
@@ -247,6 +253,9 @@ test('install() does not capture its own wrapper as the fallback when a saved wr
     // fallback must be the real pre-test console, not logWrapper itself.
     console.log('outside after B');
     assert.deepEqual(finalCollected, ['outside after B']);
+    // The override was swapped out before anything was logged, so no line
+    // in this sequence reached it.
+    assert.deepEqual(collectedWhileOverridden, []);
   } finally {
     console.log = origLog;
     console.error = origError;
