@@ -58,12 +58,13 @@ where `proxyDriver` is a dropdown of the supported ids rather than a
 free-text field, and Proxy config path/Status page path are shown or
 hidden and given a matching placeholder based on whichever driver is
 currently selected in that dropdown (unsaved changes included); the
-Caddy TLS dropdown (`proxyCaddyTls`) appears only while a Caddy driver is
-selected, with the Proxy TLS certificate/key fields shown alongside it
-only once that dropdown's own (possibly unsaved) value is `files` — the
-same two certificate/key fields appear unconditionally while nginx is
-selected instead, since that driver always reads them; the
-Proxy cert resolver/Proxy API URL fields appear only while Traefik is selected,
+TLS source dropdown (`tlsSource`) appears for every driver that manages a
+proxy, listing only the sources that driver supports, with the ACME DNS
+provider shown only while the shown source is `acme-dns` and the Proxy TLS
+certificate/key fields only while it is `files` (the shown source being the
+unsaved choice, else the stored one, else the driver's default); the
+Proxy cert resolver field appears only while Traefik is selected with an
+`acme-dns`/`acme-http` source, the Proxy API URL field only while Traefik is selected,
 and Proxy config path is hidden for a driver with no config file (Caddy
 (admin API), Nginx Proxy Manager). Hiding a field never clears its stored
 value — see
@@ -77,10 +78,11 @@ value — see
 | `statusPagePath` | `render-status-page` | the status page is never rendered |
 | `proxyDriver` | `sync-proxy`, `render-status-page`, every OIDC/forward-auth capability check | `caddy`, the default — allowed values are `caddy`/`caddy-api`/`nginx`/`nginx-proxy-manager`/`haproxy`/`traefik`/`none` |
 | `proxyConfigPath` | same as `proxyDriver` | the active driver's own default config path (`/etc/caddy/Caddyfile` for Caddy, `/etc/nginx/conf.d/bellhop.conf` for nginx, `/etc/haproxy/bellhop.cfg` for HAProxy, which also writes `bellhop.map` in the same directory, `/etc/traefik/dynamic/bellhop.yml` for Traefik; `caddy-api`, `nginx-proxy-manager`, and `none` have no config file at all, and hide this field on the Settings page) |
-| `proxyCaddyTls` | both Caddy drivers | `cloudflare`, the default — issues each site's certificate via DNS-01 with Cloudflare; `letsencrypt`/`internal`/`files` are the other allowed values (Caddy's own HTTP-01/TLS-ALPN-01, its internal CA, or the shared `proxyTlsCertificate`/`proxyTlsKey` pair below, respectively); ignored by every other driver, and shown on the Settings page only while a Caddy driver is selected |
-| `proxyTlsCertificate` | the nginx driver, and both Caddy drivers in `proxyCaddyTls: files` mode | certbot's own default certificate path for the inventory domain; ignored by both Caddy drivers in every other `proxyCaddyTls` mode, by `nginx-proxy-manager`, `haproxy`, `traefik`, and `none`, and shown on the Settings page only while nginx is selected, or a Caddy driver with `files` mode chosen |
-| `proxyTlsKey` | the nginx driver, and both Caddy drivers in `proxyCaddyTls: files` mode | certbot's own default key path for the inventory domain; ignored by both Caddy drivers in every other `proxyCaddyTls` mode, by `nginx-proxy-manager`, `haproxy`, `traefik`, and `none`, and shown on the Settings page only while nginx is selected, or a Caddy driver with `files` mode chosen |
-| `proxyCertResolver` | the Traefik driver | `cloudflare`, the default ACME certificate resolver name every rendered router's `tls.certResolver` is set to; the reserved value `none` instead enables TLS on every router with no resolver named (`tls: {}`), for an operator serving certificates through Traefik's file provider or its own default certificate; ignored by every other driver, and shown on the Settings page only while Traefik is selected |
+| `tlsSource` | `sync-proxy` and `convert-caddyfile` (every driver that renders certificate configuration), and the push-live step's `prune-acme-challenges` | the active driver's own default (`acme-dns` for Caddy, Caddy (admin API) and Traefik; `files` for nginx; `acme-http` for Nginx Proxy Manager; `external` for HAProxy and `none`) — allowed values are `acme-dns`/`acme-http`/`internal`/`files`/`external`; which ones each driver supports is in [TLS sources](reverse-proxy/README.md#tls-sources). Checked only against that list when written, never against the active driver |
+| `acmeDnsProvider` | `tlsSource: acme-dns` | `cloudflare`, the default and only allowed value |
+| `proxyTlsCertificate` | `tlsSource: files` (nginx's only source; an option for both Caddy drivers and Traefik) | certbot's own default certificate path for the inventory domain; ignored under every other source, and shown on the Settings page only while the shown TLS source is `files` |
+| `proxyTlsKey` | `tlsSource: files` (same as `proxyTlsCertificate`) | certbot's own default key path for the inventory domain; ignored under every other source, and shown on the Settings page only while the shown TLS source is `files` |
+| `proxyCertResolver` | the Traefik driver, under `tlsSource` `acme-dns`/`acme-http` | `cloudflare`, the default ACME certificate resolver name every rendered router's `tls.certResolver` is set to — any resolver name is allowed (`none` is no longer reserved: `tlsSource: external` replaced it); ignored by every other driver and under `files`/`external`, and shown on the Settings page only while Traefik is selected with one of those two sources |
 | `proxyApiUrl` | the Traefik driver | no post-apply check at all — the file is written and trusted to load; set to Traefik's API address as reachable from the proxy host to have every apply confirm it loaded before succeeding; ignored by every other driver, and shown on the Settings page only while Traefik is selected |
 | `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
@@ -88,8 +90,8 @@ value — see
 | `pveCreatorRole` | same as `pveUserRealm` | `PVEVMAdmin` |
 
 See [Reverse proxy drivers](reverse-proxy/README.md) for what `proxyDriver`, `proxyConfigPath`,
-the [Caddy driver](reverse-proxy/caddy.md)'s `proxyCaddyTls`, the nginx
-driver's `proxyTlsCertificate`/`proxyTlsKey`, and the [Traefik
+`tlsSource`/`acmeDnsProvider` ([TLS sources](reverse-proxy/README.md#tls-sources)),
+`proxyTlsCertificate`/`proxyTlsKey`, and the [Traefik
 driver](reverse-proxy/traefik.md)'s `proxyCertResolver`/`proxyApiUrl`
 actually do. See [Proxmox access for VM creators](proxmox-access.md) for
 what `pveUserRealm`/`pveCreatorRole` actually do.

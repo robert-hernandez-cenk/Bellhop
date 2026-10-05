@@ -1243,7 +1243,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the twenty-nine settings keys', () => {
+test('SETTINGS_KEYS lists exactly the twenty-eight settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'acmeDnsProvider',
     'authentikAdminGroup',
@@ -1263,7 +1263,6 @@ test('SETTINGS_KEYS lists exactly the twenty-nine settings keys', () => {
     'npmApiEmail',
     'npmApiUrl',
     'proxyApiUrl',
-    'proxyCaddyTls',
     'proxyCertResolver',
     'proxyConfigPath',
     'proxyDriver',
@@ -1328,35 +1327,36 @@ test('SettingsSchema accepts proxyDriver "haproxy", and an inventory naming it r
   assert.equal(loadInventory(dest).proxyDriver, 'haproxy');
 });
 
-// issue #51: proxyCaddyTls is the two Caddy drivers' own setting (one of
-// CADDY_TLS_MODES, src/lib/proxy/ids.ts), following the same
-// optional/independent-default pattern as proxyCertResolver above.
+// issue #72: proxyCaddyTls (issue #51) is gone -- tlsSource replaced it.
+// Until User Story 4's one-time migration converts and removes a leftover
+// proxyCaddyTls meta row, the database must still load and save around it:
+// loadInventory reads only SETTINGS_KEYS, so the row is ignored, and
+// saveInventory writes/deletes only SETTINGS_KEYS, so it leaves the row
+// alone rather than crashing on it.
 
-test('SettingsSchema accepts each of the four proxyCaddyTls modes', () => {
-  for (const mode of ['cloudflare', 'letsencrypt', 'internal', 'files']) {
-    assert.equal(SettingsSchema.safeParse({ proxyCaddyTls: mode }).success, true);
-  }
+test('SettingsSchema has no proxyCaddyTls setting', () => {
+  assert.equal('proxyCaddyTls' in SettingsSchema.shape, false);
+  assert.equal((SETTINGS_KEYS as string[]).includes('proxyCaddyTls'), false);
 });
 
-test('SettingsSchema rejects a proxyCaddyTls value outside the four modes', () => {
-  assert.equal(SettingsSchema.safeParse({ proxyCaddyTls: 'bogus' }).success, false);
-  assert.equal(SettingsSchema.safeParse({ proxyCaddyTls: '' }).success, false);
-});
-
-test('saveInventory/loadInventory round-trips proxyCaddyTls, and clearing it removes it from meta', () => {
+test('a leftover proxyCaddyTls meta row is ignored on load and left in place on save', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
   const dest = path.join(dir, 'bellhop.db');
-  saveInventory(dest, { ...FIXTURE_INVENTORY, proxyCaddyTls: 'internal' });
-  const loaded = loadInventory(dest);
-  assert.equal(loaded.proxyCaddyTls, 'internal');
+  saveInventory(dest, FIXTURE_INVENTORY);
+  const writer = new Database(dest);
+  writer.prepare("INSERT INTO meta (key, value) VALUES ('proxyCaddyTls', 'letsencrypt')").run();
+  writer.close();
 
-  saveInventory(dest, { ...loaded, proxyCaddyTls: undefined });
-  const reloaded = loadInventory(dest);
-  assert.equal(reloaded.proxyCaddyTls, undefined);
+  const loaded = loadInventory(dest);
+  assert.equal('proxyCaddyTls' in loaded, false);
+  assert.equal(loaded.tlsSource, undefined);
+
+  saveInventory(dest, { ...loaded, proxyDriver: 'caddy' });
+  assert.equal(loadInventory(dest).proxyDriver, 'caddy');
   const db = new Database(dest, { readonly: true });
   const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyCaddyTls'").get();
   db.close();
-  assert.equal(row, undefined);
+  assert.deepEqual(row, { value: 'letsencrypt' });
 });
 
 test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {

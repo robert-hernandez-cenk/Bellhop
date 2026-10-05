@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
+import type { AcmeDnsProvider, TlsSource } from './ids.ts';
 import {
   ACME_DNS_RESOLVERS,
   AUTHENTIK_COPY_HEADERS,
@@ -24,7 +25,7 @@ const HostMatchSchema = z.object({ host: z.array(z.string()).optional() }).passt
 const RouteSchema = z
   .object({ '@id': z.string().optional(), match: z.array(HostMatchSchema).optional() })
   .passthrough();
-// A server's TLS connection policy (issue #51's 'files' mode). Only @id and
+// A server's TLS connection policy (tlsSource 'files', issues #51, #72). Only @id and
 // whether it has a `match` matter to the planner: one with no match is a
 // catch-all.
 const ConnectionPolicySchema = z
@@ -38,7 +39,7 @@ const ServerSchema = z
   })
   .passthrough();
 const TlsPolicySchema = z.object({ '@id': z.string().optional(), subjects: z.array(z.string()).optional() }).passthrough();
-// An apps.tls.certificates.load_files entry (issue #51's 'files' mode).
+// An apps.tls.certificates.load_files entry (tlsSource 'files', issues #51, #72).
 const LoadFileSchema = z
   .object({
     '@id': z.string().optional(),
@@ -167,17 +168,19 @@ export function renderRoute(route: ProxyRoute, ctx: ProxyContext): CaddyRoute {
   };
 }
 
-// Bellhop's TLS objects for one proxyCaddyTls mode -- exactly what Caddy's
-// adapter makes from the file-based driver's per-site clause for the same
-// mode (research R1, pinned against test/fixtures/caddy/tls-*-adapted.json),
-// with Bellhop's @ids and certificate tag:
-//   - cloudflare: one automation policy, ACME with the Cloudflare DNS-01
-//     challenge, the same token placeholder and resolvers as the file-based
-//     driver's clause;
+// Bellhop's TLS objects for one TLS source (issues #51, #72) -- exactly what
+// Caddy's adapter makes from the file-based driver's per-site clause for the
+// same source (research R1, pinned against
+// test/fixtures/caddy/tls-*-adapted.json), with Bellhop's @ids and
+// certificate tag:
+//   - acme-dns: one automation policy, ACME with the acmeDnsProvider's
+//     DNS-01 challenge (only Cloudflare today), the same token placeholder
+//     and resolvers as the file-based driver's clause;
 //   - internal: one automation policy issued by Caddy's internal CA;
 //   - files: the certificate/key pair loaded from disk, plus a connection
 //     policy selecting it for every Bellhop hostname;
-//   - letsencrypt: nothing -- Caddy's automatic HTTPS needs no TLS app.
+//   - acme-http: nothing -- Caddy's automatic HTTPS needs no TLS app;
+//   - external: not supported -- a programming error (externalSourceError).
 // The catch-all connection policy the adapter appends after a 'files'
 // policy is placed by planCaddyConfig instead (renderDefaultConnectionPolicy),
 // since whether it is needed depends on the live server.
@@ -188,8 +191,8 @@ export interface CaddyTlsObjects {
 }
 
 export function renderTlsObjects(hostnames: string[], ctx: ProxyContext): CaddyTlsObjects {
-  switch (ctx.caddyTls) {
-    case 'cloudflare':
+  switch (ctx.tlsSource) {
+    case 'acme-dns':
       return {
         policy: {
           '@id': BELLHOP_TLS_POLICY_ID,
@@ -198,7 +201,7 @@ export function renderTlsObjects(hostnames: string[], ctx: ProxyContext): CaddyT
             {
               challenges: {
                 dns: {
-                  provider: { api_token: CLOUDFLARE_TOKEN_PLACEHOLDER, name: 'cloudflare' },
+                  provider: acmeDnsProviderObject(ctx.acmeDnsProvider),
                   resolvers: ACME_DNS_RESOLVERS,
                 },
               },
@@ -223,8 +226,44 @@ export function renderTlsObjects(hostnames: string[], ctx: ProxyContext): CaddyT
           certificate_selection: { any_tag: [BELLHOP_CERT_TAG] },
         },
       };
-    case 'letsencrypt':
+    case 'acme-http':
       return {};
+    case 'external':
+      throw externalSourceError();
+  }
+}
+
+// The DNS-01 provider object for one ACME DNS provider -- exhaustive over
+// AcmeDnsProvider, so adding a provider to ids.ts fails typecheck here until
+// it has one.
+function acmeDnsProviderObject(provider: AcmeDnsProvider): { api_token: string; name: string } {
+  switch (provider) {
+    case 'cloudflare':
+      return { api_token: CLOUDFLARE_TOKEN_PLACEHOLDER, name: 'cloudflare' };
+  }
+}
+
+// Renderer backstop (research R4): checkTlsSource refuses 'external' for
+// caddy-api (sync-proxy) and convert-caddyfile before anything is planned,
+// so reaching the planner with it is a programming error -- never a
+// silently certificate-less configuration.
+function externalSourceError(): Error {
+  return new Error("caddy-api driver cannot render tlsSource 'external' (checkTlsSource should have refused it)");
+}
+
+// Whether Bellhop writes an automation policy of its own under this source
+// -- the sources whose untagged operator policies naming a Bellhop hostname
+// are conflicts (planCaddyConfig, research R4).
+function writesAutomationPolicy(source: TlsSource): boolean {
+  switch (source) {
+    case 'acme-dns':
+    case 'internal':
+      return true;
+    case 'acme-http':
+    case 'files':
+      return false;
+    case 'external':
+      throw externalSourceError();
   }
 }
 
@@ -267,7 +306,7 @@ export interface CaddyConflict {
 export interface CaddyChange {
   kind: 'add' | 'replace' | 'remove' | 'reorder';
   // 'tls-files' is the load_files entry and 'tls-connection' the connection
-  // policies ('files' mode, issue #51); the catch-all bellhop-tls-default is
+  // policies (tlsSource 'files', issue #51); the catch-all bellhop-tls-default is
   // reported as part of 'tls-connection', never on its own.
   object: 'route' | 'tls-policy' | 'tls-files' | 'tls-connection';
   hostnames: string[];
@@ -362,12 +401,12 @@ function movedObjects(before: CaddyConfigObject, after: CaddyConfigObject): Cadd
 // Reconciles the desired routes against the live configuration (research
 // R5/R6, issue #51 research R3/R4): strips every Bellhop object, leaves out
 // routes whose hostnames an untagged object already claims (conflicts),
-// prepends the rest -- routes to the HTTPS server, and the active TLS mode's
+// prepends the rest -- routes to the HTTPS server, and the active TLS source's
 // objects to their own lists (the automation policy to the automation
 // policies, the load_files entry to load_files, the connection policies to
 // that same HTTPS server) -- prunes any container a removed Bellhop object
-// leaves empty, and reports what changed. Switching TLS modes is just this
-// rebuild: every bellhop-tls* object is stripped and the current mode's
+// leaves empty, and reports what changed. Switching TLS sources is just this
+// rebuild: every bellhop-tls* object is stripped and the current source's
 // added back. The input is never mutated.
 export function planCaddyConfig(
   current: CaddyConfig,
@@ -395,13 +434,14 @@ export function planCaddyConfig(
 
   // Conflicts: an untagged route (any server) naming the hostname exactly,
   // case-insensitively -- and an untagged automation policy doing the same,
-  // but only in a mode where Bellhop writes an automation policy of its own
-  // for it to collide with ('cloudflare'/'internal'). In 'letsencrypt' or
-  // 'files' an operator policy naming a Bellhop host is meant to apply
-  // (research R4). Untagged load_files entries and connection policies
-  // never claim: Bellhop's SNI policy is prepended, so it matches first.
-  // Wildcards never match here.
-  const writesPolicy = ctx.caddyTls === 'cloudflare' || ctx.caddyTls === 'internal';
+  // but only under a TLS source where Bellhop writes an automation policy of
+  // its own for it to collide with ('acme-dns'/'internal'). Under
+  // 'acme-http' or 'files' an operator policy naming a Bellhop host is meant
+  // to apply (research R4). Untagged load_files entries and connection
+  // policies never claim: Bellhop's SNI policy is prepended, so it matches
+  // first. Wildcards never match here. Throws for 'external' even with no
+  // routes, so the backstop never depends on the inventory's contents.
+  const writesPolicy = writesAutomationPolicy(ctx.tlsSource);
   const claims = new Map<string, Omit<CaddyConflict, 'hostname' | 'owner'>>();
   for (const [name, server] of Object.entries(servers)) {
     for (const r of server.routes ?? []) {
@@ -430,7 +470,7 @@ export function planCaddyConfig(
   }
 
   const desiredRoutes = kept.map((r) => renderRoute(r, ctx));
-  // No kept route means no TLS objects either, in any mode -- an
+  // No kept route means no TLS objects either, under any source -- an
   // empty-subjects policy or empty-SNI connection policy would match every
   // hostname.
   const desiredTls: CaddyTlsObjects =

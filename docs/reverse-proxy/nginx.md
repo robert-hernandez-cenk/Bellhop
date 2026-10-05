@@ -24,8 +24,9 @@ Debian/Ubuntu nginx package's default document root. Serving that page
 block's job, exactly as the status page's site block is for Caddy.
 
 Because nginx cannot obtain a certificate the way Caddy does through
-Cloudflare DNS-01, every site this driver generates shares one
-certificate/key pair — normally a wildcard for your domain, so that adding
+Cloudflare DNS-01, its only TLS source is `files` (its default, so
+`tlsSource` can stay unset — see [TLS sources](README.md#tls-sources)):
+every site this driver generates shares one certificate/key pair — normally a wildcard for your domain, so that adding
 a subdomain never needs a certificate step of its own. Point Bellhop at it
 with the `proxyTlsCertificate`/`proxyTlsKey` settings (see [Inventory-wide
 settings](../configuration.md#inventory-wide-settings)); left unset, it looks for certbot's own default path for

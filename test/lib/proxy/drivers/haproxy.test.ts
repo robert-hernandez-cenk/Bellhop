@@ -65,7 +65,7 @@ function emptyInventory(): Inventory {
 }
 
 function renderInventory(inventory: Inventory, configPath = CONFIG_PATH): FileSpec[] {
-  return render(buildRoutes(inventory), buildProxyContext(inventory), configPath);
+  return render(buildRoutes(inventory), buildProxyContext(inventory, haproxyDriver), configPath);
 }
 
 // One backend block (contract "Backend block") -- the lines every backend
@@ -115,7 +115,8 @@ function ctx(externalPort = 443): ProxyContext {
       keyPath: '/etc/letsencrypt/live/example.com/privkey.pem',
     },
     certResolver: 'cloudflare',
-    caddyTls: 'cloudflare',
+    tlsSource: 'external',
+    acmeDnsProvider: 'cloudflare',
   };
 }
 
@@ -320,7 +321,7 @@ test('haproxyDriver declares its id, label, capabilities, default config path, s
   assert.equal(haproxyDriver.capabilities.acmeDns01ViaCloudflare(exampleInventory()), false);
   assert.equal(haproxyDriver.defaultConfigPath, '/etc/haproxy/bellhop.cfg');
   assert.equal(haproxyDriver.statusPage, null);
-  assert.equal(haproxyDriver.usesSharedCertificate, undefined);
+  assert.deepEqual(haproxyDriver.capabilities.tlsSources, ['external']);
   assert.equal(
     haproxyDriver.configPathNote,
     "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate."
@@ -336,7 +337,7 @@ function deps(ssh: FakeSSHClient, configPath = CONFIG_PATH) {
 test('plan(): preview is the backends file then the map file, each under a ==> <path> <== label, and the payload is both FileSpecs', async () => {
   const inv = exampleInventory();
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
-  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv), deps(ssh));
+  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv, haproxyDriver), deps(ssh));
   assert.equal(
     plan.preview,
     `==> ${CONFIG_PATH} <==\n${EXPECTED_BACKENDS}\n\n==> ${MAP_PATH} <==\n${EXPECTED_MAP}`
@@ -357,7 +358,7 @@ test('apply(): one script to the proxy host that writes both files, validates wi
   const inv = exampleInventory();
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const d = deps(ssh);
-  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv), d);
+  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv, haproxyDriver), d);
   await haproxyDriver.apply(plan, d);
   assert.equal(ssh.history.length, 1);
   assert.equal(ssh.history[0].sshTarget, '192.0.2.2');
@@ -375,7 +376,7 @@ test('apply(): a non-zero exit throws with the remote stderr', async () => {
   const inv = exampleInventory();
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: 'haproxy -c failed', code: 1 }));
   const d = deps(ssh);
-  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv), d);
+  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv, haproxyDriver), d);
   await assert.rejects(() => haproxyDriver.apply(plan, d), /haproxy -c failed/);
 });
 
@@ -434,7 +435,7 @@ async function runApply(opts: { cfg?: string; map?: string; haproxyExit: number 
   const inv = exampleInventory();
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const d = { ssh, inventory: inv, proxyHost: 'pve1', configPath: cfgPath };
-  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv), d);
+  const plan = await haproxyDriver.plan(buildRoutes(inv), buildProxyContext(inv, haproxyDriver), d);
   await haproxyDriver.apply(plan, d);
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, ssh.history[0].command);

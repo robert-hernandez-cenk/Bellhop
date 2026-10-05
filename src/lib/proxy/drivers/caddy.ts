@@ -1,17 +1,18 @@
 import type { Inventory } from '../../inventory.ts';
 import type { ProxyContext, ProxyRoute } from '../routes.ts';
-import { caddyTlsMode } from '../routes.ts';
+import type { AcmeDnsProvider } from '../ids.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
 
-// How each site gets its certificate is a per-deployment choice (issue #51,
-// proxyCaddyTls -> ctx.caddyTls). 'cloudflare' -- the default, and the only
-// behavior before #51 -- is DNS-01 via Cloudflare with these two resolvers
-// (the API token is a Caddy-side env var this generator never needs to
-// see); 'letsencrypt' leaves the clause out so Caddy's own automatic HTTPS
+// How each site gets its certificate is a per-deployment choice (issues
+// #51, #72: the tlsSource setting -> ctx.tlsSource). 'acme-dns' -- the
+// default, and the only behavior before #51 -- is DNS-01 via the
+// acmeDnsProvider (only Cloudflare today) with these two resolvers (the API
+// token is a Caddy-side env var this generator never needs to see);
+// 'acme-http' leaves the clause out so Caddy's own automatic HTTPS
 // (HTTP-01/TLS-ALPN-01) takes over; 'internal' has Caddy's local CA issue
 // it; 'files' serves the operator's own certificate/key pair (ctx.tls, the
-// same pair the nginx driver uses). The token placeholder and resolvers are
+// same pair the nginx driver uses). 'external' is not supported. The token placeholder and resolvers are
 // exported, along with the forward-auth literals below, so the admin-API
 // Caddy driver (issue #26, src/lib/proxy/caddy-json.ts) renders the same
 // values as JSON rather than keeping its own copy.
@@ -41,19 +42,36 @@ export function caddyfileToken(value: string): string {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
-// The per-site TLS clause for the active mode (contracts/
-// rendering-and-settings.md "Caddyfile per-site TLS clause"), placed last in
-// every site block where the fixed Cloudflare clause always was.
+// The per-site TLS clause for the effective TLS source (specs/
+// 072-tls-source-setting/contracts/rendering-and-messages.md "Caddy"),
+// placed last in every site block where the fixed Cloudflare clause always
+// was -- byte-identical to the proxyCaddyTls mode each source replaced
+// (issue #72, FR-007).
 function tlsClause(ctx: ProxyContext): string[] {
-  switch (ctx.caddyTls) {
-    case 'cloudflare':
-      return CLOUDFLARE_TLS_BLOCK;
-    case 'letsencrypt':
+  switch (ctx.tlsSource) {
+    case 'acme-dns':
+      return acmeDnsBlock(ctx.acmeDnsProvider);
+    case 'acme-http':
       return [];
     case 'internal':
       return ['    tls internal'];
     case 'files':
       return [`    tls ${caddyfileToken(ctx.tls.certificatePath)} ${caddyfileToken(ctx.tls.keyPath)}`];
+    case 'external':
+      // Renderer backstop (research R4): checkTlsSource refuses this before
+      // anything renders, so reaching it is a programming error -- never a
+      // silently certificate-less Caddyfile.
+      throw new Error("caddy driver cannot render tlsSource 'external' (checkTlsSource should have refused it)");
+  }
+}
+
+// The DNS-01 clause for one ACME DNS provider -- exhaustive over
+// AcmeDnsProvider, so adding a provider to ids.ts fails typecheck here
+// until it has a clause.
+function acmeDnsBlock(provider: AcmeDnsProvider): string[] {
+  switch (provider) {
+    case 'cloudflare':
+      return CLOUDFLARE_TLS_BLOCK;
   }
 }
 
@@ -124,13 +142,15 @@ export const CADDYFILE_DEFAULT_PATH = '/etc/caddy/Caddyfile';
 
 // issue #51, User Story 4 (contract "Cloudflare prune decision"): both Caddy
 // drivers (file-based and admin-API) obtain a certificate via Cloudflare
-// DNS-01 only in the 'cloudflare' caddyTls mode (unset defaults to it) -- the
-// other three modes never touch Cloudflare's DNS at all, so
+// DNS-01 only under tlsSource 'acme-dns' (unset defaults to it for both) --
+// the other sources never touch Cloudflare's DNS at all, so
 // prune-acme-challenges has nothing to clean up after them. Exported so
 // caddy-api.ts's own capabilities object reads the exact same rule rather
-// than keeping a second copy that could drift from this one.
+// than keeping a second copy that could drift from this one. Interim until
+// issue #72's User Story 3 replaces the capability with usesCloudflareDns01
+// (src/lib/proxy/tls.ts).
 export function caddyAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
-  return caddyTlsMode(inventory) === 'cloudflare';
+  return (inventory.tlsSource ?? 'acme-dns') === 'acme-dns';
 }
 
 export const caddyDriver = fileDriver({
@@ -142,8 +162,6 @@ export const caddyDriver = fileDriver({
   // caddy.example.com block already serves via file_server (see CLAUDE.md's
   // render-status-page bullet), and the placeholder the Settings page shows.
   statusPage: { suggestedPath: '/usr/share/caddy/index.html' },
-  // issue #51: the Settings page shows the Caddy TLS dropdown for it.
-  usesCaddyTls: true,
   configPathNote: 'Only the bellhop-managed section of this file is replaced; everything outside it is left alone.',
   render,
   validateCommand: (configPath) => `caddy validate --adapter caddyfile --config ${singleQuote(configPath)}`,

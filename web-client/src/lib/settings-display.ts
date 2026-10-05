@@ -183,8 +183,8 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'proxyDriver',
     'proxyConfigPath',
     'statusPagePath',
-    'proxyCaddyTls',
-    // issue #72: placed so every setting has a tab; hidden by isVisible
+    // issue #72: placed so every setting has a tab (proxyCaddyTls is gone
+    // from the server's settings, so it left this list); hidden by isVisible
     // (SettingsPage.tsx) until the TLS source UI lands.
     'tlsSource',
     'acmeDnsProvider',

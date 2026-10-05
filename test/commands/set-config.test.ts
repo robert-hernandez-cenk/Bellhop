@@ -213,31 +213,46 @@ test('runSetConfig rejects a proxyApiUrl with a scheme other than http/https', (
   );
 });
 
-// issue #51: proxyCaddyTls is the two Caddy drivers' own setting -- same
-// round-trip/rejection pattern as proxyCertResolver above.
-test('runSetConfig round-trips proxyCaddyTls through --apply and --unset', () => {
+// issue #72: tlsSource and acmeDnsProvider are enum settings validated by
+// the schema alone -- no check against the active driver at write time
+// (nginx + internal is stored; sync-proxy refuses it later). proxyCaddyTls,
+// which tlsSource replaced, is now an unknown setting.
+test('runSetConfig round-trips every tlsSource through --apply, and --unset clears it', () => {
   const inventoryPath = tempInventoryPath();
-  runSetConfig({ key: 'proxyCaddyTls', value: 'internal', apply: true }, { inventoryPath });
-  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, 'internal');
-  runSetConfig({ key: 'proxyCaddyTls', unset: true, apply: true }, { inventoryPath });
-  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, undefined);
-});
-
-test('runSetConfig round-trips every proxyCaddyTls mode through --apply', () => {
-  const inventoryPath = tempInventoryPath();
-  for (const mode of ['cloudflare', 'letsencrypt', 'internal', 'files']) {
-    runSetConfig({ key: 'proxyCaddyTls', value: mode, apply: true }, { inventoryPath });
-    assert.equal(loadInventory(inventoryPath).proxyCaddyTls, mode);
+  for (const source of ['acme-dns', 'acme-http', 'internal', 'files', 'external']) {
+    runSetConfig({ key: 'tlsSource', value: source, apply: true }, { inventoryPath });
+    assert.equal(loadInventory(inventoryPath).tlsSource, source);
   }
+  runSetConfig({ key: 'tlsSource', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).tlsSource, undefined);
 });
 
-test('runSetConfig rejects a proxyCaddyTls value outside the four modes', () => {
+test('runSetConfig stores a tlsSource the active driver does not support (no write-time driver check)', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'proxyDriver', value: 'nginx', apply: true }, { inventoryPath });
+  runSetConfig({ key: 'tlsSource', value: 'internal', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).tlsSource, 'internal');
+});
+
+test('runSetConfig rejects a tlsSource or acmeDnsProvider outside its list', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(() => runSetConfig({ key: 'tlsSource', value: 'letsencrypt', apply: true }, { inventoryPath }), /^Error: tlsSource: /);
+  assert.throws(() => runSetConfig({ key: 'acmeDnsProvider', value: 'route53', apply: true }, { inventoryPath }), /^Error: acmeDnsProvider: /);
+  assert.equal(loadInventory(inventoryPath).tlsSource, undefined);
+});
+
+test('runSetConfig round-trips acmeDnsProvider cloudflare', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'acmeDnsProvider', value: 'cloudflare', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).acmeDnsProvider, 'cloudflare');
+});
+
+test('runSetConfig rejects proxyCaddyTls as an unknown setting (issue #72 removed it)', () => {
   const inventoryPath = tempInventoryPath();
   assert.throws(
-    () => runSetConfig({ key: 'proxyCaddyTls', value: 'bogus', apply: true }, { inventoryPath }),
-    /proxyCaddyTls/
+    () => runSetConfig({ key: 'proxyCaddyTls', value: 'internal', apply: true }, { inventoryPath }),
+    /^Error: Unknown setting 'proxyCaddyTls'/
   );
-  assert.equal(loadInventory(inventoryPath).proxyCaddyTls, undefined);
 });
 
 test('runSetConfig round-trips proxyDriver nginx through --apply', () => {

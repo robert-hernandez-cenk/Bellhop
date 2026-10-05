@@ -160,8 +160,8 @@ The router's `deps()` sets `actor` (`resolveActor(req)`) and `canSeeGuest`.
 Shared by GET and PATCH so they never disagree:
 
 - `settings`: only *stored* non-secret values (what inputs edit).
-- `proxyDrivers`: `listDrivers()` in registration order, each `{ id, label, defaultConfigPath, suggestedStatusPagePath, managesProxy, usesSharedCertificate, usesCertResolver, usesApiUrl, usesCaddyTls, usesNpmApi, configPathNote }` (`proxyDriversInfo()`; `uses*` default `false`).
-- `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`), `caddyTlsModes` (`[...CADDY_TLS_MODES]`), `defaultCaddyTls` (`DEFAULT_CADDY_TLS`).
+- `proxyDrivers`: `listDrivers()` in registration order, each `{ id, label, defaultConfigPath, suggestedStatusPagePath, managesProxy, tlsSources, defaultTlsSource, usesCertResolver, usesApiUrl, usesNpmApi, configPathNote }` (`proxyDriversInfo()`; `tlsSources`/`defaultTlsSource` from `capabilities`, #72; `uses*` default `false`).
+- `defaultProxyDriver` (`DEFAULT_PROXY_DRIVER_ID`), `acmeDnsProviders` (`[...ACME_DNS_PROVIDERS]`), `defaultAcmeDnsProvider` (`DEFAULT_ACME_DNS_PROVIDER`). PATCH validates `tlsSource`/`acmeDnsProvider` by schema only, with no check against the active driver; `proxyCaddyTls` is rejected as an unknown key.
 - `sources`: each non-secret key's `environment`/`settings`/`none`.
 - `environment`: only env-pinned keys, `{ variable, value?, stored, storedValue? }`; `value` is the effective non-secret value, never present for a secret; `stored`/`storedValue` drive the "Stored copy" line operators check before deleting a `data/*.env` file.
 - `secrets`: `{ set, source }` per secret, never the value.

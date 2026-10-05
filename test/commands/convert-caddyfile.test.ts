@@ -13,6 +13,7 @@ import {
 } from '../../src/commands/networking/convert-caddyfile.ts';
 import { planCaddyConfig } from '../../src/lib/proxy/caddy-json.ts';
 import { buildRoutes, buildProxyContext } from '../../src/lib/proxy/routes.ts';
+import { caddyApiDriver } from '../../src/lib/proxy/drivers/caddy-api.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import type { ExecResult } from '../../src/lib/ssh-client.ts';
 
@@ -75,13 +76,13 @@ test('apply loads the adapted config plus Bellhop routes against the live Etag, 
   const write = ssh.history.find((h) => h.command.includes('-X PATCH'));
   assert.ok(write);
   assert.match(write.command, /If-Match: "\/config\/ 5fa1bc684323e7a0"/);
-  const expected = planCaddyConfig(adapted, buildRoutes(inventory), buildProxyContext(inventory), 'pve1').config;
+  const expected = planCaddyConfig(adapted, buildRoutes(inventory), buildProxyContext(inventory, caddyApiDriver), 'pve1').config;
   assert.deepEqual(JSON.parse(write.command.split('\n')[2]), expected);
   assert.match(formatConvertCaddyfile(result), new RegExp(nextSteps('pve1').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
 test('refuses once Caddy already holds Bellhop objects', async () => {
-  const converted = planCaddyConfig(adapted, buildRoutes(inventory), buildProxyContext(inventory), 'pve1').config;
+  const converted = planCaddyConfig(adapted, buildRoutes(inventory), buildProxyContext(inventory, caddyApiDriver), 'pve1').config;
   const live = `HTTP/1.1 200 OK\r\nEtag: "/config/ 2"\r\n\r\n${JSON.stringify(converted)}`;
   const ssh = fakeProxyHost({ live });
   await assert.rejects(runConvertCaddyfile({ apply: true }, { ssh, inventory }), {

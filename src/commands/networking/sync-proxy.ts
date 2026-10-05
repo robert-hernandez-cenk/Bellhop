@@ -65,7 +65,7 @@ export async function runSyncProxy(
     throw new Error(capabilityErrors.map((e) => e.message).join('\n'));
   }
 
-  const ctx = buildProxyContext(deps.inventory);
+  const ctx = buildProxyContext(deps.inventory, driver);
   const plan = await driver.plan(routes, ctx, resolvedDeps);
 
   if (opts.apply) {

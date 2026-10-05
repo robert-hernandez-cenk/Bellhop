@@ -45,7 +45,7 @@ function inv(overrides: Partial<Inventory> = {}): Inventory {
 // buildProxyContext have already done the derivation by the time render
 // runs, exactly as fileDriver's plan() calls it.
 function configOf(inventory: Inventory): string {
-  return render(buildRoutes(inventory), buildProxyContext(inventory), '/etc/nginx/conf.d/bellhop.conf')[0].content;
+  return render(buildRoutes(inventory), buildProxyContext(inventory, nginxDriver), '/etc/nginx/conf.d/bellhop.conf')[0].content;
 }
 
 // --- (a) skeleton, even with zero routes ------------------------------------
@@ -178,7 +178,7 @@ test('render: two routes produce two server blocks separated by exactly one blan
 
 test('render returns exactly one owned FileSpec at configPath', () => {
   const inventory = inv({ guests: [{ name: 'app-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.16', subdomains: ['app'] }] });
-  const files = render(buildRoutes(inventory), buildProxyContext(inventory), '/etc/nginx/conf.d/bellhop.conf');
+  const files = render(buildRoutes(inventory), buildProxyContext(inventory, nginxDriver), '/etc/nginx/conf.d/bellhop.conf');
   assert.equal(files.length, 1);
   assert.equal(files[0].path, '/etc/nginx/conf.d/bellhop.conf');
   assert.equal(files[0].mode, 'owned');
@@ -714,7 +714,7 @@ function runGuardedApply(existingContent: string | undefined): {
   if (existingContent !== undefined) writeFileSync(confPath, existingContent);
 
   // The real render output, so the FileSpec carries the driver's own ownedHeader.
-  const files = render([], buildProxyContext(inv()), confPath);
+  const files = render([], buildProxyContext(inv(), nginxDriver), confPath);
   const script = buildFileDriverScript(files, 'nginx -t', 'systemctl reload nginx');
   const scriptPath = posix(join(tmpDir, 'apply.sh'));
   writeFileSync(scriptPath, script);

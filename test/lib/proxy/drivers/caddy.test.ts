@@ -17,7 +17,7 @@ import { FakeSSHClient } from '../../../support/fake-ssh-client.ts';
 // and apply() writes (the last test in this file checks plan() directly).
 function buildCaddyBlock(inventory: Inventory): string {
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, caddyDriver);
   return wrapManagedSection(render(routes, ctx, '/etc/caddy/Caddyfile')[0].content);
 }
 
@@ -235,7 +235,7 @@ test('buildCaddyBlock throws the missing-authentik error text when a forward-gat
 
 test('render returns only the body; the bellhop-managed markers come from fileDriver', () => {
   withPinnedOutpostPort(() => {
-    const [file] = render(buildRoutes(inventory), buildProxyContext(inventory), '/etc/caddy/Caddyfile');
+    const [file] = render(buildRoutes(inventory), buildProxyContext(inventory, caddyDriver), '/etc/caddy/Caddyfile');
     assert.equal(file.mode, 'managed-section');
     assert.equal(file.content, EXPECTED_LINES.slice(1, -1).join('\n'));
   });
@@ -250,7 +250,7 @@ test('caddyDriver.plan previews and carries exactly the pinned block', async () 
       proxyHost: 'pve1',
       configPath: '/etc/caddy/Caddyfile',
     };
-    const plan = await caddyDriver.plan(buildRoutes(inventory), buildProxyContext(inventory), deps);
+    const plan = await caddyDriver.plan(buildRoutes(inventory), buildProxyContext(inventory, caddyDriver), deps);
     assert.equal(plan.preview, EXPECTED_LINES.join('\n'));
     assert.deepEqual(plan.payload, [{ path: '/etc/caddy/Caddyfile', content: EXPECTED_LINES.join('\n'), mode: 'managed-section' }]);
   } finally {
@@ -259,13 +259,15 @@ test('caddyDriver.plan previews and carries exactly the pinned block', async () 
   }
 });
 
-// --- issue #51: proxyCaddyTls ----------------------------------------------
-// Every mode renders the same characterization block with only the per-site
-// TLS clause swapped (contracts/rendering-and-settings.md "Caddyfile per-site
-// TLS clause"). The cloudflare clause is the four lines EXPECTED_LINES
-// carries after each site's directives; these helpers rebuild the expected
-// block from EXPECTED_LINES with that clause replaced, so the other modes
-// are pinned against exactly the same routes the characterization pins.
+// --- issues #51, #72: tlsSource ---------------------------------------------
+// Every TLS source renders the same characterization block with only the
+// per-site TLS clause swapped (specs/072-tls-source-setting/contracts/
+// rendering-and-messages.md "Caddy"), byte-identical to the old
+// proxyCaddyTls mode it replaced (FR-007). The acme-dns/cloudflare clause is
+// the four lines EXPECTED_LINES carries after each site's directives; these
+// helpers rebuild the expected block from EXPECTED_LINES with that clause
+// replaced, so the other sources are pinned against exactly the same routes
+// the characterization pins.
 const CLOUDFLARE_CLAUSE = [
   '    tls {',
   '        dns cloudflare {env.CLOUDFLARE_API_TOKEN}',
@@ -294,32 +296,33 @@ function blockFor(inv: Inventory): string {
   return block;
 }
 
-test('proxyCaddyTls cloudflare renders exactly the characterization block (unset = cloudflare)', () => {
-  assert.equal(blockFor({ ...inventory, proxyCaddyTls: 'cloudflare' }), EXPECTED_LINES.join('\n'));
+test('tlsSource acme-dns (cloudflare) renders exactly the characterization block (unset = acme-dns)', () => {
+  assert.equal(blockFor({ ...inventory, tlsSource: 'acme-dns' }), EXPECTED_LINES.join('\n'));
+  assert.equal(blockFor({ ...inventory, tlsSource: 'acme-dns', acmeDnsProvider: 'cloudflare' }), EXPECTED_LINES.join('\n'));
 });
 
-test('proxyCaddyTls letsencrypt renders the same block with every TLS clause removed', () => {
-  const block = blockFor({ ...inventory, proxyCaddyTls: 'letsencrypt' });
+test('tlsSource acme-http renders the same block with every TLS clause removed', () => {
+  const block = blockFor({ ...inventory, tlsSource: 'acme-http' });
   assert.equal(block, expectedWithClause([]));
   assert.doesNotMatch(block, /\btls\b/);
 });
 
-test('proxyCaddyTls internal renders `tls internal` in place of the Cloudflare clause', () => {
-  assert.equal(blockFor({ ...inventory, proxyCaddyTls: 'internal' }), expectedWithClause(['    tls internal']));
+test('tlsSource internal renders `tls internal` in place of the Cloudflare clause', () => {
+  assert.equal(blockFor({ ...inventory, tlsSource: 'internal' }), expectedWithClause(['    tls internal']));
 });
 
-test('proxyCaddyTls files renders the domain-derived certificate/key paths by default', () => {
+test('tlsSource files renders the domain-derived certificate/key paths by default', () => {
   assert.equal(
-    blockFor({ ...inventory, proxyCaddyTls: 'files' }),
+    blockFor({ ...inventory, tlsSource: 'files' }),
     expectedWithClause(['    tls /etc/letsencrypt/live/example.com/fullchain.pem /etc/letsencrypt/live/example.com/privkey.pem'])
   );
 });
 
-test('proxyCaddyTls files uses proxyTlsCertificate/proxyTlsKey when set', () => {
+test('tlsSource files uses proxyTlsCertificate/proxyTlsKey when set', () => {
   assert.equal(
     blockFor({
       ...inventory,
-      proxyCaddyTls: 'files',
+      tlsSource: 'files',
       proxyTlsCertificate: '/etc/ssl/example/cert.pem',
       proxyTlsKey: '/etc/ssl/example/key.pem',
     }),
@@ -327,10 +330,10 @@ test('proxyCaddyTls files uses proxyTlsCertificate/proxyTlsKey when set', () => 
   );
 });
 
-test('proxyCaddyTls files double-quotes a path holding whitespace, a double quote or a backslash, escaping only the quote (research R6)', () => {
+test('tlsSource files double-quotes a path holding whitespace, a double quote or a backslash, escaping only the quote (research R6)', () => {
   const block = blockFor({
     ...inventory,
-    proxyCaddyTls: 'files',
+    tlsSource: 'files',
     proxyTlsCertificate: '/etc/ssl/my certs/cert.pem',
     // a"b\c -- one double quote and one backslash. Live-verified against
     // Caddy v2.10.2 `caddy adapt`: inside a quoted token only \" is an
@@ -341,10 +344,19 @@ test('proxyCaddyTls files double-quotes a path holding whitespace, a double quot
 });
 
 test('a path with a backslash but no whitespace or double quote is quoted, its backslash left single (research R6)', () => {
-  const block = blockFor({ ...inventory, proxyCaddyTls: 'files', proxyTlsCertificate: String.raw`/etc/ssl/a\b.pem` });
+  const block = blockFor({ ...inventory, tlsSource: 'files', proxyTlsCertificate: String.raw`/etc/ssl/a\b.pem` });
   assert.ok(block.includes(String.raw`    tls "/etc/ssl/a\b.pem" /etc/letsencrypt/live/example.com/privkey.pem`));
 });
 
-test('caddyDriver declares usesCaddyTls for the Settings page', () => {
-  assert.equal(caddyDriver.usesCaddyTls, true);
+// Renderer backstop (research R4): checkTlsSource refuses 'external' for
+// the caddy driver before anything renders, so reaching render() with it is
+// a programming error -- never a silently certificate-less Caddyfile.
+test('render throws a programming error for tlsSource external, which caddy does not support', () => {
+  withPinnedOutpostPort(() => {
+    const inv: Inventory = { ...inventory, tlsSource: 'external' };
+    assert.throws(
+      () => render(buildRoutes(inv), buildProxyContext(inv, caddyDriver), '/etc/caddy/Caddyfile'),
+      /^Error: caddy driver cannot render tlsSource 'external' \(checkTlsSource should have refused it\)$/
+    );
+  });
 });

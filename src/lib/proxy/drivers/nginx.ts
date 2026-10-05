@@ -103,7 +103,6 @@ export const nginxDriver = fileDriver({
   // operator's own hand-authored server block's job, the same way Caddy's
   // status page block is hand-authored.
   statusPage: { suggestedPath: '/var/www/html/index.html' },
-  usesSharedCertificate: true,
   configPathNote: "nginx replaces this whole file on every apply, and refuses to replace a file it didn't generate.",
   render,
   validateCommand: () => 'nginx -t',

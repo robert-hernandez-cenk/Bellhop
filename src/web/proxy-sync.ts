@@ -54,11 +54,12 @@ export interface SyncProxyLiveResult {
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
 
-// The prune only ever makes sense for a driver/mode combination that issues
-// certificates via ACME DNS-01 through Cloudflare -- the two Caddy drivers'
-// default caddyTls mode, or Traefik's certResolver when it names one (issue
-// #51; before that, Caddy's TLS_BLOCK was the only, non-configurable path).
-// A driver/mode that never touches Cloudflare's DNS never leaves stale
+// The prune only ever makes sense for a driver/source combination that issues
+// certificates via ACME DNS-01 through Cloudflare -- the two Caddy drivers
+// under tlsSource 'acme-dns' (their default), or Traefik whenever its
+// routers name a resolver (issues #51, #72; before #51, Caddy's TLS_BLOCK
+// was the only, non-configurable path).
+// A driver/source that never touches Cloudflare's DNS never leaves stale
 // _acme-challenge TXT records behind in the first place, so there is
 // nothing here for this step to clean up.
 export function pruneAcmeDriverSkipMessage(driverId: string): string {

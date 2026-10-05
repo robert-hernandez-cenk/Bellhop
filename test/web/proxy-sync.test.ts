@@ -349,21 +349,21 @@ test('syncProxyLive (real Nginx Proxy Manager driver, fake client) pushes NPM co
 });
 
 // issue #51, User Story 4, T024: the prune now follows the active driver's
-// configured TLS mode, not just its identity -- a Caddy driver can opt a
-// deployment out of Cloudflare DNS-01 (proxyCaddyTls) without switching
-// drivers, and so can Traefik (proxyCertResolver).
-test('syncProxyLive (real caddy driver, proxyCaddyTls unset) still prunes Cloudflare', async () => {
+// configured TLS source (issue #72: tlsSource), not just its identity -- a
+// deployment opts out of Cloudflare DNS-01 with tlsSource without switching
+// drivers, for Caddy and Traefik alike.
+test('syncProxyLive (real caddy driver, tlsSource unset) still prunes Cloudflare', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
   const logs = await captureLogs(() =>
     syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
   );
-  assert.ok(cloudflare.history.length > 0, 'an unset proxyCaddyTls still means cloudflare, so the prune runs');
+  assert.ok(cloudflare.history.length > 0, 'an unset tlsSource still means acme-dns via cloudflare, so the prune runs');
   assert.equal(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('caddy')), false);
 });
 
-test("syncProxyLive (real caddy driver, proxyCaddyTls 'internal') skips the ACME prune, never touching Cloudflare", async () => {
-  const internalInventory: Inventory = { ...inventory, proxyCaddyTls: 'internal' };
+test("syncProxyLive (real caddy driver, tlsSource 'internal') skips the ACME prune, never touching Cloudflare", async () => {
+  const internalInventory: Inventory = { ...inventory, tlsSource: 'internal' };
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
   const logs = await captureLogs(() =>
@@ -377,8 +377,8 @@ test("syncProxyLive (real caddy driver, proxyCaddyTls 'internal') skips the ACME
   );
 });
 
-test("syncProxyLive (real traefik driver, proxyCertResolver 'none') skips the ACME prune, never touching Cloudflare", async () => {
-  const traefikInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'traefik', proxyCertResolver: 'none' };
+test("syncProxyLive (real traefik driver, tlsSource 'external') skips the ACME prune, never touching Cloudflare", async () => {
+  const traefikInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'traefik', tlsSource: 'external' };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
   const logs = await captureLogs(() =>

@@ -49,7 +49,7 @@ function setup(inventory: Inventory, client: FakeNpmClient) {
   const driver = createNpmDriver({ clientFor: () => client });
   const deps: DriverDeps = { ssh: new FakeSSHClient(defaultResponder), inventory, proxyHost: 'pve1', configPath: null };
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, nginxProxyManagerDriver);
   return {
     driver,
     deps,
@@ -270,7 +270,7 @@ test('NPM: with no covering certificate, the preview says a certificate will be 
 test('planNpmSync picks the qualifying certificate with the latest expires_on for a new host, but keeps an existing host on its current one', async () => {
   const inventory = inv([TWO_ROUTES[1]]);
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, nginxProxyManagerDriver);
   const newer: NpmCertificate = { ...WILDCARD, id: 8, nice_name: 'Newer wildcard', expires_on: '2100-01-01 00:00:00' };
   const now = new Date('2026-09-29T00:00:00Z');
 
@@ -298,7 +298,7 @@ test('nginxProxyManagerDriver metadata matches the contract', () => {
   assert.equal(nginxProxyManagerDriver.capabilities.acmeDns01ViaCloudflare(inv([])), false);
   assert.equal(nginxProxyManagerDriver.defaultConfigPath, null);
   assert.equal(nginxProxyManagerDriver.statusPage, null);
-  assert.equal(nginxProxyManagerDriver.usesSharedCertificate, undefined);
+  assert.deepEqual(nginxProxyManagerDriver.capabilities.tlsSources, ['acme-http']);
   assert.equal(nginxProxyManagerDriver.configPathNote, undefined);
 });
 
@@ -342,12 +342,12 @@ test('planNpmSync: a mixed-case route hostname against an owned host holding the
 
   const [route] = buildRoutes(inventory);
   const mixed = { ...route, hostnames: ['App.Example.com', 'WWW.example.com'] };
-  const plan = planNpmSync([mixed], buildProxyContext(inventory), await client.listProxyHosts(), [WILDCARD]);
+  const plan = planNpmSync([mixed], buildProxyContext(inventory, nginxProxyManagerDriver), await client.listProxyHosts(), [WILDCARD]);
   assert.deepEqual(plan.routes.map((r) => r.action), ['unchanged']);
   assert.deepEqual(plan.deletes, []);
 
   // And a new mixed-case route is created with lower-cased names.
-  const fresh = planNpmSync([mixed], buildProxyContext(inventory), [], [WILDCARD]);
+  const fresh = planNpmSync([mixed], buildProxyContext(inventory, nginxProxyManagerDriver), [], [WILDCARD]);
   const create = fresh.routes[0];
   assert.deepEqual(create.action === 'create' && create.desired.domain_names, ['app.example.com', 'www.example.com']);
 });
@@ -560,7 +560,7 @@ test('M1: a three-host chain (A releases a name B claims, B releases a name C cl
 test('M1: updates with no name moving between them keep route order', () => {
   const inventory = inv(TWO_ROUTES);
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, nginxProxyManagerDriver);
   const empty = planNpmSync(routes, ctx, [], [WILDCARD]);
   // Both hosts exist with a drifted port, ids in reverse of route order.
   const hosts = empty.routes.map((r, i) => {
@@ -691,7 +691,7 @@ test('US3: a forward-gated route with /api/* and /health exempt carries the whol
 test("US3: advanced_config is the nginx driver's own server body with only the two variables swapped (one renderer, FR-016)", async () => {
   await withPinnedOutpostPort(async () => {
     const inventory = gatedInv({ unauthenticatedPaths: ['/api/*', '/health'] });
-    const nginxFile = renderNginx(buildRoutes(inventory), buildProxyContext(inventory), '/etc/nginx/conf.d/bellhop.conf')[0].content;
+    const nginxFile = renderNginx(buildRoutes(inventory), buildProxyContext(inventory, nginxProxyManagerDriver), '/etc/nginx/conf.d/bellhop.conf')[0].content;
     const lines = nginxFile.split('\n');
     // The nginx driver separates its TLS lines from the body with one blank line.
     const tlsEnd = lines.findIndex((l) => l.startsWith('    ssl_certificate_key '));
@@ -825,7 +825,7 @@ test('chooseCertificate: the current certificate is kept while it qualifies; oth
 test('planNpmSync takes "now": the same certificate list plans differently before and after its expiry', () => {
   const inventory = inv([TWO_ROUTES[1]]);
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, nginxProxyManagerDriver);
   const short = cert(6, ['wiki.example.com'], '2027-01-01 00:00:00');
   const before = planNpmSync(routes, ctx, [], [short], new Date('2026-12-31T23:59:59Z')).routes[0];
   const after = planNpmSync(routes, ctx, [], [short], new Date('2027-01-01T00:00:01Z')).routes[0];
@@ -1111,7 +1111,7 @@ test('F2: claimants of several kinds are grouped by kind, proxy hosts first; ids
 test('F2: planNpmSync takes redirection and 404 hosts as an optional last argument', () => {
   const inventory = inv([TWO_ROUTES[1]]);
   const routes = buildRoutes(inventory);
-  const ctx = buildProxyContext(inventory);
+  const ctx = buildProxyContext(inventory, nginxProxyManagerDriver);
   const plan = planNpmSync(routes, ctx, [], [WILDCARD], NOW, { redirectionHosts: [], deadHosts: [{ id: 7, domain_names: ['wiki.example.com'] }] });
   assert.deepEqual(plan.routes[0].action === 'conflict' && plan.routes[0].claimants, [{ kind: 'dead', id: 7 }]);
 });

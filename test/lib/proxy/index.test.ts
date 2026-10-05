@@ -122,7 +122,8 @@ test('Traefik driver metadata: label, capabilities, default config path, status 
   assert.equal(traefikDriver.statusPage, null);
   assert.equal(traefikDriver.usesCertResolver, true);
   assert.equal(traefikDriver.usesApiUrl, true);
-  assert.equal(traefikDriver.usesSharedCertificate, undefined);
+  assert.deepEqual(traefikDriver.capabilities.tlsSources, ['acme-dns', 'acme-http', 'files', 'external']);
+  assert.equal(traefikDriver.capabilities.defaultTlsSource, 'acme-dns');
 });
 
 test('getDriver returns haproxyDriver when proxyDriver is "haproxy" (issue #32)', () => {
@@ -173,17 +174,25 @@ test('Caddy driver metadata: label, defaultConfigPath, statusPage', () => {
 });
 
 // issue #30 x #33: nginx is a managed, file-configured driver with its own
-// label and suggested status page, and the only one serving the shared
-// proxyTlsCertificate/proxyTlsKey certificate.
-test('nginx driver metadata: label, defaultConfigPath, statusPage, usesSharedCertificate, managesProxy', () => {
+// label and suggested status page, serving only the shared
+// proxyTlsCertificate/proxyTlsKey certificate (tlsSource 'files', issue #72).
+test('nginx driver metadata: label, defaultConfigPath, statusPage, tlsSources, managesProxy', () => {
   assert.equal(nginxDriver.label, 'nginx');
   assert.equal(nginxDriver.defaultConfigPath, '/etc/nginx/conf.d/bellhop.conf');
   assert.deepEqual(nginxDriver.statusPage, { suggestedPath: '/var/www/html/index.html' });
-  assert.equal(nginxDriver.usesSharedCertificate, true);
+  assert.deepEqual(nginxDriver.capabilities.tlsSources, ['files']);
+  assert.equal(nginxDriver.capabilities.defaultTlsSource, 'files');
   assert.equal(managesProxy(nginxDriver), true);
   assert.match(nginxDriver.configPathNote ?? '', /replaces this whole file/);
-  assert.equal(caddyDriver.usesSharedCertificate ?? false, false);
-  assert.equal(noneDriver.usesSharedCertificate ?? false, false);
+});
+
+// issue #72: the per-driver TLS hints the Settings page used to read are
+// gone -- every driver's TLS behavior comes from its tlsSources instead.
+test('no driver carries the removed usesCaddyTls/usesSharedCertificate hints (issue #72)', () => {
+  for (const driver of listDrivers()) {
+    assert.equal('usesCaddyTls' in driver, false, driver.id);
+    assert.equal('usesSharedCertificate' in driver, false, driver.id);
+  }
 });
 
 test('None driver metadata: label, defaultConfigPath, statusPage, capabilities', () => {
@@ -197,42 +206,42 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
 
 // issue #51, User Story 4, T023 (contract "Cloudflare prune decision"): each
 // driver's acmeDns01ViaCloudflare now actually reads the inventory handed to
-// it rather than returning a fixed value regardless of mode.
-test('caddyDriver/caddyApiDriver.capabilities.acmeDns01ViaCloudflare: true for unset/cloudflare, false for letsencrypt/internal/files', () => {
+// it rather than returning a fixed value regardless of mode. Since issue
+// #72 it reads tlsSource (interim, until User Story 3 replaces it).
+test('caddyDriver/caddyApiDriver.capabilities.acmeDns01ViaCloudflare: true for unset/acme-dns, false for acme-http/internal/files', () => {
   for (const driver of [caddyDriver, caddyApiDriver]) {
     assert.equal(driver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true, `${driver.id}: unset`);
     assert.equal(
-      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCaddyTls: 'cloudflare' })),
+      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'acme-dns' })),
       true,
-      `${driver.id}: cloudflare`
+      `${driver.id}: acme-dns`
     );
-    for (const mode of ['letsencrypt', 'internal', 'files'] as const) {
+    for (const tlsSource of ['acme-http', 'internal', 'files'] as const) {
       assert.equal(
-        driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCaddyTls: mode })),
+        driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource })),
         false,
-        `${driver.id}: ${mode}`
+        `${driver.id}: ${tlsSource}`
       );
     }
   }
 });
 
-test("traefikDriver.capabilities.acmeDns01ViaCloudflare: true for unset/a named resolver, false only for 'none'", () => {
+test('traefikDriver.capabilities.acmeDns01ViaCloudflare: true whenever routers name a resolver (unset/acme-dns/acme-http), false for files/external', () => {
   assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true);
   assert.equal(
     traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCertResolver: 'my-resolver' })),
     true
   );
-  assert.equal(
-    traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCertResolver: 'none' })),
-    false
-  );
+  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'acme-http' })), true);
+  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'files' })), false);
+  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'external' })), false);
 });
 
 test('nginx/nginx-proxy-manager/haproxy/none drivers: acmeDns01ViaCloudflare is always false, regardless of inventory', () => {
   for (const driver of [nginxDriver, nginxProxyManagerDriver, haproxyDriver, noneDriver]) {
     assert.equal(driver.capabilities.acmeDns01ViaCloudflare(baseInventory()), false, driver.id);
     assert.equal(
-      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCaddyTls: 'cloudflare', proxyCertResolver: 'cloudflare' })),
+      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'acme-dns', proxyCertResolver: 'cloudflare' })),
       false,
       driver.id
     );
@@ -248,7 +257,8 @@ test('None driver: plan() previews the fixed message, apply() is a no-op with no
       externalPort: 443,
       tls: { certificatePath: '/etc/ssl/example.pem', keyPath: '/etc/ssl/example.key' },
       certResolver: 'cloudflare',
-      caddyTls: 'cloudflare',
+      tlsSource: 'external',
+      acmeDnsProvider: 'cloudflare',
     },
     deps
   );
@@ -395,7 +405,7 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
     // buildProxyContext are driver-agnostic, computed once by sync-proxy
     // before it ever calls into the active driver.
     const expectedRoutes = buildRoutes(inv);
-    const expectedCtx = buildProxyContext(inv);
+    const expectedCtx = buildProxyContext(inv, testDriver);
 
     const ssh = new FakeSSHClient(() => ({ stdout: 'live-test-driver-content', stderr: '', code: 0 }));
     const syncResult = await runSyncProxy({}, { ssh, inventory: inv });

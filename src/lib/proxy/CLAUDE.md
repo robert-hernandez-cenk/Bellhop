@@ -8,7 +8,7 @@ Seven drivers are registered: six that manage a proxy (`caddy`, `caddy-api`, `ng
 
 Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.md`; one line each here.
 
-- Caddy (and Caddy admin API): the ACME DNS resolvers (`ACME_DNS_RESOLVERS`) are fixed within `proxyCaddyTls` `cloudflare` mode (the default, one mode among four since #51). See `src/lib/proxy/drivers/CLAUDE.md`.
+- Caddy (and Caddy admin API): the ACME DNS resolvers (`ACME_DNS_RESOLVERS`) are fixed under `tlsSource: acme-dns` with `acmeDnsProvider: cloudflare` (the default, and the only provider since #72; one source among four the Caddy drivers support). See `src/lib/proxy/drivers/CLAUDE.md`.
 - nginx (#30): CA-bundle path and `conf.d` default config path assume a Debian/Ubuntu layout; the shared-certificate default is derived from `domain`. See `src/lib/proxy/drivers/CLAUDE.md`.
 - Nginx Proxy Manager (#31): tested against NPM 2.16 only. See `src/lib/proxy/drivers/CLAUDE.md`.
 - HAProxy (#32): main config path, CA bundle, and reload command are fixed Debian/Ubuntu package defaults. See `src/lib/proxy/drivers/CLAUDE.md`.
@@ -18,7 +18,10 @@ Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.
 ## File responsibilities
 
 - `routes.ts`: `buildRoutes(inventory)` derives a proxy-neutral `ProxyRoute[]` from `hosts[]`/`guests[]`/`externalSites[]`: skip `proxyManual` and no-`subdomains` entries; default `port` to `80`; throw the missing-authentik error when a forward-gated route exists but no entry has `authentik: true` with an `ip`. `buildRouteForEntry` derives one entry's route alone.
-- `routes.ts`: `buildProxyContext(inventory)` derives the shared `ProxyContext`: the Authentik outpost's `ip`/`port`; the fixed `externalPort` `443`; `tls: { certificatePath, keyPath }` (#30), the shared certificate/key pair a driver that can't obtain its own per-site certificate serves on every route, from `proxyTlsCertificate`/`proxyTlsKey` when set, else certbot's default path for the inventory `domain` (always present because `domain` is mandatory, so a driver never handles "no certificate"; the Caddy driver ignores it outside `files` mode); `certResolver` (Traefik).
+- `routes.ts`: `buildProxyContext(inventory, driver)` derives the shared `ProxyContext`: the Authentik outpost's `ip`/`port`; the fixed `externalPort` `443`; `tls: { certificatePath, keyPath }` (#30), the shared certificate/key pair served under `tlsSource: files`, from `proxyTlsCertificate`/`proxyTlsKey` when set, else certbot's default path for the inventory `domain` (always present because `domain` is mandatory, so a driver never handles "no certificate"); `certResolver` (Traefik, read under `acme-dns`/`acme-http`); `tlsSource`, the effective TLS source (#72: the setting, else the active driver's `defaultTlsSource`, which is why it takes the driver; both callers, `runSyncProxy` and `convert-caddyfile`, already hold it); `acmeDnsProvider` (default `cloudflare`). Every field is resolved here so a renderer never handles an unset value.
+- `tls.ts` (#72): `effectiveTlsSource(inventory, driver)`, `acmeDnsProvider(inventory)`, `checkTlsSource(inventory, driver)` (the refusal message, or `null`), `usesCloudflareDns01(inventory, driver)`. Imports the driver type only, so `routes.ts` can import it without a cycle.
+- `legacy-tls.ts` (#72): pure `convertLegacyTlsSettings`, the one-time conversion of the removed `proxyCaddyTls` and the old reserved `proxyCertResolver: none` into `tlsSource`. Imports only `ids.ts`.
+- `ids.ts`: dependency-free ids and lists shared by the schema, the registry and `ProxyContext`: `PROXY_DRIVER_IDS`, `DEFAULT_PROXY_DRIVER_ID`, `TLS_SOURCES`, `ACME_DNS_PROVIDERS`, `DEFAULT_ACME_DNS_PROVIDER`.
 - A route never carries its auth tier, only its `mode` (`'ungated' | 'forward' | 'oidc'`, plus a forward route's parsed `PathPattern[]` and raw `string[]` `unauthenticatedPaths` in stored order). Tier enforcement stays entirely Authentik's job (`sync-authentik`).
 - `driver.ts`: the `ReverseProxyDriver` interface and `checkCapabilities(routes, driver)`.
 - `file-driver.ts`: `fileDriver(...)`, the shared builder for file-configured drivers.
@@ -31,10 +34,11 @@ Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.
 `driver.ts` defines:
 
 - `id`; `label` (the Settings page dropdown's option text).
-- `capabilities`: `authModes`, and `acmeDns01ViaCloudflare`, which is `(inventory: Inventory) => boolean` (#51), not a fixed boolean, because a driver's Cloudflare DNS-01 usage can depend on a setting (Caddy's `proxyCaddyTls`, Traefik's `proxyCertResolver`). It decides whether `syncProxyLive` runs `prune-acme-challenges` (see `src/commands/networking/CLAUDE.md` › "prune-acme-challenges" › "When it runs").
+- `capabilities`: `authModes`; `tlsSources` (the TLS sources it can render, in `TLS_SOURCES` order) and `defaultTlsSource` (what an unset `tlsSource` means for it; always in `tlsSources`) (#72); and `acmeDns01ViaCloudflare`, which is `(inventory: Inventory) => boolean` (#51), not a fixed boolean, because a driver's Cloudflare DNS-01 usage depends on `tlsSource` (Caddy: `acme-dns`; Traefik: `acme-dns`/`acme-http`). It decides whether `syncProxyLive` runs `prune-acme-challenges` (see `src/commands/networking/CLAUDE.md` › "prune-acme-challenges" › "When it runs").
+- Each renderer switches on `ctx.tlsSource` exhaustively and throws a programming-error `Error` (`<driver> driver cannot render tlsSource '<x>' (checkTlsSource should have refused it)`) for a source its driver doesn't support, so a missed check never renders a silently wrong configuration.
 - `defaultConfigPath: string | null` (`null` = driver uses no configuration file).
 - `statusPage: { suggestedPath: string } | null` (`null` = serves no status page).
-- Six optional Settings-page hints: `usesSharedCertificate` (page shows `proxyTlsCertificate`/`proxyTlsKey`; nginx only); `usesCertResolver`/`usesApiUrl` (page shows Proxy cert resolver/Proxy API URL; Traefik only, #35); `usesCaddyTls` (page shows the Caddy TLS dropdown and, with value `files`, the TLS path fields; both Caddy drivers, #51); `usesNpmApi` (page shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` on the Proxy tab; Nginx Proxy Manager only, #73); `configPathNote` (a sentence appended to the Proxy config path help).
+- Four optional Settings-page hints: `usesCertResolver`/`usesApiUrl` (page shows Proxy cert resolver/Proxy API URL; Traefik only, #35); `usesNpmApi` (page shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` on the Proxy tab; Nginx Proxy Manager only, #73); `configPathNote` (a sentence appended to the Proxy config path help). The TLS fields are driven by `capabilities.tlsSources`/`defaultTlsSource` instead; the old `usesSharedCertificate`/`usesCaddyTls` hints were removed (#72).
 - `plan()`/`apply()`/`snapshot()`.
 
 `fileDriver` is the shared builder for file-configured drivers (Caddy, nginx, HAProxy, Traefik); three of the five analysed mechanisms have no file at all (e.g. Caddy's admin API), so the top-level contract is "reconcile these routes", not "render this file".
@@ -51,7 +55,7 @@ Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.
 `src/lib/proxy/drivers/none.ts`'s `noneDriver` (#33; not every deployment has a Bellhop-managed proxy, whether hand-configured or absent), selected with `proxyDriver: 'none'`:
 
 - `label` `'No proxy'`; `defaultConfigPath` and `statusPage` both `null`.
-- `capabilities` accept both `forward` and `oidc` (so `checkCapabilities` never rejects a gated entry; the assumption is the operator's own proxy enforces `forward_auth`) with `acmeDns01ViaCloudflare: () => false`.
+- `capabilities` accept both `forward` and `oidc` (so `checkCapabilities` never rejects a gated entry; the assumption is the operator's own proxy enforces `forward_auth`) with `acmeDns01ViaCloudflare: () => false`; `tlsSources` is all five (it renders nothing, so any value is acceptable) and `defaultTlsSource` is `external`.
 - `plan()` returns `{ preview: NO_PROXY_SYNC_MESSAGE, payload: null }` with no routes/context consulted; `apply()` is a no-op; `snapshot()` throws `NO_PROXY_STATUS_PAGE_ERROR`. Both constants live in `driver.ts` beside `managesProxy` so every caller shares the text.
 - `runSyncProxy` (`src/commands/networking/sync-proxy.ts`) checks `managesProxy(driver)` right after `getDriver` and, when false, returns `{ proxyHost: null, driver: driver.id, preview: NO_PROXY_SYNC_MESSAGE, applied: false }` (`applied` always `false`, even with `--apply`) before `driverDeps`/`buildRoutes`/`checkCapabilities` run, which would otherwise throw over a missing `proxy: true` entry or missing `authentik` ip. `SyncProxyResult.proxyHost` is therefore `string | null`, and callers key on that, not on `applied`: the CLI and the `sync-proxy` operation (`src/operations/maintenance.ts`) print/log `result.preview` instead of their usual "Generated/Wrote ... for <host>" lines whenever it's `null` (dry run and `--apply` alike); `syncProxyLive` and `migrate-guest`'s post-move push log it via `logInfo`; `migrate-guest` also skips its "Pushing the new IP ... live via the proxy" line when `managesProxy(getDriver(inventory))` is false.
 
@@ -67,7 +71,7 @@ Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.
 
 ## `fileDriver(def)`
 
-`fileDriver` owns the full render -> back up -> write -> validate -> restore-or-reload cycle for a file-configured proxy. A new driver supplies `render()`, its validate command, its reload command, and a required `label` and `statusPage` (no defaults, so a driver can't silently show its bare id in the Settings dropdown or opt out of a status page by omission). `usesSharedCertificate`/`configPathNote` are optional and passed through; `configFiles()` optionally overrides which paths `snapshot()` reads (default `[configPath]`).
+`fileDriver` owns the full render -> back up -> write -> validate -> restore-or-reload cycle for a file-configured proxy. A new driver supplies `render()`, its validate command, its reload command, and a required `label` and `statusPage` (no defaults, so a driver can't silently show its bare id in the Settings dropdown or opt out of a status page by omission). `usesCertResolver`/`usesApiUrl`/`configPathNote` are optional and passed through; `configFiles()` optionally overrides which paths `snapshot()` reads (default `[configPath]`).
 
 Definition shape:
 

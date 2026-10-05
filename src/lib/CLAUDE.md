@@ -87,9 +87,9 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath` (#124): readers fail with a named error, never a hardcoded fallback (a wrong IP is worse than none), ending with `settingFix(key, valueHint)` (`settings-hint.ts`, #20), which names both `set-config` and the Settings page.
 - `customScriptsRepo`/`customScriptsBranch` (#11): each validated (owner/repo; git branch name). Both-or-neither is not in the schema (`set-config` writes one key at a time); `customScriptSource()` (`app-source.ts`) enforces it on read.
 - `proxyDriver`/`proxyConfigPath`: `getDriver()`'s driver and its config file.
-- `proxyCaddyTls` (#51): `cloudflare` (default), `letsencrypt`, `internal`, `files`; inert for non-Caddy drivers.
-- `proxyTlsCertificate`/`proxyTlsKey` (#30): shared cert/key for nginx and Caddy `files` mode.
-- `proxyCertResolver`/`proxyApiUrl` (#35): Traefik only; `proxyCertResolver` also admits reserved `none`.
+- `tlsSource` (#72): `acme-dns`, `acme-http`, `internal`, `files`, `external`; unset means the active driver's `defaultTlsSource`. `acmeDnsProvider` (#72): `cloudflare` only (the default). Both are enum-checked only, never against the driver (`checkTlsSource` in `src/lib/proxy/tls.ts` runs where configuration is produced), so switching drivers never makes the inventory unloadable. They replaced `proxyCaddyTls` (#51); a leftover `proxyCaddyTls` meta row is ignored by `loadInventory` (it reads only `SETTINGS_KEYS`) and left in place by `saveInventory`.
+- `proxyTlsCertificate`/`proxyTlsKey` (#30): the shared cert/key pair served under `tlsSource: files`.
+- `proxyCertResolver`/`proxyApiUrl` (#35): Traefik only; `proxyCertResolver` is read under `acme-dns`/`acme-http`, and no value is reserved (`none` was, until #72's `external` replaced it).
 - `pveUserRealm`/`pveCreatorRole` (#53): unset `pveUserRealm` = creator grant off.
 - #64's twelve integration settings (`authentikApiUrl` + eight other `authentik*`, `webUiAuthMode`, `npmApiUrl`, `npmApiEmail`): `settings-defs.ts`'s `MovedSettingsSchema`, spread into `SettingsSchema`.
 

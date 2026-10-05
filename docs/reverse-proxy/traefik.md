@@ -45,9 +45,9 @@ up:
 - **A `websecure` entry point.** Every Bellhop router is sent to an entry
   point of exactly that name (issue #35: fixed, not configurable).
 - **A certificate resolver**, matching `proxyCertResolver` (unset means
-  `cloudflare`) — unless you set `proxyCertResolver` to the reserved value
-  `none`, in which case no resolver is needed at all; see [Certificate
-  resolver](#certificate-resolver) below. Bellhop only names the resolver
+  `cloudflare`) — only under `tlsSource` `acme-dns` (the default) or
+  `acme-http`; under `files` or `external` no resolver is needed at all;
+  see [TLS sources](#tls-sources) below. Bellhop only names the resolver
   on each router's `tls`
   block — issuing certificates (DNS-01 with Cloudflare, in the common case)
   is entirely this resolver's own configuration.
@@ -111,28 +111,50 @@ certificatesResolvers:
 With a resolver named `letsencrypt` instead of `cloudflare`, point Bellhop
 at it: `bellhop set-config proxyCertResolver letsencrypt --apply`.
 
-## Certificate resolver
+## TLS sources
 
-Setting `proxyCertResolver` to the reserved name `none` tells every
-Bellhop router to enable TLS without naming any resolver at all
-(`tls: {}` instead of `tls: { certResolver: <name> }`) — Traefik then
-serves whatever certificate its file provider loads for that hostname
-(a `tls.certificates` entry in a dynamic-configuration file of your own,
-alongside Bellhop's, including one covering a self-signed certificate you
-generated yourself) or, failing that, its own default certificate. This is
-for an operator who manages certificates entirely through the file
-provider rather than through any ACME resolver. `none` is reserved by
-Bellhop: if your static configuration defines a resolver literally named
-`none`, Bellhop can't reference it — rename that resolver. With
-`proxyCertResolver` unset or set to any other name, output is unchanged
-from today (`tls: { certResolver: <name> }` on every router).
+Where certificates come from is the driver-independent `tlsSource`
+setting (issue #72 — see [TLS sources](README.md#tls-sources) for every
+driver). Traefik supports four of the five:
+
+| `tlsSource` | Every router's `tls` | What else Bellhop writes |
+|---|---|---|
+| unset / `acme-dns` (the default), `acme-http` | `tls: { certResolver: <proxyCertResolver> }` | Nothing — the resolver your static configuration defines obtains the certificate; which challenge it uses (DNS-01 or HTTP-01) is configured there, not by Bellhop |
+| `files` | `tls: {}` | A top-level `tls.certificates` entry naming `proxyTlsCertificate`/`proxyTlsKey` (unset: certbot's own path for the inventory domain), after `http:` in the same file |
+| `external` | `tls: {}` | Nothing — Traefik serves whatever certificate its file provider loads for that hostname from a file of your own, or its own default certificate |
+
+`internal` is refused: Traefik has no internal CA of its own.
+
+Under `files`, the file gains, for a domain of `example.com`:
+
+```yaml
+tls:
+  certificates:
+    - certFile: /etc/letsencrypt/live/example.com/fullchain.pem
+      keyFile: /etc/letsencrypt/live/example.com/privkey.pem
+```
+
+Traefik's file provider adds that pair to its default certificate store
+and selects it by SNI for a router with `tls: {}`. Bellhop writes no
+`tls.stores` default-certificate override, so a default store of your own
+stays untouched. The files must exist and be readable by the Traefik
+process on the proxy host — Bellhop doesn't check them, and Traefik logs a
+missing or unreadable pair rather than rejecting the file, so check
+Traefik's own log after the first apply. (Not verified against a live
+Traefik in issue #72 — the shape is Traefik's documented v3
+dynamic-configuration format.)
+
+`external` replaces the old reserved `proxyCertResolver: none` and
+renders byte-for-byte what it did; `none` is now an ordinary resolver
+name. Under `acme-dns`/`acme-http` the output is unchanged from before
+(`tls: { certResolver: <name> }` on every router).
 
 The web UI's push-live step runs the stale `_acme-challenge` cleanup
-(`prune-acme-challenges`) under this driver for any resolver name except
-`none` — a named resolver may be obtaining its own certificate (through
-Cloudflare DNS-01 or otherwise) and so may leave one of those records
-behind; `none` never touches an ACME resolver at all, so there's nothing
-to clean up.
+(`prune-acme-challenges`) under this driver whenever its routers name a
+resolver (`acme-dns` or `acme-http`) — a named resolver may be obtaining
+its own certificate through Cloudflare DNS-01 and so may leave one of those
+records behind; `files` and `external` never touch an ACME resolver at
+all, so there's nothing to clean up.
 
 ## Rendered file
 

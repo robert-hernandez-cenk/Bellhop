@@ -153,7 +153,7 @@ export async function runConvertCaddyfile(
   if (capabilityErrors.length > 0) {
     throw new Error(capabilityErrors.map((e) => e.message).join('\n'));
   }
-  const plan = planCaddyConfig(adapted, routes, buildProxyContext(deps.inventory), proxyHost);
+  const plan = planCaddyConfig(adapted, routes, buildProxyContext(deps.inventory, caddyApiDriver), proxyHost);
   // The conversion writes the adapted configuration even when the planner
   // adds nothing to it (plan.config is null only when it equals `adapted`).
   const toWrite = plan.config ?? adapted;

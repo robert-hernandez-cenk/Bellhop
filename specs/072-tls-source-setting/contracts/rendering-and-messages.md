@@ -36,7 +36,7 @@ Output unchanged; their single supported source is their default.
 ## Refusal (`checkTlsSource`, thrown by `runSyncProxy` and `convert-caddyfile`)
 
 ```text
-tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply
+tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page
 ```
 
 - Raised before `driverDeps`, `buildRoutes`, any preview, or any SSH call;

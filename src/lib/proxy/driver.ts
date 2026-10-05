@@ -14,17 +14,17 @@ export interface DriverCapabilities {
   authModes: ProxyAuthMode[];
   // Whether the active driver, for this inventory, issues certificates via
   // ACME DNS-01 through Cloudflare -- a function rather than a fixed
-  // boolean (issue #51) since Caddy's proxyCaddyTls and Traefik's
-  // proxyCertResolver can each opt a deployment out of Cloudflare without
-  // switching drivers: both Caddy drivers return true only in the
-  // 'cloudflare' caddyTls mode (caddyAcmeDns01ViaCloudflare,
-  // src/lib/proxy/drivers/caddy.ts) and Traefik returns true for any named
-  // resolver but false for the reserved 'none' (src/lib/proxy/drivers/
+  // boolean (issue #51) since the tlsSource setting (issue #72) can opt a
+  // deployment out of Cloudflare without switching drivers: both Caddy
+  // drivers return true only under 'acme-dns' (caddyAcmeDns01ViaCloudflare,
+  // src/lib/proxy/drivers/caddy.ts) and Traefik whenever its routers name a
+  // resolver, under 'acme-dns' or 'acme-http' (src/lib/proxy/drivers/
   // traefik.ts); every other driver always returns false, since it never
   // touches Cloudflare's DNS at all. prune-acme-challenges
   // (src/web/proxy-sync.ts) calls this with the live inventory before ever
-  // touching Cloudflare: a driver/mode combination that never touches
-  // Cloudflare DNS leaves nothing behind for it to clean up.
+  // touching Cloudflare: a driver/source combination that never touches
+  // Cloudflare DNS leaves nothing behind for it to clean up. Interim: issue
+  // #72's User Story 3 replaces it with usesCloudflareDns01 (./tls.ts).
   acmeDns01ViaCloudflare: (inventory: Inventory) => boolean;
   // Which TLS sources this driver can render (issue #72), and the one used
   // when the tlsSource setting is unset -- defaultTlsSource must be in
@@ -74,19 +74,12 @@ export interface ReverseProxyDriver {
   // render-status-page checks managesProxy() first, then this, then
   // statusPagePath.
   statusPage: { suggestedPath: string } | null;
-  // true = every site this driver renders is served with the one shared
-  // certificate/key pair the proxyTlsCertificate/proxyTlsKey settings name
-  // (ProxyContext.tls) -- nginx only (issue #30), since it cannot obtain
-  // certificates itself. The Settings page shows those two fields only for
-  // a driver that sets this. Absent = false (Caddy gets its own certificates
-  // via DNS-01; 'none' writes nothing), so a driver that never reads those
-  // settings needs no declaration.
-  usesSharedCertificate?: boolean;
   // true = this driver reads the proxyCertResolver setting (issue #35,
-  // Traefik only, which names its certificate resolver per route rather
-  // than obtaining a certificate itself the way Caddy's DNS-01 does or
-  // sharing one file pair the way nginx does). The Settings page shows that
-  // field only for a driver that sets this. Absent = false.
+  // Traefik only, which names its certificate resolver per route under
+  // tlsSource 'acme-dns'/'acme-http'). The Settings page shows that field
+  // only for a driver that sets this. Absent = false. Whether the
+  // proxyTlsCertificate/proxyTlsKey fields apply is no longer a driver hint
+  // but the effective tlsSource (issue #72): they are read under 'files'.
   usesCertResolver?: boolean;
   // true = this driver reads the proxyApiUrl setting (issue #35, Traefik
   // only) to validate a rendered file against the proxy's own read-only
@@ -94,15 +87,6 @@ export interface ReverseProxyDriver {
   // driver that sets this. Absent = false (most drivers validate locally
   // on the proxy host instead, e.g. `caddy validate`/`nginx -t`).
   usesApiUrl?: boolean;
-  // true = this driver reads the proxyCaddyTls setting (issue #51, the two
-  // Caddy drivers only, which can issue a certificate four different ways
-  // -- Cloudflare DNS-01, a public Let's Encrypt HTTP/TLS-ALPN challenge,
-  // Caddy's own internal CA, or a shared certificate/key file pair -- where
-  // every other driver either always obtains its own certificate one fixed
-  // way or shares ctx.tls/proxyCertResolver instead. The Settings page
-  // shows the Caddy TLS dropdown only for a driver that sets this. Absent
-  // = false.
-  usesCaddyTls?: boolean;
   // true = this driver reads the npmApiUrl/npmApiEmail/npmApiPassword
   // settings (issue #73, Nginx Proxy Manager only) to reach its REST API
   // and sign in to it. The Settings page shows those three fields on the

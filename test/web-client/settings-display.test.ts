@@ -367,7 +367,6 @@ test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab, en
     'proxyDriver',
     'proxyConfigPath',
     'statusPagePath',
-    'proxyCaddyTls',
     'tlsSource',
     'acmeDnsProvider',
     'proxyTlsCertificate',

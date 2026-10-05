@@ -42,7 +42,7 @@ function driverDeps(ssh: FakeSSHClient, inv: Inventory = inventory) {
 }
 
 async function plan(ssh: FakeSSHClient, inv: Inventory = inventory) {
-  return caddyApiDriver.plan(buildRoutes(inv), buildProxyContext(inv), driverDeps(ssh, inv));
+  return caddyApiDriver.plan(buildRoutes(inv), buildProxyContext(inv, caddyApiDriver), driverDeps(ssh, inv));
 }
 
 test('declares what the Settings page and capability checks read', () => {
@@ -55,8 +55,9 @@ test('declares what the Settings page and capability checks read', () => {
   assert.deepEqual(caddyApiDriver.capabilities.authModes, ['forward', 'oidc']);
   assert.equal(caddyApiDriver.capabilities.acmeDns01ViaCloudflare(inventory), true);
   assert.deepEqual(caddyApiDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });
-  // issue #51: the Settings page shows the Caddy TLS dropdown for it.
-  assert.equal(caddyApiDriver.usesCaddyTls, true);
+  // issue #72: the same TLS sources as the file-based Caddy driver.
+  assert.deepEqual(caddyApiDriver.capabilities.tlsSources, ['acme-dns', 'acme-http', 'internal', 'files']);
+  assert.equal(caddyApiDriver.capabilities.defaultTlsSource, 'acme-dns');
 });
 
 test('a dry run reads once, with the Caddyfile-mode check, and writes nothing (FR-003)', async () => {
@@ -81,12 +82,12 @@ test('apply PATCHes exactly the planned configuration with the read Etag', async
     body.apps.http.servers.srv0.routes.map((r: { '@id'?: string }) => r['@id'] ?? 'www'),
     ['bellhop-route-media.example.com', 'bellhop-route-web.example.com', 'www']
   );
-  const expected = planCaddyConfig(handAuthored, buildRoutes(inventory), buildProxyContext(inventory), 'pve1').config;
+  const expected = planCaddyConfig(handAuthored, buildRoutes(inventory), buildProxyContext(inventory, caddyApiDriver), 'pve1').config;
   assert.deepEqual(body, expected);
 });
 
 test('a second sync with nothing changed previews no changes and sends no write (SC-003)', async () => {
-  const synced = planCaddyConfig(handAuthored, buildRoutes(inventory), buildProxyContext(inventory), 'pve1').config;
+  const synced = planCaddyConfig(handAuthored, buildRoutes(inventory), buildProxyContext(inventory, caddyApiDriver), 'pve1').config;
   const ssh = fakeCaddy({ stdout: getResponse(synced) });
   const p = await plan(ssh);
   assert.equal(p.preview, NO_CHANGES_MESSAGE);

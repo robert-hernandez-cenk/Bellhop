@@ -130,7 +130,7 @@ Deletable: name `_acme-challenge.<domain>` or `_acme-challenge.<labels>.<domain>
 ### When it runs
 
 - Last step of `syncProxyLive` (`src/web/proxy-sync.ts`), never failing it: if `getDriver(inventory).capabilities.acmeDns01ViaCloudflare(inventory)` is false it logs one skip line (`pruneAcmeDriverSkipMessage`: "is not configured to use ACME DNS-01 via Cloudflare") and skips Cloudflare; an unconfigured client logs its own; a throw becomes a `logWarn`. Nothing goes into `SyncProxyLiveResult`.
-- It is always false for nginx, Nginx Proxy Manager, HAProxy, `none`; for Caddy unless `proxyCaddyTls` is `cloudflare`; for Traefik only when `proxyCertResolver` is the reserved `none`.
+- It is always false for nginx, Nginx Proxy Manager, HAProxy, `none`; for Caddy unless the effective `tlsSource` is `acme-dns`; for Traefik when it is `files` or `external` (#72).
 - Only guest-edit and create/install/delete-guest paths prune; `sync-proxy`, `render-status-page`, `migrate-guest` (CLI, web, MCP) call `runSyncProxy`/`runRenderStatusPage` directly.
 
 ## render-status-page
