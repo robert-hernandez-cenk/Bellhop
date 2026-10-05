@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  proxyHostText,
   LAN_GATEWAYS_EMPTY_TEXT,
   proxyDriverOptions,
   proxyFieldView,
@@ -21,13 +20,6 @@ import { SETTINGS_KEYS } from '../../src/lib/inventory.ts';
 import type { SettingsResponse } from '../../web-client/src/api/types.ts';
 import { SECRET_SETTINGS_KEYS } from '../../src/lib/settings-defs.ts';
 
-test('proxyHostText returns "<name> (<ip>)" for a set proxy entry', () => {
-  assert.equal(proxyHostText({ name: 'proxy', ip: '10.0.0.2' }), 'proxy (10.0.0.2)');
-});
-
-test('proxyHostText explains the empty state for null', () => {
-  assert.equal(proxyHostText(null), 'not set — no inventory entry has proxy: true with an IP yet');
-});
 
 test('LAN_GATEWAYS_EMPTY_TEXT explains the empty state', () => {
   assert.equal(LAN_GATEWAYS_EMPTY_TEXT, 'LAN gateways: none yet — no host has a midScheme');
@@ -447,21 +439,23 @@ test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab, en
     'npmApiEmail',
     'npmApiPassword',
   ]);
-  assert.ok(fieldsForTab('general').includes('webUiAuthMode'));
+  for (const key of ['webUiAuthMode', 'webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'] as const) {
+    assert.ok(fieldsForTab('general').includes(key), `General tab lists ${key}`);
+  }
 });
 
 test('fieldState reports a key the environment pins as env-pinned with its variable and stored copy', () => {
   const data = {
     environment: {
-      webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik', stored: true, storedValue: 'authentik' },
+      webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'oidc', stored: true, storedValue: 'oidc' },
     },
   };
   assert.deepEqual(fieldState('webUiAuthMode', data), {
     kind: 'env-pinned',
     variable: 'WEB_UI_AUTH_MODE',
-    value: 'authentik',
+    value: 'oidc',
     stored: true,
-    storedValue: 'authentik',
+    storedValue: 'oidc',
   });
 });
 
@@ -472,8 +466,8 @@ test('fieldState reports a pinned secret with no value and no stored value', () 
 
 test('storedCopyText shows whether a pinned field has a stored copy, and its value only for a non-secret', () => {
   assert.equal(
-    storedCopyText({ kind: 'env-pinned', variable: 'WEB_UI_AUTH_MODE', value: 'authentik', stored: true, storedValue: 'authentik' }),
-    'Stored copy: authentik',
+    storedCopyText({ kind: 'env-pinned', variable: 'WEB_UI_AUTH_MODE', value: 'oidc', stored: true, storedValue: 'oidc' }),
+    'Stored copy: oidc',
   );
   assert.equal(storedCopyText({ kind: 'env-pinned', variable: 'GITHUB_API_TOKEN', stored: true }), 'Stored copy: set');
   assert.equal(
@@ -487,16 +481,16 @@ test('fieldState reports an unpinned key as editable', () => {
   assert.deepEqual(fieldState('authentikApiUrl', { environment: {} }), { kind: 'editable' });
 });
 
-test('effectiveWebUiAuthMode prefers the environment, then the stored value, then auto', () => {
+test('effectiveWebUiAuthMode prefers the environment, then the stored value, then none', () => {
   assert.equal(
     effectiveWebUiAuthMode({
       settings: { webUiAuthMode: 'none' },
-      environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'authentik', stored: false } },
+      environment: { webUiAuthMode: { variable: 'WEB_UI_AUTH_MODE', value: 'oidc', stored: false } },
     }),
-    'authentik',
+    'oidc',
   );
   assert.equal(effectiveWebUiAuthMode({ settings: { webUiAuthMode: 'none' }, environment: {} }), 'none');
-  assert.equal(effectiveWebUiAuthMode({ settings: {}, environment: {} }), 'auto');
+  assert.equal(effectiveWebUiAuthMode({ settings: {}, environment: {} }), 'none');
 });
 
 test('needsConfirmation is true for any change to either admin-group field, including a clear', () => {
@@ -509,14 +503,14 @@ test('needsConfirmation is true for any change to either admin-group field, incl
   }
 });
 
-test('needsConfirmation is true for webUiAuthMode only when leaving authentik', () => {
-  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', 'auto'), true);
-  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', 'none'), true);
-  // Clearing falls back to auto, which also leaves authentik.
-  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', null), true);
-  assert.equal(needsConfirmation('webUiAuthMode', 'authentik', 'authentik'), false);
-  assert.equal(needsConfirmation('webUiAuthMode', 'auto', 'authentik'), false);
-  assert.equal(needsConfirmation('webUiAuthMode', 'auto', 'none'), false);
+test('needsConfirmation is true for webUiAuthMode only when leaving oidc', () => {
+  assert.equal(needsConfirmation('webUiAuthMode', 'oidc', 'none'), true);
+  // Clearing falls back to none, which also leaves oidc.
+  assert.equal(needsConfirmation('webUiAuthMode', 'oidc', null), true);
+  assert.equal(needsConfirmation('webUiAuthMode', 'oidc', 'oidc'), false);
+  assert.equal(needsConfirmation('webUiAuthMode', 'none', 'oidc'), false);
+  assert.equal(needsConfirmation('webUiAuthMode', 'none', 'none'), false);
+  assert.equal(needsConfirmation('webUiAuthMode', 'none', null), false);
 });
 
 test('needsConfirmation is false for every other setting', () => {
@@ -528,7 +522,7 @@ test('confirmationMessage explains each guarded change', () => {
   assert.match(confirmationMessage('authentikAdminGroup'), /administrator/);
   assert.match(confirmationMessage('authentikAdminGroup'), /refused if it would remove your own/);
   assert.match(confirmationMessage('authentikBuiltinAdminGroup'), /administrator/);
-  assert.match(confirmationMessage('webUiAuthMode'), /without signing in through Authentik/);
+  assert.match(confirmationMessage('webUiAuthMode'), /without signing in/);
 });
 
 test('secretStatusText names whether a secret is set and where it comes from', () => {
@@ -543,7 +537,7 @@ test('secretStatusText names whether a secret is set and where it comes from', (
 function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsResponse {
   return {
     settings: {},
-    derived: { lanGateways: [], proxy: null },
+    derived: { lanGateways: [] },
     proxyDrivers: [],
     defaultProxyDriver: 'caddy',
     acmeDnsProviders: ['cloudflare'],
@@ -555,6 +549,7 @@ function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsRe
       cloudflareDnsApiToken: { set: false, source: 'none' },
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: false, source: 'none' },
+      webUiOidcClientSecret: { set: false, source: 'none' },
     },
     ...overrides,
   };
@@ -570,7 +565,7 @@ test('mergeSettingsResponse takes only the saved non-secret key from the respons
   const res = settingsResponse({
     settings: { nfsServer: '192.0.2.6' },
     sources: { nfsServer: 'settings', dnsServer: 'none' },
-    derived: { lanGateways: [{ host: 'pve-a', gateway: '192.0.2.1' }], proxy: null },
+    derived: { lanGateways: [{ host: 'pve-a', gateway: '192.0.2.1' }] },
   });
   const merged = mergeSettingsResponse(prev, res, 'nfsServer');
   assert.deepEqual(merged.settings, { nfsServer: '192.0.2.6', dnsServer: '192.0.2.53' });
@@ -586,6 +581,7 @@ test('mergeSettingsResponse takes only the saved secret status from the response
       cloudflareDnsApiToken: { set: true, source: 'settings' },
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: false, source: 'none' },
+      webUiOidcClientSecret: { set: false, source: 'none' },
     },
   });
   const merged = mergeSettingsResponse(prev, res, 'authentikApiToken');

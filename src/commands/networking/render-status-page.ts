@@ -8,10 +8,7 @@ import type { DriverDeps } from '../../lib/proxy/driver.ts';
 import { managesProxy, NO_PROXY_STATUS_PAGE_ERROR } from '../../lib/proxy/driver.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+import { escapeHtml } from '../../lib/html.ts';
 
 export function buildStatusPageHtml(hostsYaml: string, deployedProxyConfig: string): string {
   return [

@@ -14,6 +14,11 @@ import { UnconfiguredAuthentikClient } from '../../../src/lib/authentik-client.t
 import type { AuthentikClient, AuthentikGroup } from '../../../src/lib/authentik-client.ts';
 import { authentikConfig } from '../../../src/lib/authentik-config.ts';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 const LADDER = authentikConfig().groupLadder;
 
@@ -30,15 +35,15 @@ function testApp(authentik: AuthentikClient = new FakeAuthentikClient()) {
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
-  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik });
+  return buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik });
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 function asUser(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'bellhop-app-users');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['bellhop-app-users'] }));
 }
 
 test('GET /api/auth-groups returns every ladder rung in order, marking which exist in Authentik', async () => {

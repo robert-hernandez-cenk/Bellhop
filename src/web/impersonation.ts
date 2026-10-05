@@ -1,18 +1,20 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Actor } from '../lib/pve-acl.ts';
 
-// Keyed by the real, trusted x-authentik-username -- see resolveAuthUser in
-// auth.ts. Not persisted to disk: a server restart clears every active
+// Keyed by the real username of the signed-in session (#69) -- see
+// resolveRequestUser in auth.ts; never by anything the request itself claims
+// in a header. Not persisted to disk: a server restart clears every active
 // impersonation, which is treated as a feature (nothing survives a deploy
 // silently). One entry per admin, one group at a time.
 export type ImpersonationStore = Map<string, string>;
 
 // Mounted immediately after requireAuth. When the calling user (identified
-// by their real, header-verified username) has an active entry, overlays
-// req.user.groups with just the impersonated group and stashes the real
-// identity on req.realUser -- every existing permission check reads only
-// req.user.groups, so this is the single point that makes the rest of the
-// app behave as the impersonated group.
+// by the real username requireAuth resolved from their session) has an
+// active entry, overlays req.user.groups with just the impersonated group and
+// stashes the real identity on req.realUser -- every existing permission
+// check reads only req.user.groups, so this is the single point that makes
+// the rest of the app behave as the impersonated group. The spread keeps
+// every other field (uid, email, viaOidc) as the real identity's.
 export function applyImpersonation(store: ImpersonationStore) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const group = req.user ? store.get(req.user.username) : undefined;

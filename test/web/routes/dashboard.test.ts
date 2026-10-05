@@ -18,6 +18,11 @@ import { authentikConfig } from '../../../src/lib/authentik-config.ts';
 import { FakeCloudflareClient, txtRecord } from '../../support/fake-cloudflare-client.ts';
 import type { CloudflareClient } from '../../../src/lib/cloudflare-client.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 function testApp(
   inventory: Inventory,
@@ -35,11 +40,11 @@ function testApp(
   // saveInventory, which reads-then-rewrites this path.
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
-  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik, cloudflare, fetchImpl, impersonationStore });
+  return buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik, cloudflare, fetchImpl, impersonationStore });
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 test('GET /api/inventory returns hosts, guests, and domain from the loaded inventory', async () => {
@@ -549,8 +554,7 @@ test('GET /api/guests/status omits a blocked host from failures for a restricted
 
   const restricted = await request(app)
     .get('/api/guests/status')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(restricted.status, 200);
   assert.deepEqual(restricted.body.failures, ['pve2']);
 
@@ -559,16 +563,16 @@ test('GET /api/guests/status omits a blocked host from failures for a restricted
   assert.deepEqual(admin.body.failures.sort(), ['pve1', 'pve2']);
 });
 
-test('GET /api/whoami returns the resolved auth user from trusted headers', async () => {
+test('GET /api/whoami returns the resolved auth user from the session', async () => {
   const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
   const app = testApp(inventory);
   const res = await request(app)
     .get('/api/whoami')
-    .set('x-authentik-username', 'alice')
-    .set('x-authentik-groups', 'admins|homelab');
+    .set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['admins', 'homelab'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, {
     username: 'alice',
+    uid: 'uid-alice',
     groups: ['admins', 'homelab'],
     localOperator: false,
     isAdmin: false,
@@ -577,7 +581,7 @@ test('GET /api/whoami returns the resolved auth user from trusted headers', asyn
   });
 });
 
-test('GET /api/whoami falls back to WEB_UI_DEV_USER when no trusted headers are sent', async () => {
+test('GET /api/whoami falls back to WEB_UI_DEV_USER when no session is sent', async () => {
   const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
   const app = testApp(inventory);
   const res = await request(app).get('/api/whoami');
@@ -593,13 +597,13 @@ test('GET /api/whoami falls back to WEB_UI_DEV_USER when no trusted headers are 
   });
 });
 
-test('protected routes reject requests with no trusted headers and no WEB_UI_DEV_USER in strict authentik mode', async () => {
+test('protected routes reject requests with no session and no WEB_UI_DEV_USER in oidc mode', async () => {
   const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
   const app = testApp(inventory);
   const originalDevUser = process.env.WEB_UI_DEV_USER;
   const originalAuthMode = process.env.WEB_UI_AUTH_MODE;
   delete process.env.WEB_UI_DEV_USER;
-  process.env.WEB_UI_AUTH_MODE = 'authentik';
+  process.env.WEB_UI_AUTH_MODE = 'oidc';
   try {
     const res = await request(app).get('/api/inventory');
     assert.equal(res.status, 401);
@@ -611,12 +615,11 @@ test('protected routes reject requests with no trusted headers and no WEB_UI_DEV
   }
 });
 
-// Mirror image of the strict-mode test above: the 'auto' default (no
-// WEB_UI_AUTH_MODE set) is what almost every adopter actually runs, and
-// until now it only had unit-level coverage (auth.test.ts), not a
-// route-level check that a request with no trusted headers and no
-// WEB_UI_DEV_USER is actually served rather than rejected.
-test('protected routes serve the local operator with no trusted headers and no WEB_UI_DEV_USER in the default auto mode', async () => {
+// Mirror image of the oidc-mode test above: the 'none' default (no
+// WEB_UI_AUTH_MODE set, #69) is what a fresh clone runs, so check at route
+// level that a request with no session and no WEB_UI_DEV_USER is actually
+// served as the local operator rather than rejected.
+test('protected routes serve the local operator with no session and no WEB_UI_DEV_USER in the default none mode', async () => {
   const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
   const app = testApp(inventory);
   const originalDevUser = process.env.WEB_UI_DEV_USER;
@@ -661,8 +664,7 @@ test('GET /api/inventory filters hosts and guests for a restricted group', async
 
   const res = await request(app)
     .get('/api/inventory')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(
     res.body.guests.map((g: any) => g.name),
@@ -705,8 +707,7 @@ test('PATCH /api/inventory/guests/:name returns 403 for a restricted group targe
 
   const res = await request(app)
     .patch('/api/inventory/guests/stash-lxc')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ port: '8080' });
   assert.equal(res.status, 403);
 });
@@ -725,8 +726,7 @@ test('PATCH /api/inventory/guests/:name still succeeds for a restricted group ta
 
   const res = await request(app)
     .patch('/api/inventory/guests/plex-lxc')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ port: '8080' });
   assert.equal(res.status, 200);
 });
@@ -741,8 +741,7 @@ test('GET /api/whoami reports admin status, admin group names, and capabilities'
   const app = testApp(whoamiInventory, undefined, new UnconfiguredAuthentikClient());
   const res = await request(app)
     .get('/api/whoami')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
   assert.equal(res.body.username, 'someone');
   assert.equal(res.body.isAdmin, true);
@@ -755,8 +754,7 @@ test('GET /api/whoami reports userDirectory: true when the injected AuthentikCli
   const app = testApp(whoamiInventory);
   const res = await request(app)
     .get('/api/whoami')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.capabilities, { userDirectory: true });
 });
@@ -765,8 +763,7 @@ test('GET /api/whoami reports a non-admin as such', async () => {
   const app = testApp(whoamiInventory);
   const res = await request(app)
     .get('/api/whoami')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'homelab');
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['homelab'] }));
   assert.equal(res.body.isAdmin, false);
 });
 
@@ -884,7 +881,7 @@ function gatedInventory(authGroup?: string): Inventory {
 }
 
 function asUser(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'bellhop-app-users');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['bellhop-app-users'] }));
 }
 
 test('PATCH guest authGroup lets a non-admin gate an ungated guest', async () => {
@@ -972,8 +969,7 @@ test('PATCH guest unauthenticatedPaths lets a non-admin in an at-or-above rung a
   const app = testApp(gatedInventoryWithPaths(USERS_RUNG));
   const res = await request(app)
     .patch('/api/inventory/guests/sonarr')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', USERS_RUNG)
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: [USERS_RUNG] }))
     .send({ unauthenticatedPaths: '/api/*' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.guest.unauthenticatedPaths, ['/api/*']);
@@ -1347,7 +1343,7 @@ async function creatorApp() {
 }
 
 function as(username: string, groups: string, req: request.Test): request.Test {
-  return req.set('x-authentik-username', username).set('x-authentik-groups', groups);
+  return req.set('Cookie', sessionCookie(sessions, { username, groups: groups ? groups.split('|') : [] }));
 }
 
 test('GET /api/inventory and /api/guests/status include a created guest for its creator under an allow-list that omits it', async () => {
@@ -1431,7 +1427,7 @@ async function uidCreatorApp() {
 }
 
 function asUid(username: string, uid: string, groups: string, req: request.Test): request.Test {
-  return req.set('x-authentik-username', username).set('x-authentik-uid', uid).set('x-authentik-groups', groups);
+  return req.set('Cookie', sessionCookie(sessions, { username, groups: groups ? groups.split('|') : [], uid }));
 }
 
 test(

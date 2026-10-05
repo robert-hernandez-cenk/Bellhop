@@ -24,6 +24,7 @@ export const DEMO_SECRET_SETTINGS: Readonly<Partial<Record<SecretSettingKey, str
   cloudflareDnsApiToken: 'demo-example-cloudflare-token',
   npmApiPassword: 'demo-example-password',
   githubApiToken: 'demo-example-github-token',
+  webUiOidcClientSecret: 'demo-example-client-secret',
 };
 
 export function buildDemoInventory(): Inventory {
@@ -35,9 +36,14 @@ export function buildDemoInventory(): Inventory {
     // below; a free address in the same range keeps the two from colliding.
     nfsServer: '198.51.100.50',
     // Stored rather than set through WEB_UI_AUTH_MODE (issue #64): the demo
-    // signs every request in with injected forward-auth headers, the same
-    // way a production deployment does with this setting stored.
-    webUiAuthMode: 'authentik',
+    // signs every request in with a seeded admin session (#69), the same
+    // way a production deployment does with this setting stored. The four
+    // OIDC values are examples so the Settings General tab shows a
+    // configured web login; nothing ever contacts this issuer.
+    webUiAuthMode: 'oidc',
+    webUiOidcIssuer: 'https://authentik.example.com/application/o/bellhop/',
+    webUiOidcClientId: 'example-client-id',
+    webUiOidcRedirectUri: 'https://bellhop.example.com/auth/callback',
     // Two moved Authentik settings, so that Settings tab isn't all
     // placeholders. Both are the stock defaults.
     authentikOutpostName: 'authentik Embedded Outpost',

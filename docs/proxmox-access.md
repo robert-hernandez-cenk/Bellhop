@@ -26,8 +26,7 @@ works if Proxmox is set up to agree with Bellhop about who that person is:
   realm's own edit dialog.
 - The realm should be backed by the **same identity provider** that
   authenticates Bellhop's own web UI (e.g. the same Authentik instance),
-  so the username or email Bellhop sees in a request's `X-authentik-*`
-  headers is the same one Proxmox's OIDC login derives a user ID from.
+  so the username or email in a user's Bellhop sign-in session is the same one Proxmox's OIDC login derives a user ID from.
   Bellhop does not verify this — a realm backed by a different provider
   will still produce grants, just to the wrong (or a nonexistent) Proxmox
   user.

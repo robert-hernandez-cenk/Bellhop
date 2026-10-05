@@ -6,7 +6,8 @@ import type { JobLog } from '../jobs/job-log.ts';
 import type { JobRunner } from '../jobs/job-runner.ts';
 import { createForeignJobTail } from '../jobs/job-tail.ts';
 import { requestJobControl } from '../jobs/job-control.ts';
-import { resolveAuthUser } from '../auth.ts';
+import { resolveRequestUser } from '../auth.ts';
+import type { SessionService } from '../login/sessions.ts';
 import { ANONYMOUS_CALLER, guestCreators, isAdmin, type AccessCaller } from '../access.ts';
 import { isGuestCreator, loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
 import type { GuestCreator, Inventory } from '../../lib/inventory.ts';
@@ -205,6 +206,10 @@ export function attachJobsWebSocket(
   inventoryPath: string,
   inventory: Inventory,
   impersonationStore: ImpersonationStore,
+  // The same SessionService buildApp's requireAuth uses (#69), so a
+  // bellhop_session cookie authenticates this socket exactly as it does an
+  // /api request.
+  sessions: SessionService,
   // isPidAlive: overridable for tests (see job-tail.ts) so a route-level
   // test can deterministically exercise the dead-owner path without
   // depending on a real pid ever being dead. Left unset in production, so
@@ -214,159 +219,173 @@ export function attachJobsWebSocket(
   const wss = new WebSocketServer({ noServer: true });
   const tailIntervalMs = options.tailIntervalMs ?? 1000;
 
-  server.on('upgrade', (req, socket, head) => {
-    const user = resolveAuthUser(req.headers);
-    if (!user) {
-      socket.destroy();
-      return;
-    }
-    // This handler is wired directly onto the raw http.Server and runs
-    // before/independent of Express's middleware chain, so it needs its own
-    // impersonation-overlay lookup -- applyImpersonation (src/web/
-    // impersonation.ts) never sees this request. Mirrors that middleware's
-    // overlay logic exactly: an active entry replaces the real groups with
-    // just the impersonated group and sets `impersonating` (which switches
-    // the issue #58 creator lift off) for the purposes of this connection's
-    // job-visibility check.
-    const impersonatedGroup = impersonationStore.get(user.username);
-    const caller: AccessCaller = impersonatedGroup
-      ? { ...user, groups: [impersonatedGroup], impersonating: impersonatedGroup }
-      : user;
-    const match = req.url?.match(/^\/ws\/jobs\/(\d+)$/);
-    if (!match) {
-      socket.destroy();
-      return;
-    }
-    const jobId = Number(match[1]);
-    const job = jobStore.get(jobId);
-    const rules = loadPermissionRules(inventoryPath);
-    if (!isJobVisible(rules, caller, job ?? null, guestCreators(inventory))) {
-      socket.destroy();
-      return;
-    }
-    // Issue #6: a job owned by another process (an MCP server) has no
-    // in-memory state in *this* process's jobRunner -- its 'chunk'/'status'/
-    // 'prompt'/'prompt-cleared' events never fire for it. Such a job still
-    // streams live, just via the polling foreign-job tailer below instead of
-    // jobRunner.events.
-    const foreign = job !== undefined && (job.owner ?? 'web') !== jobRunner.owner;
-    // Only meaningful when `foreign` -- the offset into the log file the
-    // backlog below ended at, and where the tail's first tick starts reading
-    // from.
-    let foreignTailOffset = 0;
-
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      if (job && foreign) {
-        const backlogBytes = jobLog.readBytes(job.logFile, 0);
-        foreignTailOffset = completeUtf8Length(backlogBytes);
-        ws.send(JSON.stringify({ type: 'backlog', text: backlogBytes.subarray(0, foreignTailOffset).toString('utf8') }));
-      } else {
-        ws.send(JSON.stringify({ type: 'backlog', text: job ? jobLog.read(job.logFile) : '' }));
-      }
-      // The job may already have finished before this socket connected (a
-      // fast job can complete before the WS handshake does) -- without this,
-      // a late-connecting client would wait forever for a 'status' event
-      // that already fired with no listener attached yet.
-      if (job) ws.send(JSON.stringify({ type: 'status', status: job.status }));
-      // A late-connecting client (operator reloads mid-prompt) needs the
-      // current prompt replayed the same way a late-finished job's status
-      // already is above -- otherwise it would wait forever for a 'prompt'
-      // event that already fired with no listener attached yet.
-      if (job && job.status === 'awaiting_input' && job.promptText) {
-        ws.send(
-          JSON.stringify({
-            type: 'prompt',
-            text: job.promptText,
-            expectedPrompts: job.expectedPromptsJson ? JSON.parse(job.expectedPromptsJson) : [],
-            // Replayed so a client connecting mid-prompt renders the same
-            // banner a client that was already connected does (issue #160).
-            // The `?? 'heuristic'` default is only ever reached by a row
-            // written before these columns existed -- and in practice not
-            // even then: src/web/server.ts runs reconcileOrphanedJobs()
-            // before serving any request, which flips every non-terminal
-            // row (including one left in 'awaiting_input' by a prior
-            // process) to 'interrupted', and this branch only runs for
-            // status === 'awaiting_input'. Kept anyway as a harmless
-            // fallback in case that ordering ever changes.
-            origin: job.promptOrigin ?? 'heuristic',
-            matchedIndex: job.promptMatchedIndex,
-          })
-        );
-      }
-
-      if (job && foreign) {
-        // No jobRunner.events registration for a foreign job -- those never
-        // fire for it (see the `foreign` comment above). Skip the tail
-        // entirely for a job that's already terminal by connect time, same
-        // as the local path needs no event listeners for one either.
-        if (!TERMINAL_JOB_STATUSES.includes(job.status)) {
-          const tail = createForeignJobTail({
-            jobStore,
-            jobLog,
-            jobId,
-            initial: { offset: foreignTailOffset, row: job },
-            send: (msg) => ws.send(JSON.stringify(msg)),
-            isPidAlive: options.isPidAlive,
-          });
-          const interval = setInterval(() => {
-            tail.tick();
-            // A stopped tail always means no more messages are coming --
-            // whether the job reached a terminal status (the client already
-            // has the final 'status' message) or the tail gave up early (a
-            // throwing tick, a row that vanished). Either way, closing the
-            // socket here is what lets the client's own reconnect/HTTP-
-            // polling fallback (it only triggers on 'close'/'error') take
-            // over instead of the connection sitting open with nothing left
-            // to feed it forever.
-            if (tail.stopped) {
-              clearInterval(interval);
-              ws.close();
-            }
-          }, tailIntervalMs);
-          ws.on('close', () => clearInterval(interval));
-        }
+  server.on('upgrade', async (req, socket, head) => {
+    // Async since #69: resolving the session may re-check it with the
+    // provider. A socket error while that is pending must not go unhandled,
+    // and any failure at all -- in the re-check or the visibility check
+    // below -- destroys the socket rather than leaving it hanging or taking
+    // the process down (this listener sits outside Express's error handling).
+    const destroy = () => socket.destroy();
+    socket.on('error', destroy);
+    try {
+      // The same resolution requireAuth uses (session cookie, re-checked when
+      // due; then WEB_UI_DEV_USER; then the local operator in none mode).
+      const user = await resolveRequestUser(req.headers, sessions);
+      if (!user) {
+        socket.destroy();
         return;
       }
+      socket.off('error', destroy);
+      // This handler is wired directly onto the raw http.Server and runs
+      // before/independent of Express's middleware chain, so it needs its own
+      // impersonation-overlay lookup -- applyImpersonation (src/web/
+      // impersonation.ts) never sees this request. Mirrors that middleware's
+      // overlay logic exactly: an active entry replaces the real groups with
+      // just the impersonated group and sets `impersonating` (which switches
+      // the issue #58 creator lift off) for the purposes of this connection's
+      // job-visibility check.
+      const impersonatedGroup = impersonationStore.get(user.username);
+      const caller: AccessCaller = impersonatedGroup
+        ? { ...user, groups: [impersonatedGroup], impersonating: impersonatedGroup }
+        : user;
+      const match = req.url?.match(/^\/ws\/jobs\/(\d+)$/);
+      if (!match) {
+        socket.destroy();
+        return;
+      }
+      const jobId = Number(match[1]);
+      const job = jobStore.get(jobId);
+      const rules = loadPermissionRules(inventoryPath);
+      if (!isJobVisible(rules, caller, job ?? null, guestCreators(inventory))) {
+        socket.destroy();
+        return;
+      }
+      // Issue #6: a job owned by another process (an MCP server) has no
+      // in-memory state in *this* process's jobRunner -- its 'chunk'/'status'/
+      // 'prompt'/'prompt-cleared' events never fire for it. Such a job still
+      // streams live, just via the polling foreign-job tailer below instead of
+      // jobRunner.events.
+      const foreign = job !== undefined && (job.owner ?? 'web') !== jobRunner.owner;
+      // Only meaningful when `foreign` -- the offset into the log file the
+      // backlog below ended at, and where the tail's first tick starts reading
+      // from.
+      let foreignTailOffset = 0;
 
-      const onChunk = (payload: { jobId: number; stream: string; text: string }) => {
-        if (payload.jobId === jobId) ws.send(JSON.stringify({ type: 'chunk', stream: payload.stream, text: payload.text }));
-      };
-      const onStatus = (payload: { jobId: number; status: string }) => {
-        if (payload.jobId === jobId) ws.send(JSON.stringify({ type: 'status', status: payload.status }));
-      };
-      const onPrompt = (payload: {
-        jobId: number;
-        text: string;
-        expectedPrompts: string[];
-        origin: string;
-        matchedIndex: number | null;
-      }) => {
-        if (payload.jobId === jobId)
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        if (job && foreign) {
+          const backlogBytes = jobLog.readBytes(job.logFile, 0);
+          foreignTailOffset = completeUtf8Length(backlogBytes);
+          ws.send(JSON.stringify({ type: 'backlog', text: backlogBytes.subarray(0, foreignTailOffset).toString('utf8') }));
+        } else {
+          ws.send(JSON.stringify({ type: 'backlog', text: job ? jobLog.read(job.logFile) : '' }));
+        }
+        // The job may already have finished before this socket connected (a
+        // fast job can complete before the WS handshake does) -- without this,
+        // a late-connecting client would wait forever for a 'status' event
+        // that already fired with no listener attached yet.
+        if (job) ws.send(JSON.stringify({ type: 'status', status: job.status }));
+        // A late-connecting client (operator reloads mid-prompt) needs the
+        // current prompt replayed the same way a late-finished job's status
+        // already is above -- otherwise it would wait forever for a 'prompt'
+        // event that already fired with no listener attached yet.
+        if (job && job.status === 'awaiting_input' && job.promptText) {
           ws.send(
             JSON.stringify({
               type: 'prompt',
-              text: payload.text,
-              expectedPrompts: payload.expectedPrompts,
-              origin: payload.origin,
-              matchedIndex: payload.matchedIndex,
+              text: job.promptText,
+              expectedPrompts: job.expectedPromptsJson ? JSON.parse(job.expectedPromptsJson) : [],
+              // Replayed so a client connecting mid-prompt renders the same
+              // banner a client that was already connected does (issue #160).
+              // The `?? 'heuristic'` default is only ever reached by a row
+              // written before these columns existed -- and in practice not
+              // even then: src/web/server.ts runs reconcileOrphanedJobs()
+              // before serving any request, which flips every non-terminal
+              // row (including one left in 'awaiting_input' by a prior
+              // process) to 'interrupted', and this branch only runs for
+              // status === 'awaiting_input'. Kept anyway as a harmless
+              // fallback in case that ordering ever changes.
+              origin: job.promptOrigin ?? 'heuristic',
+              matchedIndex: job.promptMatchedIndex,
             })
           );
-      };
-      const onPromptCleared = (payload: { jobId: number }) => {
-        if (payload.jobId === jobId) ws.send(JSON.stringify({ type: 'prompt-cleared' }));
-      };
+        }
 
-      jobRunner.events.on('chunk', onChunk);
-      jobRunner.events.on('status', onStatus);
-      jobRunner.events.on('prompt', onPrompt);
-      jobRunner.events.on('prompt-cleared', onPromptCleared);
-      ws.on('close', () => {
-        jobRunner.events.off('chunk', onChunk);
-        jobRunner.events.off('status', onStatus);
-        jobRunner.events.off('prompt', onPrompt);
-        jobRunner.events.off('prompt-cleared', onPromptCleared);
+        if (job && foreign) {
+          // No jobRunner.events registration for a foreign job -- those never
+          // fire for it (see the `foreign` comment above). Skip the tail
+          // entirely for a job that's already terminal by connect time, same
+          // as the local path needs no event listeners for one either.
+          if (!TERMINAL_JOB_STATUSES.includes(job.status)) {
+            const tail = createForeignJobTail({
+              jobStore,
+              jobLog,
+              jobId,
+              initial: { offset: foreignTailOffset, row: job },
+              send: (msg) => ws.send(JSON.stringify(msg)),
+              isPidAlive: options.isPidAlive,
+            });
+            const interval = setInterval(() => {
+              tail.tick();
+              // A stopped tail always means no more messages are coming --
+              // whether the job reached a terminal status (the client already
+              // has the final 'status' message) or the tail gave up early (a
+              // throwing tick, a row that vanished). Either way, closing the
+              // socket here is what lets the client's own reconnect/HTTP-
+              // polling fallback (it only triggers on 'close'/'error') take
+              // over instead of the connection sitting open with nothing left
+              // to feed it forever.
+              if (tail.stopped) {
+                clearInterval(interval);
+                ws.close();
+              }
+            }, tailIntervalMs);
+            ws.on('close', () => clearInterval(interval));
+          }
+          return;
+        }
+
+        const onChunk = (payload: { jobId: number; stream: string; text: string }) => {
+          if (payload.jobId === jobId) ws.send(JSON.stringify({ type: 'chunk', stream: payload.stream, text: payload.text }));
+        };
+        const onStatus = (payload: { jobId: number; status: string }) => {
+          if (payload.jobId === jobId) ws.send(JSON.stringify({ type: 'status', status: payload.status }));
+        };
+        const onPrompt = (payload: {
+          jobId: number;
+          text: string;
+          expectedPrompts: string[];
+          origin: string;
+          matchedIndex: number | null;
+        }) => {
+          if (payload.jobId === jobId)
+            ws.send(
+              JSON.stringify({
+                type: 'prompt',
+                text: payload.text,
+                expectedPrompts: payload.expectedPrompts,
+                origin: payload.origin,
+                matchedIndex: payload.matchedIndex,
+              })
+            );
+        };
+        const onPromptCleared = (payload: { jobId: number }) => {
+          if (payload.jobId === jobId) ws.send(JSON.stringify({ type: 'prompt-cleared' }));
+        };
+
+        jobRunner.events.on('chunk', onChunk);
+        jobRunner.events.on('status', onStatus);
+        jobRunner.events.on('prompt', onPrompt);
+        jobRunner.events.on('prompt-cleared', onPromptCleared);
+        ws.on('close', () => {
+          jobRunner.events.off('chunk', onChunk);
+          jobRunner.events.off('status', onStatus);
+          jobRunner.events.off('prompt', onPrompt);
+          jobRunner.events.off('prompt-cleared', onPromptCleared);
+        });
       });
-    });
+    } catch {
+      socket.destroy();
+    }
   });
 
   return wss;

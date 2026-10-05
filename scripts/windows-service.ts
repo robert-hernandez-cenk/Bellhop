@@ -4,64 +4,34 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import nodeWindows from 'node-windows';
-import { findProxyEntry, loadInventory } from '../src/lib/inventory.ts';
 import { dataDir, inventoryPath } from '../src/lib/paths.ts';
 import { importEnvFilesAndUseStore } from '../src/lib/config-import.ts';
+import { FIREWALL_RULE_NAME, firewallRuleCommand } from './firewall-rule.ts';
 
 const { Service, elevate } = nodeWindows;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVICE_NAME = 'BellhopWebUI';
 const SERVICE_DESCRIPTION = 'Bellhop web dashboard';
-const FIREWALL_RULE_NAME = 'BellhopWebUI';
 const DEFAULT_PORT = 3000;
 
 // Mirrors src/cli.ts/src/web/server.ts (issue #64): data/authentik.env is
 // loaded as an environment override, imported once into the settings store,
-// and the store registered, all before the loadInventory() call below --
-// the one-time requires_auth -> auth_group migration (src/lib/inventory.ts)
-// reads the group ladder at DB-open time. If this script is the first thing
-// to open a legacy database, an unset ladder here would migrate every gated
-// entry onto the built-in default ladder's top rung instead of this
-// operator's configured one -- and since requires_auth is dropped in the
-// same call, there is no re-running this correctly afterward. Only
-// authentik.env is loaded: nothing else this script reads comes from the
-// other two files, and the import reads all three regardless.
+// and the store registered, all at module load, before anything else in this
+// script opens the inventory database -- the one-time requires_auth ->
+// auth_group migration (src/lib/inventory.ts) reads the group ladder at
+// DB-open time, and the import itself is that first open. If this script is
+// the first thing to open a legacy database, an unset ladder here would
+// migrate every gated entry onto the built-in default ladder's top rung
+// instead of this operator's configured one -- and since requires_auth is
+// dropped in the same call, there is no re-running this correctly
+// afterward. Only authentik.env is loaded: nothing else this script reads
+// comes from the other two files, and the import reads all three
+// regardless.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 importEnvFilesAndUseStore(inventoryPath(), dataDir());
 
 type Action = 'install' | 'uninstall';
-
-// The only host allowed to reach this service directly, now that auth is
-// enforced by Caddy's forward_auth in front of it. Without this
-// scope, any LAN host could hit this port directly and bypass Authentik
-// entirely, since the app itself trusts Caddy's forwarded headers without
-// re-verifying them. Read from inventory rather than hardcoded, so the
-// rule follows automatically if Caddy ever moves.
-const IPV4_ADDRESS = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-
-function resolveProxyIp(): string {
-  const entry = findProxyEntry(loadInventory(inventoryPath()));
-  if (!entry?.ip) {
-    throw new Error(
-      "Cannot scope the firewall rule: no inventory entry has 'proxy: true' with an ip. " +
-        'Refusing to install a rule open to the whole LAN.'
-    );
-  }
-  // netsh's remoteip= also accepts keywords like "any"/"localsubnet" -- an
-  // inventory ip of literally one of those would install a LAN-wide rule
-  // with no error, defeating the whole point of scoping it. HostEntrySchema/
-  // GuestEntrySchema's `ip` is a plain unvalidated string, so this is the
-  // one place that actually enforces "a real IPv4 address" before it
-  // reaches netsh.
-  if (!IPV4_ADDRESS.test(entry.ip)) {
-    throw new Error(
-      `Cannot scope the firewall rule: the 'proxy: true' entry's ip ("${entry.ip}") is not a valid IPv4 address. ` +
-        'Refusing to install a rule open to the whole LAN.'
-    );
-  }
-  return entry.ip;
-}
 
 function resolvePort(): number {
   return process.env.PORT ? Number(process.env.PORT) : DEFAULT_PORT;
@@ -127,22 +97,12 @@ function removeFirewallRule(): void {
   }
 }
 
-function addFirewallRule(port: number, proxyIp: string): void {
+function addFirewallRule(port: number): void {
   removeFirewallRule(); // avoid duplicate rules if install runs more than once
-  execSync(
-    `netsh advfirewall firewall add rule name="${FIREWALL_RULE_NAME}" dir=in action=allow protocol=TCP localport=${port} remoteip=${proxyIp} profile=any`,
-    { stdio: 'inherit' }
-  );
+  execSync(firewallRuleCommand(port), { stdio: 'inherit' });
 }
 
 async function install(): Promise<void> {
-  // Resolved before any machine mutation below (build, service install/start,
-  // firewall rule) so an inventory that can't yield a proxy IP fails the
-  // install outright rather than leaving a half-installed state — a running
-  // service with no firewall rule scoping who can reach it. See
-  // resolveProxyIp()'s own comment for the security rationale.
-  const proxyIp = resolveProxyIp();
-
   console.log('Building web client...');
   execSync('npm run web:build', { cwd: REPO_ROOT, stdio: 'inherit' });
 
@@ -179,7 +139,7 @@ async function install(): Promise<void> {
   }
 
   console.log(`Opening firewall for TCP port ${port}...`);
-  addFirewallRule(port, proxyIp);
+  addFirewallRule(port);
 
   console.log(`Done. Service "${SERVICE_NAME}" is installed and listening on port ${port}.`);
 }

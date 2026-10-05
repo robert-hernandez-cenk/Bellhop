@@ -11,6 +11,9 @@ import { buildCloudflareClient } from '../lib/cloudflare-client.ts';
 import { authMode } from './auth.ts';
 import { logWarn } from '../lib/log.ts';
 import type { ImpersonationStore } from './impersonation.ts';
+import { SessionStore } from './login/session-store.ts';
+import { SessionService } from './login/sessions.ts';
+import { RealWebLoginClient } from './login/oidc-client.ts';
 import { JobStore } from './jobs/job-store.ts';
 import { createJobLog } from './jobs/job-log.ts';
 import { JobRunner } from './jobs/job-runner.ts';
@@ -44,17 +47,18 @@ const invPath = inventoryPath();
 importEnvFilesAndUseStore(invPath, dataDir());
 const inventory = loadInventory(invPath);
 
-// Called at boot so an invalid auth mode fails fast here rather than on
-// every request. The warning is one of the two visible guards on the
-// inferred default -- the other is the web UI's own banner. The mode now
+// Called at boot so an invalid auth mode (a retired WEB_UI_AUTH_MODE=auto or
+// authentik included) fails fast here rather than on every request. The mode
 // comes from the stored webUiAuthMode setting unless WEB_UI_AUTH_MODE
-// overrides it; a malformed stored value can only appear by hand-editing
-// the database, since every write path validates it.
+// overrides it; a malformed stored value can only appear by hand-editing the
+// database, since every write path validates it. Only none mode warns: it
+// is the one where a request with no session is served as a full-admin local
+// operator (#69).
 const mode = authMode();
-if (mode !== 'authentik') {
+if (mode === 'none') {
   logWarn(
-    `Web UI auth mode is '${mode}': requests with no Authentik forward-auth headers are served as a full-admin local operator. ` +
-      'Set the webUiAuthMode setting (or WEB_UI_AUTH_MODE) to authentik to require authentication.'
+    "Web UI auth mode is 'none': requests without a signed-in session are served as a full-admin local operator. " +
+      'Configure sign-in (bellhop configure-web-login <entry> --apply), sign in at /auth/login, then set webUiAuthMode to oidc.'
   );
 }
 
@@ -62,7 +66,7 @@ if (mode !== 'authentik') {
 // own comment in src/lib/authentik-config.ts), whether it comes from
 // AUTHENTIK_OUTPOST_PORT or, through the store registered above, a
 // hand-edited stored value. It's now reached from
-// isAdminUser -> resolveAuthUser / localOperator() / isJobVisible on every
+// isAdminUser -> resolveRequestUser / localOperator() / isJobVisible on every
 // request -- worst case, the raw 'upgrade' WebSocket listener in
 // src/web/routes/jobs.ts, which has no Express error handling, so an
 // uncaught throw there would be an unhandled exception that could take the
@@ -75,6 +79,23 @@ const baseSsh = new Ssh2SSHClient();
 const jobStore = new JobStore(path.join(dataDir(), 'jobs.sqlite3'));
 const jobLog = createJobLog(path.join(dataDir(), 'job-logs'));
 const jobRunner = new JobRunner(jobStore, jobLog, baseSsh);
+
+// Web-login sessions (#69): their own file under data/, so they survive a
+// restart (FR-013) without touching inventory/bellhop.db. Opened after the
+// JobStore above, which creates data/ if it is missing. A store that cannot
+// be opened stops start-up: without it nobody could sign in, and in oidc mode
+// every request would be refused with nothing in the log to say why.
+const sessionsPath = path.join(dataDir(), 'sessions.sqlite3');
+let sessionStore: SessionStore;
+try {
+  sessionStore = new SessionStore(sessionsPath);
+} catch (err) {
+  throw new Error(`Could not open the web-login session store at ${sessionsPath}: ${(err as Error).message}`);
+}
+// One service for requireAuth, the /auth routes and the job-log WebSocket,
+// so they share the store and the single-flight re-check map.
+const sessions = new SessionService({ store: sessionStore, client: new RealWebLoginClient() });
+
 // Close out any job left running/queued/awaiting_input by a previous
 // process that died mid-job (e.g. a service restart) -- see issue #99 and
 // JobRunner.reconcileOrphanedJobs. Must run before the app starts
@@ -108,6 +129,7 @@ const app = buildApp({
   cloudflare: buildCloudflareClient(),
   impersonationStore,
   taskScheduler,
+  sessions,
 });
 
 const clientDist = path.join(REPO_ROOT, 'web-client', 'dist');
@@ -117,7 +139,7 @@ app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
 });
 
 const server = http.createServer(app);
-attachJobsWebSocket(server, jobRunner, jobStore, jobLog, invPath, inventory, impersonationStore);
+attachJobsWebSocket(server, jobRunner, jobStore, jobLog, invPath, inventory, impersonationStore, sessions);
 
 const port = Number(process.env.PORT ?? 3000);
 server.listen(port, () => {

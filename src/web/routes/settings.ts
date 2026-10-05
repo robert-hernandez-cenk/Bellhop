@@ -1,11 +1,10 @@
 import { Router } from 'express';
-import { forwardAuthIdentity, isAdminOf, requireAdminGroup } from '../auth.ts';
+import { isAdminOf, requireAdminGroup } from '../auth.ts';
 import { logWarn } from '../../lib/log.ts';
 import {
   loadInventory,
   saveInventory,
   refreshInventory,
-  findProxyEntry,
   SettingsSchema,
   SETTINGS_KEYS,
   assignSetting,
@@ -16,6 +15,7 @@ import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
 import { ACME_DNS_PROVIDERS, DEFAULT_ACME_DNS_PROVIDER } from '../../lib/proxy/ids.ts';
 import { clearSecret, configValueAt, storedSecretKeys, writeSecret, type ConfigSource } from '../../lib/config.ts';
+import { WEB_LOGIN_KEYS } from '../login/config.ts';
 import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
   SECRET_SETTINGS_KEYS,
@@ -117,17 +117,14 @@ function currentSettings(inv: Inventory): Settings {
   return settings;
 }
 
-// The two values that are derived rather than configured (issue #124):
-// set-guest-vpn's LAN gateway comes from each host's own midScheme, and
-// the Windows service's firewall scope comes from the proxy: true entry.
+// The value that is derived rather than configured (issue #124):
+// set-guest-vpn's LAN gateway comes from each host's own midScheme.
 // Shown read-only so an admin can see what they actually resolve to.
 function derivedValues(inv: Inventory) {
-  const proxy = findProxyEntry(inv);
   return {
     lanGateways: inv.hosts
       .filter((h) => h.midScheme)
       .map((h) => ({ host: h.name, gateway: h.midScheme!.gateway })),
-    proxy: proxy?.ip ? { name: proxy.name, ip: proxy.ip } : null,
   };
 }
 
@@ -286,28 +283,65 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       }
     }
 
-    // Issue #64 US6: refuse switching webUiAuthMode to 'authentik' unless
-    // the identity authentik mode would see on this very request -- its
-    // forward-auth headers, parsed as authentik mode parses them -- exists
-    // and is an administrator under the admin groups this request leaves in
-    // place. Otherwise every later request, including the one needed to
-    // undo it, would be rejected or lose this page. The headers are read
-    // directly rather than from req.user, because in none mode req.user is
-    // the local operator even when the proxy did send them. Clearing it or
-    // setting auto/none needs no such check: confirming that leaving
-    // "authentik" is deliberate is the Settings page's job (client-side).
-    if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'authentik') {
-      const identity = forwardAuthIdentity(req.headers);
-      if (!identity) {
+    // Refuse switching webUiAuthMode to oidc until an administrator has
+    // proved they can sign in (#69 US4, FR-020): otherwise every later
+    // request, including the one needed to undo it, would be refused or lose
+    // this page. Checked in the contract's order -- the four OIDC settings
+    // are complete once this request is saved, then the real requester
+    // (never an impersonated view) has a web-login session. A session is
+    // honored in none mode too (research R6), which is what lets the operator
+    // prove they can sign in before turning it on. Clearing the mode or
+    // setting none needs no such check: confirming that leaving oidc is
+    // deliberate is the Settings page's job (client-side). A resend of oidc
+    // while it is already in force changes nothing, so it is not refused.
+    //
+    // The completeness check also runs on every save while oidc stays in
+    // force: clearing a login setting then would make sign-in impossible
+    // and lock everyone out of this page within one re-check interval.
+    // Changing a value is allowed (only the provider could tell whether the
+    // new one works); the CLI remains the recovery path (FR-021).
+    //
+    // The admin check is on the real identity under the post-save admin
+    // groups, and is not redundant with requireAdminGroup or the lockout
+    // guard: requireAdminGroup judges the impersonation-overlaid groups, and
+    // the lockout guard only runs when this request changes admin groups, so a
+    // real non-admin whose impersonation entry names an admin group (entries
+    // persist until restart) passes both.
+    const modeBefore = configValueAt(inventoryPath, 'webUiAuthMode').value;
+    const modeAfter = 'webUiAuthMode' in updates ? updates.webUiAuthMode : modeBefore;
+    const switchingToOidc = modeAfter === 'oidc' && modeBefore !== 'oidc';
+    if (modeAfter === 'oidc') {
+      // The effective value of each login setting after this request: the
+      // value it sets or clears, else what is in force now. No key in the
+      // body can be env-pinned (refused above), so a body key's effective
+      // value is exactly what it writes. While oidc merely stays in force,
+      // only a key this request clears counts, so an unrelated save is never
+      // refused for a gap it did not make.
+      const missing = WEB_LOGIN_KEYS.filter((key) => {
+        if (isSecretSettingKey(key) && secretUpdates.has(key)) return secretUpdates.get(key) === undefined;
+        if (key in updates) return updates[key as keyof Settings] === undefined;
+        return switchingToOidc && configValueAt(inventoryPath, key).value === undefined;
+      });
+      if (missing.length > 0) {
         res.status(409).json({
-          error:
-            'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected',
+          error: switchingToOidc
+            ? `Web login is not configured: set ${missing.join(', ')} first (bellhop configure-web-login <entry> --apply)`
+            : `Refusing to clear ${missing.join(', ')} while webUiAuthMode is oidc: nobody could sign in. Set webUiAuthMode to none first`,
         });
         return;
       }
-      if (!isAdminOf(identity.groups, adminGroupsAfter)) {
+    }
+    if (switchingToOidc) {
+      if (!(req.realUser ?? req.user)?.viaOidc) {
         res.status(409).json({
-          error: `Refusing to set webUiAuthMode to authentik: the Authentik identity on this request (${identity.username}) is not an administrator, so it would lose access to this page`,
+          error: 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change',
+        });
+        return;
+      }
+      const requester = (req.realUser ?? req.user)!; // safe: viaOidc above proved a user exists
+      if (!isAdminOf(requester.groups, adminGroupsAfter)) {
+        res.status(409).json({
+          error: `You are signed in as ${requester.username}, who would not be an admin after this change`,
         });
         return;
       }
@@ -340,14 +374,18 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
       return;
     }
-    // Leaving authentik turns sign-in off for the whole web UI, so it is
-    // worth a line in the service log naming who did it (the real user,
-    // never an impersonated view). An unset mode is auto.
-    if (authModeBefore === 'authentik' && 'webUiAuthMode' in updates && updates.webUiAuthMode !== 'authentik') {
+    // Leaving oidc turns sign-in off for the whole web UI, so it is worth a
+    // line in the service log naming who did it (the real user, never an
+    // impersonated view). An unset mode is none.
+    if (authModeBefore === 'oidc' && 'webUiAuthMode' in updates && updates.webUiAuthMode !== 'oidc') {
       const who = (req.realUser ?? req.user)?.username ?? 'unknown';
       logWarn(
-        `Sign-in mode changed from authentik to ${updates.webUiAuthMode ?? 'auto'} by ${who} -- the web UI no longer requires Authentik sign-in`
+        `Sign-in mode changed from oidc to ${updates.webUiAuthMode ?? 'none'} by ${who} -- the web UI no longer requires sign-in`
       );
+    }
+    if (authModeBefore !== 'oidc' && 'webUiAuthMode' in updates && updates.webUiAuthMode === 'oidc') {
+      const who = (req.realUser ?? req.user)?.username ?? 'unknown';
+      logWarn(`webUiAuthMode set to oidc by ${who}`);
     }
     // Reflect the write in the shared in-memory object immediately rather
     // than waiting for the next request's reload middleware.

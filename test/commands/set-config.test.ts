@@ -530,3 +530,12 @@ test('resolveSetConfigValue refuses a secret passed as an argument even with --u
   );
   assert.equal(await resolveSetConfigValue({ key: 'npmApiPassword', unset: true }, fakeInput().input), undefined);
 });
+
+// #69 US4 / FR-021: the Settings page refuses oidc until an admin can sign in,
+// but the CLI is the recovery path and stays unrestricted.
+test('runSetConfig sets webUiAuthMode oidc with no login settings configured', () => {
+  const inventoryPath = tempInventoryPath();
+  const result = runSetConfig({ key: 'webUiAuthMode', value: 'oidc', apply: true }, { inventoryPath });
+  assert.equal(result.applied, true);
+  assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
+});

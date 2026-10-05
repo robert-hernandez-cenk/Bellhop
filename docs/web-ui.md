@@ -107,26 +107,27 @@ subdomains, deleting a guest that had any) automatically re-run
 proxy configuration and status page never drift from what the Dashboard
 shows. Set `PORT` to run it on a port other than 3001.
 
-The deployed web UI can be gated behind its reverse proxy's Authentik
-forward-auth (Caddy's `forward_auth`, nginx's `auth_request`), checking
-every request against a self-hosted Authentik instance and forwarding
-trusted `X-authentik-*` identity headers on success. (The HAProxy driver
-can't generate forward-auth, so under it you front the web UI yourself —
-see [HAProxy limits](reverse-proxy/haproxy.md#limits).) There is no login
-page or session store in this app itself, only a global Express middleware
-(`src/web/auth.ts`) that trusts those headers when present. Whether a
-request arriving with no such headers is rejected or served as a synthetic
-always-admin local operator is controlled by the `webUiAuthMode` setting
-(the `WEB_UI_AUTH_MODE` environment variable overrides it — see [Sign-in
-mode](environment-variables.md#sign-in-mode) and [Running without
-Authentik](authentik.md#running-without-authentik)). The default `auto`
-mode falls back to the local operator, so running `web:start`/`web:dev`
-directly (not routed through the proxy) works out of the box instead of
-401ing the whole dashboard; store `webUiAuthMode` as `authentik` on any
-deployment where authentication is load-bearing, so a request that
-bypasses forward-auth fails closed. `WEB_UI_DEV_USER` remains useful in
-dev/test for simulating a *specific non-admin group membership*, which the
-synthetic local operator can't do — `web:dev` sets it automatically (to
+The deployed web UI signs people in itself, as an OpenID Connect client of
+your Authentik instance: a browser with no session is sent to `/auth/login`,
+signs in at Authentik, and comes back with a session cookie (`/auth/callback`
+creates it). There is nothing for the reverse proxy to do in front of the web
+UI — its route is not forward-gated, and any `X-authentik-*` header on a
+request is ignored. Sessions last at most 30 days and live in
+`data/sessions.sqlite3`; **Sign out** in the sidebar ends the session and
+Authentik's own. Setup, the group-change delay and recovery are in [Web
+login](authentik.md#web-login) and [Locked out](authentik.md#locked-out).
+
+Whether a request with no session is sent to sign in or served as a
+synthetic always-admin local operator is controlled by the `webUiAuthMode`
+setting (the `WEB_UI_AUTH_MODE` environment variable overrides it — see
+[Sign-in mode](environment-variables.md#sign-in-mode) and [Running without
+Authentik](authentik.md#running-without-authentik)). The default `none`
+mode serves the local operator, so running `web:start`/`web:dev` directly
+works out of the box instead of redirecting every page to a sign-in that is
+not set up; store `webUiAuthMode` as `oidc` on any deployment where
+authentication matters. `WEB_UI_DEV_USER` remains useful in dev/test for
+simulating a *specific non-admin group membership*, which the synthetic
+local operator can't do — `web:dev` sets it automatically (to
 `local-dev`) and `npm test` sets it too (to `test-user`).
 
 ## Settings page
@@ -160,15 +161,17 @@ the selected driver.
   for confirmation first, and is refused when, under the new names, you
   would no longer be an administrator yourself. The check uses your real
   groups even while impersonating, and never blocks the local operator.
-- **Web UI sign-in** (`webUiAuthMode`). Switching it to `authentik` is
-  refused unless the save itself carries Authentik's forward-auth headers
-  and the user they name is an administrator (under the admin groups as
-  they will be after the save) — otherwise the next request from your
-  browser would be rejected or lose this page. The headers are checked
-  even in `none` mode, which otherwise ignores them. Switching away from
-  `authentik` asks for confirmation, since the web UI then becomes
-  reachable without signing in, and the service log records who did it. If a wrong value locks you
-  out anyway, see [Locked out](authentik.md#locked-out).
+- **Web UI sign-in** (`webUiAuthMode`) and the four web login values
+  beside it (issuer, client ID, callback URL, client secret —
+  `bellhop configure-web-login` fills them in). Switching to `oidc` is
+  refused unless all four are set, you have signed in through
+  `/auth/login`, and you would still be an administrator (under the admin
+  groups as they will be after the save) — otherwise your next request
+  would send you to a sign-in you cannot complete. While `oidc` is in
+  force, clearing any of the four is refused for the same reason. Switching away from
+  `oidc` asks for confirmation, since the web UI then becomes reachable
+  without signing in, and the service log records who did it. If a wrong
+  value locks you out anyway, see [Locked out](authentik.md#locked-out).
 
 Settings stays in the nav for any admin even without Authentik's user
 directory; Users and Permissions need it.

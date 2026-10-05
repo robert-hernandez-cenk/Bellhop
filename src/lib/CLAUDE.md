@@ -91,11 +91,12 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `proxyTlsCertificate`/`proxyTlsKey` (#30): the shared cert/key pair served under `tlsSource: files`.
 - `proxyCertResolver`/`proxyApiUrl` (#35): Traefik only; `proxyCertResolver` is read under `acme-dns`/`acme-http`, and no value is reserved (`none` was, until #72's `external` replaced it).
 - `pveUserRealm`/`pveCreatorRole` (#53): unset `pveUserRealm` = creator grant off.
-- #64's twelve integration settings (`authentikApiUrl` + eight other `authentik*`, `webUiAuthMode`, `npmApiUrl`, `npmApiEmail`): `settings-defs.ts`'s `MovedSettingsSchema`, spread into `SettingsSchema`.
+- #64's twelve integration settings (`authentikApiUrl` + eight other `authentik*`, `webUiAuthMode`, `npmApiUrl`, `npmApiEmail`): `settings-defs.ts`'s `MovedSettingsSchema`, spread into `SettingsSchema`. `webUiAuthMode` accepts only `oidc`/`none` (#69; `openInventoryDb` migrates a stored `authentik` to `oidc` and deletes a stored `auto`).
+- #69's web login: `webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri` (must end in `/auth/callback`, and be `https://` except on loopback, since the sign-in cookies are `Secure`) and the secret `webUiOidcClientSecret` (env `WEB_UI_OIDC_*`, file `authentik.env`); read together by `src/web/login/config.ts`, written by `configure-web-login`.
 
 Writers: `set-config <key> [value] [--unset] [--apply]` (`src/commands/maintenance/set-config.ts`) and the admin-only web Settings page, both validating against `SettingsSchema`.
 
-Derived, not configured: `set-guest-vpn --vpn none`'s LAN gateway is the parent host's `midScheme.gateway`; the Windows service firewall `remoteip=` (`scripts/windows-service.ts`'s `resolveProxyIp`) is the `proxy: true` entry.
+Derived, not configured: `set-guest-vpn --vpn none`'s LAN gateway is the parent host's `midScheme.gateway`. (The Windows service firewall rule is no longer address-scoped, #69.)
 
 ### `saveInventory` transaction
 

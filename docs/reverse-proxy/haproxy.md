@@ -221,17 +221,11 @@ so such a backend needs `insecureBackendTls` under every driver.
   Switch the entry to OIDC mode (the app then checks the login itself —
   see [Authentik](../authentik.md)) or clear its `authGroup`. Nothing is
   ever deployed ungated in its place.
-- **Bellhop's own web UI can't sit behind a Bellhop-generated backend.**
-  The web UI trusts `X-authentik-*` headers from its proxy, and production
-  runs with the `webUiAuthMode` setting stored as `authentik` (see
-  [Web UI](../web-ui.md)). Under this driver Bellhop can't put forward-auth
-  in front of the web UI's subdomain, and every generated backend strips
-  those headers, so routing the web UI through one only produces 401s. To
-  serve it through HAProxy, front it yourself: mark that entry
-  `proxyManual` and hand-author its routing with your own Authentik
-  forward-auth (for example the community Lua integration), which must
-  overwrite — never pass through — any `X-authentik-*` headers the client
-  sent. Keep `webUiAuthMode` set to `authentik`.
+- **Bellhop's own web UI needs nothing special.** It signs users in itself
+  (see [Web login](../authentik.md#web-login)), so its route is a plain
+  backend with no forward-auth in front of it — no `proxyManual` entry is
+  needed. Give Bellhop's entry `authMode: oidc` and its `/auth/callback`
+  URL in `oidcRedirectUris`, as for any OIDC app.
 - **`unauthenticatedPaths` is ignored.** It only means something on a
   forward-gated entry, which this driver never renders.
 - **No status page.** HAProxy has no document root to serve one from.

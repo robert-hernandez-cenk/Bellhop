@@ -111,6 +111,7 @@ with `--apply`. The main ones:
 | `attach-nfs-mount` | Give an existing guest a NAS share through its host |
 | `sync-proxy` | Write the reverse-proxy configuration and reload the proxy |
 | `sync-authentik` | Reconcile Authentik applications, OpenID clients, and access tiers |
+| `configure-web-login` | Store the sign-in client Bellhop's own web UI uses |
 | `set-config` | Set an inventory-wide setting |
 
 [Commands](docs/commands.md) has every command, its flags, and how each one

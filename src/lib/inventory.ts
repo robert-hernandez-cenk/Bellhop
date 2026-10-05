@@ -654,6 +654,26 @@ function migrateCaddyToProxy(db: Database.Database): void {
   tx();
 }
 
+// One-time #69 migration: the web UI's auth modes became 'oidc' | 'none'.
+// A stored 'authentik' meant "sign-in required", which is what 'oidc' means
+// now; a stored 'auto' meant "authentik if the headers are there, else the
+// dev fallback", which is simply the unset state now, so its row is deleted.
+// 'oidc'/'none'/absent are left alone, which also makes it self-idempotent
+// and silent on every open after the first.
+function migrateWebUiAuthMode(db: Database.Database): void {
+  const tx = db.transaction(() => {
+    const row = db.prepare("SELECT value FROM meta WHERE key = 'webUiAuthMode'").get() as { value: string } | undefined;
+    if (row?.value === 'authentik') {
+      db.prepare("UPDATE meta SET value = 'oidc' WHERE key = 'webUiAuthMode'").run();
+      logInfo("Migrated webUiAuthMode from 'authentik' to 'oidc' (#69, one-time).");
+    } else if (row?.value === 'auto') {
+      db.prepare("DELETE FROM meta WHERE key = 'webUiAuthMode'").run();
+      logInfo("Migrated webUiAuthMode 'auto' to unset (#69, one-time).");
+    }
+  });
+  tx();
+}
+
 // One-time #72 migration: the pre-#72 TLS settings (the Caddy-only
 // proxyCaddyTls meta row, and Traefik's reserved proxyCertResolver 'none')
 // become the driver-neutral tlsSource setting, and the legacy rows are
@@ -705,6 +725,7 @@ function migrateLegacyTlsSettings(db: Database.Database): void {
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
   migrateCaddyToProxy(db);
+  migrateWebUiAuthMode(db);
   // Order-independent of the column work below -- it touches only meta.
   migrateLegacyTlsSettings(db);
   ensureColumn(db, 'hosts', 'proxy_manual', 'proxy_manual INTEGER');

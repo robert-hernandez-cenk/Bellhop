@@ -4,7 +4,6 @@ import type { SecretSettingKey, SettingsResponse, SettingsValues } from '../api/
 import { PageDescription } from '../components/PageDescription';
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal';
 import {
-  proxyHostText,
   LAN_GATEWAYS_EMPTY_TEXT,
   proxyDriverOptions,
   proxyFieldView,
@@ -116,7 +115,28 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
   },
   webUiAuthMode: {
     label: 'Web UI sign-in',
-    help: "How the web UI decides who is signed in. auto: use Authentik's forward-auth headers when a request has them, otherwise serve it as the local administrator. authentik: require the forward-auth headers and reject every request without them -- saving this is refused from a session that did not come through Authentik, since every later request would be rejected. none: ignore the headers; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE in the service environment or run bellhop set-config webUiAuthMode auto --apply on the server. Unset: auto.",
+    help: "How the web UI decides who is signed in. oidc: require sign-in through Authentik using Bellhop's own client -- configure the client with bellhop configure-web-login <entry> --apply, sign in once at /auth/login, then switch to oidc here (saving is refused until the client is configured and you are signed in through it as an administrator). none: no authentication; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE=none in the service environment or run bellhop set-config webUiAuthMode none --apply on the server. Unset: none.",
+  },
+  // #69: the four settings behind Bellhop's own OIDC sign-in. Set by
+  // `bellhop configure-web-login` (the four values come from the entry's
+  // Authentik client).
+  webUiOidcIssuer: {
+    label: 'OIDC issuer URL',
+    placeholder: 'https://authentik.example.com/application/o/bellhop/',
+    help: "The OIDC provider's issuer URL for Bellhop's own sign-in. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+  },
+  webUiOidcClientId: {
+    label: 'OIDC client ID',
+    help: "The client ID Bellhop signs in with. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+  },
+  webUiOidcRedirectUri: {
+    label: 'OIDC redirect URI',
+    placeholder: 'https://bellhop.example.com/auth/callback',
+    help: "Where the provider sends the browser after sign-in; its path must be /auth/callback. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+  },
+  webUiOidcClientSecret: {
+    label: 'OIDC client secret',
+    help: "The client secret Bellhop signs in with. Write-only: never shown. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
   },
   authentikApiUrl: {
     label: 'Authentik API URL',
@@ -192,8 +212,8 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
 };
 
 const WEB_UI_AUTH_MODE_OPTIONS = [
-  { value: 'auto', label: 'auto (default)' },
-  { value: 'authentik', label: 'authentik' },
+  { value: '', label: 'unset' },
+  { value: 'oidc', label: 'oidc' },
   { value: 'none', label: 'none' },
 ];
 
@@ -446,12 +466,12 @@ export function SettingsPage() {
     }
     if (key === 'webUiAuthMode') {
       // A fixed list, so it never waits on `data`; an unset value shows as
-      // its default, auto.
+      // its default, none.
       return (
         <select
           id={`setting-${key}`}
           className="field-input"
-          value={drafts.webUiAuthMode || 'auto'}
+          value={drafts.webUiAuthMode ?? ''}
           onChange={(e) => setDrafts({ ...drafts, webUiAuthMode: e.target.value })}
         >
           {WEB_UI_AUTH_MODE_OPTIONS.map((option) => (
@@ -572,10 +592,9 @@ export function SettingsPage() {
       <div className="settings-fields" role="tabpanel">
         {visibleFields.map(renderField)}
       </div>
-      {/* The derived values are what the General (set-guest-vpn's LAN
-          gateway) and Proxy (the firewall scope) settings resolve against,
-          so they show under both of those tabs. */}
-      {(tab === 'general' || tab === 'proxy') && (
+      {/* The derived value is what the General tab's set-guest-vpn LAN
+          gateway setting resolves against, so it shows under that tab. */}
+      {tab === 'general' && (
         <>
           <h3>Derived (read-only)</h3>
           <PageDescription>
@@ -592,7 +611,6 @@ export function SettingsPage() {
             ) : (
               <li>{LAN_GATEWAYS_EMPTY_TEXT}</li>
             )}
-            <li>Proxy IP (firewall scope): {proxyHostText(data?.derived.proxy ?? null)}</li>
           </ul>
         </>
       )}

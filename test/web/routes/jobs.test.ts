@@ -19,6 +19,11 @@ import { attachJobsWebSocket, completeUtf8Length } from '../../../src/web/routes
 import { savePermissionGroup } from '../../../src/lib/permissions.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
 import Database from 'better-sqlite3';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
 
@@ -48,7 +53,7 @@ test('GET /api/jobs lists jobs most-recent-first, GET /api/jobs/:id returns deta
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: 'done', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
   const id = jobRunner.enqueue({
     command: 'update-all',
@@ -63,15 +68,13 @@ test('GET /api/jobs lists jobs most-recent-first, GET /api/jobs/:id returns deta
 
   const list = await request(app)
     .get('/api/jobs')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(list.status, 200);
   assert.equal(list.body[0].id, id);
 
   const detail = await request(app)
     .get(`/api/jobs/${id}`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(detail.status, 200);
   assert.equal(detail.body.job.status, 'success');
   assert.match(detail.body.log, /done/);
@@ -82,7 +85,7 @@ test('GET /api/jobs/:id 404s for an unknown id', async () => {
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
   const res = await request(app).get('/api/jobs/999');
   assert.equal(res.status, 404);
 });
@@ -92,7 +95,7 @@ test('POST /api/jobs/:id/cancel stops a running job and marks it cancelled', asy
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: 'done', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
   // Gate the job on a promise the test controls, rather than a fixed delay
   // raced against the cancel request over real wall-clock time (flaky under
@@ -115,8 +118,7 @@ test('POST /api/jobs/:id/cancel stops a running job and marks it cancelled', asy
 
   const res = await request(app)
     .post(`/api/jobs/${id}/cancel`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
   assert.equal(res.body.cancelled, true);
 
@@ -138,7 +140,7 @@ test('POST /api/jobs/:id/cancel 404s for an unknown id', async () => {
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
   const res = await request(app).post('/api/jobs/999/cancel');
   assert.equal(res.status, 404);
 });
@@ -148,7 +150,7 @@ test('POST /api/jobs/:id/cancel 409s for a job that already finished', async () 
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: 'done', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
   const id = jobRunner.enqueue({
     command: 'update-all',
@@ -162,8 +164,7 @@ test('POST /api/jobs/:id/cancel 409s for a job that already finished', async () 
 
   const res = await request(app)
     .post(`/api/jobs/${id}/cancel`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 409);
 });
 
@@ -177,7 +178,7 @@ function startWsServer(
   inv: Inventory = inventory
 ): Promise<{ server: http.Server; port: number }> {
   const server = http.createServer();
-  attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, inv, impersonationStore, options);
+  attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, inv, impersonationStore, sessions, options);
   return new Promise((resolve) => {
     server.listen(0, () => {
       const address = server.address();
@@ -227,11 +228,11 @@ function waitFor(predicate: () => boolean): Promise<void> {
   });
 }
 
-test('WS /ws/jobs/:id refuses the upgrade with no trusted headers and no WEB_UI_DEV_USER in strict authentik mode', async () => {
+test('WS /ws/jobs/:id refuses the upgrade with no session and no WEB_UI_DEV_USER in oidc mode', async () => {
   const originalDevUser = process.env.WEB_UI_DEV_USER;
   const originalAuthMode = process.env.WEB_UI_AUTH_MODE;
   delete process.env.WEB_UI_DEV_USER;
-  process.env.WEB_UI_AUTH_MODE = 'authentik';
+  process.env.WEB_UI_AUTH_MODE = 'oidc';
   try {
     const jobStore = new JobStore(':memory:');
     const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
@@ -252,7 +253,7 @@ test('WS /ws/jobs/:id refuses the upgrade with no trusted headers and no WEB_UI_
   }
 });
 
-test('WS /ws/jobs/:id accepts the upgrade with a trusted x-authentik-username header', async () => {
+test('WS /ws/jobs/:id accepts the upgrade with a valid session cookie', async () => {
   const jobStore = new JobStore(':memory:');
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
@@ -264,10 +265,7 @@ test('WS /ws/jobs/:id accepts the upgrade with a trusted x-authentik-username he
     // (fleet-wide) -- only an admin caller is visible for a null target
     // (see isJobVisible), so this connects as admin to keep testing what it
     // always tested: a trusted, authenticated caller can open the socket.
-    const outcome = await connect(port, {
-      'x-authentik-username': 'alice',
-      'x-authentik-groups': 'bellhop-admins',
-    });
+    const outcome = await connect(port, { Cookie: sessionCookie(sessions, { username: 'alice', groups: ['bellhop-admins'] }) });
     assert.equal(outcome, 'open');
   } finally {
     server.close();
@@ -293,7 +291,7 @@ test('WS /ws/jobs/:id refuses the upgrade for a restricted group blocked from th
 
   const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath);
   try {
-    const outcome = await connect(port, { 'x-authentik-username': 'kid', 'x-authentik-groups': 'family' }, id);
+    const outcome = await connect(port, { Cookie: sessionCookie(sessions, { username: 'kid', groups: ['family'] }) }, id);
     assert.equal(outcome, 'refused');
   } finally {
     server.close();
@@ -319,7 +317,7 @@ test('WS /ws/jobs/:id accepts the upgrade for a restricted group not blocked fro
 
   const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath);
   try {
-    const outcome = await connect(port, { 'x-authentik-username': 'kid', 'x-authentik-groups': 'family' }, id);
+    const outcome = await connect(port, { Cookie: sessionCookie(sessions, { username: 'kid', groups: ['family'] }) }, id);
     assert.equal(outcome, 'open');
   } finally {
     server.close();
@@ -355,7 +353,7 @@ test("WS /ws/jobs/:id reflects the impersonated group's access, not the connecti
     // this job's target -- the upgrade must be refused.
     const outcome = await connect(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
     assert.equal(outcome, 'refused');
@@ -398,7 +396,7 @@ test('WS /ws/jobs/:id forwards a live prompt event carrying origin and matchedIn
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
 
@@ -440,7 +438,7 @@ test("WS /ws/jobs/:id replays a mid-prompt job's origin and matchedIndex to a cl
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
 
@@ -470,7 +468,7 @@ test('POST /api/jobs/:id/answer writes the answer and resumes an awaiting_input 
       return { cancel: () => { fireCheck = undefined; } };
     },
   });
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
   const id = jobRunner.enqueue({
     command: 'install-app',
@@ -492,8 +490,7 @@ test('POST /api/jobs/:id/answer writes the answer and resumes an awaiting_input 
 
   const res = await request(app)
     .post(`/api/jobs/${id}/answer`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }))
     .send({ text: 'y' });
   assert.equal(res.status, 200);
   assert.equal(res.body.answered, true);
@@ -510,7 +507,7 @@ test('POST /api/jobs/:id/answer 404s for an unknown id', async () => {
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
   const res = await request(app).post('/api/jobs/999/answer').send({ text: 'y' });
   assert.equal(res.status, 404);
 });
@@ -520,7 +517,7 @@ test('POST /api/jobs/:id/answer 409s for a job that is not awaiting input', asyn
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: 'done', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
   const id = jobRunner.enqueue({
     command: 'update-all',
     category: 'maintenance',
@@ -532,8 +529,7 @@ test('POST /api/jobs/:id/answer 409s for a job that is not awaiting input', asyn
   await waitForFinished(jobStore, id);
   const res = await request(app)
     .post(`/api/jobs/${id}/answer`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }))
     .send({ text: 'y' });
   assert.equal(res.status, 409);
 });
@@ -549,7 +545,7 @@ test('POST /api/jobs/:id/dismiss-prompt clears an awaiting_input job without wri
       return { cancel: () => { fireCheck = undefined; } };
     },
   });
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
   const id = jobRunner.enqueue({
     command: 'install-app',
@@ -570,8 +566,7 @@ test('POST /api/jobs/:id/dismiss-prompt clears an awaiting_input job without wri
 
   const res = await request(app)
     .post(`/api/jobs/${id}/dismiss-prompt`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
   assert.equal(res.body.dismissed, true);
   assert.deepEqual(ssh.writes, []);
@@ -592,7 +587,7 @@ test('POST /api/jobs/:id/dismiss-prompt 404s for an unknown id', async () => {
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
   const res = await request(app).post('/api/jobs/999/dismiss-prompt');
   assert.equal(res.status, 404);
 });
@@ -602,7 +597,7 @@ test('POST /api/jobs/:id/dismiss-prompt 409s for a job that is not awaiting inpu
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: 'done', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
   const id = jobRunner.enqueue({
     command: 'update-all',
     category: 'maintenance',
@@ -614,8 +609,7 @@ test('POST /api/jobs/:id/dismiss-prompt 409s for a job that is not awaiting inpu
   await waitForFinished(jobStore, id);
   const res = await request(app)
     .post(`/api/jobs/${id}/dismiss-prompt`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 409);
 });
 
@@ -625,7 +619,7 @@ test('GET /api/jobs omits jobs whose target a restricted group cannot access', a
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = seededInventoryPath();
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   jobRunner.enqueue({
     command: 'guest-power',
@@ -644,14 +638,12 @@ test('GET /api/jobs omits jobs whose target a restricted group cannot access', a
 
   await request(app)
     .put('/api/permissions/family')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }))
     .send({ mode: 'block-list', resources: [{ type: 'guest', name: 'stash-lxc' }] });
 
   const res = await request(app)
     .get('/api/jobs')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(
     res.body.map((j: any) => j.target),
@@ -665,14 +657,13 @@ test('GET /api/jobs omits untargeted (fleet-wide) jobs for a restricted group', 
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = seededInventoryPath();
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   jobRunner.enqueue({ command: 'sync-inventory', category: 'maintenance', argsJson: '{}', run: async () => {} });
 
   const res = await request(app)
     .get('/api/jobs')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, []);
 });
@@ -683,7 +674,7 @@ test('GET /api/jobs/:id 404s (not 403) for a restricted group targeting a job it
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = seededInventoryPath();
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   const id = jobRunner.enqueue({
     command: 'guest-power',
@@ -694,14 +685,12 @@ test('GET /api/jobs/:id 404s (not 403) for a restricted group targeting a job it
   });
   await request(app)
     .put('/api/permissions/family')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }))
     .send({ mode: 'block-list', resources: [{ type: 'guest', name: 'stash-lxc' }] });
 
   const res = await request(app)
     .get(`/api/jobs/${id}`)
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 404);
 });
 
@@ -711,14 +700,13 @@ test('POST /api/jobs/:id/cancel 404s for a restricted group targeting a job it c
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = seededInventoryPath();
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   const id = jobRunner.enqueue({ command: 'sync-inventory', category: 'maintenance', argsJson: '{}', run: async () => {} });
 
   const res = await request(app)
     .post(`/api/jobs/${id}/cancel`)
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 404);
 });
 
@@ -728,7 +716,7 @@ test('GET /api/jobs shows only jobs whose target is on an allow-list group\'s re
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = seededInventoryPath();
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   jobRunner.enqueue({
     command: 'guest-power',
@@ -747,14 +735,12 @@ test('GET /api/jobs shows only jobs whose target is on an allow-list group\'s re
 
   await request(app)
     .put('/api/permissions/family')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }))
     .send({ mode: 'allow-list', resources: [{ type: 'guest', name: 'plex-lxc' }] });
 
   const res = await request(app)
     .get('/api/jobs')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(
     res.body.map((j: any) => j.target),
@@ -769,6 +755,7 @@ test('GET /api/jobs/:id exposes the prompt origin and matched index for an await
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const app = buildApp({
+    sessions,
     inventory,
     baseSsh: ssh,
     jobStore,
@@ -783,8 +770,7 @@ test('GET /api/jobs/:id exposes the prompt origin and matched index for an await
 
   const res = await request(app)
     .get(`/api/jobs/${id}`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
   assert.equal(res.status, 200);
   assert.equal(res.body.job.promptOrigin, 'expected');
@@ -819,7 +805,7 @@ test('WS /ws/jobs/:id streams a job owned by another process via polling, not jo
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
 
@@ -872,7 +858,7 @@ test('WS /ws/jobs/:id still refuses a foreign job a restricted group cannot see'
 
   const { server, port } = await startWsServer(jobRunner, jobStore, jobLog, inventoryPath, new Map(), { tailIntervalMs: 20, isPidAlive: () => true });
   try {
-    const outcome = await connect(port, { 'x-authentik-username': 'kid', 'x-authentik-groups': 'family' }, id);
+    const outcome = await connect(port, { Cookie: sessionCookie(sessions, { username: 'kid', groups: ['family'] }) }, id);
     assert.equal(outcome, 'refused');
   } finally {
     server.close();
@@ -904,7 +890,7 @@ test('WS /ws/jobs/:id closes the socket when the foreign job tail stops from a t
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
     await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'running'));
@@ -950,7 +936,7 @@ test('WS /ws/jobs/:id closes the socket after a foreign job reaches a terminal s
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
     await waitFor(() => messages.some((m) => m.type === 'status' && m.status === 'running'));
@@ -987,7 +973,7 @@ test("WS /ws/jobs/:id closes the socket once the foreign job's owning MCP proces
   try {
     const { ws, messages } = await connectCollectingMessages(
       port,
-      { 'x-authentik-username': 'admin', 'x-authentik-groups': 'bellhop-admins' },
+      { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
       id
     );
 
@@ -1024,7 +1010,7 @@ for (const action of ['cancel', 'answer', 'dismiss-prompt'] as const) {
     const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
     const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+    const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
     const owner = `mcp:${process.pid}`;
     const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
@@ -1034,8 +1020,7 @@ for (const action of ['cancel', 'answer', 'dismiss-prompt'] as const) {
     const res = await request(app)
       .post(`/api/jobs/${id}/${action}`)
       .send({ text: 'y' })
-      .set('x-authentik-username', 'admin')
-      .set('x-authentik-groups', 'bellhop-admins');
+      .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
     assert.equal(res.status, 202);
     assert.deepEqual(res.body, { requested: true, owner });
@@ -1053,7 +1038,7 @@ for (const action of ['cancel', 'answer', 'dismiss-prompt'] as const) {
     const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
     const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+    const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
     const deadPid = 2147483646;
     assert.equal(defaultIsPidAlive(deadPid), false, 'test assumes this pid is not a real running process');
@@ -1065,8 +1050,7 @@ for (const action of ['cancel', 'answer', 'dismiss-prompt'] as const) {
     const res = await request(app)
       .post(`/api/jobs/${id}/${action}`)
       .send({ text: 'y' })
-      .set('x-authentik-username', 'admin')
-      .set('x-authentik-groups', 'bellhop-admins');
+      .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
     assert.equal(res.status, 409);
     assert.equal(res.body.error, `job ${id}'s owning process ${owner} has exited`);
@@ -1079,7 +1063,7 @@ test('POST /api/jobs/:id/cancel 409s "nothing to cancel" for a terminal job owne
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
   const owner = `mcp:${process.pid}`;
   const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
@@ -1087,8 +1071,7 @@ test('POST /api/jobs/:id/cancel 409s "nothing to cancel" for a terminal job owne
 
   const res = await request(app)
     .post(`/api/jobs/${id}/cancel`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
   assert.equal(res.status, 409);
   assert.equal(res.body.error, `Job ${id} is already success — nothing to cancel`);
@@ -1103,7 +1086,7 @@ for (const action of ['answer', 'dismiss-prompt'] as const) {
     const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
     const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-    const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
+    const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath: seededInventoryPath(), authentik: new FakeAuthentikClient() });
 
     const owner = `mcp:${process.pid}`;
     const id = jobStore.createJob({ command: 'update-all', category: 'maintenance', argsJson: '{}', owner });
@@ -1112,8 +1095,7 @@ for (const action of ['answer', 'dismiss-prompt'] as const) {
     const res = await request(app)
       .post(`/api/jobs/${id}/${action}`)
       .send({ text: 'y' })
-      .set('x-authentik-username', 'admin')
-      .set('x-authentik-groups', 'bellhop-admins');
+      .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
     assert.equal(res.status, 409);
     assert.equal(res.body.error, `Job ${id} is not awaiting input — nothing to ${verb}`);
@@ -1134,6 +1116,7 @@ test('POST /api/jobs/:id/cancel on a job owned by a second JobRunner ends it can
   const webSsh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const webRunner = new JobRunner(jobStore, jobLog, webSsh);
   const app = buildApp({
+    sessions,
     inventory,
     baseSsh: webSsh,
     jobStore,
@@ -1160,8 +1143,7 @@ test('POST /api/jobs/:id/cancel on a job owned by a second JobRunner ends it can
 
   const res = await request(app)
     .post(`/api/jobs/${id}/cancel`)
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
   assert.equal(res.status, 202);
   assert.deepEqual(res.body, { requested: true, owner });
@@ -1249,6 +1231,7 @@ function creatorFixture(
   // A fresh copy: buildApp's /api reload mutates this object in place.
   const inv: Inventory = structuredClone(fixtureInventory);
   const app = buildApp({
+    sessions,
     inventory: inv,
     baseSsh: ssh,
     jobStore,
@@ -1279,8 +1262,7 @@ function creatorFixture(
 }
 
 function asUser(req: request.Test, username: string, groups: string, uid?: string): request.Test {
-  req = req.set('x-authentik-username', username).set('x-authentik-groups', groups);
-  return uid ? req.set('x-authentik-uid', uid) : req;
+  return req.set('Cookie', sessionCookie(sessions, { username, groups: groups ? groups.split('|') : [], ...(uid ? { uid } : {}) }));
 }
 
 test('jobs: a job targeting a guest the caller created is listed, readable, and controllable under an allow-list that omits it', async () => {
@@ -1344,13 +1326,13 @@ test('WS /ws/jobs/:id accepts the creator of the target guest and refuses anothe
   try {
     const creator = await connect(
       port,
-      { 'x-authentik-username': 'test-user', 'x-authentik-groups': 'app-users', 'x-authentik-uid': 'uid-test-user' },
+      { Cookie: sessionCookie(sessions, { username: 'test-user', groups: ['app-users'], uid: 'uid-test-user' }) },
       id
     );
     assert.equal(creator, 'open');
     const other = await connect(
       port,
-      { 'x-authentik-username': 'other-user', 'x-authentik-groups': 'app-users', 'x-authentik-uid': 'uid-other-user' },
+      { Cookie: sessionCookie(sessions, { username: 'other-user', groups: ['app-users'], uid: 'uid-other-user' }) },
       id
     );
     assert.equal(other, 'refused');
@@ -1367,7 +1349,7 @@ test('WS /ws/jobs/:id refuses an admin creator who is impersonating app-users', 
   try {
     const outcome = await connect(
       port,
-      { 'x-authentik-username': 'test-user', 'x-authentik-groups': 'bellhop-admins', 'x-authentik-uid': 'uid-test-user' },
+      { Cookie: sessionCookie(sessions, { username: 'test-user', groups: ['bellhop-admins'], uid: 'uid-test-user' }) },
       id
     );
     assert.equal(outcome, 'refused');
@@ -1431,7 +1413,7 @@ test('WS /ws/jobs/:id refuses the creator of a guest named like a host for a job
   try {
     const outcome = await connect(
       port,
-      { 'x-authentik-username': 'test-user', 'x-authentik-groups': 'app-users', 'x-authentik-uid': 'uid-test-user' },
+      { Cookie: sessionCookie(sessions, { username: 'test-user', groups: ['app-users'], uid: 'uid-test-user' }) },
       id
     );
     assert.equal(outcome, 'refused');
@@ -1475,7 +1457,7 @@ test('WS /ws/jobs/:id refuses a job that started before the creator was recorded
   try {
     const outcome = await connect(
       port,
-      { 'x-authentik-username': 'test-user', 'x-authentik-groups': 'app-users', 'x-authentik-uid': 'uid-test-user' },
+      { Cookie: sessionCookie(sessions, { username: 'test-user', groups: ['app-users'], uid: 'uid-test-user' }) },
       id
     );
     assert.equal(outcome, 'refused');

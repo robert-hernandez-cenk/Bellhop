@@ -1,10 +1,9 @@
 // Framework-free (no React/DOM imports) so it compiles under the root
 // NodeNext config and is testable with plain node --test, same rationale as
 // admin-nav.ts/whoami-store.ts. Text for the Settings page's derived-values
-// section: a fresh inventory with no `proxy: true` entry and no host
-// `midScheme` should read as an explained empty state, never a bare "none"
-// or nothing at all -- see contracts/ui-and-messages.md ("Settings page
-// text").
+// section: a fresh inventory with no host `midScheme` should read as an
+// explained empty state, never a bare "none" or nothing at all -- see
+// contracts/ui-and-messages.md ("Settings page text").
 
 import type {
   SettingsResponse,
@@ -13,13 +12,6 @@ import type {
   SecretSettingKey,
   SecretStatus,
 } from '../api/types.ts';
-
-export type ProxyHost = NonNullable<SettingsResponse['derived']['proxy']>;
-
-export function proxyHostText(proxy: ProxyHost | null): string {
-  if (!proxy) return 'not set — no inventory entry has proxy: true with an IP yet';
-  return `${proxy.name} (${proxy.ip})`;
-}
 
 export const LAN_GATEWAYS_EMPTY_TEXT = 'LAN gateways: none yet — no host has a midScheme';
 
@@ -213,6 +205,11 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'pveUserRealm',
     'pveCreatorRole',
     'webUiAuthMode',
+    // #69: Bellhop's own OIDC web login, beside the mode it feeds.
+    'webUiOidcIssuer',
+    'webUiOidcClientId',
+    'webUiOidcRedirectUri',
+    'webUiOidcClientSecret',
   ],
   proxy: [
     'proxyDriver',
@@ -252,7 +249,7 @@ export function fieldsForTab(tab: SettingsTab): readonly SettingsFieldKey[] {
   return TAB_FIELDS[tab];
 }
 
-const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken'];
+const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken', 'webUiOidcClientSecret'];
 
 export function isSecretField(key: SettingsFieldKey): key is SecretSettingKey {
   return (SECRET_KEYS as readonly string[]).includes(key);
@@ -292,9 +289,9 @@ export function storedCopyText(state: EnvPinnedState): string {
 }
 
 // The auth mode actually in force: the environment's value when pinned,
-// else the stored one, else the server's own default, auto.
+// else the stored one, else the server's own default, none (#69).
 export function effectiveWebUiAuthMode(data: Pick<SettingsResponse, 'settings' | 'environment'>): string {
-  return data.environment.webUiAuthMode?.value ?? data.settings.webUiAuthMode ?? 'auto';
+  return data.environment.webUiAuthMode?.value ?? data.settings.webUiAuthMode ?? 'none';
 }
 
 const ADMIN_GROUP_KEYS: readonly SettingsFieldKey[] = ['authentikAdminGroup', 'authentikBuiltinAdminGroup'];
@@ -302,7 +299,7 @@ const ADMIN_GROUP_KEYS: readonly SettingsFieldKey[] = ['authentikAdminGroup', 'a
 // Whether saving `next` over `current` needs a confirmation first (FR-023):
 // any change to either admin-group field (a clear included, since that
 // falls back to the default group), and a webUiAuthMode change that leaves
-// authentik. `current` is the stored value for the admin groups and the
+// oidc. `current` is the stored value for the admin groups and the
 // effective mode (effectiveWebUiAuthMode) for webUiAuthMode; `next` is
 // null for a clear.
 export function needsConfirmation(
@@ -311,14 +308,14 @@ export function needsConfirmation(
   next: string | null | undefined,
 ): boolean {
   if (ADMIN_GROUP_KEYS.includes(key)) return (current ?? '') !== (next ?? '');
-  if (key === 'webUiAuthMode') return current === 'authentik' && (next || 'auto') !== 'authentik';
+  if (key === 'webUiAuthMode') return current === 'oidc' && (next || 'none') !== current;
   return false;
 }
 
 // The confirmation dialog's text for a guarded field.
 export function confirmationMessage(key: SettingsFieldKey): string {
   if (key === 'webUiAuthMode') {
-    return 'Leaving authentik means the web UI will be reachable without signing in through Authentik: requests without forward-auth headers are served as the local operator (auto) or every request is (none). Save anyway?';
+    return 'Leaving oidc means the web UI will be reachable without signing in: every request is served as the local operator. Save anyway?';
   }
   return 'This changes who counts as an administrator in Bellhop. Saving is refused if it would remove your own administrator access. Save anyway?';
 }

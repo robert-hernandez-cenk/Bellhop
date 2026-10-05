@@ -12,8 +12,14 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { savePermissionGroup } from '../../src/lib/permissions.ts';
-import { applyImpersonation, resolveActor, type ImpersonationStore } from '../../src/web/impersonation.ts';
-import type { Request } from 'express';
+import { applyImpersonation, resolveActor, resolveTriggeredBy, type ImpersonationStore } from '../../src/web/impersonation.ts';
+import express, { type Request } from 'express';
+import { requireAuth } from '../../src/web/auth.ts';
+import { newTestSessions, sessionCookie } from '../support/web-session.ts';
+
+// One session store for the file; each sessionCookie() call mints a fresh
+// session, so tests do not share identities.
+const sessions = newTestSessions();
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -41,6 +47,7 @@ function testApp(impersonationStore: ImpersonationStore, inventoryPath: string) 
     inventoryPath,
     authentik: new FakeAuthentikClient(),
     impersonationStore,
+    sessions,
   });
 }
 
@@ -49,11 +56,11 @@ test('an admin with an active impersonation entry sees whoami overlaid with the 
   const app = testApp(store, newInventoryPath());
   const res = await request(app)
     .get('/api/whoami')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, {
     username: 'admin',
+    uid: 'uid-admin',
     groups: ['bellhop-viewers'],
     impersonating: 'bellhop-viewers',
     localOperator: false,
@@ -71,11 +78,11 @@ test('a user with no impersonation entry is unaffected', async () => {
   const app = testApp(new Map(), newInventoryPath());
   const res = await request(app)
     .get('/api/whoami')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, {
     username: 'admin',
+    uid: 'uid-admin',
     groups: ['bellhop-admins'],
     localOperator: false,
     isAdmin: true,
@@ -94,16 +101,14 @@ test('impersonation overlay drives downstream permission checks, not just whoami
   const blockedApp = testApp(new Map([['admin', 'bellhop-viewers']]), inventoryPath);
   const blocked = await request(blockedApp)
     .get('/api/inventory')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(blocked.status, 200);
   assert.deepEqual(blocked.body.hosts, []);
 
   const adminApp = testApp(new Map(), inventoryPath);
   const unblocked = await request(adminApp)
     .get('/api/inventory')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins');
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(unblocked.status, 200);
   assert.equal(unblocked.body.hosts.length, 1);
 });
@@ -160,11 +165,11 @@ test('resolveActor omits uid entirely when the real identity has none', () => {
   assert.ok(actor && !('uid' in actor), 'a real identity with no uid must round-trip without a uid key at all');
 });
 
-// --- viaForwardAuth survives the overlay (issue #64) ---
+// --- viaOidc survives the overlay (#69; was viaForwardAuth, issue #64) ---
 
-test('applyImpersonation keeps viaForwardAuth on both the overlaid req.user and req.realUser', () => {
+test('applyImpersonation keeps viaOidc on both the overlaid req.user and req.realUser', () => {
   const req = {
-    user: { username: 'admin', groups: ['bellhop-admins'], viaForwardAuth: true as const },
+    user: { username: 'admin', groups: ['bellhop-admins'], uid: 'uid-admin', viaOidc: true as const },
   } as unknown as Request; // only the fields applyImpersonation reads
   let nextCalled = false;
   applyImpersonation(new Map([['admin', 'bellhop-viewers']]))(req, {} as never, () => {
@@ -172,13 +177,71 @@ test('applyImpersonation keeps viaForwardAuth on both the overlaid req.user and 
   });
   assert.equal(nextCalled, true);
   assert.equal(req.user?.impersonating, 'bellhop-viewers');
-  assert.equal(req.user?.viaForwardAuth, true);
-  assert.equal(req.realUser?.viaForwardAuth, true);
+  assert.equal(req.user?.viaOidc, true);
+  assert.equal(req.realUser?.viaOidc, true);
+  assert.equal(req.realUser?.uid, 'uid-admin');
 });
 
-test('whoami does not expose viaForwardAuth', async () => {
+test('whoami does not expose viaOidc', async () => {
   const app = testApp(new Map(), newInventoryPath());
-  const res = await request(app).get('/api/whoami').set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  const res = await request(app)
+    .get('/api/whoami')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
   assert.equal(res.status, 200);
-  assert.equal('viaForwardAuth' in res.body, false);
+  assert.equal(res.body.username, 'admin');
+  assert.equal('viaOidc' in res.body, false);
+});
+
+// --- #69 US1: the store is keyed by the session username, and attribution is
+// the real session user (uid included) -----------------------------------------
+
+// requireAuth + applyImpersonation exactly as buildApp mounts them, with a
+// handler that reports what attribution would record.
+function attributionApp(store: ImpersonationStore) {
+  const app = express();
+  app.use(requireAuth(sessions));
+  app.use(applyImpersonation(store));
+  app.get('/who', (req, res) => {
+    res.json({ triggeredBy: resolveTriggeredBy(req), actor: resolveActor(req) ?? null, groups: req.user?.groups });
+  });
+  return app;
+}
+
+test('an impersonation entry keyed by the session username overlays that session, and only that one', async () => {
+  const app = attributionApp(new Map([['alice', 'bellhop-viewers']]));
+  const alice = await request(app)
+    .get('/who')
+    .set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['bellhop-admins'] }));
+  assert.deepEqual(alice.body.groups, ['bellhop-viewers']);
+  const bob = await request(app)
+    .get('/who')
+    .set('Cookie', sessionCookie(sessions, { username: 'bob', groups: ['bellhop-admins'] }));
+  assert.deepEqual(bob.body.groups, ['bellhop-admins']);
+});
+
+test('resolveTriggeredBy and resolveActor give the real session user, with uid, while impersonating', async () => {
+  const app = attributionApp(new Map([['alice', 'bellhop-viewers']]));
+  const res = await request(app)
+    .get('/who')
+    .set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['bellhop-admins'], uid: 'uid-alice', email: 'alice@example.com' }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.triggeredBy, { triggeredByUsername: 'alice', triggeredByImpersonating: 'bellhop-viewers' });
+  assert.deepEqual(res.body.actor, { username: 'alice', email: 'alice@example.com', uid: 'uid-alice' });
+});
+
+test('resolveTriggeredBy and resolveActor give the session user, with uid, when not impersonating', async () => {
+  const app = attributionApp(new Map());
+  const res = await request(app)
+    .get('/who')
+    .set('Cookie', sessionCookie(sessions, { username: 'bob', groups: ['homelab'], uid: 'uid-bob' }));
+  assert.deepEqual(res.body.triggeredBy, { triggeredByUsername: 'bob' });
+  assert.deepEqual(res.body.actor, { username: 'bob', uid: 'uid-bob' });
+});
+
+test('x-authentik-* headers do not key an impersonation entry', async () => {
+  // test-user is the suite-wide WEB_UI_DEV_USER; the header names someone else.
+  const app = attributionApp(new Map([['header-admin', 'bellhop-viewers']]));
+  const res = await request(app).get('/who').set('x-authentik-username', 'header-admin').set('x-authentik-groups', 'bellhop-admins');
+  assert.equal(res.body.triggeredBy.triggeredByUsername, 'test-user');
+  assert.equal(res.body.triggeredBy.triggeredByImpersonating, undefined);
 });

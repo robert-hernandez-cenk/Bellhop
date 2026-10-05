@@ -43,15 +43,33 @@ const positiveIntegerString = z
   .string()
   .refine((value) => /^[0-9]+$/.test(value) && Number(value) > 0, 'must be a positive integer');
 
-export const WEB_UI_AUTH_MODES = ['auto', 'authentik', 'none'] as const;
+// #69: 'oidc' means sign-in through Bellhop's own OIDC client is required;
+// 'none' means no authentication. (The old 'auto'/'authentik' are migrated
+// away in openInventoryDb and rejected as an env value.)
+export const WEB_UI_AUTH_MODES = ['oidc', 'none'] as const;
 export type WebUiAuthMode = (typeof WEB_UI_AUTH_MODES)[number];
 
 const webUiAuthMode = z
   .string()
   .refine(
     (value): value is WebUiAuthMode => (WEB_UI_AUTH_MODES as readonly string[]).includes(value),
-    'must be one of: auto, authentik, none'
+    'must be one of: oidc, none'
   );
+
+// The redirect URI Bellhop registers with the provider: the callback route is
+// fixed at /auth/callback, so any other path could never complete a sign-in.
+// It must be https:// because the sign-in cookies are Secure, which a browser
+// drops over plain http -- except on loopback, the one place it accepts them.
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+const webUiOidcRedirectUri = z.string().refine((value) => {
+  try {
+    const url = new URL(value);
+    const schemeOk = url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname));
+    return schemeOk && url.pathname === '/auth/callback';
+  } catch {
+    return false;
+  }
+}, 'must be an https:// URL (http:// only for localhost) whose path is /auth/callback');
 
 // API tokens never contain whitespace, so a stray space or newline from a
 // copy-paste is caught here rather than surfacing later as an opaque 401.
@@ -72,6 +90,9 @@ export const MovedSettingsSchema = z.object({
   authentikInvalidationFlowSlug: nonEmpty.optional(),
   authentikOidcSigningKeyName: nonEmpty.optional(),
   webUiAuthMode: webUiAuthMode.optional(),
+  webUiOidcIssuer: httpUrl.optional(),
+  webUiOidcClientId: nonEmpty.optional(),
+  webUiOidcRedirectUri: webUiOidcRedirectUri.optional(),
   npmApiUrl: httpUrl.optional(),
   npmApiEmail: nonEmpty.optional(),
 });
@@ -84,6 +105,7 @@ export const SecretSettingsSchema = z.object({
   cloudflareDnsApiToken: token.optional(),
   npmApiPassword: password.optional(),
   githubApiToken: token.optional(),
+  webUiOidcClientSecret: token.optional(),
 });
 
 export type MovedSettingKey = keyof z.infer<typeof MovedSettingsSchema>;
@@ -129,6 +151,12 @@ export const SETTING_DEFS: Record<ConfigKey, SettingDef> = {
   npmApiEmail: { envVar: 'NPM_API_EMAIL', group: 'proxy', secret: false, envFile: 'nginx-proxy-manager.env' },
   npmApiPassword: { envVar: 'NPM_API_PASSWORD', group: 'proxy', secret: true, envFile: 'nginx-proxy-manager.env' },
   githubApiToken: { envVar: 'GITHUB_API_TOKEN', group: 'github', secret: true },
+  // #69: Bellhop's own OIDC web login, shown on the General tab beside the
+  // auth mode. Same authentik.env as WEB_UI_AUTH_MODE for the env-pinned note.
+  webUiOidcIssuer: { envVar: 'WEB_UI_OIDC_ISSUER', group: 'general', secret: false, envFile: 'authentik.env' },
+  webUiOidcClientId: { envVar: 'WEB_UI_OIDC_CLIENT_ID', group: 'general', secret: false, envFile: 'authentik.env' },
+  webUiOidcRedirectUri: { envVar: 'WEB_UI_OIDC_REDIRECT_URI', group: 'general', secret: false, envFile: 'authentik.env' },
+  webUiOidcClientSecret: { envVar: 'WEB_UI_OIDC_CLIENT_SECRET', group: 'general', secret: true, envFile: 'authentik.env' },
 };
 
 export function isSecretSettingKey(key: string): key is SecretSettingKey {

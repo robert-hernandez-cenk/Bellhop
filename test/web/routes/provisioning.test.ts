@@ -22,6 +22,11 @@ import type { GoBuilder } from '../../../src/lib/go-build.ts';
 import type { AuthentikClient } from '../../../src/lib/authentik-client.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
 import { FakeGoBuilder, fakeNordVpnFetch, fakePiaFetch } from '../../support/fake-go-builder-and-fetch.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -62,6 +67,7 @@ function testApp(
   const fetchImpl = extra?.fetchImpl ?? ((async () => new Response(null, { status: 404 })) as unknown as typeof fetch);
   return {
     app: buildApp({
+      sessions,
       inventory,
       baseSsh: ssh,
       jobStore,
@@ -108,6 +114,7 @@ function isolatedApp(
   const authentik = extra?.authentik ?? new FakeAuthentikClient();
   return {
     app: buildApp({
+      sessions,
       inventory: inv,
       baseSsh: ssh,
       jobStore,
@@ -161,8 +168,7 @@ test('POST /api/provisioning/create-lxc/apply records who triggered the job', as
   const { app, jobStore } = testApp(() => ({ stdout: 'created', stderr: '', code: 0 }));
   const res = await request(app)
     .post('/api/provisioning/create-lxc/apply')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }))
     .send({ host: 'pve1', mid: 30, hostname: 'attributed-lxc', template: 'debian-13-standard' });
   await waitForFinished(jobStore, res.body.jobId);
   const job = jobStore.get(res.body.jobId);
@@ -1286,7 +1292,7 @@ test('POST /api/provisioning/deploy-vpn-gateway/apply does not rewrite a blank h
 });
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 test('POST /api/provisioning/create-lxc/preview returns 403 for a restricted group targeting a blocked host', async () => {
@@ -1301,7 +1307,7 @@ test('POST /api/provisioning/create-lxc/preview returns 403 for a restricted gro
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   await asAdmin(request(app).put('/api/permissions/family')).send({
     mode: 'block-list',
@@ -1310,8 +1316,7 @@ test('POST /api/provisioning/create-lxc/preview returns 403 for a restricted gro
 
   const res = await request(app)
     .post('/api/provisioning/create-lxc/preview')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ host: 'pve1', mid: 4, hostname: 'test-lxc' });
   assert.equal(res.status, 403);
 });
@@ -1328,7 +1333,7 @@ test('POST /api/provisioning/delete-guest/preview returns 403 for a restricted g
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   await asAdmin(request(app).put('/api/permissions/family')).send({
     mode: 'block-list',
@@ -1337,8 +1342,7 @@ test('POST /api/provisioning/delete-guest/preview returns 403 for a restricted g
 
   const res = await request(app)
     .post('/api/provisioning/delete-guest/preview')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ guest: 'plex-lxc' });
   assert.equal(res.status, 403);
 });
@@ -1367,7 +1371,7 @@ test('POST /api/provisioning/create-lxc/preview returns 403, not 400, for a bloc
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  const app = buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  const app = buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 
   await asAdmin(request(app).put('/api/permissions/family')).send({
     mode: 'block-list',
@@ -1376,8 +1380,7 @@ test('POST /api/provisioning/create-lxc/preview returns 403, not 400, for a bloc
 
   const res = await request(app)
     .post('/api/provisioning/create-lxc/preview')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ host: 'pve1', mid: 'abc', hostname: 42 });
   assert.equal(res.status, 403);
   assert.equal(ssh.history.length, 0);
@@ -1702,9 +1705,7 @@ test('create-vm apply as a normal user grants the header-identified creator, usi
   const ctx = isolatedApp(grantInventory(), grantResponder);
   const res = await request(ctx.app)
     .post('/api/provisioning/create-vm/apply')
-    .set('x-authentik-username', 'alice')
-    .set('x-authentik-email', 'alice@example.com')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['family'], email: 'alice@example.com' }))
     .send({ host: 'pve1', mid: 31, name: 'alice-vm' });
   assert.equal(res.status, 200);
   await waitForFinished(ctx.jobStore, res.body.jobId);
@@ -1717,9 +1718,7 @@ test('create-vm apply while impersonating a group grants the real admin, not the
   const ctx = isolatedApp(grantInventory(), grantResponder, { impersonationStore: new Map([['admin', 'family']]) });
   const res = await request(ctx.app)
     .post('/api/provisioning/create-vm/apply')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-email', 'admin@example.com')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'], email: 'admin@example.com' }))
     .send({ host: 'pve1', mid: 32, name: 'admin-vm' });
   assert.equal(res.status, 200);
   await waitForFinished(ctx.jobStore, res.body.jobId);
@@ -1730,7 +1729,7 @@ test('create-vm apply while impersonating a group grants the real admin, not the
 test('create-vm preview and apply both receive the actor', async () => {
   const ctx = isolatedApp(grantInventory(), grantResponder);
   const withAlice = (r: request.Test) =>
-    r.set('x-authentik-username', 'alice').set('x-authentik-email', 'alice@example.com').set('x-authentik-groups', 'family');
+    r.set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['family'], email: 'alice@example.com' }));
   const preview = await withAlice(request(ctx.app).post('/api/provisioning/create-vm/preview')).send({ host: 'pve1', mid: 33, name: 'alice-vm' });
   assert.equal(preview.status, 200);
   assert.match(preview.body.preview, /Would grant PVEVMAdmin on \/vms\/4033 to alice's Proxmox account \(realm authentik\)/);
@@ -1766,7 +1765,7 @@ function usedMidsApp() {
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
-  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
+  return buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik: new FakeAuthentikClient() });
 }
 
 test('GET /api/provisioning/used-mids gives an admin every host with a midScheme', async () => {
@@ -1788,8 +1787,7 @@ test('GET /api/provisioning/used-mids counts hidden guests for a restricted grou
 
   const res = await request(app)
     .get('/api/provisioning/used-mids')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(Object.keys(res.body), ['usedMids']);
   assert.deepEqual(res.body, { usedMids: { pve1: [2, 3] } });
@@ -1836,8 +1834,7 @@ test('POST /api/provisioning/install-app/preview omits a hidden conflicting gues
 
   const restricted = await request(app)
     .post('/api/provisioning/install-app/preview')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send(body);
   assert.equal(restricted.status, 400);
   assert.equal(restricted.body.error, "VMID 4002 on 'pve1' is already in use -- choose a different --mid");

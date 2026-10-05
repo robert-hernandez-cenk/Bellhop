@@ -1,87 +1,285 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveAuthUser, requireAdminGroup, isAdminUser, authMode } from '../../src/web/auth.ts';
+import request from 'supertest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { resolveRequestUser, requireAdminGroup, isAdminUser, authMode } from '../../src/web/auth.ts';
 import { authentikConfig } from '../../src/lib/authentik-config.ts';
+import { buildApp } from '../../src/web/app.ts';
+import { JobStore } from '../../src/web/jobs/job-store.ts';
+import { createJobLog } from '../../src/web/jobs/job-log.ts';
+import { JobRunner } from '../../src/web/jobs/job-runner.ts';
+import { FakeSSHClient } from '../support/fake-ssh-client.ts';
+import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
+import { newTestSessions, sessionCookie, TEST_WEB_LOGIN_CONFIG, type TestSessions } from '../support/web-session.ts';
+import { FakeWebLoginClient } from '../support/fake-web-login-client.ts';
+import { SessionStore } from '../../src/web/login/session-store.ts';
+import { SessionService } from '../../src/web/login/sessions.ts';
+import type { RecheckResult } from '../../src/web/login/oidc-client.ts';
 
 const ADMIN_GROUP_NAME = authentikConfig({}).adminGroup;
 const AUTHENTIK_BUILTIN_ADMIN_GROUP_NAME = authentikConfig({}).builtinAdminGroup;
 
-test('resolveAuthUser returns a user from Authentik forward-auth headers, splitting groups on |', () => {
-  const user = resolveAuthUser({
-    'x-authentik-username': 'alice',
-    'x-authentik-email': 'alice@example.com',
-    'x-authentik-groups': 'admins|homelab',
+afterEach(() => resetConfigStore());
+
+// The forward-auth headers a reverse proxy used to add. #69 (FR-018):
+// Bellhop's own authentication never reads them, in either mode.
+const HEADERS = {
+  'x-authentik-username': 'header-user',
+  'x-authentik-groups': ADMIN_GROUP_NAME,
+  'x-authentik-uid': 'uid-header-user',
+  'x-authentik-email': 'header-user@example.com',
+};
+
+// --- authMode (#69 research R10) ---------------------------------------------
+
+test('authMode defaults to none when the variable is unset or empty', () => {
+  assert.equal(authMode({}), 'none');
+  assert.equal(authMode({ WEB_UI_AUTH_MODE: '' }), 'none');
+});
+
+test('authMode accepts oidc and none from the environment', () => {
+  assert.equal(authMode({ WEB_UI_AUTH_MODE: 'oidc' }), 'oidc');
+  assert.equal(authMode({ WEB_UI_AUTH_MODE: 'none' }), 'none');
+});
+
+for (const retired of ['auto', 'authentik']) {
+  test(`authMode rejects the retired WEB_UI_AUTH_MODE=${retired} with a pointer to the new modes`, () => {
+    assert.throws(
+      () => authMode({ WEB_UI_AUTH_MODE: retired }),
+      (err: Error) =>
+        err.message ===
+        `WEB_UI_AUTH_MODE=${retired} is no longer supported -- use oidc (sign-in required) or none (no authentication); see docs/authentik.md`
+    );
   });
-  assert.deepEqual(user, { username: 'alice', email: 'alice@example.com', groups: ['admins', 'homelab'], viaForwardAuth: true });
+}
+
+test('authMode rejects an unrecognized value, listing the valid ones', () => {
+  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'bogus' }), /must be one of oidc, none/);
 });
 
-test('resolveAuthUser defaults email to undefined and groups to [] when those headers are absent', () => {
-  const user = resolveAuthUser({ 'x-authentik-username': 'alice' });
-  assert.deepEqual(user, { username: 'alice', email: undefined, groups: [], viaForwardAuth: true });
+test('authMode reads the stored webUiAuthMode when a config store is registered', () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  assert.equal(authMode({}), 'oidc');
 });
 
-test('resolveAuthUser falls back to WEB_UI_DEV_USER when no trusted headers are present', () => {
-  const original = process.env.WEB_UI_DEV_USER;
-  process.env.WEB_UI_DEV_USER = 'local-dev';
-  try {
-    const user = resolveAuthUser({});
-    assert.deepEqual(user, { username: 'local-dev', groups: [] });
-  } finally {
-    if (original === undefined) delete process.env.WEB_UI_DEV_USER;
-    else process.env.WEB_UI_DEV_USER = original;
+test('authMode: WEB_UI_AUTH_MODE overrides the stored webUiAuthMode', () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  assert.equal(authMode({ WEB_UI_AUTH_MODE: 'none' }), 'none');
+});
+
+test('authMode still rejects an invalid WEB_UI_AUTH_MODE with a store registered', () => {
+  tempConfigStore({ webUiAuthMode: 'none' });
+  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'bogus' }), /must be one of oidc, none/);
+});
+
+// --- resolveRequestUser: session -> WEB_UI_DEV_USER -> local operator (R6) -----
+
+test('a valid session wins over WEB_UI_DEV_USER and the local operator, in either mode', async () => {
+  const sessions = newTestSessions();
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: ['homelab'], uid: 'uid-alice', email: 'alice@example.com' });
+  for (const mode of ['oidc', 'none']) {
+    const user = await resolveRequestUser({ cookie }, sessions, { WEB_UI_AUTH_MODE: mode, WEB_UI_DEV_USER: 'dev-user' });
+    assert.deepEqual(user, { username: 'alice', uid: 'uid-alice', email: 'alice@example.com', groups: ['homelab'], viaOidc: true });
   }
 });
 
-test('resolveAuthUser returns undefined in strict authentik mode with no headers and no dev bypass', () => {
-  assert.equal(resolveAuthUser({}, { WEB_UI_AUTH_MODE: 'authentik' }), undefined);
+test('the session identity carries uid and viaOidc', async () => {
+  const sessions = newTestSessions();
+  const cookie = sessionCookie(sessions, { username: 'test-user', groups: [], uid: 'uid-test-user' });
+  const user = await resolveRequestUser({ cookie }, sessions, { WEB_UI_AUTH_MODE: 'oidc' });
+  assert.equal(user?.uid, 'uid-test-user');
+  assert.equal(user?.viaOidc, true);
+  assert.ok(user && !('localOperator' in user));
 });
 
-test('authMode defaults to auto when the variable is unset or empty', () => {
-  assert.equal(authMode({}), 'auto');
-  assert.equal(authMode({ WEB_UI_AUTH_MODE: '' }), 'auto');
+test('WEB_UI_DEV_USER is next, ahead of the local operator in none mode', async () => {
+  const sessions = newTestSessions();
+  const user = await resolveRequestUser({}, sessions, { WEB_UI_AUTH_MODE: 'none', WEB_UI_DEV_USER: 'dev-user' });
+  assert.deepEqual(user, { username: 'dev-user', groups: [] });
 });
 
-test('authMode rejects an unrecognized value, listing the valid ones', () => {
-  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'oidc' }), /must be one of auto, authentik, none/);
+test('WEB_UI_DEV_USER also authenticates in oidc mode (dev/test only)', async () => {
+  const sessions = newTestSessions();
+  const user = await resolveRequestUser({}, sessions, { WEB_UI_AUTH_MODE: 'oidc', WEB_UI_DEV_USER: 'dev-user', WEB_UI_DEV_GROUPS: 'a|b' });
+  assert.deepEqual(user, { username: 'dev-user', groups: ['a', 'b'] });
 });
 
-test('auto mode with no headers yields the synthetic local operator, who is an admin', () => {
-  const user = resolveAuthUser({}, {});
+test('none mode with no session and no dev user yields the synthetic local operator, who is an admin', async () => {
+  const sessions = newTestSessions();
+  const user = await resolveRequestUser({}, sessions, {});
   assert.deepEqual(user, { username: 'local', groups: [ADMIN_GROUP_NAME], localOperator: true });
   assert.equal(isAdminUser(user!.groups, {}), true);
 });
 
-test('WEB_UI_LOCAL_USER names the local operator', () => {
-  const user = resolveAuthUser({}, { WEB_UI_LOCAL_USER: 'alice' });
+test('WEB_UI_LOCAL_USER names the local operator', async () => {
+  const user = await resolveRequestUser({}, newTestSessions(), { WEB_UI_LOCAL_USER: 'alice' });
   assert.equal(user!.username, 'alice');
 });
 
-// The property that keeps the inferred default safe on a configured
-// instance: if the flag goes unset on a deployment that really does have
-// forward-auth, users keep their real groups instead of every one of them
-// silently becoming an admin.
-test('auto mode with headers yields the header identity, with real groups and no admin promotion', () => {
-  const user = resolveAuthUser({ 'x-authentik-username': 'someone', 'x-authentik-groups': 'homelab' }, {});
-  assert.equal(user!.localOperator, undefined);
-  assert.equal(isAdminUser(user!.groups, {}), false);
-  assert.deepEqual(user, { username: 'someone', email: undefined, groups: ['homelab'], viaForwardAuth: true });
+test('oidc mode with no session and no dev user is unauthenticated', async () => {
+  assert.equal(await resolveRequestUser({}, newTestSessions(), { WEB_UI_AUTH_MODE: 'oidc' }), undefined);
 });
 
-test('none mode ignores trusted headers entirely and always yields the local operator', () => {
-  const user = resolveAuthUser({ 'x-authentik-username': 'someone', 'x-authentik-groups': 'homelab' }, { WEB_UI_AUTH_MODE: 'none' });
+test('an unknown session cookie falls through to the next rung', async () => {
+  const sessions = newTestSessions();
+  const headers = { cookie: 'bellhop_session=not-a-real-session' };
+  assert.equal(await resolveRequestUser(headers, sessions, { WEB_UI_AUTH_MODE: 'oidc' }), undefined);
+  const local = await resolveRequestUser(headers, sessions, { WEB_UI_AUTH_MODE: 'none' });
+  assert.equal(local?.localOperator, true);
+});
+
+test('x-authentik-* headers have no effect in oidc mode', async () => {
+  assert.equal(await resolveRequestUser(HEADERS, newTestSessions(), { WEB_UI_AUTH_MODE: 'oidc' }), undefined);
+});
+
+test('x-authentik-* headers have no effect in none mode', async () => {
+  const user = await resolveRequestUser(HEADERS, newTestSessions(), { WEB_UI_AUTH_MODE: 'none' });
   assert.deepEqual(user, { username: 'local', groups: [ADMIN_GROUP_NAME], localOperator: true });
 });
 
-test('auto mode resolution order is headers, then WEB_UI_DEV_USER, then the local operator', () => {
-  const fromHeaders = resolveAuthUser({ 'x-authentik-username': 'header-user' }, { WEB_UI_DEV_USER: 'dev-user' });
-  assert.equal(fromHeaders!.username, 'header-user');
-  const fromDev = resolveAuthUser({}, { WEB_UI_DEV_USER: 'dev-user' });
-  assert.equal(fromDev!.username, 'dev-user');
-  assert.equal(fromDev!.localOperator, undefined);
-  const fromLocal = resolveAuthUser({}, {});
-  assert.equal(fromLocal!.username, 'local');
+test('x-authentik-* headers do not displace the dev user', async () => {
+  const user = await resolveRequestUser(HEADERS, newTestSessions(), { WEB_UI_DEV_USER: 'dev-user' });
+  assert.deepEqual(user, { username: 'dev-user', groups: [] });
 });
+
+test('dev/local identities never carry a uid or viaOidc', async () => {
+  const sessions = newTestSessions();
+  const devUser = await resolveRequestUser({}, sessions, { WEB_UI_DEV_USER: 'dev-user' });
+  assert.ok(devUser && !('uid' in devUser) && !('viaOidc' in devUser));
+  const local = await resolveRequestUser({}, sessions, {});
+  assert.ok(local && !('uid' in local) && !('viaOidc' in local));
+});
+
+// --- requireAuth through the app: unauthenticated responses ------------------
+
+function testApp(sessions = newTestSessions()) {
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const app = buildApp({
+    inventory: { domain: 'example.com', hosts: [], guests: [] },
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner: new JobRunner(jobStore, jobLog, ssh),
+    inventoryPath: path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db'),
+    authentik: new FakeAuthentikClient(),
+    sessions,
+  });
+  // A stand-in for the SPA fallback server.ts adds after buildApp, so a page
+  // navigation that gets past requireAuth has somewhere to land.
+  app.use((_req, res) => {
+    res.status(200).send('page');
+  });
+  return { app, sessions };
+}
+
+// Runs `fn` in oidc mode with the suite-wide WEB_UI_DEV_USER removed.
+async function signedOutInOidcMode(fn: () => Promise<void>): Promise<void> {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  const original = process.env.WEB_UI_DEV_USER;
+  delete process.env.WEB_UI_DEV_USER;
+  try {
+    await fn();
+  } finally {
+    if (original !== undefined) process.env.WEB_UI_DEV_USER = original;
+  }
+}
+
+test('oidc mode: an unauthenticated /api request gets 401 JSON, whatever the method', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app } = testApp();
+    for (const res of [await request(app).get('/api/whoami'), await request(app).post('/api/jobs/1/cancel')]) {
+      assert.equal(res.status, 401);
+      assert.deepEqual(res.body, { error: 'unauthorized' });
+    }
+  });
+});
+
+test('oidc mode: an unauthenticated page GET redirects to /auth/login with the path and query as returnTo', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app } = testApp();
+    const res = await request(app).get('/jobs?x=1');
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.location, '/auth/login?returnTo=%2Fjobs%3Fx%3D1');
+    const head = await request(app).head('/settings');
+    assert.equal(head.status, 302);
+    assert.equal(head.headers.location, '/auth/login?returnTo=%2Fsettings');
+  });
+});
+
+test('oidc mode: an unauthenticated non-GET outside /api gets 401', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app } = testApp();
+    const res = await request(app).post('/something');
+    assert.equal(res.status, 401);
+    assert.deepEqual(res.body, { error: 'unauthorized' });
+  });
+});
+
+test('oidc mode: x-authentik-* headers alone are unauthenticated', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app } = testApp();
+    const api = await request(app).get('/api/whoami').set(HEADERS);
+    assert.equal(api.status, 401);
+    const page = await request(app).get('/').set(HEADERS);
+    assert.equal(page.status, 302);
+  });
+});
+
+test('oidc mode: a session cookie authenticates both /api and pages', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions } = testApp();
+    const cookie = sessionCookie(sessions, { username: 'alice', groups: ['homelab'], uid: 'uid-alice' });
+    const api = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(api.status, 200);
+    assert.equal(api.body.username, 'alice');
+    assert.equal(api.body.uid, 'uid-alice');
+    assert.equal(api.body.localOperator, false);
+    assert.equal('viaOidc' in api.body, false, 'viaOidc is a server-side guard input, not part of whoami');
+    const page = await request(app).get('/jobs').set('Cookie', cookie);
+    assert.equal(page.status, 200);
+  });
+});
+
+test('/auth/* is reachable without a session in oidc mode', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app } = testApp();
+    const res = await request(app).get('/auth/login');
+    assert.equal(res.status, 200);
+    assert.match(res.text, /Web login is not configured/);
+  });
+});
+
+test('none mode: a request with only x-authentik-* headers is the local operator', async () => {
+  tempConfigStore({ webUiAuthMode: 'none' });
+  const original = process.env.WEB_UI_DEV_USER;
+  delete process.env.WEB_UI_DEV_USER;
+  try {
+    const { app } = testApp();
+    const res = await request(app).get('/api/whoami').set(HEADERS);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.username, 'local');
+    assert.equal(res.body.localOperator, true);
+  } finally {
+    if (original !== undefined) process.env.WEB_UI_DEV_USER = original;
+  }
+});
+
+test('none mode: a session is honored, showing the operator as themselves', async () => {
+  tempConfigStore({ webUiAuthMode: 'none' });
+  const { app, sessions } = testApp();
+  const res = await request(app)
+    .get('/api/whoami')
+    .set('Cookie', sessionCookie(sessions, { username: 'alice', groups: [ADMIN_GROUP_NAME] }));
+  assert.equal(res.body.username, 'alice');
+  assert.equal(res.body.localOperator, false);
+});
+
+// --- Admin predicates ---------------------------------------------------------
 
 test('isAdminUser honors a configured admin group name', () => {
   assert.equal(isAdminUser(['my-admins'], { AUTHENTIK_ADMIN_GROUP: 'my-admins' }), true);
@@ -90,59 +288,6 @@ test('isAdminUser honors a configured admin group name', () => {
 
 test('isAdminUser honors a configured built-in admin group name', () => {
   assert.equal(isAdminUser(['superusers'], { AUTHENTIK_BUILTIN_ADMIN_GROUP: 'superusers' }), true);
-});
-
-test('resolveAuthUser ignores an empty x-authentik-username header and falls back to the dev bypass', () => {
-  const original = process.env.WEB_UI_DEV_USER;
-  process.env.WEB_UI_DEV_USER = 'local-dev';
-  try {
-    const user = resolveAuthUser({ 'x-authentik-username': '' });
-    assert.deepEqual(user, { username: 'local-dev', groups: [] });
-  } finally {
-    if (original === undefined) delete process.env.WEB_UI_DEV_USER;
-    else process.env.WEB_UI_DEV_USER = original;
-  }
-});
-
-// issue #58 (unit U1): uid is the identity provider's stable user id,
-// used downstream to match a guest's recorded creator across username
-// renames (src/lib/permissions.ts's isGuestCreator).
-test('resolveAuthUser sets uid from a non-empty x-authentik-uid header', () => {
-  const user = resolveAuthUser({ 'x-authentik-username': 'test-user', 'x-authentik-uid': 'uid-test-user' });
-  assert.equal(user?.uid, 'uid-test-user');
-  assert.deepEqual(user, { username: 'test-user', email: undefined, groups: [], uid: 'uid-test-user', viaForwardAuth: true });
-});
-
-test('resolveAuthUser omits uid when the x-authentik-uid header is absent or empty', () => {
-  const absent = resolveAuthUser({ 'x-authentik-username': 'test-user' });
-  assert.ok(absent && !('uid' in absent), 'no x-authentik-uid header must round-trip without a uid key at all');
-
-  const empty = resolveAuthUser({ 'x-authentik-username': 'test-user', 'x-authentik-uid': '' });
-  assert.ok(empty && !('uid' in empty), 'an empty x-authentik-uid header must be treated the same as absent');
-});
-
-test('dev/local identities never carry a uid', () => {
-  const devUser = resolveAuthUser({}, { WEB_UI_DEV_USER: 'dev-user' });
-  assert.ok(devUser && !('uid' in devUser), 'the dev-bypass identity has no uid');
-
-  const local = resolveAuthUser({}, {});
-  assert.ok(local && !('uid' in local), 'the synthetic local operator has no uid');
-});
-
-test('resolveAuthUser honors WEB_UI_DEV_GROUPS as a pipe-delimited list alongside WEB_UI_DEV_USER', () => {
-  const originalUser = process.env.WEB_UI_DEV_USER;
-  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
-  process.env.WEB_UI_DEV_USER = 'local-dev';
-  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins|homelab';
-  try {
-    const user = resolveAuthUser({});
-    assert.deepEqual(user, { username: 'local-dev', groups: ['bellhop-admins', 'homelab'] });
-  } finally {
-    if (originalUser === undefined) delete process.env.WEB_UI_DEV_USER;
-    else process.env.WEB_UI_DEV_USER = originalUser;
-    if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
-    else process.env.WEB_UI_DEV_GROUPS = originalGroups;
-  }
 });
 
 function fakeRes() {
@@ -202,36 +347,112 @@ test('requireAdminGroup returns 403 when req.user is undefined', () => {
   assert.equal(state.statusCode, 403);
 });
 
-// -- Issue #64: webUiAuthMode through the config accessor, viaForwardAuth ---
+// --- session re-check and expiry through the app (#69 US2, FR-014/FR-014a) -------------
 
-afterEach(() => resetConfigStore());
+const MIN = 60 * 1000;
+const DAY = 24 * 60 * MIN;
 
-test('authMode reads the stored webUiAuthMode when a config store is registered', () => {
-  tempConfigStore({ webUiAuthMode: 'authentik' });
-  assert.equal(authMode({}), 'authentik');
-  assert.equal(resolveAuthUser({}, {}), undefined);
+// An app whose sessions run on a clock the test moves.
+function clockedApp() {
+  const clock = { now: 1_000_000 };
+  const { app, sessions } = testApp(newTestSessions({ now: () => clock.now }));
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: [ADMIN_GROUP_NAME], uid: 'uid-alice' });
+  return { app, sessions, clock, cookie };
+}
+
+const refreshedIdentity = (groups: string[]): RecheckResult => ({
+  kind: 'ok',
+  identity: { username: 'alice', uid: 'uid-alice', groups, refreshToken: 'rotated-refresh-token', idToken: 'new-id-token' },
 });
 
-test('authMode: WEB_UI_AUTH_MODE overrides the stored webUiAuthMode', () => {
-  tempConfigStore({ webUiAuthMode: 'authentik' });
-  assert.equal(authMode({ WEB_UI_AUTH_MODE: 'none' }), 'none');
+test('a request after 5 minutes re-checks the session and sees the groups the provider now reports', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    const before = await request(app).get('/api/settings').set('Cookie', cookie);
+    assert.equal(before.status, 200);
+    assert.equal(sessions.client.callsTo('recheck').length, 0, 'a fresh session makes no provider call');
+
+    clock.now += 5 * MIN;
+    sessions.client.recheckResults.push(refreshedIdentity(['homelab']));
+    const after = await request(app).get('/api/settings').set('Cookie', cookie);
+    assert.equal(after.status, 403, 'admin was removed at the provider');
+    assert.equal(sessions.client.callsTo('recheck').length, 1);
+  });
 });
 
-test('authMode still rejects an invalid WEB_UI_AUTH_MODE with a store registered', () => {
-  tempConfigStore({ webUiAuthMode: 'auto' });
-  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'oidc' }), /must be one of auto, authentik, none/);
+test('a refused re-check answers 401 and the session is gone', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    clock.now += 5 * MIN;
+    sessions.client.recheckResults.push({ kind: 'refused', reason: 'Re-check with https://authentik.example.com/ was refused: HTTP 400 invalid_grant' });
+    const res = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(res.status, 401);
+    assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+    const again = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(again.status, 401);
+    assert.equal(sessions.client.callsTo('recheck').length, 1);
+  });
 });
 
-test('resolveAuthUser marks a forward-auth header identity with viaForwardAuth', () => {
-  const user = resolveAuthUser({ 'x-authentik-username': 'alice' }, {});
-  assert.equal(user?.viaForwardAuth, true);
+test('an unreachable provider keeps serving the last-known identity', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    clock.now += 5 * MIN;
+    sessions.client.recheckResults.push({ kind: 'unreachable', reason: 'Re-check with https://authentik.example.com/ failed: HTTP 503' });
+    const res = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.username, 'alice');
+    assert.equal(res.body.isAdmin, true);
+  });
 });
 
-test('viaForwardAuth is never set on the dev user or the local operator', () => {
-  const devUser = resolveAuthUser({}, { WEB_UI_DEV_USER: 'dev-user' });
-  assert.ok(devUser && !('viaForwardAuth' in devUser), 'the dev-bypass identity did not come through forward-auth');
-  const local = resolveAuthUser({}, {});
-  assert.ok(local && !('viaForwardAuth' in local), 'the local operator did not come through forward-auth');
-  const none = resolveAuthUser({ 'x-authentik-username': 'alice' }, { WEB_UI_AUTH_MODE: 'none' });
-  assert.ok(none && !('viaForwardAuth' in none), "none mode ignores headers, so its identity isn't forward-auth's");
+test('a session 30 days old answers 401 even though the provider would still vouch for it', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    // Re-checked successfully along the way: the 30 days still run from sign-in.
+    for (let day = 1; day < 30; day++) {
+      clock.now += DAY;
+      sessions.client.recheckResults.push(refreshedIdentity([ADMIN_GROUP_NAME]));
+      assert.equal((await request(app).get('/api/whoami').set('Cookie', cookie)).status, 200, `day ${day}`);
+    }
+    clock.now += DAY;
+    sessions.client.recheckResults.push(refreshedIdentity([ADMIN_GROUP_NAME]));
+    const res = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(res.status, 401);
+    assert.equal(sessions.client.recheckResults.length, 1, 'expired before any provider call');
+  });
+});
+
+// A SessionService over `store` and a fresh fake provider, typed like newTestSessions'.
+function serviceOn(store: SessionStore): TestSessions {
+  const client = new FakeWebLoginClient();
+  return Object.assign(new SessionService({ store, client, config: () => TEST_WEB_LOGIN_CONFIG }), { client });
+}
+
+test('a file-backed session survives the service restarting', async () => {
+  await signedOutInOidcMode(async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'sessions-')), 'sessions.sqlite3');
+    const firstStore = new SessionStore(file);
+    const first = testApp(serviceOn(firstStore));
+    const cookie = sessionCookie(first.sessions, { username: 'alice', groups: [ADMIN_GROUP_NAME], uid: 'uid-alice' });
+    assert.equal((await request(first.app).get('/api/whoami').set('Cookie', cookie)).status, 200);
+    firstStore.close();
+
+    const secondStore = new SessionStore(file);
+    try {
+      const second = testApp(serviceOn(secondStore));
+      const res = await request(second.app).get('/api/whoami').set('Cookie', cookie);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.username, 'alice');
+    } finally {
+      secondStore.close();
+    }
+  });
+});
+
+// #69 US5 (T043): a stored value the schema rejects is reported by the config
+// accessor, whose error points at set-config rather than at the env variable.
+test('authMode: a stored invalid webUiAuthMode throws an error naming set-config', () => {
+  tempConfigStore({ webUiAuthMode: 'bogus' as never });
+  assert.throws(() => authMode({}), /set-config webUiAuthMode/);
 });

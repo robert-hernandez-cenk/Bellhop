@@ -18,6 +18,11 @@ import { SECRET_SETTINGS_KEYS } from '../../../src/lib/settings-defs.ts';
 import { envPinnedError } from '../../../src/web/routes/settings.ts';
 import Database from 'better-sqlite3';
 import { configValueAt, useConfigStore, writeSecret } from '../../../src/lib/config.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 function baseInventory(): Inventory {
   return {
@@ -42,6 +47,7 @@ function testApp(inv: Inventory = baseInventory()) {
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inv);
   const app = buildApp({
+    sessions,
     inventory: inv,
     baseSsh: ssh,
     jobStore,
@@ -54,15 +60,34 @@ function testApp(inv: Inventory = baseInventory()) {
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
+
+// The three stored (non-secret) OIDC web-login settings; the fourth, the
+// client secret, lives in the secret table. Example values only.
+const LOGIN_SETTINGS = {
+  webUiOidcIssuer: 'https://authentik.example.com/application/o/bellhop/',
+  webUiOidcClientId: 'example-client-id',
+  webUiOidcRedirectUri: 'https://bellhop.example.com/auth/callback',
+};
+
+// A test app whose web login is fully configured, so the oidc guard reaches
+// its session check. Registers the db as the config store (as the real
+// service does) and leaves the caller to useConfigStore(null).
+function loginConfiguredApp(extra: Partial<Inventory> = {}) {
+  const made = testApp({ ...baseInventory(), ...LOGIN_SETTINGS, ...extra });
+  writeSecret(made.inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  useConfigStore(made.inventoryPath);
+  return made;
+}
+
+const SIGN_IN_FIRST = 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change';
 
 test('GET /api/settings returns 403 for a non-admin', async () => {
   const { app } = testApp();
   const res = await request(app)
     .get('/api/settings')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'family');
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }));
   assert.equal(res.status, 403);
 });
 
@@ -73,7 +98,7 @@ test('GET /api/settings returns current and derived values', async () => {
   assert.equal(res.body.settings.dnsServer, '10.0.0.53');
   assert.equal(res.body.settings.nfsServer, undefined);
   assert.deepEqual(res.body.derived.lanGateways, [{ host: 'pve1', gateway: '10.0.0.1' }]);
-  assert.deepEqual(res.body.derived.proxy, { name: 'proxy', ip: '10.0.0.2' });
+  assert.ok(!('proxy' in res.body.derived), 'derived.proxy is gone: the firewall rule is no longer scoped to the proxy');
   assert.ok(!('caddy' in res.body.derived), 'derived.caddy is renamed, not aliased');
 });
 
@@ -144,8 +169,7 @@ test('PATCH /api/settings returns 403 for a non-admin', async () => {
   const { app } = testApp();
   const res = await request(app)
     .patch('/api/settings')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }))
     .send({ nfsServer: '10.0.0.5' });
   assert.equal(res.status, 403);
 });
@@ -595,6 +619,7 @@ test('an admin impersonating a non-admin group gets 403 on GET and PATCH /api/se
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const app = buildApp({
+    sessions,
     inventory: baseInventory(),
     baseSsh: ssh,
     jobStore,
@@ -638,6 +663,7 @@ test('GET /api/settings reports every secret as { set, source } and never its va
       cloudflareDnsApiToken: { set: false, source: 'none' },
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: true, source: 'environment' },
+      webUiOidcClientSecret: { set: false, source: 'none' },
     });
     const body = JSON.stringify(res.body);
     assert.ok(!body.includes('STORED-MARKER') && !body.includes('ENV-MARKER'), 'no secret value in the response');
@@ -733,8 +759,7 @@ test('PATCH /api/settings refuses an authentikBuiltinAdminGroup change that woul
   // bellhop-admins), so changing *that* name is what would lock them out.
   const res = await request(app)
     .patch('/api/settings')
-    .set('x-authentik-username', 'admin')
-    .set('x-authentik-groups', 'authentik Admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['authentik Admins'] }))
     .send({ authentikBuiltinAdminGroup: 'other-builtin' });
   assert.equal(res.status, 409);
   assert.match(res.body.error, /^Refusing to change authentikBuiltinAdminGroup: you would no longer be an administrator/);
@@ -778,6 +803,7 @@ test('an impersonating admin still gets 403 on an admin-group PATCH, never reach
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const app = buildApp({
+    sessions,
     inventory: baseInventory(),
     baseSsh: ssh,
     jobStore,
@@ -791,46 +817,318 @@ test('an impersonating admin still gets 403 on an admin-group PATCH, never reach
   assert.equal(res.status, 403);
 });
 
-test('PATCH /api/settings refuses webUiAuthMode: authentik from a request with no forward-auth headers', async () => {
-  const { app, inventoryPath } = testApp();
-  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
-  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
+// -- #69 US4: switching to oidc is refused until an admin can sign in ---------
+
+async function withoutDevUser<T>(fn: () => Promise<T>): Promise<T> {
+  const original = process.env.WEB_UI_DEV_USER;
+  delete process.env.WEB_UI_DEV_USER;
   try {
-    // No x-authentik-username header -> falls to the WEB_UI_DEV_USER=test-user
-    // dev identity (set for the whole `npm test` run), which is never
-    // viaForwardAuth.
-    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'authentik' });
+    return await fn();
+  } finally {
+    if (original !== undefined) process.env.WEB_UI_DEV_USER = original;
+  }
+}
+
+test('PATCH webUiAuthMode: oidc is refused first for incomplete login settings, naming every missing key', async () => {
+  const { app, inventoryPath } = testApp();
+  useConfigStore(inventoryPath);
+  try {
+    // An admin session, so only the completeness check can be what refuses.
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
     assert.equal(res.status, 409);
     assert.equal(
       res.body.error,
-      'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected'
+      'Web login is not configured: set webUiOidcIssuer, webUiOidcClientId, webUiOidcRedirectUri, webUiOidcClientSecret first (bellhop configure-web-login <entry> --apply)'
     );
     assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
   } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc counts login values set in the same request, secret included', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), ...LOGIN_SETTINGS });
+  useConfigStore(inventoryPath);
+  try {
+    // Only the secret is missing from the store...
+    const refused = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
+    assert.equal(refused.status, 409);
+    assert.match(refused.body.error, /set webUiOidcClientSecret first/);
+    // ...and supplying it in the same request completes the set.
+    const ok = await asAdmin(request(app).patch('/api/settings')).send({
+      webUiAuthMode: 'oidc',
+      webUiOidcClientSecret: 'example-client-secret',
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc is refused when the same request clears a login value', async () => {
+  const { app, inventoryPath } = loginConfiguredApp();
+  try {
+    const clearedSetting = await asAdmin(request(app).patch('/api/settings')).send({
+      webUiAuthMode: 'oidc',
+      webUiOidcClientId: null,
+    });
+    assert.equal(clearedSetting.status, 409);
+    assert.match(clearedSetting.body.error, /set webUiOidcClientId first/);
+    const clearedSecret = await asAdmin(request(app).patch('/api/settings')).send({
+      webUiAuthMode: 'oidc',
+      webUiOidcClientSecret: null,
+    });
+    assert.equal(clearedSecret.status, 409);
+    assert.match(clearedSecret.body.error, /set webUiOidcClientSecret first/);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc counts an environment-supplied login value as set', async () => {
+  await withEnv({ WEB_UI_OIDC_ISSUER: 'https://authentik.example.com/application/o/bellhop/' }, async () => {
+    const { app, inventoryPath } = testApp({
+      ...baseInventory(),
+      webUiOidcClientId: 'example-client-id',
+      webUiOidcRedirectUri: 'https://bellhop.example.com/auth/callback',
+    });
+    writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+    useConfigStore(inventoryPath);
+    try {
+      const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
+      assert.equal(res.status, 200);
+    } finally {
+      useConfigStore(null);
+    }
+  });
+});
+
+test('PATCH webUiAuthMode: oidc is refused from a request with no web-login session (dev user)', async () => {
+  const { app, inventoryPath } = loginConfiguredApp();
+  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
+  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
+  try {
+    // No session cookie -> falls to the WEB_UI_DEV_USER=test-user dev
+    // identity (set for the whole `npm test` run), which is never viaOidc.
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, SIGN_IN_FIRST);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
     if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
     else process.env.WEB_UI_DEV_GROUPS = originalGroups;
   }
 });
 
-test('PATCH /api/settings allows webUiAuthMode: authentik from a request with forward-auth headers', async () => {
-  const { app, inventoryPath } = testApp();
-  const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
-  assert.equal(res.status, 200);
-  assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+test('PATCH webUiAuthMode: oidc is refused from the local operator (no session, no dev user)', async () => {
+  const { app, inventoryPath } = loginConfiguredApp();
+  try {
+    // Without the suite-wide dev user, none mode serves this as the (admin)
+    // local operator: it passes requireAdminGroup but has no session.
+    await withoutDevUser(async () => {
+      const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'oidc' });
+      assert.equal(res.status, 409);
+      assert.equal(res.body.error, SIGN_IN_FIRST);
+    });
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
+  }
 });
 
-test('PATCH /api/settings allows clearing webUiAuthMode and setting auto/none with no forward-auth check', async () => {
-  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: 'authentik' });
+test('PATCH webUiAuthMode: oidc from a non-admin session never reaches the guard (403)', async () => {
+  const { app, inventoryPath } = loginConfiguredApp();
+  try {
+    const res = await request(app)
+      .patch('/api/settings')
+      .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }))
+      .send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 403);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+// The contract's third message: requireAdminGroup judges the impersonation
+// overlay and the lockout guard only runs on admin-group changes, so a real
+// non-admin whose (persisting) impersonation entry names an admin group
+// reaches the oidc guard and is refused by its own admin check.
+test('PATCH webUiAuthMode: oidc is refused for a real non-admin passing requireAdminGroup via an impersonation entry', async () => {
+  const inv = { ...baseInventory(), ...LOGIN_SETTINGS };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  useConfigStore(inventoryPath);
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const app = buildApp({
+    sessions,
+    inventory: inv,
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner: new JobRunner(jobStore, jobLog, ssh),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    impersonationStore: new Map([['someone', 'bellhop-admins']]),
+  });
+  try {
+    const res = await request(app)
+      .patch('/api/settings')
+      .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }))
+      .send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, 'You are signed in as someone, who would not be an admin after this change');
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc together with admin groups that drop the session user is refused by the lockout guard', async () => {
+  const { app, inventoryPath } = loginConfiguredApp();
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({
+      webUiAuthMode: 'oidc',
+      authentikAdminGroup: 'example-other-admins',
+    });
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /you would no longer be an administrator/);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc from a session admin succeeds and logs who did it', async (t) => {
+  const { app, inventoryPath } = loginConfiguredApp({ webUiAuthMode: 'none' });
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (message: string) => errors.push(message));
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 200);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
+    assert.ok(
+      errors.some((line) => line.includes('webUiAuthMode set to oidc by admin')),
+      `expected the audit warning, got: ${errors.join(' | ')}`
+    );
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc by an impersonating admin is judged by, and logged as, the real identity', async (t) => {
+  const inv = { ...baseInventory(), ...LOGIN_SETTINGS };
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  useConfigStore(inventoryPath);
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const app = buildApp({
+    sessions,
+    inventory: inv,
+    baseSsh: ssh,
+    jobStore,
+    jobLog,
+    jobRunner: new JobRunner(jobStore, jobLog, ssh),
+    inventoryPath,
+    authentik: new FakeAuthentikClient(),
+    // Viewing as another admin group keeps the Settings page reachable.
+    impersonationStore: new Map([['admin', 'authentik Admins']]),
+  });
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (message: string) => errors.push(message));
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 200);
+    assert.ok(errors.some((line) => line.includes('webUiAuthMode set to oidc by admin')));
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: oidc while already oidc is not refused, even without a session', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: 'oidc' });
+  useConfigStore(inventoryPath);
+  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
+  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
+  try {
+    // Login settings are incomplete and the requester is the dev user, yet a
+    // resend of the mode already in force changes nothing.
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 200);
+  } finally {
+    useConfigStore(null);
+    if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
+    else process.env.WEB_UI_DEV_GROUPS = originalGroups;
+  }
+});
+
+// While oidc is in force, clearing a login setting would make sign-in
+// impossible and lock everyone out within one re-check interval.
+test('PATCH while oidc is in force refuses clearing a login setting or the secret', async () => {
+  const { app, inventoryPath } = loginConfiguredApp({ webUiAuthMode: 'oidc' });
+  try {
+    const clearedSetting = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: null });
+    assert.equal(clearedSetting.status, 409);
+    assert.equal(
+      clearedSetting.body.error,
+      'Refusing to clear webUiOidcClientId while webUiAuthMode is oidc: nobody could sign in. Set webUiAuthMode to none first'
+    );
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, LOGIN_SETTINGS.webUiOidcClientId);
+
+    const clearedSecret = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientSecret: null });
+    assert.equal(clearedSecret.status, 409);
+    assert.match(clearedSecret.body.error, /Refusing to clear webUiOidcClientSecret while webUiAuthMode is oidc/);
+    assert.equal(configValueAt(inventoryPath, 'webUiOidcClientSecret').value, 'example-client-secret');
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH while oidc is in force allows changing a login value, unrelated saves, and clearing after leaving oidc', async () => {
+  const { app, inventoryPath } = loginConfiguredApp({ webUiAuthMode: 'oidc' });
+  try {
+    const changed = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: 'example-client-id-2' });
+    assert.equal(changed.status, 200, changed.body.error);
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, 'example-client-id-2');
+
+    const unrelated = await asAdmin(request(app).patch('/api/settings')).send({ dnsServer: '10.0.0.53' });
+    assert.equal(unrelated.status, 200, unrelated.body.error);
+
+    const leaving = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none', webUiOidcClientId: null });
+    assert.equal(leaving.status, 200, leaving.body.error);
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, undefined);
+  } finally {
+    useConfigStore(null);
+  }
+});
+
+test('PATCH webUiAuthMode: auto and authentik are rejected as unknown modes (400)', async () => {
+  const { app, inventoryPath } = testApp();
+  for (const mode of ['auto', 'authentik']) {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: mode });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /webUiAuthMode: .*oidc, none/);
+  }
+  assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+});
+
+test('PATCH /api/settings allows clearing webUiAuthMode and setting none with no forward-auth check', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: 'oidc' });
   const originalGroups = process.env.WEB_UI_DEV_GROUPS;
   process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
   try {
     const cleared = await request(app).patch('/api/settings').send({ webUiAuthMode: null });
     assert.equal(cleared.status, 200);
     assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
-
-    const auto = await request(app).patch('/api/settings').send({ webUiAuthMode: 'auto' });
-    assert.equal(auto.status, 200);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'auto');
 
     const none = await request(app).patch('/api/settings').send({ webUiAuthMode: 'none' });
     assert.equal(none.status, 200);
@@ -864,99 +1162,24 @@ test('GET /api/settings reports a pinned key\'s stored copy: its value for a non
   );
 });
 
-// -- Final review F2: switching to authentik checks the header identity ------
+// -- Final review M7: leaving oidc is logged -----------------------------------
 
-// Registers the test app's own database as the config store, so its stored
-// webUiAuthMode is the mode requireAuth actually runs under.
-async function withStoredAuthMode(
-  mode: 'auto' | 'authentik' | 'none',
-  fn: (app: ReturnType<typeof testApp>['app'], inventoryPath: string) => Promise<void>
-): Promise<void> {
-  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: mode });
-  useConfigStore(inventoryPath);
-  try {
-    await fn(app, inventoryPath);
-  } finally {
-    useConfigStore(null);
-  }
-}
-
-test('PATCH webUiAuthMode: authentik in auto mode with admin forward-auth headers is allowed', async () => {
-  await withStoredAuthMode('auto', async (app, inventoryPath) => {
-    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
-    assert.equal(res.status, 200);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
-  });
-});
-
-test('PATCH webUiAuthMode: authentik in none mode with admin forward-auth headers is allowed', async () => {
-  await withStoredAuthMode('none', async (app, inventoryPath) => {
-    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
-    assert.equal(res.status, 200);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
-  });
-});
-
-test('PATCH webUiAuthMode: authentik in none mode with non-admin forward-auth headers is refused', async () => {
-  await withStoredAuthMode('none', async (app, inventoryPath) => {
-    // none mode serves this request as the (admin) local operator, so it
-    // passes requireAdminGroup; the Authentik identity it carries is not.
-    const res = await request(app)
-      .patch('/api/settings')
-      .set('x-authentik-username', 'someone')
-      .set('x-authentik-groups', 'family')
-      .send({ webUiAuthMode: 'authentik' });
-    assert.equal(res.status, 409);
-    assert.equal(
-      res.body.error,
-      'Refusing to set webUiAuthMode to authentik: the Authentik identity on this request (someone) is not an administrator, so it would lose access to this page'
-    );
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
-  });
-});
-
-test('PATCH webUiAuthMode: authentik in none mode with no forward-auth headers is refused', async () => {
-  await withStoredAuthMode('none', async (app, inventoryPath) => {
-    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'authentik' });
-    assert.equal(res.status, 409);
-    assert.equal(
-      res.body.error,
-      'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected'
-    );
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
-  });
-});
-
-test('PATCH webUiAuthMode: authentik checks the header identity against the admin groups the same request sets', async () => {
-  await withStoredAuthMode('none', async (app, inventoryPath) => {
-    const res = await asAdmin(request(app).patch('/api/settings')).send({
-      webUiAuthMode: 'authentik',
-      authentikAdminGroup: 'example-other-admins',
-    });
-    assert.equal(res.status, 409);
-    assert.match(res.body.error, /^Refusing to set webUiAuthMode to authentik: the Authentik identity on this request \(admin\) is not an administrator/);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'none');
-  });
-});
-
-// -- Final review M7: leaving authentik is logged ------------------------------
-
-test('PATCH /api/settings logs a warning naming the real user when webUiAuthMode leaves authentik', async (t) => {
-  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'authentik' });
+test('PATCH /api/settings logs a warning naming the real user when webUiAuthMode leaves oidc', async (t) => {
+  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'oidc' });
   const errors: string[] = [];
   t.mock.method(console, 'error', (message: string) => errors.push(message));
   const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
   assert.equal(res.status, 200);
   assert.ok(
     errors.some((line) =>
-      line.includes('Sign-in mode changed from authentik to none by admin -- the web UI no longer requires Authentik sign-in')
+      line.includes('Sign-in mode changed from oidc to none by admin -- the web UI no longer requires sign-in')
     ),
     `expected the sign-in mode warning, got: ${errors.join(' | ')}`
   );
 });
 
-test('PATCH /api/settings logs nothing about sign-in mode for a change that does not leave authentik', async (t) => {
-  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'auto' });
+test('PATCH /api/settings logs nothing about sign-in mode for a change that does not leave oidc', async (t) => {
+  const { app } = testApp({ ...baseInventory() });
   const errors: string[] = [];
   t.mock.method(console, 'error', (message: string) => errors.push(message));
   const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
