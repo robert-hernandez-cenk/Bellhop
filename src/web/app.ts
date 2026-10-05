@@ -31,6 +31,7 @@ import { authRoutes } from './routes/auth.ts';
 import { SessionStore } from './login/session-store.ts';
 import { SessionService } from './login/sessions.ts';
 import { RealWebLoginClient, type WebLoginClient } from './login/oidc-client.ts';
+import { buildMcpHttp } from './mcp/index.ts';
 
 export interface AppDeps {
   inventory: Inventory;
@@ -93,13 +94,32 @@ export function buildApp(deps: AppDeps): express.Express {
   // requireAuth, not beside refreshInventory below, because requireAuth
   // itself reads settings (webUiAuthMode, the admin group names). Sign-in
   // reads the OIDC settings, so /auth gets the same fresh read.
-  app.use(['/api', '/auth'], (_req, _res, next) => {
+  app.use(['/api', '/auth', '/mcp'], (_req, _res, next) => {
     invalidateConfigSnapshot();
     next();
   });
   // The /auth routes, ahead of requireAuth: signing in must never need a
   // session (#69, contracts/http-auth.md).
   app.use('/auth', authRoutes(sessions));
+  // MCP over HTTP (#65/#66), also ahead of requireAuth: it authenticates
+  // with its own bearer credential, never the session cookie. Its jobs run on
+  // this service's JobRunner, so they are owned by 'web'.
+  const mcpHttp = buildMcpHttp({
+    mcp: {
+      ssh: deps.baseSsh,
+      inventory: deps.inventory,
+      inventoryPath: deps.inventoryPath,
+      authentik: deps.authentik,
+      cloudflare,
+      goBuilder: deps.goBuilder,
+      fetchImpl: deps.fetchImpl,
+      tlsProbeSleepFn: deps.tlsProbeSleepFn,
+      jobStore: deps.jobStore,
+      jobLog: deps.jobLog,
+      jobRunner: deps.jobRunner,
+    },
+  });
+  app.use(mcpHttp.router);
   app.use(requireAuth(sessions));
   app.use(applyImpersonation(impersonationStore));
   // Reload inventory from disk before every /api request so a change

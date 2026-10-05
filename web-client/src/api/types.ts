@@ -375,7 +375,7 @@ export interface EnvironmentPin {
   storedValue?: string;
 }
 
-export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken' | 'webUiOidcClientSecret';
+export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken' | 'webUiOidcClientSecret' | 'mcpApiKey';
 export interface SecretStatus {
   set: boolean;
   source: SettingSource;

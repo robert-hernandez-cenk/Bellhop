@@ -33,6 +33,8 @@ const EXPECTED: Record<string, [string, string, boolean]> = {
   webUiOidcClientId: ['WEB_UI_OIDC_CLIENT_ID', 'general', false],
   webUiOidcRedirectUri: ['WEB_UI_OIDC_REDIRECT_URI', 'general', false],
   webUiOidcClientSecret: ['WEB_UI_OIDC_CLIENT_SECRET', 'general', true],
+  // #65/#66: the HTTP MCP endpoint's API key, on its own MCP tab.
+  mcpApiKey: ['MCP_API_KEY', 'mcp', true],
 };
 
 // The data/ file each variable lived in before #64 -- named in the Settings
@@ -69,10 +71,10 @@ test('SETTINGS_KEYS includes the 15 non-secret moved keys and no secret key', ()
   assert.deepEqual(Object.keys(MovedSettingsSchema.shape).sort(), MOVED_NON_SECRET.sort());
 });
 
-test('SECRET_SETTINGS_KEYS is exactly the five tokens/passwords', () => {
+test('SECRET_SETTINGS_KEYS is exactly the six tokens/passwords/keys', () => {
   assert.deepEqual(
     [...SECRET_SETTINGS_KEYS].sort(),
-    ['authentikApiToken', 'cloudflareDnsApiToken', 'githubApiToken', 'npmApiPassword', 'webUiOidcClientSecret']
+    ['authentikApiToken', 'cloudflareDnsApiToken', 'githubApiToken', 'mcpApiKey', 'npmApiPassword', 'webUiOidcClientSecret']
   );
   assert.deepEqual(Object.keys(SecretSettingsSchema.shape).sort(), [...SECRET_SETTINGS_KEYS].sort());
 });
@@ -145,6 +147,16 @@ test('the four tokens must be non-empty with no whitespace', () => {
     for (const bad of ['', 'two words', 'trailing\n', '\ttab']) {
       assert.ok(!accepts(SecretSettingsSchema, key, bad), `${key}: ${JSON.stringify(bad)}`);
     }
+  }
+});
+
+// #66: a network listener's key must be long enough not to be guessed,
+// and a pasted newline must fail here, not later as an opaque 401.
+test('mcpApiKey must be at least 32 characters with no whitespace', () => {
+  assert.ok(accepts(SecretSettingsSchema, 'mcpApiKey', 'a'.repeat(32)));
+  for (const bad of ['', 'a'.repeat(31), `${'a'.repeat(32)} `, `${'a'.repeat(32)}
+`]) {
+    assert.ok(!accepts(SecretSettingsSchema, 'mcpApiKey', bad), JSON.stringify(bad));
   }
 });
 

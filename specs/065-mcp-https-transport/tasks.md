@@ -12,7 +12,7 @@ description: "Task list for MCP over HTTPS with sign-in and an API-key fallback"
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the baseline in the worktree: `npm run typecheck` and `npm test` pass before any change (recorded: 3056 pass, 0 fail)
+- [x] T001 Confirm the baseline in the worktree: `npm run typecheck` and `npm test` pass before any change (recorded: 3056 pass, 0 fail)
 
 ---
 
@@ -20,10 +20,10 @@ description: "Task list for MCP over HTTPS with sign-in and an API-key fallback"
 
 **Purpose**: the HTTP host and route skeleton every story runs through, plus the `buildMcpServer` options they need.
 
-- [ ] T002 Test then add `buildMcpServer` options `actor?: { username: string }` and `tracker?: PromptTracker` in `src/mcp/build-server.ts` (default tracker built per server as today; `previewAndEnqueue` gets `triggeredByUsername: actor.username`, falling back to `'mcp'` until T020), tests in `test/mcp/build-server.test.ts`
-- [ ] T003 Test then implement `McpHttpHost` in `src/web/mcp/http-host.ts`: map `Mcp-Session-Id` → `{ transport, server, principal, username, lastSeen }`; new session only for an `initialize` request without a session id (else 400); unknown id → 404; principal mismatch → 403; one shared `PromptTracker`; `sweep(now)` closes sessions idle ≥ 30 minutes, run by an unref'd 60 s interval; `close()` for shutdown/tests. Tests in `test/web/mcp/http-host.test.ts` drive it through the SDK `Client` + `StreamableHTTPClientTransport` against an Express app on `127.0.0.1:0`
-- [ ] T004 Test then implement `mcpRoutes(deps)` in `src/web/mcp/routes.ts` with a pluggable verifier: fail-closed guard (contract step 1: `503` with the exact message naming `configure-web-login` and `mcpApiKey`), `requireBearerAuth` (contract step 2–3), then `McpHttpHost`; cookies never authenticate. Tests in `test/web/mcp/routes.test.ts`
-- [ ] T005 Mount `mcpRoutes` in `buildApp` (`src/web/app.ts`) before `requireAuth`, with `invalidateConfigSnapshot` applied to `/mcp`; wire the web service's `JobRunner`/deps in `src/web/server.ts`; add `AppDeps` fields; test that `/mcp` is reachable without a cookie in `oidc` mode and that `/api` still requires one, in `test/web/mcp/routes.test.ts`
+- [x] T002 Test then add `buildMcpServer` options `actor?: { username: string }` and `tracker?: PromptTracker` in `src/mcp/build-server.ts` (default tracker built per server as today; `previewAndEnqueue` gets `triggeredByUsername: actor.username`, falling back to `'mcp'` until T020), tests in `test/mcp/build-server.test.ts`
+- [x] T003 Test then implement `McpHttpHost` in `src/web/mcp/http-host.ts`: map `Mcp-Session-Id` → `{ transport, server, principal, username, lastSeen }`; new session only for an `initialize` request without a session id (else 400); unknown id → 404; principal mismatch → 403; one shared `PromptTracker`; `sweep(now)` closes sessions idle ≥ 30 minutes, run by an unref'd 60 s interval; `close()` for shutdown/tests. Tests in `test/web/mcp/http-host.test.ts` drive it through the SDK `Client` + `StreamableHTTPClientTransport` against an Express app on `127.0.0.1:0`
+- [x] T004 Test then implement `mcpRoutes(deps)` in `src/web/mcp/routes.ts` with a pluggable verifier: fail-closed guard (contract step 1: `503` with the exact message naming `configure-web-login` and `mcpApiKey`), `requireBearerAuth` (contract step 2–3), then `McpHttpHost`; cookies never authenticate. Tests in `test/web/mcp/routes.test.ts`
+- [x] T005 Mount `mcpRoutes` in `buildApp` (`src/web/app.ts`) before `requireAuth`, with `invalidateConfigSnapshot` applied to `/mcp`; wire the web service's `JobRunner`/deps in `src/web/server.ts`; add `AppDeps` fields; test that `/mcp` is reachable without a cookie in `oidc` mode and that `/api` still requires one, in `test/web/mcp/routes.test.ts`
 
 **Checkpoint**: `/mcp` serves MCP to a test verifier; stdio untouched.
 
@@ -35,13 +35,13 @@ description: "Task list for MCP over HTTPS with sign-in and an API-key fallback"
 
 **Independent Test**: quickstart §2.
 
-- [ ] T006 [US3] Test then add secret `mcpApiKey` to `SecretSettingsSchema`/`SETTING_DEFS` in `src/lib/settings-defs.ts`: env `MCP_API_KEY`, group `mcp` (extend `SettingGroup`), validation "no whitespace, ≥ 32 characters" with fixed messages; tests in `test/lib/settings-defs.test.ts` (and any exhaustive key-list tests that need the new key)
-- [ ] T007 [US3] Test then implement the key verifier in `src/web/mcp/api-key.ts`: SHA-256 both sides, `timingSafeEqual`, principal `api-key`, username `api-key`; read through `configValue('mcpApiKey')` per request; tests in `test/web/mcp/api-key.test.ts` (match, mismatch, unset, env override, cleared key refused)
-- [ ] T008 [US3] Use the key verifier in `mcpRoutes`; end-to-end tests in `test/web/mcp/routes.test.ts`: key works (`get_inventory`), wrong key 401, neither configured 503, key-only 401 has no `resource_metadata`
-- [ ] T009 [US3] Test that `GET /api/settings` reports `secrets.mcpApiKey` as `{ set, source }` only and `PATCH` validates/stores/clears it with no value echoed, in `test/web/routes/settings.test.ts`; adjust `src/web/routes/settings.ts` only if needed
-- [ ] T010 [P] [US3] Add the **MCP** tab to `SETTINGS_TABS`/`fieldsForTab` in `web-client/src/lib/settings-display.ts` (+ its test), and the `mcpApiKey` field help (endpoint shape `https://<bellhop address>/mcp`, header `Authorization: Bearer <key>`, link to docs) in `web-client/src/pages/SettingsPage.tsx`
-- [ ] T011 [US3] Add a **Generate** button to the `mcpApiKey` `SecretField` in `web-client/src/pages/SettingsPage.tsx`: 32 bytes from `crypto.getRandomValues`, base64url, shown in a revealed input until saved, never fetched from the server; helper `generateApiKey()` in `web-client/src/lib/settings-display.ts` with a test
-- [ ] T012 [US3] Test that `set-config mcpApiKey <value>` is refused as an argument and `--stdin --apply` stores it, and that MCP `set_config`'s key enum excludes it, in `test/commands/maintenance/set-config.test.ts` / `test/mcp/build-server.test.ts`
+- [x] T006 [US3] Test then add secret `mcpApiKey` to `SecretSettingsSchema`/`SETTING_DEFS` in `src/lib/settings-defs.ts`: env `MCP_API_KEY`, group `mcp` (extend `SettingGroup`), validation "no whitespace, ≥ 32 characters" with fixed messages; tests in `test/lib/settings-defs.test.ts` (and any exhaustive key-list tests that need the new key)
+- [x] T007 [US3] Test then implement the key verifier in `src/web/mcp/api-key.ts`: SHA-256 both sides, `timingSafeEqual`, principal `api-key`, username `api-key`; read through `configValue('mcpApiKey')` per request; tests in `test/web/mcp/api-key.test.ts` (match, mismatch, unset, env override, cleared key refused)
+- [x] T008 [US3] Use the key verifier in `mcpRoutes`; end-to-end tests in `test/web/mcp/routes.test.ts`: key works (`get_inventory`), wrong key 401, neither configured 503, key-only 401 has no `resource_metadata`
+- [x] T009 [US3] Test that `GET /api/settings` reports `secrets.mcpApiKey` as `{ set, source }` only and `PATCH` validates/stores/clears it with no value echoed, in `test/web/routes/settings.test.ts`; adjust `src/web/routes/settings.ts` only if needed
+- [x] T010 [P] [US3] Add the **MCP** tab to `SETTINGS_TABS`/`fieldsForTab` in `web-client/src/lib/settings-display.ts` (+ its test), and the `mcpApiKey` field help (endpoint shape `https://<bellhop address>/mcp`, header `Authorization: Bearer <key>`, link to docs) in `web-client/src/pages/SettingsPage.tsx`
+- [x] T011 [US3] Add a **Generate** button to the `mcpApiKey` `SecretField` in `web-client/src/pages/SettingsPage.tsx`: 32 bytes from `crypto.getRandomValues`, base64url, shown in a revealed input until saved, never fetched from the server; helper `generateApiKey()` in `web-client/src/lib/settings-display.ts` with a test
+- [x] T012 [US3] Test that `set-config mcpApiKey <value>` is refused as an argument and `--stdin --apply` stores it, and that MCP `set_config`'s key enum excludes it, in `test/commands/maintenance/set-config.test.ts` / `test/mcp/build-server.test.ts`
 
 **Checkpoint**: headless MCP over HTTP works end to end.
 

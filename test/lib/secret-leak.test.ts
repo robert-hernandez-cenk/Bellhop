@@ -32,7 +32,8 @@ const sessions = newTestSessions();
 // every place a value could surface is searched for any of them. A secret is
 // write-only: nothing below may ever print, return, or persist one.
 
-const marker = (key: SecretSettingKey, suffix = '') => `leak-marker-${key}${suffix}-7f3a`;
+// Padded so every marker clears mcpApiKey's 32-character minimum (#66).
+const marker = (key: SecretSettingKey, suffix = '') => `leak-marker-${key}${suffix}-7f3a-0123456789`;
 const MARKERS = SECRET_SETTINGS_KEYS.map((key) => marker(key));
 const SEEDED = Object.fromEntries(SECRET_SETTINGS_KEYS.map((key) => [key, marker(key)])) as Record<SecretSettingKey, string>;
 

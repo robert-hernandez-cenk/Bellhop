@@ -30,6 +30,14 @@ export interface McpServerOptions {
   progressIntervalMs?: number;
   // Test-only: how long a wait_for_job prompt dialog stays open unanswered.
   elicitationTimeoutMs?: number;
+  // Who this server acts for, recorded on every job it starts (#65/#66): an
+  // HTTP session's signed-in admin or 'api-key', or the stdio server's OS
+  // user. Unset keeps the old generic 'mcp'.
+  actor?: { username: string };
+  // The prompt-dialog de-duplication state. The HTTP host passes one shared
+  // by all its sessions, so two sessions never both ask about one prompt
+  // (FR-005); unset builds one for this server alone, as stdio needs.
+  tracker?: PromptTracker;
 }
 
 export function toolName(operationId: string): string {
@@ -63,8 +71,10 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
   // Mirrors the web UI's per-request reload (issue #98): pick up CLI and
   // web-UI writes made since the last tool call.
   const refresh = () => refreshInventory(deps.inventory, deps.inventoryPath);
-  // One per server, subscribed before any job can run (#58).
-  const tracker = new PromptTracker(deps.jobRunner.events);
+  // One per server (or one shared by every HTTP session), subscribed before
+  // any job can run (#58).
+  const tracker = options.tracker ?? new PromptTracker(deps.jobRunner.events);
+  const triggeredByUsername = options.actor?.username ?? 'mcp';
 
   for (const op of MCP_OPERATIONS) {
     // internalFields (e.g. deploy-vpn-gateway's connectPollAttempts/
@@ -92,7 +102,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
         const { apply, ...raw } = args;
         const input = parseOperationInput(op, raw);
         if (!apply) return text(scrubSecretValues(op, input, await op.preview(input, deps)));
-        const { jobId, preview } = await previewAndEnqueue(op, raw, deps, deps.jobRunner, { triggeredByUsername: 'mcp' });
+        const { jobId, preview } = await previewAndEnqueue(op, raw, deps, deps.jobRunner, { triggeredByUsername });
         return json({ jobId, preview: scrubSecretValues(op, input, preview) });
       }
     );
