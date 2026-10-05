@@ -19,6 +19,7 @@ import { createJobLog } from './jobs/job-log.ts';
 import { JobRunner } from './jobs/job-runner.ts';
 import { TaskScheduler } from './tasks/scheduler.ts';
 import { buildApp } from './app.ts';
+import { SetupService } from './setup/service.ts';
 import { attachJobsWebSocket } from './routes/jobs.ts';
 import { REPO_ROOT, dataDir, inventoryPath } from '../lib/paths.ts';
 
@@ -46,6 +47,13 @@ const invPath = inventoryPath();
 // files' values are already in the environment above.
 importEnvFilesAndUseStore(invPath, dataDir());
 const inventory = loadInventory(invPath);
+
+// First-run setup (#86): a fresh install (no hosts, setup never finished)
+// gets a setup record and a one-time token here, and every start while
+// setup is pending logs the setup address below. Before setup there is no
+// sign-in, so the token is the only thing that opens the web UI.
+const setup = new SetupService({ inventoryPath: invPath, inventory, dataDir: dataDir() });
+const setupToken = setup.start();
 
 // Called at boot so an invalid auth mode (a retired WEB_UI_AUTH_MODE=auto or
 // authentik included) fails fast here rather than on every request. The mode
@@ -130,6 +138,7 @@ const app = buildApp({
   impersonationStore,
   taskScheduler,
   sessions,
+  setup,
 });
 
 const clientDist = path.join(REPO_ROOT, 'web-client', 'dist');
@@ -139,9 +148,16 @@ app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
 });
 
 const server = http.createServer(app);
-attachJobsWebSocket(server, jobRunner, jobStore, jobLog, invPath, inventory, impersonationStore, sessions);
+attachJobsWebSocket(server, jobRunner, jobStore, jobLog, invPath, inventory, impersonationStore, sessions, { setup });
 
 const port = Number(process.env.PORT ?? 3000);
 server.listen(port, () => {
   console.log(`bellhop web UI listening on http://localhost:${port}`);
+  if (setupToken) {
+    // The service can't know which address other devices reach it on, so
+    // the line names localhost and says to substitute.
+    console.log(
+      `Setup is pending: open http://localhost:${port}/setup?token=${setupToken} (from another device, use this machine's address instead of localhost)`
+    );
+  }
 });

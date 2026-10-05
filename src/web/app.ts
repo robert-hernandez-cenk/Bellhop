@@ -28,6 +28,9 @@ import { networkingRoutes } from './routes/networking.ts';
 import { oidcRoutes } from './routes/oidc.ts';
 import { tasksRoutes } from './routes/tasks.ts';
 import { authRoutes } from './routes/auth.ts';
+import { setupRoutes } from './routes/setup.ts';
+import { setupGate } from './setup/gate.ts';
+import { SetupService } from './setup/service.ts';
 import { SessionStore } from './login/session-store.ts';
 import { SessionService } from './login/sessions.ts';
 import { RealWebLoginClient, type WebLoginClient } from './login/oidc-client.ts';
@@ -76,6 +79,10 @@ export interface AppDeps {
   // `sessions` is not given (the default service is built around it); a
   // test can inject a fake here.
   webLogin?: WebLoginClient;
+  // The first-run setup walkthrough (#86). server.ts passes the one it
+  // started; defaulted to a service with no setup in progress, so tests
+  // that predate setup see no gate.
+  setup?: SetupService;
 }
 
 export function buildApp(deps: AppDeps): express.Express {
@@ -85,7 +92,12 @@ export function buildApp(deps: AppDeps): express.Express {
   const sessions: SessionService =
     deps.sessions ??
     new SessionService({ store: new SessionStore(':memory:'), client: deps.webLogin ?? new RealWebLoginClient() });
+  const setup = deps.setup ?? SetupService.notApplicable();
   app.use(express.json());
+  // While first-run setup is pending (#86), nothing but the setup page, its
+  // API and static assets is reachable -- ahead of /auth and requireAuth,
+  // because before setup there is no sign-in to protect anything else.
+  app.use(setupGate(setup));
   // Drop the config accessor's snapshot at the start of every /api request
   // (issue #64, research R3), so a setting saved by another process (the
   // CLI, the MCP server, a direct DB edit) applies on this very request
@@ -99,6 +111,7 @@ export function buildApp(deps: AppDeps): express.Express {
   });
   // The /auth routes, ahead of requireAuth: signing in must never need a
   // session (#69, contracts/http-auth.md).
+  app.use(setupRoutes(setup));
   app.use('/auth', authRoutes(sessions));
   app.use(requireAuth(sessions));
   app.use(applyImpersonation(impersonationStore));

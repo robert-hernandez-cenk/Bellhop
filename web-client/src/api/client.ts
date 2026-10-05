@@ -9,9 +9,18 @@ function redirectToLogin(): never {
   throw new Error('Authentication required');
 }
 
+// A 503 with setupRequired means first-run setup is still pending (#86):
+// nothing but the setup page is served, so go there.
 async function check(res: Response): Promise<void> {
   if (res.status === 401) redirectToLogin();
-  if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 503 && body.setupRequired) {
+      location.href = '/setup';
+      throw new Error('Setup required');
+    }
+    throw new Error(body.error ?? res.statusText);
+  }
 }
 
 export async function apiGet<T>(path: string): Promise<T> {

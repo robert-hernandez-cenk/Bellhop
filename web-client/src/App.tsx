@@ -12,6 +12,7 @@ import { PermissionsPage } from './pages/PermissionsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TasksPage } from './pages/TasksPage';
 import { NetworkingPage } from './pages/NetworkingPage';
+import { SetupPage } from './pages/SetupPage';
 import { ThemeProvider } from './lib/theme';
 import { WhoAmIProvider, useWhoAmI } from './lib/whoami';
 
@@ -49,6 +50,16 @@ function AppShell() {
 }
 
 export default function App() {
+  // First-run setup (#86) renders on its own, outside WhoAmIProvider: while
+  // setup is pending every other API call (whoami included) answers 503 and
+  // would send the browser straight back here.
+  if (location.pathname === '/setup') {
+    return (
+      <ThemeProvider>
+        <SetupPage />
+      </ThemeProvider>
+    );
+  }
   return (
     <ThemeProvider>
       <WhoAmIProvider>
