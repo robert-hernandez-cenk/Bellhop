@@ -93,7 +93,7 @@ export type ConfigKey = MovedSettingKey | SecretSettingKey;
 export const MOVED_SETTINGS_KEYS = Object.keys(MovedSettingsSchema.shape) as MovedSettingKey[];
 export const SECRET_SETTINGS_KEYS = Object.keys(SecretSettingsSchema.shape) as SecretSettingKey[];
 
-export type SettingGroup = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'nginx-proxy-manager' | 'github';
+export type SettingGroup = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github';
 
 export interface SettingDef {
   // The environment variable that overrides the stored value when set and
@@ -122,9 +122,12 @@ export const SETTING_DEFS: Record<ConfigKey, SettingDef> = {
   authentikOidcSigningKeyName: { envVar: 'AUTHENTIK_OIDC_SIGNING_KEY_NAME', group: 'authentik', secret: false, envFile: 'authentik.env' },
   webUiAuthMode: { envVar: 'WEB_UI_AUTH_MODE', group: 'general', secret: false, envFile: 'authentik.env' },
   cloudflareDnsApiToken: { envVar: 'CLOUDFLARE_DNS_API_TOKEN', group: 'cloudflare', secret: true, envFile: 'cloudflare-api.env' },
-  npmApiUrl: { envVar: 'NPM_API_URL', group: 'nginx-proxy-manager', secret: false, envFile: 'nginx-proxy-manager.env' },
-  npmApiEmail: { envVar: 'NPM_API_EMAIL', group: 'nginx-proxy-manager', secret: false, envFile: 'nginx-proxy-manager.env' },
-  npmApiPassword: { envVar: 'NPM_API_PASSWORD', group: 'nginx-proxy-manager', secret: true, envFile: 'nginx-proxy-manager.env' },
+  // issue #73: these three now sit in the proxy group -- the Settings page
+  // shows them on the Proxy tab, only while the Nginx Proxy Manager driver
+  // is selected, rather than on their own tab. envVar/envFile unchanged.
+  npmApiUrl: { envVar: 'NPM_API_URL', group: 'proxy', secret: false, envFile: 'nginx-proxy-manager.env' },
+  npmApiEmail: { envVar: 'NPM_API_EMAIL', group: 'proxy', secret: false, envFile: 'nginx-proxy-manager.env' },
+  npmApiPassword: { envVar: 'NPM_API_PASSWORD', group: 'proxy', secret: true, envFile: 'nginx-proxy-manager.env' },
   githubApiToken: { envVar: 'GITHUB_API_TOKEN', group: 'github', secret: true },
 };
 

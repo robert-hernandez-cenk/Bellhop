@@ -221,7 +221,9 @@ variable names and the precedence rule. A saved value is used from the
 next request (web UI) or the next run (CLI, MCP server), with no restart.
 
 The Settings page groups everything by integration, one tab each:
-General, Proxy, Authentik, Cloudflare, Nginx Proxy Manager and GitHub.
+General, Proxy, Authentik, Cloudflare and GitHub — the Nginx Proxy
+Manager fields below live on the Proxy tab, shown only while Nginx Proxy
+Manager is the selected driver.
 
 | Setting | Tab | When unset |
 |---|---|---|
@@ -237,9 +239,9 @@ General, Proxy, Authentik, Cloudflare, Nginx Proxy Manager and GitHub.
 | `authentikInvalidationFlowSlug` | Authentik | `default-invalidation-flow` |
 | `authentikOidcSigningKeyName` | Authentik | `authentik Self-signed Certificate` |
 | `cloudflareDnsApiToken` (secret) | Cloudflare | `prune-acme-challenges` reports it is not configured; the web UI's push-live step skips it |
-| `npmApiUrl` | Nginx Proxy Manager | `http://<the proxy: true entry's ip>:81` |
-| `npmApiEmail` | Nginx Proxy Manager | the Nginx Proxy Manager driver cannot sync |
-| `npmApiPassword` (secret) | Nginx Proxy Manager | the Nginx Proxy Manager driver cannot sync |
+| `npmApiUrl` | Proxy (Nginx Proxy Manager driver) | `http://<the proxy: true entry's ip>:81` |
+| `npmApiEmail` | Proxy (Nginx Proxy Manager driver) | the Nginx Proxy Manager driver cannot sync |
+| `npmApiPassword` (secret) | Proxy (Nginx Proxy Manager driver) | the Nginx Proxy Manager driver cannot sync |
 | `githubApiToken` (secret) | GitHub | GitHub API requests are anonymous |
 
 Both the API URL and the token must be set for the Authentik integration

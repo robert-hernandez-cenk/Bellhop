@@ -463,6 +463,10 @@ export function createNpmDriver(opts: { clientFor: (inventory: Inventory) => Npm
     capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
     defaultConfigPath: null,
     statusPage: null,
+    // issue #73: the only driver that reads npmApiUrl/npmApiEmail/
+    // npmApiPassword -- the Settings page shows those three fields on the
+    // Proxy tab only while this driver is selected.
+    usesNpmApi: true,
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {
       const client = opts.clientFor(deps.inventory);

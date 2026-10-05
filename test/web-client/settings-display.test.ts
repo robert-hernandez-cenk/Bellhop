@@ -34,8 +34,8 @@ test('LAN_GATEWAYS_EMPTY_TEXT explains the empty state', () => {
 
 test('proxyDriverOptions suffixes only the default driver label with " (default)"', () => {
   const drivers = [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, configPathNote: null },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, usesNpmApi: false, configPathNote: null },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, usesNpmApi: false, configPathNote: null },
   ];
   assert.deepEqual(proxyDriverOptions(drivers, 'caddy'), [
     { value: 'caddy', label: 'Caddy (default)' },
@@ -45,8 +45,8 @@ test('proxyDriverOptions suffixes only the default driver label with " (default)
 
 test('proxyDriverOptions preserves driver order and suffixes whichever id is the default', () => {
   const drivers = [
-    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, configPathNote: null },
-    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null },
+    { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, usesNpmApi: false, configPathNote: null },
+    { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, usesNpmApi: false, configPathNote: null },
   ];
   assert.deepEqual(proxyDriverOptions(drivers, 'none'), [
     { value: 'caddy', label: 'Caddy' },
@@ -55,8 +55,8 @@ test('proxyDriverOptions preserves driver order and suffixes whichever id is the
 });
 
 const DRIVERS = [
-  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, configPathNote: null },
-  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null },
+  { id: 'caddy', label: 'Caddy', defaultConfigPath: '/etc/caddy/Caddyfile', suggestedStatusPagePath: '/usr/share/caddy/index.html', managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: true, usesNpmApi: false, configPathNote: null },
+  { id: 'none', label: 'No proxy', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, usesNpmApi: false, configPathNote: null },
 ];
 
 test('proxyFieldView shows both fields with Caddy-specific placeholders/help when Caddy is selected', () => {
@@ -73,6 +73,7 @@ test('proxyFieldView hides both fields when "no proxy" is selected', () => {
   const view = proxyFieldView('none', DRIVERS, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showNpmApiFields, false);
 });
 
 test('proxyFieldView hides both fields for an unknown driver id', () => {
@@ -80,6 +81,7 @@ test('proxyFieldView hides both fields for an unknown driver id', () => {
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
   assert.equal(view.showTlsFields, false);
+  assert.equal(view.showNpmApiFields, false);
 });
 
 // issue #30 x #33: nginx's entry exactly as GET /api/settings serves it.
@@ -92,7 +94,7 @@ const NGINX = {
   usesSharedCertificate: true,
   usesCertResolver: false,
   usesApiUrl: false,
-  usesCaddyTls: false,
+  usesCaddyTls: false, usesNpmApi: false,
   configPathNote: "nginx replaces this whole file on every apply, and refuses to replace a file it didn't generate.",
 };
 
@@ -119,7 +121,7 @@ const HAPROXY = {
   usesSharedCertificate: false,
   usesCertResolver: false,
   usesApiUrl: false,
-  usesCaddyTls: false,
+  usesCaddyTls: false, usesNpmApi: false,
   configPathNote:
     "HAProxy replaces this whole file and writes bellhop.map beside it on every apply, and refuses to replace a file it didn't generate.",
 };
@@ -156,7 +158,7 @@ test('proxyFieldView appends a driver-supplied configPathNote to the config path
 // it. Paired with no suggested status page path and no shared certificate,
 // all three fields are hidden.
 test('proxyFieldView hides all three fields for a managed driver with no config file, no status page, and no shared certificate', () => {
-  const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null }];
+  const drivers = [{ id: 'nodefault', label: 'No Default', defaultConfigPath: null, suggestedStatusPagePath: null, managesProxy: true, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, usesNpmApi: false, configPathNote: null }];
   const view = proxyFieldView('nodefault', drivers, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.configPathHelp, undefined, 'no "required" help text is shown once the field itself is hidden');
@@ -165,7 +167,7 @@ test('proxyFieldView hides all three fields for a managed driver with no config 
 });
 
 test('proxyFieldView hides the config path field for a driver that manages no proxy, even if it reports a default path', () => {
-  const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, configPathNote: null }];
+  const drivers = [{ id: 'odd', label: 'Odd', defaultConfigPath: '/etc/odd.conf', suggestedStatusPagePath: '/var/www/index.html', managesProxy: false, usesSharedCertificate: false, usesCertResolver: false, usesApiUrl: false, usesCaddyTls: false, usesNpmApi: false, configPathNote: null }];
   const view = proxyFieldView('odd', drivers, 'cloudflare');
   assert.equal(view.showConfigPath, false);
   assert.equal(view.showStatusPagePath, false);
@@ -184,7 +186,7 @@ test('proxyFieldView for the Caddy admin-API driver hides the config path and ke
     usesSharedCertificate: false,
     usesCertResolver: false,
     usesApiUrl: false,
-    usesCaddyTls: true,
+    usesCaddyTls: true, usesNpmApi: false,
     configPathNote: null,
   };
   const view = proxyFieldView('caddy-api', [CADDY_API], 'cloudflare');
@@ -207,7 +209,7 @@ const TRAEFIK = {
   usesSharedCertificate: false,
   usesCertResolver: true,
   usesApiUrl: true,
-  usesCaddyTls: false,
+  usesCaddyTls: false, usesNpmApi: false,
   configPathNote:
     "Traefik's file provider must watch this file's directory. The whole file is replaced on every apply, and a file Bellhop didn't generate is refused.",
 };
@@ -237,9 +239,51 @@ test('proxyFieldView hides the cert resolver and API URL fields for an unmanaged
   const unmanaged = proxyFieldView('none', DRIVERS, 'cloudflare');
   assert.equal(unmanaged.showCertResolverField, false);
   assert.equal(unmanaged.showApiUrlField, false);
+  assert.equal(unmanaged.showNpmApiFields, false);
   const unknown = proxyFieldView('unknown-provider', DRIVERS, 'cloudflare');
   assert.equal(unknown.showCertResolverField, false);
   assert.equal(unknown.showApiUrlField, false);
+  assert.equal(unknown.showNpmApiFields, false);
+});
+
+// issue #73 (US1): Nginx Proxy Manager's entry exactly as GET /api/settings
+// serves it -- the only driver with usesNpmApi set, no config file, and no
+// status page.
+const NGINX_PROXY_MANAGER = {
+  id: 'nginx-proxy-manager',
+  label: 'Nginx Proxy Manager',
+  defaultConfigPath: null,
+  suggestedStatusPagePath: null,
+  managesProxy: true,
+  usesSharedCertificate: false,
+  usesCertResolver: false,
+  usesApiUrl: false,
+  usesCaddyTls: false,
+  usesNpmApi: true,
+  configPathNote: null,
+};
+
+test('proxyFieldView for Nginx Proxy Manager shows only the Nginx Proxy Manager fields', () => {
+  const view = proxyFieldView('nginx-proxy-manager', [...DRIVERS, NGINX, HAPROXY, TRAEFIK, NGINX_PROXY_MANAGER], 'cloudflare');
+  assert.equal(view.showNpmApiFields, true);
+  assert.equal(view.showConfigPath, false);
+  assert.equal(view.showStatusPagePath, false);
+  assert.equal(view.showTlsFields, false);
+  assert.equal(view.showCaddyTlsField, false);
+  assert.equal(view.showCertResolverField, false);
+  assert.equal(view.showApiUrlField, false);
+});
+
+// issue #73 (US2): the Nginx Proxy Manager fields never show for any other
+// driver, before the driver list has loaded, or for an unknown id.
+test('proxyFieldView hides the Nginx Proxy Manager fields for every other driver, and while unloaded/unknown', () => {
+  const drivers = [...DRIVERS, NGINX, HAPROXY, TRAEFIK, NGINX_PROXY_MANAGER];
+  assert.equal(proxyFieldView('caddy', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('traefik', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('nginx', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('haproxy', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('none', drivers, 'cloudflare').showNpmApiFields, false);
+  assert.equal(proxyFieldView('unknown-provider', drivers, 'cloudflare').showNpmApiFields, false);
 });
 
 // issue #51 (T016): proxyFieldView's third argument is the shown Caddy TLS
@@ -293,11 +337,12 @@ test('caddyTlsOptions suffixes whichever mode is passed as the default', () => {
   ]);
 });
 
-// Issue #64: the Settings page groups every setting by integration.
-test('SETTINGS_TABS lists the six integration tabs in order', () => {
+// Issue #64: the Settings page groups every setting by integration. Issue
+// #73 drops the Nginx Proxy Manager tab -- its three fields move to Proxy.
+test('SETTINGS_TABS lists the five integration tabs in order, with no Nginx Proxy Manager tab', () => {
   assert.deepEqual(
     SETTINGS_TABS.map((t) => t.label),
-    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'Nginx Proxy Manager', 'GitHub'],
+    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'GitHub'],
   );
 });
 
@@ -311,11 +356,13 @@ test('fieldsForTab puts each secret beside its own integration', () => {
   assert.ok(fieldsForTab('authentik').includes('authentikApiToken'));
   assert.ok(fieldsForTab('authentik').includes('authentikApiUrl'));
   assert.deepEqual([...fieldsForTab('cloudflare')], ['cloudflareDnsApiToken']);
-  assert.deepEqual([...fieldsForTab('nginx-proxy-manager')], ['npmApiUrl', 'npmApiEmail', 'npmApiPassword']);
   assert.deepEqual([...fieldsForTab('github')], ['githubApiToken']);
 });
 
-test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab', () => {
+// Issue #73: the three Nginx Proxy Manager fields move onto the end of the
+// Proxy tab, after the other driver-dependent fields, rather than keeping
+// their own tab.
+test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab, ending with the Nginx Proxy Manager fields', () => {
   assert.deepEqual([...fieldsForTab('proxy')], [
     'proxyDriver',
     'proxyConfigPath',
@@ -325,6 +372,9 @@ test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab', (
     'proxyTlsKey',
     'proxyCertResolver',
     'proxyApiUrl',
+    'npmApiUrl',
+    'npmApiEmail',
+    'npmApiPassword',
   ]);
   assert.ok(fieldsForTab('general').includes('webUiAuthMode'));
 });

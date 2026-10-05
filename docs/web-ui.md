@@ -133,11 +133,13 @@ synthetic local operator can't do — `web:dev` sets it automatically (to
 
 Admins reach the Settings page from the Admin group in the sidebar. It
 holds every setting described in [Configuration](configuration.md), one
-tab per integration: General, Proxy, Authentik, Cloudflare, Nginx Proxy
-Manager and GitHub. Each field saves on its own, and a saved value is in
-use from the very next request — nothing needs a restart. The Proxy tab's
-fields still appear and disappear with the selected proxy driver (see
-[Reverse proxy drivers](reverse-proxy/README.md)).
+tab per integration: General, Proxy, Authentik, Cloudflare and GitHub.
+Each field saves on its own, and a saved value is in use from the very
+next request — nothing needs a restart. The Proxy tab's fields still
+appear and disappear with the selected proxy driver (see [Reverse proxy
+drivers](reverse-proxy/README.md)) — the Nginx Proxy Manager API URL,
+email and password fields show there only while Nginx Proxy Manager is
+the selected driver.
 
 - **Secrets** (the Authentik API token, the Cloudflare DNS API token, the
   Nginx Proxy Manager password and the GitHub API token) show only "Set" or

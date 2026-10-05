@@ -716,7 +716,7 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   the `prune-acme-challenges` bullet below), `defaultConfigPath: string |
   null` (`null` means the
   driver uses no configuration file), `statusPage: { suggestedPath:
-  string } | null` (`null` means it serves no status page), five optional
+  string } | null` (`null` means it serves no status page), six optional
   Settings-page hints -- `usesSharedCertificate` (`true` means the driver
   serves `ctx.tls`'s shared certificate, so the page shows the
   `proxyTlsCertificate`/`proxyTlsKey` fields; nginx only),
@@ -725,7 +725,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   #35 -- see the "Traefik driver" bullet below), `usesCaddyTls` (`true`
   means the page shows the Caddy TLS dropdown, and -- with that dropdown's
   own value `files` -- the `proxyTlsCertificate`/`proxyTlsKey` fields too;
-  both Caddy drivers only, issue #51), and
+  both Caddy drivers only, issue #51), `usesNpmApi` (`true` means the page
+  shows the `npmApiUrl`/`npmApiEmail`/`npmApiPassword` fields on the Proxy
+  tab; Nginx Proxy Manager only, issue #73), and
   `configPathNote` (a sentence appended to the Proxy config path help) --,
   `plan()`/`apply()`/`snapshot()`) and `checkCapabilities(routes, driver)`;
   `file-driver.ts`'s
@@ -1109,7 +1111,11 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   bullet above -- `DriverDeps.configPath` is `string | null` precisely for
   this driver), and the Settings page hides Proxy config path/Status page
   path/the TLS fields for it the same way it already hides them for
-  `none`. `capabilities: { authModes: ['forward', 'oidc'],
+  `none`. It does carry `usesNpmApi: true` (issue #73), the one Settings-
+  page hint it sets: the page shows the `npmApiUrl`/`npmApiEmail`/
+  `npmApiPassword` fields at the end of the Proxy tab while this driver is
+  selected (see the "Web UI Settings page" bullet below), rather than on a
+  tab of their own the way they used to sit. `capabilities: { authModes: ['forward', 'oidc'],
   acmeDns01ViaCloudflare: () => false }`; `statusPage: null` too, since it has no
   document root of its own to serve one from.
 
@@ -3806,9 +3812,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   adds `proxyDrivers` (every registered driver from `listDrivers()`, mapped
   to `{ id, label, defaultConfigPath, suggestedStatusPagePath,
   managesProxy, usesSharedCertificate, usesCertResolver, usesApiUrl,
-  usesCaddyTls, configPathNote }` (`usesCertResolver`/`usesApiUrl`,
+  usesCaddyTls, usesNpmApi, configPathNote }` (`usesCertResolver`/`usesApiUrl`,
   issue #35's `proxyDriversInfo()`
-  addition, and `usesCaddyTls`, issue #51's, all default `false` the same way `usesSharedCertificate` does),
+  addition, `usesCaddyTls`, issue #51's, and `usesNpmApi`, issue #73's, all default `false` the same way `usesSharedCertificate` does),
   Caddy, Caddy (admin API), nginx,
   Nginx Proxy Manager, HAProxy, Traefik, then None) and `defaultProxyDriver`
   (`DEFAULT_PROXY_DRIVER_ID`), plus (issue #51) `caddyTlsModes`
@@ -3833,8 +3839,9 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   The same file's `proxyFieldView(selectedId,
   drivers, caddyTls)` decides, for whichever driver is currently selected in that
   *unsaved* dropdown value, whether the Proxy config path, Status page
-  path, Caddy TLS, Proxy TLS certificate/key, and (issue #35) Proxy cert
-  resolver/Proxy API URL fields apply at all: a driver whose
+  path, Caddy TLS, Proxy TLS certificate/key, (issue #35) Proxy cert
+  resolver/Proxy API URL, and (issue #73) `npmApiUrl`/`npmApiEmail`/
+  `npmApiPassword` fields apply at all: a driver whose
   `managesProxy` is `false` (only `none` today) hides all of them
   entirely rather than showing them disabled or empty; a managed driver
   with a `defaultConfigPath` shows Proxy config path with that path as its
@@ -3863,10 +3870,15 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   comparison in the page), and (issue #35) shows the Proxy cert
   resolver/Proxy API URL fields only when `usesCertResolver`/`usesApiUrl`
   are true respectively (`showCertResolverField`/`showApiUrlField`;
-  Traefik only today, same metadata-driven pattern); an unrecognized id
+  Traefik only today, same metadata-driven pattern), and (issue #73)
+  shows the three NPM fields only when `usesNpmApi` is true
+  (`showNpmApiFields`; Nginx Proxy Manager only, same metadata-driven
+  pattern, display-only the same way every other driver-specific field
+  is -- switching away from and back to Nginx Proxy Manager never clears
+  or resends those three drafts); an unrecognized id
   (never reachable through the
-  dropdown itself, but defensive) hides all of them. The TLS and
-  cert-resolver/API-URL fields also
+  dropdown itself, but defensive) hides all of them. The TLS,
+  cert-resolver/API-URL, and NPM fields also
   stay hidden until the driver list has loaded, since unlike the other two
   they mean nothing for the default driver. Until the driver list has
   loaded (or if the load fails) the
@@ -3904,8 +3916,12 @@ how to reach a target and is the only code that talks to `ssh2` directly:
   Issue #64 turned the page into the editor for the settings store (the
   bullet above). It is tabbed by integration -- `SETTINGS_TABS`/
   `fieldsForTab` (`web-client/src/lib/settings-display.ts`): General,
-  Proxy, Authentik, Cloudflare, Nginx Proxy Manager, GitHub -- with
-  `proxyFieldView`'s show/hide rules unchanged inside the Proxy tab. The
+  Proxy, Authentik, Cloudflare, GitHub -- with
+  `proxyFieldView`'s show/hide rules unchanged inside the Proxy tab (issue
+  #73 dropped the separate Nginx Proxy Manager tab; its three fields now
+  sit at the end of the Proxy tab's field list, shown only while that
+  driver is selected -- see the `usesNpmApi`/`showNpmApiFields` mentions
+  above). The
   response gains `sources` (every non-secret key's `environment`/
   `settings`/`none`), `environment` (only the keys an env var currently
   pins: `{ variable, value? }`, `value` the effective value for a

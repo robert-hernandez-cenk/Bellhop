@@ -98,6 +98,11 @@ export interface ReverseProxyDriver {
   // shows the Caddy TLS dropdown only for a driver that sets this. Absent
   // = false.
   usesCaddyTls?: boolean;
+  // true = this driver reads the npmApiUrl/npmApiEmail/npmApiPassword
+  // settings (issue #73, Nginx Proxy Manager only) to reach its REST API
+  // and sign in to it. The Settings page shows those three fields on the
+  // Proxy tab only for a driver that sets this. Absent = false.
+  usesNpmApi?: boolean;
   // One sentence the Settings page appends to the Proxy config path help
   // for this driver -- how it treats that file (the whole file vs. a
   // managed section of it). Absent = nothing appended.

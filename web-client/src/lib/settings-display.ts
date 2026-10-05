@@ -90,6 +90,11 @@ export interface ProxyFieldView {
   // an id comparison" rule as showTlsFields above.
   showCertResolverField: boolean;
   showApiUrlField: boolean;
+  // Nginx Proxy Manager API URL/email/password (issue #73): shown only for
+  // a managed driver whose metadata says it reads them (usesNpmApi) --
+  // the Nginx Proxy Manager driver today, same "metadata, never an id
+  // comparison" rule as showTlsFields/showCertResolverField above.
+  showNpmApiFields: boolean;
 }
 
 // `caddyTls` is the shown (possibly unsaved) Caddy TLS value -- resolved by
@@ -112,6 +117,7 @@ export function proxyFieldView(
       showCaddyTlsField: false,
       showCertResolverField: false,
       showApiUrlField: false,
+      showNpmApiFields: false,
     };
   }
   const shared = {
@@ -121,6 +127,7 @@ export function proxyFieldView(
     showCaddyTlsField: driver.usesCaddyTls,
     showCertResolverField: driver.usesCertResolver,
     showApiUrlField: driver.usesApiUrl,
+    showNpmApiFields: driver.usesNpmApi,
   };
   // A managed driver with no config file at all (defaultConfigPath: null --
   // issue #31, e.g. a REST-managed driver like Nginx Proxy Manager) hides
@@ -140,15 +147,17 @@ export function proxyFieldView(
 
 // Issue #64: the Settings page groups every setting by integration, one
 // tab each, in this order (FR-014). Each secret sits in the same tab as
-// the integration settings it is used with.
-export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'nginx-proxy-manager' | 'github';
+// the integration settings it is used with. Issue #73 dropped the Nginx
+// Proxy Manager tab -- its three fields now sit at the end of the Proxy
+// tab instead, shown only while that driver is selected (proxyFieldView's
+// showNpmApiFields).
+export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'proxy', label: 'Proxy' },
   { id: 'authentik', label: 'Authentik' },
   { id: 'cloudflare', label: 'Cloudflare' },
-  { id: 'nginx-proxy-manager', label: 'Nginx Proxy Manager' },
   { id: 'github', label: 'GitHub' },
 ];
 
@@ -179,6 +188,11 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'proxyTlsKey',
     'proxyCertResolver',
     'proxyApiUrl',
+    // issue #73: the Nginx Proxy Manager fields, moved off their own tab
+    // and onto the end of this one.
+    'npmApiUrl',
+    'npmApiEmail',
+    'npmApiPassword',
   ],
   authentik: [
     'authentikApiUrl',
@@ -193,7 +207,6 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'authentikOidcSigningKeyName',
   ],
   cloudflare: ['cloudflareDnsApiToken'],
-  'nginx-proxy-manager': ['npmApiUrl', 'npmApiEmail', 'npmApiPassword'],
   github: ['githubApiToken'],
 };
 

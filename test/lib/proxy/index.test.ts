@@ -143,6 +143,16 @@ test('getDriver returns nginxProxyManagerDriver when proxyDriver is "nginx-proxy
   assert.equal(managesProxy(nginxProxyManagerDriver), true);
 });
 
+// issue #73: usesNpmApi is true only for the Nginx Proxy Manager driver --
+// the Settings page shows the npmApiUrl/npmApiEmail/npmApiPassword fields on
+// the Proxy tab only for whichever driver sets this.
+test('usesNpmApi is true only for the Nginx Proxy Manager driver (issue #73)', () => {
+  assert.equal(nginxProxyManagerDriver.usesNpmApi, true);
+  for (const driver of [caddyDriver, caddyApiDriver, nginxDriver, haproxyDriver, traefikDriver, noneDriver]) {
+    assert.equal(driver.usesNpmApi ?? false, false, driver.id);
+  }
+});
+
 test('driverDeps returns configPath: null for the Nginx Proxy Manager driver, even when proxyConfigPath is set', () => {
   const inv = baseInventory({ proxyDriver: 'nginx-proxy-manager', proxyConfigPath: '/etc/nginx/conf.d/bellhop.conf' });
   const deps = driverDeps(inv, new FakeSSHClient(defaultResponder), nginxProxyManagerDriver);
