@@ -87,7 +87,7 @@ export class SessionService {
       // unreachable (keep the identity, retry after a minute). The message
       // names the key and env var, never the value (config.ts).
       this.store.markCheckAttempt(rawId);
-      logWarn(`Web login re-check for ${session.username} skipped: ${(err as Error).message}; keeping the last-known identity`);
+      logWarn(`Web login re-check for ${session.username} skipped: ${err instanceof Error ? err.message : 'invalid web login settings'}; keeping the last-known identity`);
       return toAuthUser(session);
     }
     if (!cfg.configured) {
@@ -138,7 +138,9 @@ export class SessionService {
         });
         // `reason` names the issuer and the failure, never a token.
         logWarn(`${result.reason}; keeping the last-known identity for ${session.username} and retrying in a minute`);
-        return toAuthUser(session);
+        // As in the `ok` path: a sign-out that landed while the provider was
+        // unreachable must not be answered with the stale identity.
+        return this.store.getSession(rawId) ? toAuthUser(session) : undefined;
     }
   }
 }

@@ -137,10 +137,48 @@ export function authRoutes(sessions: SessionService, client: WebLoginClient = se
       return;
     }
 
+    // A browser signing in again (a stale tab, a second account) still carries
+    // its previous cookie: delete that session so it does not linger as an
+    // orphan until it expires.
+    const previous = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    if (previous) sessions.destroy(previous);
     const sessionId = sessions.create(identity);
     logInfo(`Signed in ${identity.username} through ${cfg.issuer}`);
     res.cookie(SESSION_COOKIE, sessionId, SESSION_COOKIE_OPTIONS);
     res.redirect(302, attempt.returnTo);
+  });
+
+  // Sign-out (FR-015, R13). POST only, so a link or an image tag cannot sign
+  // anyone out, and the Lax session cookie is not sent on a cross-site POST.
+  // Whatever happens at the provider, the local session is already gone and
+  // the cookie cleared before it is asked anything, so this never fails.
+  router.post('/logout', async (req, res) => {
+    const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const session = sessionId ? sessions.destroy(sessionId) : undefined;
+    // Same attributes the cookie was set with (path "/"), or the browser keeps it.
+    res.clearCookie(SESSION_COOKIE, clearOptions(SESSION_COOKIE_OPTIONS));
+
+    let target = '/auth/signed-out';
+    if (session) {
+      try {
+        const cfg = webLoginConfig();
+        if (cfg.configured) {
+          // Where the provider sends the browser afterwards: this deployment's
+          // origin, taken from the registered redirect URI.
+          const back = new URL('/auth/signed-out', cfg.redirectUri).href;
+          target = (await client.endSessionUrl(cfg, session.idToken, back)) ?? target;
+        }
+      } catch {
+        // Invalid settings or a client that threw: the unexpected error's
+        // text is neither logged nor shown (it carries no secrecy guarantee).
+        logWarn('Web sign-out could not ask the identity provider to end its session; signed out locally only');
+      }
+    }
+    res.redirect(303, target);
+  });
+
+  router.get('/signed-out', (_req, res) => {
+    sendPage(res, 200, 'You are signed out', ['<p><a href="/auth/login">Sign in again</a></p>']);
   });
 
   return router;

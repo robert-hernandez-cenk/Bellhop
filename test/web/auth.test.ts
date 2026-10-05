@@ -13,7 +13,11 @@ import { JobRunner } from '../../src/web/jobs/job-runner.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
-import { newTestSessions, sessionCookie } from '../support/web-session.ts';
+import { newTestSessions, sessionCookie, TEST_WEB_LOGIN_CONFIG, type TestSessions } from '../support/web-session.ts';
+import { FakeWebLoginClient } from '../support/fake-web-login-client.ts';
+import { SessionStore } from '../../src/web/login/session-store.ts';
+import { SessionService } from '../../src/web/login/sessions.ts';
+import type { RecheckResult } from '../../src/web/login/oidc-client.ts';
 
 const ADMIN_GROUP_NAME = authentikConfig({}).adminGroup;
 const AUTHENTIK_BUILTIN_ADMIN_GROUP_NAME = authentikConfig({}).builtinAdminGroup;
@@ -341,4 +345,107 @@ test('requireAdminGroup returns 403 when req.user is undefined', () => {
   });
   assert.equal(called, false);
   assert.equal(state.statusCode, 403);
+});
+
+// --- session re-check and expiry through the app (#69 US2, FR-014/FR-014a) -------------
+
+const MIN = 60 * 1000;
+const DAY = 24 * 60 * MIN;
+
+// An app whose sessions run on a clock the test moves.
+function clockedApp() {
+  const clock = { now: 1_000_000 };
+  const { app, sessions } = testApp(newTestSessions({ now: () => clock.now }));
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: [ADMIN_GROUP_NAME], uid: 'uid-alice' });
+  return { app, sessions, clock, cookie };
+}
+
+const refreshedIdentity = (groups: string[]): RecheckResult => ({
+  kind: 'ok',
+  identity: { username: 'alice', uid: 'uid-alice', groups, refreshToken: 'rotated-refresh-token', idToken: 'new-id-token' },
+});
+
+test('a request after 5 minutes re-checks the session and sees the groups the provider now reports', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    const before = await request(app).get('/api/settings').set('Cookie', cookie);
+    assert.equal(before.status, 200);
+    assert.equal(sessions.client.callsTo('recheck').length, 0, 'a fresh session makes no provider call');
+
+    clock.now += 5 * MIN;
+    sessions.client.recheckResults.push(refreshedIdentity(['homelab']));
+    const after = await request(app).get('/api/settings').set('Cookie', cookie);
+    assert.equal(after.status, 403, 'admin was removed at the provider');
+    assert.equal(sessions.client.callsTo('recheck').length, 1);
+  });
+});
+
+test('a refused re-check answers 401 and the session is gone', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    clock.now += 5 * MIN;
+    sessions.client.recheckResults.push({ kind: 'refused', reason: 'Re-check with https://authentik.example.com/ was refused: HTTP 400 invalid_grant' });
+    const res = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(res.status, 401);
+    assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+    const again = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(again.status, 401);
+    assert.equal(sessions.client.callsTo('recheck').length, 1);
+  });
+});
+
+test('an unreachable provider keeps serving the last-known identity', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    clock.now += 5 * MIN;
+    sessions.client.recheckResults.push({ kind: 'unreachable', reason: 'Re-check with https://authentik.example.com/ failed: HTTP 503' });
+    const res = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.username, 'alice');
+    assert.equal(res.body.isAdmin, true);
+  });
+});
+
+test('a session 30 days old answers 401 even though the provider would still vouch for it', async () => {
+  await signedOutInOidcMode(async () => {
+    const { app, sessions, clock, cookie } = clockedApp();
+    // Re-checked successfully along the way: the 30 days still run from sign-in.
+    for (let day = 1; day < 30; day++) {
+      clock.now += DAY;
+      sessions.client.recheckResults.push(refreshedIdentity([ADMIN_GROUP_NAME]));
+      assert.equal((await request(app).get('/api/whoami').set('Cookie', cookie)).status, 200, `day ${day}`);
+    }
+    clock.now += DAY;
+    sessions.client.recheckResults.push(refreshedIdentity([ADMIN_GROUP_NAME]));
+    const res = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(res.status, 401);
+    assert.equal(sessions.client.recheckResults.length, 1, 'expired before any provider call');
+  });
+});
+
+// A SessionService over `store` and a fresh fake provider, typed like newTestSessions'.
+function serviceOn(store: SessionStore): TestSessions {
+  const client = new FakeWebLoginClient();
+  return Object.assign(new SessionService({ store, client, config: () => TEST_WEB_LOGIN_CONFIG }), { client });
+}
+
+test('a file-backed session survives the service restarting', async () => {
+  await signedOutInOidcMode(async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'sessions-')), 'sessions.sqlite3');
+    const firstStore = new SessionStore(file);
+    const first = testApp(serviceOn(firstStore));
+    const cookie = sessionCookie(first.sessions, { username: 'alice', groups: [ADMIN_GROUP_NAME], uid: 'uid-alice' });
+    assert.equal((await request(first.app).get('/api/whoami').set('Cookie', cookie)).status, 200);
+    firstStore.close();
+
+    const secondStore = new SessionStore(file);
+    try {
+      const second = testApp(serviceOn(secondStore));
+      const res = await request(second.app).get('/api/whoami').set('Cookie', cookie);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.username, 'alice');
+    } finally {
+      secondStore.close();
+    }
+  });
 });

@@ -91,13 +91,13 @@ description: "Task list for web UI login through Bellhop's own OIDC client (#69)
 
 ### Tests first
 
-- [ ] T029 [P] [US2] Tests in test/web/routes/auth.test.ts for `POST /auth/logout` (session deleted, cookie cleared, 303 to end-session URL with `id_token_hint` and `post_logout_redirect_uri=<origin of redirect URI>/auth/signed-out`, else 303 `/auth/signed-out`; provider unreachable still clears; no session still 303) and `GET /auth/signed-out`; a logged-out cookie then gets 401
-- [ ] T030 [P] [US2] Request-level tests in test/web/auth.test.ts with injected clock: after 5 minutes a request triggers a re-check and sees new groups (admin removed → `/api/settings` 403); refused re-check → 401 and session gone; unreachable → served with last-known identity; 30-day-old session → 401; a file-backed session survives building a second app on the same store (restart)
+- [x] T029 [P] [US2] Tests in test/web/routes/auth.test.ts for `POST /auth/logout` (session deleted, cookie cleared, 303 to end-session URL with `id_token_hint` and `post_logout_redirect_uri=<origin of redirect URI>/auth/signed-out`, else 303 `/auth/signed-out`; provider unreachable still clears; no session still 303) and `GET /auth/signed-out`; a logged-out cookie then gets 401
+- [x] T030 [P] [US2] Request-level tests in test/web/auth.test.ts with injected clock: after 5 minutes a request triggers a re-check and sees new groups (admin removed → `/api/settings` 403); refused re-check → 401 and session gone; unreachable → served with last-known identity; 30-day-old session → 401; a file-backed session survives building a second app on the same store (restart)
 
 ### Implementation
 
-- [ ] T031 [US2] Implement `POST /auth/logout` and `GET /auth/signed-out` in src/web/routes/auth.ts
-- [ ] T032 [US2] Inject the clock through `SessionService`/`AppDeps` where T030 needs it; ensure the purge runs at store open and on sign-in
+- [x] T031 [US2] Implement `POST /auth/logout` and `GET /auth/signed-out` in src/web/routes/auth.ts
+- [x] T032 [US2] Inject the clock through `SessionService`/`AppDeps` where T030 needs it; ensure the purge runs at store open and on sign-in
 
 ---
 

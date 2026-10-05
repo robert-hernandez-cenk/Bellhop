@@ -12,7 +12,7 @@ import { WebLoginError, type LoginIdentity, type StartedLogin } from '../../../s
 import { FakeSSHClient } from '../../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
-import { newTestSessions, TEST_WEB_LOGIN_CONFIG, type TestSessions } from '../../support/web-session.ts';
+import { newTestSessions, sessionCookie, TEST_WEB_LOGIN_CONFIG, type TestSessions } from '../../support/web-session.ts';
 
 // GET /auth/login and GET /auth/callback (#69 US1, contracts/http-auth.md).
 // The provider is a FakeWebLoginClient (the SessionService's client); the
@@ -377,4 +377,167 @@ test('GET /auth/callback fails when web login stopped being configured mid sign-
   const res = await request(app).get('/auth/callback?code=example-code&state=example-state').set('Cookie', loginCookie);
   await assertSignInFailed(res, '/jobs', /not configured/);
   assert.equal(sessions.client.callsTo('completeLogin').length, 0);
+});
+
+// --- re-sign-in replaces the browser's existing session ----------------------------
+
+test('GET /auth/callback destroys the session the browser already carries, leaving only the new one', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  const oldCookie = sessionCookie(sessions, { username: 'alice', groups: [] });
+  const oldId = oldCookie.split('=')[1]!;
+  const loginCookie = await startLogin(app, sessions, '/jobs');
+  sessions.client.completeLoginResults.push(identity);
+  const res = await request(app)
+    .get('/auth/callback?code=example-code&state=example-state')
+    .set('Cookie', `${loginCookie}; ${oldCookie}`);
+  assert.equal(res.status, 302);
+  assert.equal(sessions.store.getSession(oldId), undefined, 'the old session is gone');
+  const fresh = cookieNamed(res, 'bellhop_session')!.split(';')[0]!.split('=')[1]!;
+  assert.notEqual(fresh, oldId);
+  assert.ok(sessions.store.getSession(fresh));
+});
+
+// --- POST /auth/logout ----------------------------------------------------------------
+
+const END_SESSION = 'https://authentik.example.com/application/o/bellhop/end-session/?id_token_hint=example-id-token';
+
+// Runs `fn` with the suite-wide WEB_UI_DEV_USER removed, so a request without
+// a valid session is genuinely unauthenticated.
+async function withoutDevUser(fn: () => Promise<void>): Promise<void> {
+  const original = process.env.WEB_UI_DEV_USER;
+  delete process.env.WEB_UI_DEV_USER;
+  try {
+    await fn();
+  } finally {
+    if (original !== undefined) process.env.WEB_UI_DEV_USER = original;
+  }
+}
+
+function assertSessionCookieCleared(res: request.Response): void {
+  const cleared = cookieNamed(res, 'bellhop_session');
+  assert.ok(cleared, `expected bellhop_session to be cleared, got: ${setCookies(res).join(' | ')}`);
+  assert.match(cleared, /^bellhop_session=;/);
+  assert.match(cleared, /Expires=Thu, 01 Jan 1970/);
+  assert.match(cleared, /Path=\/(;|$)/);
+  assert.match(cleared, /HttpOnly/i);
+  assert.match(cleared, /Secure/i);
+  assert.match(cleared, /SameSite=Lax/i);
+}
+
+test('POST /auth/logout deletes the session, clears the cookie and sends the browser to the end-session URL', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: ['bellhop-admins'] });
+  sessions.client.endSessionUrlResults.push(END_SESSION);
+  const res = await request(app).post('/auth/logout').set('Cookie', cookie);
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.location, END_SESSION);
+  assertSessionCookieCleared(res);
+  assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+
+  const call = sessions.client.callsTo('endSessionUrl')[0]!;
+  assert.equal(call.idToken, 'example-id-token');
+  assert.equal(call.postLogoutRedirectUri, 'https://bellhop.example.com/auth/signed-out');
+  assert.deepEqual(call.cfg, TEST_WEB_LOGIN_CONFIG);
+
+  await withoutDevUser(async () => {
+    tempConfigStore({ webUiAuthMode: 'oidc' });
+    const after = await request(app).get('/api/whoami').set('Cookie', cookie);
+    assert.equal(after.status, 401, 'the logged-out cookie no longer authenticates');
+  });
+});
+
+test('POST /auth/logout falls back to /auth/signed-out when the provider has no end-session endpoint', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: [] });
+  sessions.client.endSessionUrlResults.push(undefined);
+  const res = await request(app).post('/auth/logout').set('Cookie', cookie);
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.location, '/auth/signed-out');
+  assertSessionCookieCleared(res);
+  assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+});
+
+test('POST /auth/logout still signs out when asking the provider throws', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: [] });
+  sessions.client.endSessionUrlResults.push(() => {
+    throw new Error('boom example-id-token');
+  });
+  const res = await request(app).post('/auth/logout').set('Cookie', cookie);
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.location, '/auth/signed-out');
+  assertSessionCookieCleared(res);
+  assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+  assertNoSecrets(res);
+});
+
+test('POST /auth/logout still signs out when web login is no longer configured', async () => {
+  resetConfigStore();
+  const { app, sessions } = testApp();
+  const cookie = sessionCookie(sessions, { username: 'alice', groups: [] });
+  const res = await request(app).post('/auth/logout').set('Cookie', cookie);
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.location, '/auth/signed-out');
+  assertSessionCookieCleared(res);
+  assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+  assert.equal(sessions.client.callsTo('endSessionUrl').length, 0);
+});
+
+test('POST /auth/logout still signs out when the web login settings are invalid', async () => {
+  resetConfigStore();
+  const original = process.env.WEB_UI_OIDC_ISSUER;
+  process.env.WEB_UI_OIDC_ISSUER = 'not-a-url-example-value';
+  try {
+    const { app, sessions } = testApp();
+    const cookie = sessionCookie(sessions, { username: 'alice', groups: [] });
+    const res = await request(app).post('/auth/logout').set('Cookie', cookie);
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.location, '/auth/signed-out');
+    assertSessionCookieCleared(res);
+    assert.equal(sessions.store.getSession(cookie.split('=')[1]!), undefined);
+  } finally {
+    if (original === undefined) delete process.env.WEB_UI_OIDC_ISSUER;
+    else process.env.WEB_UI_OIDC_ISSUER = original;
+  }
+});
+
+test('POST /auth/logout with no session (or an unknown one) is still a 303 to /auth/signed-out', async () => {
+  configureWebLogin();
+  const { app, sessions } = testApp();
+  for (const cookie of [undefined, 'bellhop_session=not-a-real-session']) {
+    const req = request(app).post('/auth/logout');
+    const res = await (cookie ? req.set('Cookie', cookie) : req);
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.location, '/auth/signed-out');
+    assertSessionCookieCleared(res);
+  }
+  assert.equal(sessions.client.callsTo('endSessionUrl').length, 0, 'no id token, so nothing to hint with');
+});
+
+test('POST /auth/logout is reachable in oidc mode without a session', async () => {
+  await withoutDevUser(async () => {
+    tempConfigStore({ webUiAuthMode: 'oidc' });
+    const { app } = testApp();
+    const res = await request(app).post('/auth/logout');
+    assert.equal(res.status, 303);
+  });
+});
+
+// --- GET /auth/signed-out ----------------------------------------------------------------
+
+test('GET /auth/signed-out is a public page with a Sign in again link', async () => {
+  await withoutDevUser(async () => {
+    tempConfigStore({ webUiAuthMode: 'oidc' });
+    const { app } = testApp();
+    const res = await request(app).get('/auth/signed-out');
+    assert.equal(res.status, 200);
+    assert.match(res.headers['content-type'], /text\/html/);
+    assert.match(res.text, /You are signed out/);
+    assert.ok(res.text.includes('href="/auth/login"'), res.text);
+    assert.match(res.text, /Sign in again/);
+  });
 });

@@ -259,3 +259,47 @@ test('sessionCookie returns a Cookie header for a fresh session', async () => {
   assert.deepEqual(user, { username: 'admin', uid: 'uid-admin', groups: ['example-admins'], viaOidc: true });
   assert.equal(sessions.client.calls.length, 0);
 });
+
+test('resolve: unreachable while the session is signed out meanwhile -> undefined, not the stale identity', async () => {
+  const { sessions, clock, id } = setup();
+  const release = gate();
+  sessions.client.recheckResults.push(async () => {
+    await release.promise;
+    return { kind: 'unreachable', reason: `Re-check with ${TEST_WEB_LOGIN_CONFIG.issuer} failed: HTTP 503` } as RecheckResult;
+  });
+  clock.now += 6 * MIN;
+  const pending = captureWarnings(() => sessions.resolve(id));
+  await new Promise((r) => setImmediate(r));
+  sessions.destroy(id);
+  release.open();
+  assert.equal((await pending).result, undefined);
+});
+
+test('resolve: a config() that throws a non-Error is treated as unreachable with fixed text', async () => {
+  const { sessions, clock, id } = setup(() => {
+    throw 'a string, not an Error';
+  });
+  clock.now += 6 * MIN;
+  const { result: user, warnings } = await captureWarnings(() => sessions.resolve(id));
+  assert.equal(user?.username, 'test-user');
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0]!.includes('invalid web login settings'), warnings[0]);
+  assert.ok(!warnings[0]!.includes('a string, not an Error'));
+});
+
+test('resolve: re-checks never extend a session past 30 days from sign-in (FR-014a)', async () => {
+  const { sessions, clock, id } = setup();
+  for (let day = 1; day < 30; day++) {
+    clock.now += DAY;
+    sessions.client.recheckResults.push(OK);
+    assert.ok(await sessions.resolve(id), `day ${day}`);
+  }
+  assert.equal(sessions.store.getSession(id)?.createdAt, 1_000_000);
+  clock.now = 1_000_000 + 30 * DAY - 1;
+  sessions.client.recheckResults.push(OK);
+  assert.ok(await sessions.resolve(id), 'still valid one ms before the 30th day');
+  clock.now = 1_000_000 + 30 * DAY;
+  sessions.client.recheckResults.push(OK);
+  assert.equal(await sessions.resolve(id), undefined);
+  assert.equal(sessions.store.getSession(id), undefined);
+});
