@@ -4,12 +4,16 @@ import { runRemote, selectTargets, type TargetSelector } from '../../lib/targets
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { UPDATE_COMMANDS, detectPackageManager, PROBED_COMMANDS } from '../../lib/package-manager.ts';
 import { errorMessage, formatFailureLines, type TargetFailure } from '../../lib/target-failure.ts';
+import { isBellhopGuest } from '../../lib/bellhop-guest.ts';
 
 export interface UpdateAllResult {
   pass: string[];
   failConnect: TargetFailure[];
   failCommand: string[];
   failUnknownPm: string[];
+  // Bellhop's own guest (the bellhopGuest setting, issue #67), left out so an
+  // OS update can never restart the service running it. Not a failure.
+  skippedSelf: string[];
 }
 
 // The one place update-all's targets are decided (operator PR feedback,
@@ -43,10 +47,16 @@ export async function runUpdateAll(
   selector: TargetSelector,
   deps: { ssh: SSHClient; inventory: Inventory }
 ): Promise<UpdateAllResult> {
-  const targets = selectUpdateTargets(deps.inventory, selector);
-  if (targets.length === 0) {
+  const selected = selectUpdateTargets(deps.inventory, selector);
+  if (selected.length === 0) {
     throw new Error('No targets matched');
   }
+
+  const skippedSelf = selected.filter((target) => isBellhopGuest(deps.inventory, target));
+  for (const target of skippedSelf) {
+    logWarn(`Skipping ${target}: it is Bellhop's own guest (the bellhopGuest setting), and updating it would disrupt the running Bellhop service`);
+  }
+  const targets = selected.filter((target) => !isBellhopGuest(deps.inventory, target));
 
   const pass: string[] = [];
   const failConnect: TargetFailure[] = [];
@@ -92,7 +102,7 @@ export async function runUpdateAll(
     }
   }
 
-  return { pass, failConnect, failCommand, failUnknownPm };
+  return { pass, failConnect, failCommand, failUnknownPm, skippedSelf };
 }
 
 export function formatUpdateAll(result: UpdateAllResult): string {
@@ -102,5 +112,6 @@ export function formatUpdateAll(result: UpdateAllResult): string {
     ...formatFailureLines('Failed to connect', result.failConnect),
     `  Command failed: ${result.failCommand.join(' ') || 'none'}`,
     `  Unknown package manager: ${result.failUnknownPm.join(' ') || 'none'}`,
+    ...(result.skippedSelf.length > 0 ? [`  Skipped (Bellhop's own guest): ${result.skippedSelf.join(' ')}`] : []),
   ].join('\n');
 }

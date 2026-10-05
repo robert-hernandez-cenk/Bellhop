@@ -15,6 +15,7 @@ import { runSyncProxy } from '../commands/networking/sync-proxy.ts';
 import { formatFailureList } from '../lib/target-failure.ts';
 import { logInfo, logWarn } from '../lib/log.ts';
 import type { Operation } from './types.ts';
+import { isBellhopGuest } from '../lib/bellhop-guest.ts';
 import { reqStr, optStr, flag } from './fields.ts';
 
 // The web route has always received update-all's selector as one of three
@@ -162,8 +163,15 @@ export const MAINTENANCE_OPERATIONS: Record<string, Operation> = {
     target: () => undefined,
     fleetWide: true,
     preview: async (i, deps) => {
-      const targets = selectUpdateTargets(deps.inventory, toTargetSelector(i));
-      return `Would update OS packages on: ${targets.join(', ')}`;
+      const selected = selectUpdateTargets(deps.inventory, toTargetSelector(i));
+      // Mirrors runUpdateAll's own bellhopGuest skip (issue #67), so the
+      // preview names exactly what apply will update.
+      const targets = selected.filter((t) => !isBellhopGuest(deps.inventory, t));
+      const skipped = selected.filter((t) => isBellhopGuest(deps.inventory, t));
+      return [
+        `Would update OS packages on: ${targets.join(', ') || 'nothing'}`,
+        ...skipped.map((t) => `Skipping ${t}: Bellhop's own guest (bellhopGuest setting).`),
+      ].join('\n');
     },
     apply: async (i, deps) => {
       const result = await runUpdateAll(toTargetSelector(i), deps);

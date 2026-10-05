@@ -16,6 +16,7 @@ import { runMigrateGuest } from '../commands/provisioning/migrate-guest.ts';
 import { runSyncAuthentik, conflictExplanation } from '../commands/networking/sync-authentik.ts';
 import { logWarn } from '../lib/log.ts';
 import { creatorGrantPreview, grantCreatorAccess, type Actor } from '../lib/pve-acl.ts';
+import { assertNotBellhopGuest } from '../lib/bellhop-guest.ts';
 import type { Operation, OperationDeps } from './types.ts';
 import { reqStr, optStr, reqInt, optInt, flag, portStr } from './fields.ts';
 
@@ -388,6 +389,9 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
           `Refusing to delete '${i.guest}' -- it's flagged 'proxy: true' (this is the guest hosting the reverse proxy itself)`
         );
       }
+      // runDeleteGuest refuses Bellhop's own guest too, but only after the
+      // Authentik teardown below has already removed its gating.
+      assertNotBellhopGuest(deps.inventory, i.guest, 'delete');
 
       // Authentik teardown must run BEFORE runDeleteGuest removes the guest
       // from inventory -- sync-authentik's candidateEntries only recognizes

@@ -368,3 +368,21 @@ test('update-app apply re-checks against the pinned appSource without resolving 
   assert.ok(!calls.some((u) => u.includes('api.github.com/repos/example-owner')), `no branch resolution expected, got: ${calls.join(', ')}`);
   assert.ok(calls.includes(pinnedCtUrl));
 });
+
+// Issue #67: the update-all preview says which target it will skip, so the
+// preview still matches what apply does.
+test('update-all preview names the bellhopGuest it will skip', async () => {
+  const op = MAINTENANCE_OPERATIONS['update-all'];
+  const guarded = { ...deps(), inventory: { ...inventory, bellhopGuest: 'app-lxc' } };
+  const preview = await op.preview(parseOperationInput(op, { all: true }), guarded);
+  assert.match(preview, /^Would update OS packages on: pve1$/m);
+  assert.match(preview, /^Skipping app-lxc: Bellhop's own guest \(bellhopGuest setting\)\.$/m);
+});
+
+test('update-all apply does not fail when the only target is the bellhopGuest', async () => {
+  const ssh = new FakeSSHClient(defaultResponder);
+  const op = MAINTENANCE_OPERATIONS['update-all'];
+  const guarded = { ...deps(ssh), inventory: { ...inventory, bellhopGuest: 'app-lxc' } };
+  await op.apply(parseOperationInput(op, { host: 'app-lxc' }), guarded);
+  assert.equal(ssh.history.length, 0);
+});

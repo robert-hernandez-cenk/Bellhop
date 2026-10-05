@@ -5,6 +5,7 @@ import { shellQuote } from '../../lib/ssh-client.ts';
 import { resolveAppUrl, resolveDevAppUrl } from '../provisioning/install-app.ts';
 import { resolveAppSource, formatSourceNotice, type AppSource } from '../../lib/app-source.ts';
 import { logInfo, logWarn } from '../../lib/log.ts';
+import { assertNotBellhopGuest } from '../../lib/bellhop-guest.ts';
 
 export interface UpdateAppOptions {
   guest: string;
@@ -69,6 +70,7 @@ export async function runUpdateApp(
   if (!entryExists) {
     throw new Error(`Unknown inventory entry: ${opts.guest}`);
   }
+  assertNotBellhopGuest(deps.inventory, opts.guest, 'update');
 
   // research R1/R5: resolved (or reused, when the caller already pinned one
   // -- see UpdateAppOptions.source) after the argument checks above but

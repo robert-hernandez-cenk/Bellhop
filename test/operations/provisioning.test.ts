@@ -791,3 +791,27 @@ test('a recorded creator carries since from the injected clock, kept on a no-act
   await op.apply(input(), d);
   assert.deepEqual(saved(), { username: 'other-user', uid: 'uid-other-user', since: '2026-03-01T00:00:00.000Z' });
 });
+
+// Issue #67: the delete-guest operation runs an Authentik teardown before
+// runDeleteGuest's own guard, so it must refuse Bellhop's own guest before
+// that teardown touches Authentik at all.
+test('delete-guest apply refuses the bellhopGuest before any Authentik teardown', async () => {
+  const d = deps();
+  d.inventory = {
+    ...d.inventory,
+    bellhopGuest: 'media',
+    guests: d.inventory.guests.map((g) => (g.name === 'media' ? { ...g, authGroup: 'admins', subdomains: ['media'] } : g)),
+  };
+  let listedApplications = false;
+  d.authentik.listApplications = async () => {
+    listedApplications = true;
+    return [];
+  };
+  const op = PROVISIONING_OPERATIONS['delete-guest'];
+  await assert.rejects(
+    op.apply(parseOperationInput(op, { guest: 'media' }), d),
+    /^Error: Refusing to delete 'media': it is Bellhop's own guest \(the bellhopGuest setting\)/
+  );
+  assert.equal(listedApplications, false);
+  assert.equal((d.ssh as FakeSSHClient).history.length, 0);
+});

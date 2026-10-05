@@ -13,6 +13,7 @@ import { managesProxy } from '../../lib/proxy/driver.ts';
 import { parseNet0, setNet0Ip, parseIpconfig0, setIpconfig0Ip } from '../../lib/guest-vpn.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
 import { copyGuestAcls } from '../../lib/pve-acl.ts';
+import { assertNotBellhopGuest } from '../../lib/bellhop-guest.ts';
 import { stringify } from 'yaml';
 
 export interface MigrateGuestOptions {
@@ -133,6 +134,7 @@ export async function runMigrateGuest(
   if (!guest || (guest.type !== 'lxc' && guest.type !== 'vm')) {
     throw new Error(`'${opts.guest}' is not an lxc/vm guest in inventory`);
   }
+  assertNotBellhopGuest(inventory, opts.guest, 'migrate');
   const toHostEntry = inventory.hosts.find((h) => h.name === opts.toHost);
   if (!toHostEntry) {
     throw new Error(`Not a Proxmox host in inventory: ${opts.toHost}`);

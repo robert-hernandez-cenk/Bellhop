@@ -303,3 +303,22 @@ test('runUpdateApp uses a passed-in opts.source without ever calling fetch', asy
   assert.equal(result.ran, false);
   assert.equal(result.source, source);
 });
+
+// Issue #67: Bellhop's own guest is refused before the app source is
+// resolved or anything runs, in a dry run too.
+for (const apply of [false, true]) {
+  test(`runUpdateApp refuses the bellhopGuest before resolving the app or any remote call (apply: ${apply})`, async () => {
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    let fetched = false;
+    const fetchImpl = (async () => {
+      fetched = true;
+      throw new Error('should not be called');
+    }) as unknown as typeof fetch;
+    await assert.rejects(
+      () => runUpdateApp({ guest: 'plex', app: 'plex', apply, fetchImpl }, { ssh, inventory: { ...inventory, bellhopGuest: 'plex' } }),
+      /^Error: Refusing to update 'plex': it is Bellhop's own guest \(the bellhopGuest setting\)/
+    );
+    assert.equal(ssh.history.length, 0);
+    assert.equal(fetched, false);
+  });
+}

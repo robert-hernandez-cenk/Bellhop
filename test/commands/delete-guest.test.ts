@@ -199,3 +199,20 @@ test('runDeleteGuest apply preserves a setting written to disk while the remote 
   assert.equal(reloaded.dnsServer, '10.0.0.53', 'a concurrently-written setting must not be reverted');
   assert.ok(!reloaded.guests.some((g) => g.name === 'media'));
 });
+
+// Issue #67: Bellhop's own guest is refused before the status probe, in a
+// dry run too.
+for (const apply of [false, true]) {
+  test(`runDeleteGuest refuses the bellhopGuest before any remote call (apply: ${apply})`, async () => {
+    const ssh = new FakeSSHClient(() => ({ stdout: 'status: running', stderr: '', code: 0 }));
+    await assert.rejects(
+      () =>
+        runDeleteGuest(
+          { guest: 'media', apply },
+          { ssh, inventory: { ...freshInventory(), bellhopGuest: 'media' }, inventoryPath: UNUSED_INVENTORY_PATH }
+        ),
+      /^Error: Refusing to delete 'media': it is Bellhop's own guest \(the bellhopGuest setting\)/
+    );
+    assert.equal(ssh.history.length, 0);
+  });
+}

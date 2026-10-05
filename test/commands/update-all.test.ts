@@ -174,11 +174,12 @@ test('runUpdateAll throws when no targets match', async () => {
 });
 
 test('formatUpdateAll renders the OK/failed/unknown summary', () => {
-  const output = formatUpdateAll({ pass: ['a'], failConnect: [], failCommand: ['b'], failUnknownPm: ['c'] });
+  const output = formatUpdateAll({ pass: ['a'], failConnect: [], failCommand: ['b'], failUnknownPm: ['c'], skippedSelf: [] });
   assert.match(output, /OK: a/);
   assert.match(output, /Failed to connect: none/);
   assert.match(output, /Command failed: b/);
   assert.match(output, /Unknown package manager: c/);
+  assert.doesNotMatch(output, /Skipped/);
 });
 
 test('formatUpdateAll lists each connection failure with its reason', () => {
@@ -187,6 +188,47 @@ test('formatUpdateAll lists each connection failure with its reason', () => {
     failConnect: [{ target: 'pve1', error: 'All configured authentication methods failed' }],
     failCommand: [],
     failUnknownPm: [],
+    skippedSelf: [],
   });
   assert.match(output, /Failed to connect:\n {4}pve1: All configured authentication methods failed/);
+});
+
+// Issue #67: Bellhop's own guest is never updated by update-all -- it is
+// skipped and reported, and every other target still runs.
+test('runUpdateAll skips the bellhopGuest and reports it in skippedSelf', async () => {
+  const ssh = new FakeSSHClient(responder);
+  const { result, warnings } = await captureWarnings(() =>
+    runUpdateAll({ host: 'apt-guest' }, { ssh, inventory: { ...inventory, bellhopGuest: 'apk-guest' } })
+  );
+  assert.deepEqual(result.pass, ['apt-guest']);
+  assert.deepEqual(result.skippedSelf, []);
+  assert.deepEqual(warnings, []);
+
+  const all = await captureWarnings(() =>
+    runUpdateAll({ group: 'lxc' }, { ssh: new FakeSSHClient(responder), inventory: { ...inventory, bellhopGuest: 'apt-guest' } })
+  );
+  assert.deepEqual(all.result.pass, ['apk-guest']);
+  assert.deepEqual(all.result.skippedSelf, ['apt-guest']);
+  assert.ok(
+    all.warnings.some((w) => w.includes('apt-guest') && w.includes('bellhopGuest')),
+    `expected a warning naming the skipped guest, got: ${JSON.stringify(all.warnings)}`
+  );
+});
+
+test('runUpdateAll sends nothing to the bellhopGuest', async () => {
+  const ssh = new FakeSSHClient(responder);
+  await runUpdateAll({ group: 'lxc' }, { ssh, inventory: { ...inventory, bellhopGuest: 'apt-guest' } });
+  assert.ok(ssh.history.every((call) => !call.command.includes('pct exec 105')));
+});
+
+test('runUpdateAll given only the bellhopGuest skips it without failing or throwing', async () => {
+  const ssh = new FakeSSHClient(responder);
+  const result = await runUpdateAll({ host: 'apt-guest' }, { ssh, inventory: { ...inventory, bellhopGuest: 'apt-guest' } });
+  assert.deepEqual(result, { pass: [], failConnect: [], failCommand: [], failUnknownPm: [], skippedSelf: ['apt-guest'] });
+  assert.equal(ssh.history.length, 0);
+});
+
+test('formatUpdateAll names the skipped bellhopGuest when there is one', () => {
+  const output = formatUpdateAll({ pass: ['a'], failConnect: [], failCommand: [], failUnknownPm: [], skippedSelf: ['bellhop'] });
+  assert.match(output, /^ {2}Skipped \(Bellhop's own guest\): bellhop$/m);
 });

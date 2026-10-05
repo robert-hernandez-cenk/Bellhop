@@ -64,3 +64,28 @@ test('runGuestPower surfaces a non-zero exit code from the remote command', asyn
   assert.equal(result.result?.code, 1);
   assert.equal(result.result?.stderr, 'CT is locked');
 });
+
+// Issue #67: Bellhop's own guest is refused before any remote call, in a dry
+// run too.
+for (const [state, action] of [['start', 'start'], ['shutdown', 'shut down']] as const) {
+  for (const apply of [false, true]) {
+    test(`runGuestPower refuses to ${action} the bellhopGuest (apply: ${apply})`, async () => {
+      const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+      await assert.rejects(
+        () => runGuestPower({ guest: 'media', state, apply }, { ssh, inventory: { ...inventory, bellhopGuest: 'media' } }),
+        new RegExp(`^Error: Refusing to ${action} 'media': it is Bellhop's own guest \\(the bellhopGuest setting\\)`)
+      );
+      assert.equal(ssh.history.length, 0);
+    });
+  }
+}
+
+test('runGuestPower still acts on other guests when bellhopGuest is set', async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const result = await runGuestPower(
+    { guest: 'winbox', state: 'shutdown', apply: true },
+    { ssh, inventory: { ...inventory, bellhopGuest: 'media' } }
+  );
+  assert.equal(result.ran, true);
+  assert.equal(ssh.history.length, 1);
+});

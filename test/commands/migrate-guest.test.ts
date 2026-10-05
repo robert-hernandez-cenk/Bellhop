@@ -1132,3 +1132,20 @@ test('runMigrateGuest apply warns when the permission copy fails, and still dest
   assert.ok(commands.some((c) => c.startsWith('rm -f')), 'the backup must still be cleaned up');
   assert.equal(loadInventory(invPath).guests.find((g) => g.name === 'media')?.vmid, 5005, 'inventory must still be saved');
 });
+
+// Issue #67: Bellhop's own guest is refused before any remote call, in a dry
+// run too.
+for (const apply of [false, true]) {
+  test(`runMigrateGuest refuses the bellhopGuest before any remote call (apply: ${apply})`, async () => {
+    const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+    await assert.rejects(
+      () =>
+        runMigrateGuest(
+          { guest: 'media', toHost: 'pve-secondary', apply },
+          { ssh, inventory: { ...inventory, bellhopGuest: 'media' }, inventoryPath: tempInventoryPath() }
+        ),
+      /^Error: Refusing to migrate 'media': it is Bellhop's own guest \(the bellhopGuest setting\)/
+    );
+    assert.equal(ssh.history.length, 0);
+  });
+}

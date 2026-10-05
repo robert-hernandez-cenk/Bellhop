@@ -3,6 +3,7 @@ import type { Inventory } from '../../lib/inventory.ts';
 import { saveInventory, refreshInventory } from '../../lib/inventory.ts';
 import { runRemote } from '../../lib/targets.ts';
 import { confirmOrDryRun } from '../../lib/dry-run.ts';
+import { assertNotBellhopGuest } from '../../lib/bellhop-guest.ts';
 
 export interface DeleteGuestOptions {
   guest: string;
@@ -37,6 +38,7 @@ export async function runDeleteGuest(
   if (!guest || (guest.type !== 'lxc' && guest.type !== 'vm')) {
     throw new Error(`'${opts.guest}' is not an lxc/vm guest in inventory`);
   }
+  assertNotBellhopGuest(deps.inventory, opts.guest, 'delete');
   const parentHost = guest.host;
   const tool = pctOrQm(guest.type);
 
