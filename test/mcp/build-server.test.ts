@@ -692,6 +692,11 @@ test('apply records the server actor as the job triggeredByUsername', async () =
   const started = parse(await call('create_lxc', { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12', apply: true }));
   await waitForFinished(jobStore, started.jobId);
   assert.equal(jobStore.get(started.jobId)?.triggeredByUsername, 'admin');
+  assert.equal(jobStore.get(started.jobId)?.triggeredVia, 'mcp');
+  // ...and the job tools report both.
+  const job = parse(await call('get_job', { id: started.jobId }));
+  assert.equal(job.job.triggeredByUsername, 'admin');
+  assert.equal(job.job.triggeredVia, 'mcp');
 });
 
 test('apply without an actor still records mcp', async () => {

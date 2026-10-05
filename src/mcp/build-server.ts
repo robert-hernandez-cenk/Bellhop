@@ -102,7 +102,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
         const { apply, ...raw } = args;
         const input = parseOperationInput(op, raw);
         if (!apply) return text(scrubSecretValues(op, input, await op.preview(input, deps)));
-        const { jobId, preview } = await previewAndEnqueue(op, raw, deps, deps.jobRunner, { triggeredByUsername });
+        const { jobId, preview } = await previewAndEnqueue(op, raw, deps, deps.jobRunner, { triggeredByUsername, triggeredVia: 'mcp' });
         return json({ jobId, preview: scrubSecretValues(op, input, preview) });
       }
     );

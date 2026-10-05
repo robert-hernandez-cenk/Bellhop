@@ -79,11 +79,11 @@ description: "Task list for MCP over HTTPS with sign-in and an API-key fallback"
 
 **Independent Test**: jobs from web, HTTP MCP (sign-in and key) and stdio record the right user and front end.
 
-- [ ] T023 [P] [US4] Test then add `jobs.triggered_via TEXT NULL` (`ensureColumn`), `JobRow.triggeredVia: 'web' | 'mcp' | null`, `JobDefinition.triggeredVia?` in `src/web/jobs/job-store.ts`/`job-runner.ts`; tests in `test/web/jobs/job-store.test.ts`
-- [ ] T024 [US4] `resolveTriggeredBy` returns `triggeredVia: 'web'` (`src/web/impersonation.ts`), scheduler's daily run unchanged (no front end) in `src/web/tasks/scheduler.ts`; tests for a web job and a scheduled run
-- [ ] T025 [US4] `buildMcpServer` enqueues with `triggeredVia: 'mcp'` and `actor.username`; HTTP host passes the session's username (`api-key` for the key); stdio `src/mcp/server.ts` passes `os.userInfo().username`; `summarizeJob` in `src/mcp/job-helpers.ts` includes `triggeredVia`; tests in `test/mcp/build-server.test.ts`, `test/mcp/job-helpers.test.ts`, `test/web/mcp/routes.test.ts`
-- [ ] T026 [P] [US4] Show the front end next to the username in `web-client/src/pages/JobHistory.tsx` and the job detail header (find where `triggeredByUsername` renders), `triggeredVia` in `web-client/src/api/types.ts`; label helper with a test
-- [ ] T027 [US4] `backfill-guest-creators` skips `triggeredVia === 'mcp'` as well as username `mcp`, in `src/commands/maintenance/backfill-guest-creators.ts` with a test
+- [x] T023 [P] [US4] Test then add `jobs.triggered_via TEXT NULL` (`ensureColumn`), `JobRow.triggeredVia: 'web' | 'mcp' | null`, `JobDefinition.triggeredVia?` in `src/web/jobs/job-store.ts`/`job-runner.ts`; tests in `test/web/jobs/job-store.test.ts`
+- [x] T024 [US4] `resolveTriggeredBy` returns `triggeredVia: 'web'` (`src/web/impersonation.ts`), scheduler's daily run unchanged (no front end) in `src/web/tasks/scheduler.ts`; tests for a web job and a scheduled run
+- [x] T025 [US4] `buildMcpServer` enqueues with `triggeredVia: 'mcp'` and `actor.username`; HTTP host passes the session's username (`api-key` for the key); stdio `src/mcp/server.ts` passes `os.userInfo().username`; `summarizeJob` in `src/mcp/job-helpers.ts` includes `triggeredVia`; tests in `test/mcp/build-server.test.ts`, `test/mcp/job-helpers.test.ts`, `test/web/mcp/routes.test.ts`
+- [x] T026 [P] [US4] Show the front end next to the username in `web-client/src/pages/JobHistory.tsx` and the job detail header (find where `triggeredByUsername` renders), `triggeredVia` in `web-client/src/api/types.ts`; label helper with a test
+- [x] T027 [US4] `backfill-guest-creators` skips `triggeredVia === 'mcp'` as well as username `mcp`, in `src/commands/maintenance/backfill-guest-creators.ts` with a test
 
 ---
 

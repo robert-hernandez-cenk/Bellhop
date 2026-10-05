@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { SSHClient } from '../../lib/ssh-client.ts';
-import type { JobStore, JobRow, ControlAction } from './job-store.ts';
+import type { JobStore, JobRow, ControlAction, TriggeredVia } from './job-store.ts';
 import type { JobLog } from './job-log.ts';
 import { JobSSHClient } from './job-ssh-client.ts';
 import type { PromptOrigin } from './job-ssh-client.ts';
@@ -42,6 +42,7 @@ export interface JobDefinition {
   // fields for what these mean.
   triggeredByUsername?: string;
   triggeredByImpersonating?: string;
+  triggeredVia?: TriggeredVia;
   // `signal` aborts when the job is cancelled. Most jobs never need it --
   // the SSH client they're handed already rejects every exec once it fires
   // -- but a job that turns per-target failures into results (the
@@ -127,6 +128,7 @@ export class JobRunner {
       expectedPromptsJson: def.expectedPrompts ? JSON.stringify(def.expectedPrompts) : undefined,
       triggeredByUsername: def.triggeredByUsername,
       triggeredByImpersonating: def.triggeredByImpersonating,
+      triggeredVia: def.triggeredVia,
       owner: this.owner,
     });
     const logFile = this.store.get(id)!.logFile;

@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -46,16 +47,21 @@ const jobRunner = new JobRunner(jobStore, jobLog, baseSsh, { owner: `mcp:${proce
 // rows, never the web service's live jobs.
 jobRunner.reconcileOrphanedJobs();
 
-const server = buildMcpServer({
-  ssh: baseSsh,
-  inventory,
-  inventoryPath: invPath,
-  authentik: buildAuthentikClient(),
-  cloudflare: buildCloudflareClient(),
-  jobStore,
-  jobLog,
-  jobRunner,
-});
+// Jobs record who ran them (#65/#66): over stdio, whoever started this
+// process on this machine -- the same trust the CLI has.
+const server = buildMcpServer(
+  {
+    ssh: baseSsh,
+    inventory,
+    inventoryPath: invPath,
+    authentik: buildAuthentikClient(),
+    cloudflare: buildCloudflareClient(),
+    jobStore,
+    jobLog,
+    jobRunner,
+  },
+  { actor: { username: os.userInfo().username } }
+);
 
 let shuttingDown = false;
 async function shutdown(): Promise<void> {

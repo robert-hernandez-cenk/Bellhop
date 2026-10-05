@@ -178,6 +178,7 @@ test('POST /api/maintenance/guest-power records the real admin identity even whi
   await waitForFinished(jobStore, res.body.jobId);
   const job = jobStore.get(res.body.jobId);
   assert.equal(job?.triggeredByUsername, 'admin');
+  assert.equal(job?.triggeredVia, 'web');
   assert.equal(job?.triggeredByImpersonating, 'bellhop-viewers');
 });
 

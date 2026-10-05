@@ -50,6 +50,7 @@ interface JobSpec {
   args: Record<string, unknown> | string;
   user?: string | null;
   status?: 'success' | 'failed' | 'cancelled' | 'interrupted';
+  via?: 'web' | 'mcp';
 }
 
 function setup(guests: GuestEntry[] = DEFAULT_GUESTS) {
@@ -63,6 +64,7 @@ function setup(guests: GuestEntry[] = DEFAULT_GUESTS) {
       category: 'provisioning',
       argsJson: typeof spec.args === 'string' ? spec.args : JSON.stringify(spec.args),
       ...(spec.user === null ? {} : { triggeredByUsername: spec.user ?? 'test-user' }),
+      ...(spec.via ? { triggeredVia: spec.via } : {}),
       owner: 'web',
     });
     const status = spec.status ?? 'success';
@@ -128,6 +130,9 @@ test('failed, cancelled, interrupted, mcp and user-less jobs are skipped silentl
   addJob({ command: 'create-lxc', args, status: 'cancelled' });
   addJob({ command: 'create-lxc', args, status: 'interrupted' });
   addJob({ command: 'create-lxc', args, user: 'mcp' });
+  // #65/#66: an MCP job now records a real username, but MCP still never
+  // records a creator, so it is skipped by its front end.
+  addJob({ command: 'create-lxc', args, user: 'admin', via: 'mcp' });
   addJob({ command: 'create-lxc', args, user: null });
   addJob({ command: 'update-app', args: { guest: 'web-lxc' } });
   const report = await run();

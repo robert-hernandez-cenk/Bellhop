@@ -80,6 +80,7 @@ test('a job started with the API key is owned by the web runner and records api-
   const job = s.jobStore.get(started.jobId)!;
   assert.equal(job.owner, 'web');
   assert.equal(job.triggeredByUsername, 'api-key');
+  assert.equal(job.triggeredVia, 'mcp');
 });
 
 test('a wrong key is answered 401', async (t) => {

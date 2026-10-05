@@ -9,7 +9,7 @@ import {
   type TaskSchedule,
 } from '../../lib/task-schedules.ts';
 import type { JobRunner } from '../jobs/job-runner.ts';
-import type { JobStatus, JobStore } from '../jobs/job-store.ts';
+import type { JobStatus, JobStore, TriggeredVia } from '../jobs/job-store.ts';
 import { TASKS, type TaskDefinition } from './registry.ts';
 
 // --- slot math (research R8) ---
@@ -108,6 +108,7 @@ export interface TaskView {
 export interface TaskAttribution {
   triggeredByUsername?: string;
   triggeredByImpersonating?: string;
+  triggeredVia?: TriggeredVia;
 }
 
 export type StartRunResult = { jobId: number } | { alreadyRunning: number };
@@ -228,6 +229,7 @@ export class TaskScheduler {
       argsJson: '{}',
       triggeredByUsername: attribution.triggeredByUsername,
       triggeredByImpersonating: attribution.triggeredByImpersonating,
+      triggeredVia: attribution.triggeredVia,
       run: (ssh, signal) => task.run({ ssh, inventory, inventoryPath, fetchImpl, now, signal }),
     });
     const run = { startedAt: this.now().toISOString(), jobId };

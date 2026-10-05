@@ -4,6 +4,7 @@ import { apiGet } from '../api/client';
 import type { JobRow } from '../api/types';
 import { JobStatusBadge } from '../components/JobStatusBadge';
 import { PageDescription } from '../components/PageDescription';
+import { triggeredByLabel } from '../lib/job-display';
 
 export function JobHistory() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
@@ -42,11 +43,7 @@ export function JobHistory() {
               </td>
               <td data-label="started">{job.startedAt}</td>
               <td data-label="triggered by">
-                {job.triggeredByUsername
-                  ? job.triggeredByImpersonating
-                    ? `${job.triggeredByUsername} (as: ${job.triggeredByImpersonating})`
-                    : job.triggeredByUsername
-                  : '—'}
+                {triggeredByLabel(job)}
               </td>
             </tr>
           ))}

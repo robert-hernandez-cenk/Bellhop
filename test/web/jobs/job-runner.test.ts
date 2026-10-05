@@ -1366,3 +1366,11 @@ test('a job\'s SSH and EventEmitter callback lines stay in its log while a previ
   rmSync(dir, { recursive: true, force: true });
   store.close();
 });
+
+// #65/#66: the front end travels from enqueue to the stored row.
+test('enqueue passes triggeredVia through to the job row', async () => {
+  const store = new JobStore(':memory:');
+  const runner = new JobRunner(store, createJobLog(mkdtempSync(path.join(tmpdir(), 'via-log-'))), new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })));
+  const id = runner.enqueue({ command: 'noop', category: 'maintenance', argsJson: '{}', triggeredByUsername: 'admin', triggeredVia: 'web', run: async () => {} });
+  assert.equal(store.get(id)?.triggeredVia, 'web');
+});

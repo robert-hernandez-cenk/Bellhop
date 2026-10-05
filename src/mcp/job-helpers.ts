@@ -22,6 +22,7 @@ export function summarizeJob(job: JobRow) {
     exitCode: job.exitCode,
     errorMessage: job.errorMessage,
     triggeredByUsername: job.triggeredByUsername,
+    triggeredVia: job.triggeredVia,
   };
 }
 
