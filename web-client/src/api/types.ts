@@ -288,6 +288,10 @@ export interface SettingsValues {
   // (issue #51) -- inert for every other driver. Unset means 'cloudflare'
   // (defaultCaddyTls on SettingsResponse below).
   proxyCaddyTls?: string;
+  // Where certificates come from, and the DNS provider for 'acme-dns' (issue
+  // #72) -- not yet shown on the Settings page; the UI arrives in a later phase.
+  tlsSource?: string;
+  acmeDnsProvider?: string;
   // The Proxmox VM-creator grant (issue #53) -- always-visible, not tied
   // to any proxy driver.
   pveUserRealm?: string;

@@ -522,7 +522,7 @@ export const traefikDriver = fileDriver({
   // Traefik's forward-auth and OIDC both work the same way every other
   // driver's do -- see User Story 2 for the forward-auth objects, not yet
   // rendered by this file.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare },
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare, tlsSources: ['acme-dns', 'acme-http', 'files', 'external'], defaultTlsSource: 'acme-dns' },
   defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
   // Traefik has no static-file server of its own (research.md R11) -- an
   // operator who wants a status page serves it elsewhere.

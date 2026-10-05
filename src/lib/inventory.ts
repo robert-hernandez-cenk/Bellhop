@@ -8,7 +8,7 @@ import { MovedSettingsSchema } from './settings-defs.ts';
 import { SECRET_SETTINGS_TABLE_SQL, effectiveValue, invalidateConfigSnapshot } from './config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
 // module -- importing index.ts here would cycle back into this file.
-import { PROXY_DRIVER_IDS, CADDY_TLS_MODES } from './proxy/ids.ts';
+import { PROXY_DRIVER_IDS, CADDY_TLS_MODES, TLS_SOURCES, ACME_DNS_PROVIDERS } from './proxy/ids.ts';
 
 export const BridgeEntrySchema = z.object({
   name: z.string().min(1),
@@ -359,6 +359,16 @@ export const SettingsSchema = z.object({
   // here so the schema and ProxyContext.caddyTls (src/lib/proxy/routes.ts)
   // can never disagree about which modes exist.
   proxyCaddyTls: z.enum(CADDY_TLS_MODES).optional(),
+  // Where certificates come from (issue #72), independent of the proxy
+  // driver -- unset means the active driver's defaultTlsSource. Validated
+  // only as an enum here; whether the active driver supports the chosen
+  // source is checked when configuration is produced (checkTlsSource,
+  // src/lib/proxy/tls.ts), so switching drivers never makes the database
+  // unloadable.
+  tlsSource: z.enum(TLS_SOURCES).optional(),
+  // Which DNS provider the 'acme-dns' tlsSource uses (issue #72) -- unset
+  // means DEFAULT_ACME_DNS_PROVIDER ('cloudflare').
+  acmeDnsProvider: z.enum(ACME_DNS_PROVIDERS).optional(),
   // The certificate/key pair every nginx driver server block shares (issue
   // #30, research R1/R2) -- nginx cannot obtain its own certificates the
   // way Caddy does, so one shared pair keeps a new subdomain's sync from

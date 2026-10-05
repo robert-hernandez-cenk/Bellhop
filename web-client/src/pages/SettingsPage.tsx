@@ -68,6 +68,16 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
     help:
       "How the Caddy drivers obtain a certificate for each site. cloudflare: DNS-01 through Cloudflare, needs a Caddy build with caddy-dns/cloudflare. letsencrypt: Caddy's automatic HTTPS over a public HTTP/TLS-ALPN challenge, needs ports 80/443 reachable from the internet. internal: Caddy's own internal CA -- self-signed, trust its root certificate on your clients. files: the shared certificate/key pair named by the Proxy TLS certificate/key fields below. Unset: cloudflare.",
   },
+  // issue #72: not rendered yet (isVisible hides both); the real labels and
+  // help arrive with the TLS source UI.
+  tlsSource: {
+    label: 'TLS source',
+    help: "Where certificates come from: acme-dns, acme-http, internal, files or external. Unset: the proxy driver's default.",
+  },
+  acmeDnsProvider: {
+    label: 'ACME DNS provider',
+    help: 'The DNS provider the acme-dns TLS source uses. Unset: cloudflare.',
+  },
   proxyTlsCertificate: {
     label: 'Proxy TLS certificate',
     placeholder: '/etc/letsencrypt/live/example.com/fullchain.pem',
@@ -362,6 +372,8 @@ export function SettingsPage() {
     // only -- so unlike the two fields above they stay hidden until a view
     // says the selected driver uses them.
     if (key === 'proxyCaddyTls') return view?.showCaddyTlsField ?? false;
+    // issue #72: no UI for the new TLS settings yet.
+    if (key === 'tlsSource' || key === 'acmeDnsProvider') return false;
     if (key === 'proxyTlsCertificate' || key === 'proxyTlsKey') return view?.showTlsFields ?? false;
     // Same "hidden until loaded" rule as the TLS fields above -- these two
     // mean something for Traefik alone (issue #35).

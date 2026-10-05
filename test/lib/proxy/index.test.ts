@@ -37,7 +37,7 @@ function fakeDriver(id: string): ReverseProxyDriver {
   return {
     id: id as ProxyDriverId,
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {
@@ -360,7 +360,7 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
   const testDriver = fileDriver({
     id: 'test-only-driver-t040' as ProxyDriverId,
     label: 'Test-only driver',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/test-only/test.conf',
     // This test exercises runRenderStatusPage below, which throws for any
     // driver whose statusPage is null (issue #33), so this
@@ -422,5 +422,37 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
     );
   } finally {
     unregister();
+  }
+});
+
+// --- TLS source capability (issue #72) --------------------------------------
+
+test('every registered driver declares a defaultTlsSource that is in its tlsSources', () => {
+  for (const driver of listDrivers()) {
+    assert.ok(driver.capabilities.tlsSources.length > 0, `${driver.id} supports at least one tlsSource`);
+    assert.ok(
+      driver.capabilities.tlsSources.includes(driver.capabilities.defaultTlsSource),
+      `${driver.id}: default '${driver.capabilities.defaultTlsSource}' is not in its tlsSources`,
+    );
+  }
+});
+
+test('each driver declares the tlsSources/defaultTlsSource of data-model.md', () => {
+  const table: Record<string, { tlsSources: string[]; defaultTlsSource: string }> = {
+    caddy: { tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
+    'caddy-api': { tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
+    traefik: { tlsSources: ['acme-dns', 'acme-http', 'files', 'external'], defaultTlsSource: 'acme-dns' },
+    nginx: { tlsSources: ['files'], defaultTlsSource: 'files' },
+    'nginx-proxy-manager': { tlsSources: ['acme-http'], defaultTlsSource: 'acme-http' },
+    haproxy: { tlsSources: ['external'], defaultTlsSource: 'external' },
+    none: { tlsSources: ['acme-dns', 'acme-http', 'internal', 'files', 'external'], defaultTlsSource: 'external' },
+  };
+  assert.deepEqual(listDrivers().map((d) => d.id).sort(), Object.keys(table).sort());
+  for (const driver of listDrivers()) {
+    assert.deepEqual(
+      { tlsSources: [...driver.capabilities.tlsSources], defaultTlsSource: driver.capabilities.defaultTlsSource },
+      table[driver.id],
+      driver.id,
+    );
   }
 });

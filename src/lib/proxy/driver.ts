@@ -1,7 +1,7 @@
 import type { SSHClient } from '../ssh-client.ts';
 import type { Inventory } from '../inventory.ts';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
-import { NO_PROXY_DRIVER_ID, type ProxyDriverId } from './ids.ts';
+import { NO_PROXY_DRIVER_ID, type ProxyDriverId, type TlsSource } from './ids.ts';
 // settings-hint.ts only imports a *type* from inventory.ts, and inventory.ts
 // only imports PROXY_DRIVER_IDS (a value) from ./ids.ts -- neither of those
 // reaches back into this file, so importing settingFix here as an ordinary
@@ -26,6 +26,11 @@ export interface DriverCapabilities {
   // touching Cloudflare: a driver/mode combination that never touches
   // Cloudflare DNS leaves nothing behind for it to clean up.
   acmeDns01ViaCloudflare: (inventory: Inventory) => boolean;
+  // Which TLS sources this driver can render (issue #72), and the one used
+  // when the tlsSource setting is unset -- defaultTlsSource must be in
+  // tlsSources. effectiveTlsSource/checkTlsSource (./tls.ts) read these.
+  tlsSources: TlsSource[];
+  defaultTlsSource: TlsSource;
 }
 
 export interface DriverDeps {

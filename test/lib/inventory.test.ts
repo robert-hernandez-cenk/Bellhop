@@ -1243,8 +1243,9 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the twenty-seven settings keys', () => {
+test('SETTINGS_KEYS lists exactly the twenty-nine settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
+    'acmeDnsProvider',
     'authentikAdminGroup',
     'authentikApiUrl',
     'authentikAuthorizationFlowSlug',
@@ -1271,6 +1272,7 @@ test('SETTINGS_KEYS lists exactly the twenty-seven settings keys', () => {
     'pveCreatorRole',
     'pveUserRealm',
     'statusPagePath',
+    'tlsSource',
     'webUiAuthMode',
   ]);
 });
@@ -2350,4 +2352,48 @@ test('withFreshSettings returns the given copy unchanged when the database does 
   const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'fresh-settings-')), 'missing.db');
   const inv: Inventory = { domain: 'example.com', nfsServer: '192.0.2.5', hosts: [], guests: [] };
   assert.deepEqual(withFreshSettings(dbPath, inv), inv);
+});
+
+// issue #72: tlsSource / acmeDnsProvider are enum-only settings on load and
+// write; whether the active driver supports the chosen source is checked
+// only when configuration is produced (src/lib/proxy/tls.ts).
+
+test('SettingsSchema accepts each tlsSource and the cloudflare acmeDnsProvider, and rejects values outside the lists', () => {
+  for (const source of ['acme-dns', 'acme-http', 'internal', 'files', 'external']) {
+    assert.equal(SettingsSchema.safeParse({ tlsSource: source }).success, true, source);
+  }
+  assert.equal(SettingsSchema.safeParse({ acmeDnsProvider: 'cloudflare' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ tlsSource: 'letsencrypt' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ tlsSource: '' }).success, false);
+  assert.equal(SettingsSchema.safeParse({ acmeDnsProvider: 'route53' }).success, false);
+});
+
+test('saveInventory/loadInventory round-trips tlsSource and acmeDnsProvider, and clearing removes them from meta', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+  const dest = path.join(dir, 'bellhop.db');
+  saveInventory(dest, { ...FIXTURE_INVENTORY, tlsSource: 'acme-dns', acmeDnsProvider: 'cloudflare' });
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.tlsSource, 'acme-dns');
+  assert.equal(loaded.acmeDnsProvider, 'cloudflare');
+
+  saveInventory(dest, { ...loaded, tlsSource: undefined, acmeDnsProvider: undefined });
+  const reloaded = loadInventory(dest);
+  assert.equal(reloaded.tlsSource, undefined);
+  assert.equal(reloaded.acmeDnsProvider, undefined);
+  const db = new Database(dest, { readonly: true });
+  const rows = db.prepare("SELECT key FROM meta WHERE key IN ('tlsSource', 'acmeDnsProvider')").all();
+  db.close();
+  assert.deepEqual(rows, []);
+});
+
+test('loadInventory rejects an out-of-list tlsSource or acmeDnsProvider written to meta', () => {
+  for (const [key, value] of [['tlsSource', 'letsencrypt'], ['acmeDnsProvider', 'route53']]) {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
+    const dest = path.join(dir, 'bellhop.db');
+    saveInventory(dest, FIXTURE_INVENTORY);
+    const db = new Database(dest);
+    db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
+    db.close();
+    assert.throws(() => loadInventory(dest), /./, key);
+  }
 });

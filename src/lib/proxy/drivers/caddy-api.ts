@@ -30,7 +30,7 @@ export const caddyApiDriver: ReverseProxyDriver = {
   // caddyTls mode (unset defaults to it) -- the other three modes never
   // touch Cloudflare's DNS, so prune-acme-challenges has nothing to clean up
   // after them.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare },
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare, tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
   // No config file: driverDeps() resolves configPath to null, and the
   // Settings page hides Proxy config path for it.
   defaultConfigPath: null,

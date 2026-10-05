@@ -136,7 +136,7 @@ export function caddyAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
 export const caddyDriver = fileDriver({
   id: 'caddy',
   label: 'Caddy',
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare },
+  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare, tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
   defaultConfigPath: CADDYFILE_DEFAULT_PATH,
   // The Caddy package's default document root -- what render-status-page's
   // caddy.example.com block already serves via file_server (see CLAUDE.md's

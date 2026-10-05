@@ -247,7 +247,7 @@ function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
   return {
     id: id as ReverseProxyDriver['id'],
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {
@@ -695,7 +695,7 @@ test('syncProxyLive: a failing sync-proxy still runs sync-authentik, skips the s
   const failing: ReverseProxyDriver = {
     id: 'fake-driver-apply-throws-f3' as ReverseProxyDriver['id'],
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true },
+    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true, tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: { suggestedPath: '/var/www/html/index.html' },
     async plan(): Promise<ProxyPlan> {
