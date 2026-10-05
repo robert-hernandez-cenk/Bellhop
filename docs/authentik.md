@@ -1,71 +1,61 @@
 # Authentik
 
-Bellhop can gate the web UI and your apps behind a self-hosted Authentik instance. This page covers running without it, connecting it and recovering from a lockout, and gating an app through Authentik's own OpenID Connect clients (OIDC mode).
+Bellhop can sign users in to its web UI, and gate your apps, with a self-hosted Authentik instance. This page covers running without it, connecting it, setting up web login, recovering from a lockout, and gating an app through Authentik's own OpenID Connect clients (OIDC mode).
 
 ## Running without Authentik
 
-Authentik is optional. With no Authentik API URL and token set and the
-web UI's sign-in mode (`webUiAuthMode`) left at its default `auto`, every
-request is served as a single always-admin local operator, and the
-features that need Authentik's REST API disable themselves — the Users and
-Permissions pages disappear from the nav, `POST /api/impersonate` returns
-503, and `sync-authentik` is skipped by the Dashboard's push-live step
-instead of failing it. The Settings page stays in the nav and reachable,
-since it needs no Authentik. Everything else — the Dashboard,
-provisioning, maintenance, jobs, `sync-proxy`, and every CLI command —
-works unchanged.
+Authentik is optional. With the web UI's sign-in mode (`webUiAuthMode`) left at its default `none`, every request is served as a single always-admin local operator, and the features that need Authentik's REST API disable themselves — the Users and Permissions pages disappear from the nav, `POST /api/impersonate` returns 503, and `sync-authentik` is skipped by the Dashboard's push-live step instead of failing it. The Settings page stays in the nav and reachable, since it needs no Authentik. Everything else — the Dashboard, provisioning, maintenance, jobs, `sync-proxy`, and every CLI command — works unchanged.
 
-A persistent banner in the UI and a warning line in the server's startup
-log both say so, because in this mode **network reach is the only access
-control**: anyone who can connect to the port gets full provisioning
-rights. The Windows firewall rule this repo installs (scoped to the
-`proxy: true` entry's IP) is what keeps that boundary meaningful.
+A persistent banner in the UI and a warning line in the server's startup log both say so, because in this mode **network reach is the only access control**: anyone who can connect to the port gets full provisioning rights.
 
 ## Connecting Authentik
 
-1. Set up Authentik forward-auth in front of the web UI's own subdomain
-   (see [Web UI](web-ui.md)), and open the web UI through it, so your
-   session carries Authentik's identity headers.
-2. On the Settings page's Authentik tab, set the Authentik API URL and API
-   token (or pipe the token to `bellhop set-config authentikApiToken
-   --stdin --apply`). The Users and Permissions pages appear on the next
-   request. Change the admin groups, group ladder, outpost and flow
-   settings on the same tab if yours differ from the defaults.
-3. On the General tab, set **Web UI sign-in** to `authentik`, so a broken
-   `forward_auth` directive fails closed rather than silently reverting to
-   the local operator. **A production deployment must store this.** The
-   page refuses the change unless your session came through Authentik's
-   forward-auth as an administrator, since your own next request would
-   otherwise be rejected or lose the page.
+1. On the Settings page's Authentik tab, set the Authentik API URL and API token (or pipe the token to `bellhop set-config authentikApiToken --stdin --apply`). The Users and Permissions pages appear on the next request. Change the admin groups, group ladder, outpost and flow settings on the same tab if yours differ from the defaults.
+2. Set up web login (next section), so people sign in to Bellhop through Authentik.
 
-Every one of these can also be pinned by an environment variable instead
-(see [Environment variables](environment-variables.md)). A deployment
-still configured through `data/authentik.env` has its values imported into
-these settings on first start — see [Moving off the data/*.env
-files](configuration.md#moving-off-the-dataenv-files).
+Every one of these can also be pinned by an environment variable instead (see [Environment variables](environment-variables.md)). A deployment still configured through `data/authentik.env` has its values imported into these settings on first start — see [Moving off the data/*.env files](configuration.md#moving-off-the-dataenv-files).
+
+## Web login
+
+Bellhop signs users in itself, as an OpenID Connect client of Authentik: an unauthenticated browser is sent to `/auth/login`, signs in at Authentik, and comes back with a session cookie. The reverse proxy no longer sits in front of the web UI doing a forward-auth check, and Bellhop ignores `X-authentik-*` request headers entirely — a client can send any header it likes, so none is trusted.
+
+`webUiAuthMode` has two values:
+
+- `none` (the default when unset) — no authentication. A request with no session is served as the always-admin local operator. A session, if there is one, is still honored.
+- `oidc` — a session is required. Without one, a page request is redirected to `/auth/login`, and an `/api` call gets a 401 (the page then redirects itself to sign in). **Store this on any deployment where authentication matters.**
+
+The retired values `auto` and `authentik` no longer exist. A stored `authentik` is converted to `oidc` the first time the database is opened, and a stored `auto` becomes unset (`none`). As the `WEB_UI_AUTH_MODE` environment variable they stop the service at start-up with a message naming the replacement.
+
+### Setting it up
+
+Bellhop's own inventory entry is gated like any OIDC app. Each step is a real change, so do them in this order; Bellhop is unreachable only between steps 3 and 5 of a deployment that was behind forward-auth.
+
+1. On Bellhop's own entry set `authGroup` (the lowest group rung that should reach Bellhop), `authMode: oidc`, and add `https://bellhop.example.com/auth/callback` to its Callback URLs (see [OIDC mode](#oidc-mode)).
+2. `bellhop sync-authentik --apply` creates the OpenID client. It also attaches the `offline_access` scope mapping to every Bellhop-owned OIDC client, which is what lets Bellhop hold a refresh token to re-check a session.
+3. `bellhop sync-proxy --apply` — Bellhop's route stops being forward-gated.
+4. `bellhop configure-web-login bellhop --apply` stores the client's issuer, client ID, callback URL and secret as the four `webUiOidc*` settings (dry run without `--apply`; the secret is never printed).
+5. Open `https://bellhop.example.com/auth/login` and sign in. This proves the client works and gives your browser a session.
+6. Switch `webUiAuthMode` to `oidc`, on the Settings page's General tab or with `bellhop set-config webUiAuthMode oidc --apply`. The page refuses the change unless all four settings are set, you have signed in through `/auth/login`, and you would still be an administrator afterwards.
+
+The callback URL must be HTTPS (the session cookie is `Secure`), and Bellhop must be reached at that one origin.
+
+**Upgrading from forward-auth.** A deployment that set `WEB_UI_AUTH_MODE=authentik` in `data/authentik.env` must change that line to `WEB_UI_AUTH_MODE=oidc` (or delete it and store the setting), then restart the service; with the old value the service refuses to start. A deployment that had stored `authentik` is converted to `oidc` the first time this version opens its database, so finish steps 1 to 4 first, or it will require a sign-in that is not set up yet (see [Locked out](#locked-out)). The Windows service's firewall rule is no longer limited to the proxy's address; reinstall the service to widen it.
+
+### Sessions and group changes
+
+- A session lasts at most 30 days and is kept in `data/sessions.sqlite3`, so a service restart does not sign anyone out. The browser only holds an opaque random ID.
+- Bellhop asks Authentik again about each session at most every 5 minutes. A user's group change reaches their next request after that, and a deactivated user is signed out. If Authentik is unreachable, the last-known identity keeps working and Bellhop retries after a minute; the service log warns on each retry.
+- **Sign out** (in the sidebar) ends the Bellhop session, then Authentik's own, and lands on `/auth/signed-out`.
+- Sessions belong to one Bellhop service process: run a single instance.
 
 ## Locked out
 
-The Settings page guards the three values that decide who can use the web
-UI: it refuses an admin-group change that would remove your own
-administrator access, refuses `authentik` sign-in unless the session
-carries Authentik's headers for an administrator, and asks before you
-leave `authentik`. If you are
-locked out anyway — Authentik is down, or forward-auth broke while
-sign-in is `authentik` — recover from the host the service runs on, with
-no web UI needed:
+The Settings page guards the values that decide who can use the web UI: it refuses an admin-group change that would remove your own administrator access, refuses switching to `oidc` unless sign-in is configured and you have signed in and would stay an administrator, and asks before you leave `oidc`. If you are locked out anyway — Authentik is down, the stored client was rotated, or sign-in is `oidc` with no working login — recover from the host the service runs on, with no web UI needed:
 
-- Run `bellhop set-config webUiAuthMode auto --apply` (or fix the admin
-  group with `bellhop set-config authentikAdminGroup <group> --apply`) in
-  the checkout the service runs from. The web service picks the change up
-  on its next request.
-- Or set `WEB_UI_AUTH_MODE=auto` (or `AUTHENTIK_ADMIN_GROUP=...`) in the
-  service's environment and restart it; the environment overrides the
-  stored setting until you remove it again.
+- Run `bellhop set-config webUiAuthMode none --apply` (or fix the admin group with `bellhop set-config authentikAdminGroup <group> --apply`) in the checkout the service runs from. The web service picks the change up on its next request.
+- Or set `WEB_UI_AUTH_MODE=none` (or `AUTHENTIK_ADMIN_GROUP=...`) in the service's environment and restart it; the environment overrides the stored setting until you remove it again.
 
-Under `auto`, a request that reaches the web UI without Authentik's
-headers is the local operator, so set sign-in back to `authentik` once
-forward-auth works again.
+Under `none`, anyone who can reach the port is the local operator, so set sign-in back to `oidc` once login works again.
 
 ## OIDC mode
 
@@ -76,7 +66,7 @@ forward-auth in front of it (Caddy's `forward_auth`, or the equivalent
 `auth_request` block on the nginx driver; the HAProxy driver has no
 forward-auth, so only `oidc` works under it), checking every request against
 Authentik and forwarding a shared,
-already-authenticated identity in `X-authentik-*` headers; `oidc` instead
+already-authenticated identity in `X-authentik-*` headers to that app; `oidc` instead
 gives the entry its own Authentik OpenID Connect client and lets the app
 run its own login. A driver that can't enforce a mode an entry needs is
 refused at sync and edit time rather than silently leaving that entry

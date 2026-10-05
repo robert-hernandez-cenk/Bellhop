@@ -81,8 +81,7 @@ guest that admin themselves created — the impersonated view must show
 exactly what the group sees, nothing more.
 
 **Matching survives a rename.** The creator is matched by the
-identity provider's stable per-user identifier (Authentik's `uid`,
-forwarded as the `X-authentik-uid` header) when both the recorded creator
+identity provider's stable per-user identifier (the OIDC `sub` claim in the user's session) when both the recorded creator
 and the caller carry one — not by login name. A user's login name can be
 renamed in the identity provider (it has happened for real users before)
 without losing creator access to guests they already created. The login

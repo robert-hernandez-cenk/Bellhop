@@ -63,20 +63,20 @@ Break any one of them and the web UI is effectively unauthenticated.
 That is a deployment error rather than a flaw in the code, but the
 consequences are the same — so please check these before reporting.
 
-- **The web UI has no login of its own.** It must sit behind a Caddy
-  `forward_auth` directive pointing at an Authentik instance. Exposed
-  directly, it authenticates nobody.
-- **It trusts the `X-authentik-*` request headers unconditionally.** That
-  is only safe if the app's port is reachable from Caddy's address alone.
-  The Windows service installer enforces this with a firewall rule scoped
-  to that address; any other deployment must arrange the equivalent
-  itself. Wherever the port is reachable more widely, anything on that
-  network can set those headers itself and become any user,
-  administrators included.
+- **Sign-in must be turned on.** The web UI signs users in itself, as an
+  OpenID Connect client of Authentik, but only once `webUiAuthMode` is
+  `oidc`. At its default `none` every request is a full administrator, so
+  a deployment reachable by anyone else must store `oidc` (see
+  [Web login](docs/authentik.md#web-login)).
+- **It serves over HTTPS, at the one address registered with Authentik.**
+  The session cookie is `Secure`, and the callback URL is fixed in the
+  client. A session lasts at most 30 days; group changes and deactivation
+  reach it within 5 minutes. Bellhop ignores `X-authentik-*` request
+  headers, so the port needs no firewall scoping to the proxy.
 - **`WEB_UI_DEV_USER` and `WEB_UI_DEV_GROUPS` must never be set in
   production.** They exist so local development and the test suite can
-  run without Caddy in front. Wherever they are set, a request carrying
-  no identity headers becomes an authenticated user in whatever groups
+  run without an identity provider. Wherever they are set, a request with
+  no session becomes an authenticated user in whatever groups
   they name — administrator groups included.
 
 ## Response expectations

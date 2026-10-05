@@ -305,3 +305,11 @@ test('example-data guard: every demo secret is an obviously fake demo-example- v
 test('buildDemoInventory stores webUiAuthMode oidc rather than relying on WEB_UI_AUTH_MODE', () => {
   assert.equal(buildDemoInventory().webUiAuthMode, 'oidc');
 });
+
+test('buildDemoInventory stores example-only OIDC web login settings', () => {
+  const inv = buildDemoInventory();
+  assert.equal(inv.webUiOidcIssuer, 'https://authentik.example.com/application/o/bellhop/');
+  assert.equal(inv.webUiOidcClientId, 'example-client-id');
+  assert.equal(inv.webUiOidcRedirectUri, 'https://bellhop.example.com/auth/callback');
+  assert.equal(DEMO_SECRET_SETTINGS.webUiOidcClientSecret, 'demo-example-client-secret');
+});

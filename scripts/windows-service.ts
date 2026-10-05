@@ -17,9 +17,10 @@ const DEFAULT_PORT = 3000;
 
 // Mirrors src/cli.ts/src/web/server.ts (issue #64): data/authentik.env is
 // loaded as an environment override, imported once into the settings store,
-// and the store registered, all before the loadInventory() call below --
-// the one-time requires_auth -> auth_group migration (src/lib/inventory.ts)
-// reads the group ladder at DB-open time. If this script is the first thing
+// and the store registered, all at module load, before anything else in this
+// script opens the inventory database -- the one-time requires_auth ->
+// auth_group migration (src/lib/inventory.ts) reads the group ladder at
+// DB-open time, and the import itself is that first open. If this script is the first thing
 // to open a legacy database, an unset ladder here would migrate every gated
 // entry onto the built-in default ladder's top rung instead of this
 // operator's configured one -- and since requires_auth is dropped in the

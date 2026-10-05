@@ -227,7 +227,11 @@ Manager is the selected driver.
 
 | Setting | Tab | When unset |
 |---|---|---|
-| `webUiAuthMode` | General | `auto` — see [Sign-in mode](environment-variables.md#sign-in-mode) |
+| `webUiAuthMode` | General | `none` — see [Sign-in mode](environment-variables.md#sign-in-mode) |
+| `webUiOidcIssuer` | General | web login is not configured — see [Web login](authentik.md#web-login) |
+| `webUiOidcClientId` | General | web login is not configured |
+| `webUiOidcRedirectUri` | General | web login is not configured |
+| `webUiOidcClientSecret` (secret) | General | web login is not configured |
 | `authentikApiUrl` | Authentik | the Authentik integration is off (no Users/Permissions pages, no `sync-authentik`) |
 | `authentikApiToken` (secret) | Authentik | the Authentik integration is off |
 | `authentikAdminGroup` | Authentik | `bellhop-admins` |
@@ -258,8 +262,8 @@ UI](web-ui.md#settings-page) for those and the sign-in mode's guards.
 
 ### Secrets
 
-The four secrets — `authentikApiToken`, `cloudflareDnsApiToken`,
-`npmApiPassword` and `githubApiToken` — are write-only. Bellhop uses them,
+The five secrets — `authentikApiToken`, `cloudflareDnsApiToken`,
+`npmApiPassword`, `githubApiToken` and `webUiOidcClientSecret` — are write-only. Bellhop uses them,
 but never shows them again: the Settings page and its API report only
 whether each is set and where the value comes from, and no log line, job
 record, error message, status page or inventory snapshot ever carries one.
@@ -304,9 +308,10 @@ copy: not set" if nothing was imported. To finish the move:
 
 1. On the Settings page, check every field marked "set by environment"
    shows a stored copy. On a production deployment, make sure **Web UI
-   sign-in** (`webUiAuthMode`) shows "Stored copy: authentik" before
+   sign-in** (`webUiAuthMode`) shows "Stored copy: oidc" before
    deleting `data/authentik.env` (the import copies it from there if the
-   file sets `WEB_UI_AUTH_MODE`), or the web UI falls back to `auto`.
+   file sets `WEB_UI_AUTH_MODE`, which must be `oidc` or `none`), or the
+   web UI falls back to `none`.
 2. Delete the files.
 3. Restart the web service, and any long-running MCP server. A running
    process keeps the variables it loaded from the files at startup, so the

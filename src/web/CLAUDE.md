@@ -6,24 +6,25 @@ Elsewhere: jobs/prompt relay/attribution in `src/web/jobs/CLAUDE.md`; scheduler 
 
 ## Web UI authentication
 
-`src/web/auth.ts`. Global `requireAuth`, mounted in `src/web/app.ts` ahead of every route, trusts the `X-authentik-*` headers the `proxy: true` entry's proxy adds after checking Authentik (Caddy `forward_auth`, nginx `auth_request`). No OIDC client, login page, or session store here: Authentik and the proxy own the session (chosen over an app-embedded OIDC client); the app only reads verified headers (`resolveAuthUser`, exported for the WebSocket path).
+Bellhop is its own OIDC client (#69): `GET /auth/login` starts an authorization-code + PKCE sign-in with Authentik, `GET /auth/callback` finishes it and creates a session, `POST /auth/logout` ends it. `X-authentik-*` request headers are never read (FR-018); any client can send one.
 
-- Only `req.user.groups` may be overlaid (by impersonation) after `requireAuth`; other `req.user` fields and `req.realUser` stay the real identity.
-- `resolveAuthUser` reads non-empty `x-authentik-uid` into `AuthUser.uid` (stable; usernames get renamed). Absent for dev/test identities and the local operator. `Actor` (`src/lib/pve-acl.ts`) gets it via `resolveActor` for `creatorFromActor`. `applyImpersonation` only replaces `groups` and sets `impersonating`, leaving `uid`; `isGuestCreator` keys off `impersonating`.
+Files: `src/web/routes/auth.ts` (the `/auth` router: server-rendered pages, no client bundle; `safeReturnTo` keeps the post-login redirect same-origin), `src/web/login/` (`config.ts` `webLoginConfig()` reads the four `webUiOidc*` settings per call, never cached; `oidc-client.ts` `WebLoginClient`/`RealWebLoginClient`, scope `openid profile email offline_access`; `session-store.ts` `SessionStore`; `sessions.ts` `SessionService`; `cookies.ts`), `src/web/auth.ts` (`authMode`, `resolveRequestUser`, `requireAuth`). `buildApp` mounts `/auth` *before* `requireAuth`, so signing in needs no session.
+
+- **Session store**: `data/sessions.sqlite3` (`server.ts` opens it; its own file so the inventory's full-replace writer never touches it). The browser holds only an opaque random id in the `bellhop_session` cookie (HttpOnly, `Secure`, Lax, 30 days); the row key is the id's SHA-256 (`hashId`). The row holds username/uid/email/groups plus the refresh and ID tokens. Pending sign-ins (`login_attempts`: state, nonce, PKCE verifier, `returnTo`) live there too, tied to the browser by the short-lived `bellhop_login` cookie scoped to `/auth`, valid 10 minutes.
+- **Re-check**: `SessionService.resolve` asks the provider again (refresh grant + userinfo) at most every `CHECK_INTERVAL_MS` (5 minutes), so a group change or deactivation lands within 5 minutes of the user's next request. `refused` (e.g. `invalid_grant`) deletes the session; `unreachable` keeps the last-known identity and retries after `CHECK_RETRY_MS` (1 minute), with one warning per attempt. Unconfigured web login at re-check time signs the session out; an invalid env-sourced `WEB_UI_OIDC_*` value is treated as unreachable (operator mistake, not a verdict). Authentik rotates the refresh token on use, so re-checks are single-flighted per session in the `inflight` map.
+- `resolveRequestUser(headers, sessions)` is the one resolver (HTTP and WebSocket): a valid session cookie (honored in both modes, which is how an operator proves an admin sign-in before switching to `oidc`), else `WEB_UI_DEV_USER`, else the local operator in `none` mode, else `undefined`. `requireAuth` answers an unauthenticated `/api` call 401 JSON (the client turns that into a redirect to `/auth/login`), redirects a page GET/HEAD to `/auth/login?returnTo=...`, and 401s anything else.
+- `AuthUser.uid` is the OIDC `sub` (stable; usernames get renamed), always set for a session identity, absent for dev/test identities and the local operator. `Actor` (`src/lib/pve-acl.ts`) gets it via `resolveActor` for `creatorFromActor`. `applyImpersonation` only replaces `groups` and sets `impersonating`, leaving `uid`; `isGuestCreator` keys off `impersonating`. Only `req.user.groups` may be overlaid after `requireAuth`; other fields and `req.realUser` stay the real identity.
+- `AuthUser.viaOidc` is set only on a session identity (never dev user/local operator) and survives the impersonation overlay; the Settings guard reads it. It is not in `whoami`.
 
 ### webUiAuthMode
 
-Setting `webUiAuthMode` (env `WEB_UI_AUTH_MODE` overrides), read per request by `authMode()` via the config accessor: `auto` (default) falls back to a synthetic always-admin local operator without trusted headers; `authentik` requires them (401 otherwise); `none` ignores headers.
+Setting `webUiAuthMode` (env `WEB_UI_AUTH_MODE` overrides), read per request by `authMode()` via the config accessor: `oidc` requires a session (401/redirect without one); `none` (the default when unset) serves a request with no session as the synthetic always-admin local operator, so a fresh clone works before any provider exists. The retired values `auto`/`authentik` are rejected by the setting schema; as `WEB_UI_AUTH_MODE` they make `authMode()` throw at start-up naming the replacement; `openInventoryDb` migrates a stored one (`src/lib/CLAUDE.md`).
 
-**Production must store `webUiAuthMode=authentik`** (or pin the env var): under `auto`, a proxy config that lost forward-auth serves everyone as full-admin instead of failing closed. Stored, deleting `data/authentik.env` keeps sign-in required.
+**Production must store `webUiAuthMode=oidc`**: under `none`, anyone who can reach the port is a full admin. Stored, deleting `data/authentik.env` keeps sign-in required.
 
-Lockout guards (web-editable setting):
+Lockout guard: a Settings PATCH switching to `oidc` is refused unless sign-in is configured and the requester has a session and would still be admin (details under "PATCH validation and refusals"). CLI/MCP writes are unrestricted (host trust), the recovery path: `set-config webUiAuthMode none --apply`, or `WEB_UI_AUTH_MODE=none` (`docs/authentik.md`, "Locked out").
 
-- `AuthUser.viaForwardAuth` is set only on the `x-authentik-username` branch (never dev user/local operator) and survives the impersonation overlay.
-- A Settings PATCH setting `authentik` re-parses the request's headers with `forwardAuthIdentity` (regardless of mode; in `none` mode `req.user` is the local operator even with headers) and refuses (409) unless they name a user passing `isAdminOf` under the admin groups that PATCH leaves. The server `logWarn`s who left `authentik`; the page confirms first.
-- CLI/MCP writes are unrestricted (host trust), the recovery path: `set-config webUiAuthMode auto --apply`, or the env var (`docs/authentik.md`, "Locked out").
-
-`WEB_UI_DEV_USER` simulates a specific non-admin group membership (the local operator can't). It applies in every mode, even `authentik`, so it must stay unset in production. `scripts/windows-service.ts`'s `buildService()` sets only `PORT`/`USERPROFILE`, so any other override reaches production only through the dotenv-loaded `data/*.env` files; never set `WEB_UI_DEV_USER` there.
+`WEB_UI_DEV_USER` simulates a specific non-admin group membership (the local operator can't). It applies in every mode, `oidc` included, so it must stay unset in production. `scripts/windows-service.ts`'s `buildService()` sets only `PORT`/`USERPROFILE`, so any other override reaches production only through the dotenv-loaded `data/*.env` files; never set `WEB_UI_DEV_USER` there. Tests that assert an unauthenticated outcome must delete it (`npm test` sets `WEB_UI_DEV_USER=test-user` globally).
 
 ### Admin predicate
 
@@ -31,13 +32,17 @@ Lockout guards (web-editable setting):
 
 ### WebSocket path
 
-`/ws/jobs/:id` (`src/web/routes/jobs.ts`) is on the raw `http.Server`, bypassing Express middleware, so its `'upgrade'` listener calls `resolveAuthUser` itself and duplicates `applyImpersonation`'s overlay and the creator map inline (synced by hand; no shared helper until a third bypass exists). Otherwise the job-log socket would be unauthenticated.
+`/ws/jobs/:id` (`src/web/routes/jobs.ts`) is on the raw `http.Server`, bypassing Express middleware, so its `'upgrade'` listener calls `resolveRequestUser` itself (it reads only the `Cookie` header, so the browser's session cookie authenticates the socket) and duplicates `applyImpersonation`'s overlay and the creator map inline (synced by hand; no shared helper until a third bypass exists). Otherwise the job-log socket would be unauthenticated.
 
-### Firewall scope and HAProxy
+### Firewall and HAProxy
 
-None of this is safe alone: it relies on `scripts/windows-service.ts`'s `addFirewallRule` scoping to `remoteip=<proxy host's IP>`, so only the proxy can reach the app and nothing can spoof the headers. `resolveProxyIp` derives it from `findProxyEntry`/`proxy: true` (errors name `'proxy: true'`), so it follows the entry, not the driver.
+Browsers now reach the service directly (the proxy no longer injects identity), so `scripts/windows-service.ts`'s `addFirewallRule` is not scoped to an address: no `remoteip=`, and `resolveProxyIp` is gone (`scripts/firewall-rule.ts`). The session cookie, not network position, is the boundary.
 
-HAProxy can't forward-gate and its Bellhop backends strip `X-authentik-*`, so serving the web UI through one under `authentik` mode only 401s. Instead mark that entry `proxyManual` and hand-author its routing with Authentik forward-auth (e.g. community Lua) that overwrites, never passes through, `X-authentik-*`; production keeps `authentik` ("Limits", `docs/reverse-proxy/haproxy.md`).
+Bellhop's own route is not forward-gated, so the HAProxy driver serves it like any other backend: no `proxyManual` is needed (`docs/reverse-proxy/haproxy.md`, "Limits"). Bellhop's entry must be `authMode: oidc` with its `/auth/callback` URL in `oidcRedirectUris` (`sync-authentik`), and `configure-web-login` stores the client (`src/commands/networking/CLAUDE.md`).
+
+### Single-operator assumptions
+
+The session store and the re-check single-flighting assume one Bellhop service process: sessions live in one `data/sessions.sqlite3` and the `inflight` map and `ImpersonationStore` are in-process, so two instances would not share them (a rotated refresh token could sign a user out). Sign-in also assumes the service is reached over HTTPS under one origin (`Secure` cookie, one registered redirect URI).
 
 ## Inventory reload
 
@@ -61,7 +66,7 @@ No live test (verify manually); `test/lib/authentik-client.test.ts` pins bodies/
 
 ### web:dev admin caveat
 
-`npm run web:dev` sets `WEB_UI_DEV_USER` and `WEB_UI_DEV_GROUPS=bellhop-admins` (`resolveAuthUser`'s dev fallback) so `/users` works without Authentik. That hardcodes the *default* admin group: if the effective `authentikAdminGroup`/`AUTHENTIK_ADMIN_GROUP` differs, the session is **not** admin (`canLower` is `false`; widening/clearing a tier refused). Fix by aligning that setting or `WEB_UI_DEV_GROUPS`.
+`npm run web:dev` sets `WEB_UI_DEV_USER` and `WEB_UI_DEV_GROUPS=bellhop-admins` (`resolveRequestUser`'s dev fallback) so `/users` works without Authentik. That hardcodes the *default* admin group: if the effective `authentikAdminGroup`/`AUTHENTIK_ADMIN_GROUP` differs, the session is **not** admin (`canLower` is `false`; widening/clearing a tier refused). Fix by aligning that setting or `WEB_UI_DEV_GROUPS`.
 
 ## Per-resource permissions
 
@@ -99,7 +104,7 @@ An allow-list-restricted user keeps access to a guest they created in the web UI
 
 `src/web/impersonation.ts`, `routes/impersonation.ts` (#101): an admin acts as if only in one non-admin group, to test its rules.
 
-- In-memory `ImpersonationStore`, `Map<realUsername, groupName>` keyed by trusted `X-authentik-username`; no cookie/secret/disk; restart clears it.
+- In-memory `ImpersonationStore`, `Map<realUsername, groupName>` keyed by the real username of the signed-in session; no cookie/secret/disk; restart clears it.
 - `applyImpersonation`, right after `requireAuth` in `app.ts`, overlays `req.user.groups` and stashes the real identity on `req.realUser`. All checks (`isResourceAllowed`, `requireResourceAccess`, `isJobVisible`, `requireAdminGroup`) read only `req.user.groups`, so this one overlay is the whole mechanism.
 - `POST`/`DELETE /api/impersonate` (the only store writers) use `requireRealAdminGroup`, checking `(req.realUser ?? req.user).groups`; with `requireAdminGroup` an impersonating admin would 403 on turning it off, locked in until restart.
 - The two admin groups are excluded from the picker and rejected server-side (no-op).
@@ -165,7 +170,7 @@ Shared by GET and PATCH so they never disagree:
 - `sources`: each non-secret key's `environment`/`settings`/`none`.
 - `environment`: only env-pinned keys, `{ variable, value?, stored, storedValue? }`; `value` is the effective non-secret value, never present for a secret; `stored`/`storedValue` drive the "Stored copy" line operators check before deleting a `data/*.env` file.
 - `secrets`: `{ set, source }` per secret, never the value.
-- `derived` (`derivedValues()`): read-only resolved values: each host's `midScheme.gateway`, and the `proxy: true` entry's `ip` via `findProxyEntry` ("Proxy IP (firewall scope)").
+- `derived` (`derivedValues()`): read-only resolved values: each host's `midScheme.gateway`, (`derived.proxy` is gone: nothing is address-scoped any more).
 
 ### PATCH validation and refusals
 

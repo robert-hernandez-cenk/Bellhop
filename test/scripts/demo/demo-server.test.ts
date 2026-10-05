@@ -123,6 +123,8 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     assert.equal(process.env.WEB_UI_AUTH_MODE, undefined);
     assert.equal(settings.settings.webUiAuthMode, 'oidc');
     assert.equal(settings.sources.webUiAuthMode, 'settings');
+    assert.equal(settings.settings.webUiOidcClientId, 'example-client-id');
+    assert.equal(settings.sources.webUiOidcIssuer, 'settings');
     assert.deepEqual(settings.environment, {});
     for (const key of Object.keys(DEMO_SECRET_SETTINGS)) {
       assert.deepEqual(settings.secrets[key], { set: true, source: 'settings' }, key);

@@ -30,6 +30,10 @@ necessarily share the web service's environment.
 | Environment variable | Setting | Secret |
 |---|---|---|
 | `WEB_UI_AUTH_MODE` | `webUiAuthMode` | |
+| `WEB_UI_OIDC_ISSUER` | `webUiOidcIssuer` | |
+| `WEB_UI_OIDC_CLIENT_ID` | `webUiOidcClientId` | |
+| `WEB_UI_OIDC_REDIRECT_URI` | `webUiOidcRedirectUri` | |
+| `WEB_UI_OIDC_CLIENT_SECRET` | `webUiOidcClientSecret` | yes |
 | `AUTHENTIK_API_URL` | `authentikApiUrl` | |
 | `AUTHENTIK_API_TOKEN` | `authentikApiToken` | yes |
 | `AUTHENTIK_ADMIN_GROUP` | `authentikAdminGroup` | |
@@ -73,8 +77,8 @@ such field shows a stored copy, delete the files and restart the web
 service and any long-running MCP server — until they restart they keep the
 values they loaded at startup. From then on the stored settings are what's
 in use, and the fields become editable. On a production deployment, check
-that **Web UI sign-in** shows "Stored copy: authentik" before deleting
-`data/authentik.env`, or sign-in falls back to `auto` (see [Sign-in
+that **Web UI sign-in** shows "Stored copy: oidc" before deleting
+`data/authentik.env`, or sign-in falls back to `none` (see [Sign-in
 mode](#sign-in-mode)). Copy the
 inventory database somewhere safe first if you want a backup — it now
 holds the secrets too (see
@@ -85,25 +89,31 @@ holds the secrets too (see
 `webUiAuthMode` (`WEB_UI_AUTH_MODE`) decides how the web UI establishes
 who is making a request:
 
-- `auto` (the default when unset) — trusted `X-authentik-*` headers are
-  used when present; a request without them is served as a synthetic
-  always-admin local operator. This is what lets the toolkit run with no
-  identity provider at all.
-- `authentik` — strict: trusted headers are required, and a request
-  without them gets a 401. **Store this on any deployment where
-  authentication is load-bearing.** `auto` cannot distinguish a
-  deployment that never had forward-auth from one whose `forward_auth`
-  directive just broke; this mode is the guarantee that the second case
-  fails closed.
-- `none` — always the local operator; trusted headers are ignored.
+- `none` (the default when unset) — no authentication: a request with no
+  session is served as a synthetic always-admin local operator. This is
+  what lets the toolkit run with no identity provider at all.
+- `oidc` — Bellhop's own sign-in is required: a request with no session
+  is redirected to `/auth/login` (or gets a 401 on `/api`). **Store this
+  on any deployment where authentication matters.** See [Web
+  login](authentik.md#web-login).
 
-The Settings page refuses to switch it to `authentik` unless the saving
-request carries Authentik's forward-auth headers and the user they name is
-an administrator (checked even in `none` mode, which otherwise ignores
-those headers), and asks for confirmation before switching away from
-`authentik` — a switch away is also logged as a warning naming who made
-it — see [Locked
-out](authentik.md#locked-out) for recovering from a wrong value anyway.
+`auto` and `authentik` are retired. A stored value is migrated when the
+database is opened (`authentik` becomes `oidc`, `auto` becomes unset);
+as the environment variable they stop the service at start-up.
+
+The Settings page refuses to switch it to `oidc` unless the four web login
+settings below are set, you have signed in through `/auth/login`, and you
+would still be an administrator, and asks for confirmation before
+switching away from `oidc` — a switch is also logged as a warning naming
+who made it — see [Locked out](authentik.md#locked-out) for recovering
+from a wrong value anyway.
+
+The web login client is four more settings, written by `bellhop
+configure-web-login` (see [Web login](authentik.md#web-login)):
+`webUiOidcIssuer` (`WEB_UI_OIDC_ISSUER`), `webUiOidcClientId`
+(`WEB_UI_OIDC_CLIENT_ID`), `webUiOidcRedirectUri`
+(`WEB_UI_OIDC_REDIRECT_URI`, ending in `/auth/callback`) and the secret
+`webUiOidcClientSecret` (`WEB_UI_OIDC_CLIENT_SECRET`).
 
 ### Group ladder upgrades
 
@@ -157,13 +167,12 @@ These are not settings and can only be set in the environment.
   `triggered_by_username`.
 - `WEB_UI_DEV_USER` / `WEB_UI_DEV_GROUPS` — local-development/test-only
   bypass for the web UI's auth check: when `WEB_UI_DEV_USER` is set, a
-  request carrying no `X-authentik-*` headers is treated as signed in as
-  this username, in whatever groups `WEB_UI_DEV_GROUPS` names
-  (administrator groups included). Real `X-authentik-*` headers still take
-  precedence when present, and the bypass applies in `authentik` mode as
-  well as `auto` (only `none` ignores it). `web:dev` sets this automatically (to `local-dev`); `npm test` sets
-  it too (to `test-user`) so the existing test suite doesn't need to fake
-  Authentik headers on every request. **Never set this in the production
+  request with no session is treated as signed in as this username, in
+  whatever groups `WEB_UI_DEV_GROUPS` names (administrator groups
+  included). A real session takes precedence, and the bypass applies in
+  `oidc` mode as well as `none`. `web:dev` sets this automatically (to
+  `local-dev`); `npm test` sets it too (to `test-user`) so the existing
+  test suite doesn't need to sign in on every request. **Never set this in the production
   Windows service's environment** — doing so would disable auth entirely
   for the real deployment (see [Web UI](web-ui.md)).
 - `SSH_AUTH_SOCK` — the SSH agent socket, used only when none of the
