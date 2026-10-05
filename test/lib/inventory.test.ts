@@ -1373,7 +1373,8 @@ function captureLog(fn: () => void): string[] {
   return lines;
 }
 
-const TLS_MIGRATION_LOG = /Migrated TLS settings to tlsSource (#72, one-time, irreversible): /;
+const TLS_MIGRATION_LOG = 'Migrated TLS settings to tlsSource (#72, one-time, irreversible): ';
+const migrationLines = (lines: string[]) => lines.filter((l) => l.includes(TLS_MIGRATION_LOG));
 
 test('opening a database converts each legacy proxyCaddyTls value for caddy, caddy-api and an unset driver (issue #72)', () => {
   const map = { cloudflare: 'acme-dns', letsencrypt: 'acme-http', internal: 'internal', files: 'files' } as const;
@@ -1426,7 +1427,7 @@ test('legacy rows under any other driver are removed without writing tlsSource; 
     loadInventory(named);
   });
   assert.equal(metaRow(named, 'proxyCertResolver'), 'my-resolver');
-  assert.equal(namedLines.filter((l) => TLS_MIGRATION_LOG.test(l)).length, 0);
+  assert.equal(migrationLines(namedLines).length, 0);
 });
 
 test('an existing tlsSource is never overwritten by the migration, though the legacy row is removed', () => {
@@ -1439,13 +1440,14 @@ test('an existing tlsSource is never overwritten by the migration, though the le
 
 test('the TLS migration is one-time: a second open changes and logs nothing', () => {
   const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'cloudflare' });
-  captureLog(() => {
+  const firstOpen = captureLog(() => {
     loadInventory(dest);
   });
+  assert.equal(migrationLines(firstOpen).length, 1, 'the matcher sees the real log line');
   const lines = captureLog(() => {
     assert.equal(loadInventory(dest).tlsSource, 'acme-dns');
   });
-  assert.equal(lines.filter((l) => TLS_MIGRATION_LOG.test(l)).length, 0);
+  assert.equal(migrationLines(lines).length, 0);
 });
 
 test('a database with no legacy TLS rows logs nothing and gains no tlsSource', () => {
@@ -1453,7 +1455,7 @@ test('a database with no legacy TLS rows logs nothing and gains no tlsSource', (
   const lines = captureLog(() => {
     assert.equal(loadInventory(dest).tlsSource, undefined);
   });
-  assert.equal(lines.filter((l) => TLS_MIGRATION_LOG.test(l)).length, 0);
+  assert.equal(migrationLines(lines).length, 0);
 });
 
 test('saveInventory also migrates legacy TLS rows on open, so a leftover row never lingers', () => {
