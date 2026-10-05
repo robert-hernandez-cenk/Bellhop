@@ -111,9 +111,9 @@ description: "Task list for running the web service as an LXC container (#67)"
 
 ## Phase 8: Polish & Verification
 
-- [ ] T028 Run `npm run typecheck`, `npm test`, `npm run web:build` and paste the results
-- [ ] T029 Run quickstart.md's manual checks: the shim from a temp directory; the guard via a fixture `INVENTORY_FILE`; the Settings page General tab in `npm run demo` at a desktop width and a ≤640px mobile width
-- [ ] T030 Review the full diff (`git diff main...HEAD`) and the fork commit for real operational data (constitution Principle I)
+- [x] T028 Run `npm run typecheck` (exit 0), `npm run web:build` (exit 0), `npm test` (3085 tests: 3083 pass, 0 fail, 2 skipped)
+- [x] T029 Manual checks: shim `--help` from outside the repository (Windows and WSL Linux); each guarded CLI command refuses `bellhopGuest` on a fixture inventory (exit 1); Settings page General tab checked in `npm run demo` at 1280px desktop and a 390px mobile viewport (no horizontal scroll); the help text was corrected to say the installer prints the set-config line
+- [x] T030 Reviewed the full diff, commit messages and the fork commit for real operational data: example values only; none of the 102 real names/IPs/domain in the live inventory appear
 
 ---
 

@@ -52,7 +52,7 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
   bellhopGuest: {
     label: "Bellhop's own guest",
     placeholder: 'bellhop',
-    help: 'Inventory name of the guest Bellhop itself runs in. Update App, Delete, Migrate, Start and Shut down refuse it, and Update All skips it, so Bellhop never cuts off its own service. The LXC installer sets it to the container hostname. Unset: no guest is protected.',
+    help: 'Inventory name of the guest Bellhop itself runs in. Update App, Delete, Migrate, Start and Shut down refuse it, and Update All skips it, so Bellhop never cuts off its own service. The LXC installer prints the command that sets it to the container hostname. Unset: no guest is protected.',
   },
   statusPagePath: {
     label: 'Status page path',
