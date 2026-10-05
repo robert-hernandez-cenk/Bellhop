@@ -18,7 +18,7 @@ function oidcOnlyDriver(): ReverseProxyDriver {
   return {
     id: 'fake-oidc-only' as ProxyDriverId,
     label: 'Fake',
-    capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
+    capabilities: { authModes: ['oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {

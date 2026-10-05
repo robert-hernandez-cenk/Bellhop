@@ -29,15 +29,10 @@ settings](../configuration.md#inventory-wide-settings).
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
 both `forward` and `oidc`), which TLS sources it can serve (`tlsSources`,
 plus the `defaultTlsSource` an unset `tlsSource` setting means for it — see
-[TLS sources](#tls-sources) below), and whether, for the current settings,
-it's issuing TLS certificates via ACME DNS-01 through Cloudflare right now
-(`acmeDns01ViaCloudflare(inventory)` — both Caddy drivers answer `true`
-only under `tlsSource: acme-dns`, and Traefik whenever its routers name a
-certificate resolver, under `acme-dns` or `acme-http`). This is what
-gates whether `prune-acme-challenges` runs as part
-of the web UI's push-live step — a driver/source that never touches
-Cloudflare's DNS leaves nothing behind for it to clean up. It
-implements three operations: `plan()` turns the routes derived from
+[TLS sources](#tls-sources) below). Whether the web UI's push-live step runs `prune-acme-challenges` is not
+a driver property: it runs only when the effective `tlsSource` is `acme-dns`
+with the `cloudflare` DNS provider, since any other source leaves no
+`_acme-challenge` records behind for it to clean up. A driver implements three operations: `plan()` turns the routes derived from
 inventory into a preview and an opaque payload (the dry-run preview is
 always exactly what `--apply` sends); `apply()` sends that payload live and
 reloads the proxy, throwing on failure — a failed validate or write

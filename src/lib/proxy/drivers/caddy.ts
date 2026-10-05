@@ -140,23 +140,10 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
 // Also the Caddyfile convert-caddyfile (issue #26) reads by default.
 export const CADDYFILE_DEFAULT_PATH = '/etc/caddy/Caddyfile';
 
-// issue #51, User Story 4 (contract "Cloudflare prune decision"): both Caddy
-// drivers (file-based and admin-API) obtain a certificate via Cloudflare
-// DNS-01 only under tlsSource 'acme-dns' (unset defaults to it for both) --
-// the other sources never touch Cloudflare's DNS at all, so
-// prune-acme-challenges has nothing to clean up after them. Exported so
-// caddy-api.ts's own capabilities object reads the exact same rule rather
-// than keeping a second copy that could drift from this one. Interim until
-// issue #72's User Story 3 replaces the capability with usesCloudflareDns01
-// (src/lib/proxy/tls.ts).
-export function caddyAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
-  return (inventory.tlsSource ?? 'acme-dns') === 'acme-dns';
-}
-
 export const caddyDriver = fileDriver({
   id: 'caddy',
   label: 'Caddy',
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare, tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
   defaultConfigPath: CADDYFILE_DEFAULT_PATH,
   // The Caddy package's default document root -- what render-status-page's
   // caddy.example.com block already serves via file_server (see CLAUDE.md's

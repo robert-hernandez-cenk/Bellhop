@@ -12,20 +12,6 @@ export type ProxyAuthMode = 'forward' | 'oidc';
 
 export interface DriverCapabilities {
   authModes: ProxyAuthMode[];
-  // Whether the active driver, for this inventory, issues certificates via
-  // ACME DNS-01 through Cloudflare -- a function rather than a fixed
-  // boolean (issue #51) since the tlsSource setting (issue #72) can opt a
-  // deployment out of Cloudflare without switching drivers: both Caddy
-  // drivers return true only under 'acme-dns' (caddyAcmeDns01ViaCloudflare,
-  // src/lib/proxy/drivers/caddy.ts) and Traefik whenever its routers name a
-  // resolver, under 'acme-dns' or 'acme-http' (src/lib/proxy/drivers/
-  // traefik.ts); every other driver always returns false, since it never
-  // touches Cloudflare's DNS at all. prune-acme-challenges
-  // (src/web/proxy-sync.ts) calls this with the live inventory before ever
-  // touching Cloudflare: a driver/source combination that never touches
-  // Cloudflare DNS leaves nothing behind for it to clean up. Interim: issue
-  // #72's User Story 3 replaces it with usesCloudflareDns01 (./tls.ts).
-  acmeDns01ViaCloudflare: (inventory: Inventory) => boolean;
   // Which TLS sources this driver can render (issue #72), and the one used
   // when the tlsSource setting is unset -- defaultTlsSource must be in
   // tlsSources. effectiveTlsSource/checkTlsSource (./tls.ts) read these.

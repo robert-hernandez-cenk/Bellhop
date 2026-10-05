@@ -22,11 +22,11 @@ Every renderer reads the effective `ctx.tlsSource` (#72; `buildProxyContext(inve
 | `haproxy` | external | external | nothing (certificates live in the operator's frontend) |
 | `none` | all five | external | nothing |
 
-`acmeDns01ViaCloudflare` (interim until US3's `usesCloudflareDns01`): Caddy's `caddyAcmeDns01ViaCloudflare` (`(tlsSource ?? 'acme-dns') === 'acme-dns'`, from `caddy.ts`, shared by both Caddy drivers); Traefik's is true under `acme-dns`/`acme-http` (any named resolver may be Cloudflare DNS-01); every other driver `() => false`.
+No driver declares whether it uses Cloudflare DNS-01: the push-live prune follows `usesCloudflareDns01` (the TLS source alone), so only `acme-dns` prunes, on any driver that supports it.
 
 ## Caddy driver (`caddy.ts`)
 
-Default; `fileDriver`-based. `authModes: ['forward', 'oidc']`, `acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare`, `defaultConfigPath: '/etc/caddy/Caddyfile'`, validate `caddy validate --adapter caddyfile --config <path>`, reload `systemctl reload caddy`. `'managed-section'` file: content outside the markers is untouched; appended when no marker exists yet.
+Default; `fileDriver`-based. `authModes: ['forward', 'oidc']`, `defaultConfigPath: '/etc/caddy/Caddyfile'`, validate `caddy validate --adapter caddyfile --config <path>`, reload `systemctl reload caddy`. `'managed-section'` file: content outside the markers is untouched; appended when no marker exists yet.
 
 `render()` must stay byte-identical to the original generator: `unauthenticatedPaths` come from the raw stored strings in stored order, never rebuilt from `PathPattern[]`.
 
@@ -42,7 +42,7 @@ Single-operator assumption: only under `tlsSource: acme-dns` with `acmeDnsProvid
 
 ## nginx driver (`nginx.ts`)
 
-`fileDriver`-based. `authModes: ['forward', 'oidc']`, `acmeDns01ViaCloudflare: () => false`, `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`, `statusPage: { suggestedPath: '/var/www/html/index.html' }` (Debian/Ubuntu docroot, served by the operator's own block), `tlsSources: ['files']` (its only source, so the Settings page shows the TLS path fields under it), a `configPathNote` (whole file replaced, foreign file refused), validate `nginx -t`, reload `systemctl reload nginx`.
+`fileDriver`-based. `authModes: ['forward', 'oidc']`, `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`, `statusPage: { suggestedPath: '/var/www/html/index.html' }` (Debian/Ubuntu docroot, served by the operator's own block), `tlsSources: ['files']` (its only source, so the Settings page shows the TLS path fields under it), a `configPathNote` (whole file replaced, foreign file refused), validate `nginx -t`, reload `systemctl reload nginx`.
 
 Shared `renderServerBody` (`src/lib/proxy/nginx-locations.ts`) renders everything from the `map` blocks to the last `location`, so NPM's `advanced_config` can't drift.
 
@@ -67,7 +67,7 @@ Single-operator assumptions: CA bundle path and `conf.d` default path assume Deb
 
 ## Nginx Proxy Manager driver (`nginx-proxy-manager.ts`, `src/lib/npm-client.ts`)
 
-No config file: `defaultConfigPath: null` (why `DriverDeps.configPath` is `string | null`); Settings hides Proxy config path, Status page path, TLS fields. `usesNpmApi: true` (#73) shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` at the end of the Proxy tab. `authModes: ['forward', 'oidc']`, `acmeDns01ViaCloudflare: () => false`, `statusPage: null`. Tested on NPM 2.16 (older releases may reject sent fields).
+No config file: `defaultConfigPath: null` (why `DriverDeps.configPath` is `string | null`); Settings hides Proxy config path, Status page path, TLS fields. `usesNpmApi: true` (#73) shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` at the end of the Proxy tab. `authModes: ['forward', 'oidc']`, `statusPage: null`. Tested on NPM 2.16 (older releases may reject sent fields).
 
 **`NpmClient`** (`AuthentikClient` pattern): interface, `zod`-validated `RealNpmClient`, `buildNpmClient(inventory)` reading `npmApiEmail`, secret `npmApiPassword`, optional `npmApiUrl` (else the `proxy: true` entry's `ip`, port 81) via the config accessor at call time (`NPM_API_EMAIL`/`NPM_API_PASSWORD`/`NPM_API_URL` override; `Settings store` in `src/lib/CLAUDE.md`). No credential or URL: named error before any request.
 
@@ -100,7 +100,7 @@ Validate `haproxy -c -f /etc/haproxy/haproxy.cfg -f '<configPath>'` (backends al
 - Body: `mode http`; `timeout server`/`timeout tunnel 1d` (SSE's client side stays under the frontend's `timeout client`; docs say raise it); first `http-request del-header x-authentik- -m beg` (no backend is forward-gated, so these are spoofed); `X-Forwarded-For` *set* to `%[src]`; `X-Forwarded-Proto https`; `X-Forwarded-Host` original Host; `X-Forwarded-Port` `ctx.externalPort`; one `server app <ip>:<port>`, no `check`.
 - TLS: `ssl verify none` (`insecureTls`); `ssl verify required ca-file /etc/ssl/certs/ca-certificates.crt` (443); else plain. Chain only, not name (no `sni`/`verifyhost`): documented, not worked around.
 
-**Auth.** `authModes: ['oidc']`, `acmeDns01ViaCloudflare: () => false`. `checkCapabilities` refuses forward entries; `render()` still throws `HAProxy cannot enforce forward-auth for entry '<name>'` as a backstop so none deploys ungated. `oidc` renders like ungated; no `unauthenticatedPaths`. `tlsSources: ['external']` (certificates live in the operator's frontend), so Settings shows no TLS path fields, only Proxy config path, with a `configPathNote` on the map file and ownership refusal.
+**Auth.** `authModes: ['oidc']`, `checkCapabilities` refuses forward entries; `render()` still throws `HAProxy cannot enforce forward-auth for entry '<name>'` as a backstop so none deploys ungated. `oidc` renders like ungated; no `unauthenticatedPaths`. `tlsSources: ['external']` (certificates live in the operator's frontend), so Settings shows no TLS path fields, only Proxy config path, with a `configPathNote` on the map file and ownership refusal.
 
 Hand-checked with `haproxy -c` on 2.6/3.4 (not in `npm test`).
 
@@ -122,7 +122,7 @@ Single-operator assumptions: `/etc/haproxy/haproxy.cfg`, the CA bundle (shared w
 
 **Forward-auth.** `bellhop-authentik`: `forwardAuth` at `http://<outpost ip>:<port>/outpost.goauthentik.io/auth/traefik`, `trustForwardHeader: true`, five identity headers (Authentik's recipe).
 
-**Cert resolver and TLS source.** `routerTls(ctx)` switches on `ctx.tlsSource` (#72): `acme-dns`/`acme-http` set `tls.certResolver` = `certResolverName(inventory)` = `proxyCertResolver ?? DEFAULT_CERT_RESOLVER` (`'cloudflare'`, `src/lib/proxy/routes.ts`), carried as always-present `ProxyContext.certResolver` (which challenge the resolver uses is the operator's static config); `external` (the old reserved `proxyCertResolver: none`, byte-identical) and `files` render `tls: {}`; `internal` throws. Under `files`, `render()` adds a top-level `tls: { certificates: [{ certFile, keyFile }] }` from `ctx.tls` after `http:` in both `stringify` passes, so the generation hash covers it (research R5; no `tls.stores` override; shape pinned by unit tests, not checked against a live Traefik). No resolver name is reserved any more. `acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare` (true under `acme-dns`/`acme-http`; any named resolver may be Cloudflare DNS-01). `authModes: ['forward', 'oidc']`; `statusPage: null` (covered by `statusPageUnsupportedError`/`statusPageSkipReason`).
+**Cert resolver and TLS source.** `routerTls(ctx)` switches on `ctx.tlsSource` (#72): `acme-dns`/`acme-http` set `tls.certResolver` = `certResolverName(inventory)` = `proxyCertResolver ?? DEFAULT_CERT_RESOLVER` (`'cloudflare'`, `src/lib/proxy/routes.ts`), carried as always-present `ProxyContext.certResolver` (which challenge the resolver uses is the operator's static config); `external` (the old reserved `proxyCertResolver: none`, byte-identical) and `files` render `tls: {}`; `internal` throws. Under `files`, `render()` adds a top-level `tls: { certificates: [{ certFile, keyFile }] }` from `ctx.tls` after `http:` in both `stringify` passes, so the generation hash covers it (research R5; no `tls.stores` override; shape pinned by unit tests, not checked against a live Traefik). No resolver name is reserved any more. `authModes: ['forward', 'oidc']`; `statusPage: null` (covered by `statusPageUnsupportedError`/`statusPageSkipReason`).
 
 Traefik-only settings (`usesCertResolver`/`usesApiUrl`): `proxyCertResolver` (`^[A-Za-z0-9_-]+$`, Traefik's rule); `proxyApiUrl` (`new URL`, `http:`/`https:`; the no-single-quote check is only defensive).
 

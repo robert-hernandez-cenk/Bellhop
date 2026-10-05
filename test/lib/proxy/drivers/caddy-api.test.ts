@@ -49,11 +49,7 @@ test('declares what the Settings page and capability checks read', () => {
   assert.equal(caddyApiDriver.id, 'caddy-api');
   assert.equal(caddyApiDriver.label, 'Caddy (admin API)');
   assert.equal(caddyApiDriver.defaultConfigPath, null);
-  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
-  // by its return value for a sample inventory rather than by deepEqual on
-  // the whole capabilities object (which would compare function identity).
   assert.deepEqual(caddyApiDriver.capabilities.authModes, ['forward', 'oidc']);
-  assert.equal(caddyApiDriver.capabilities.acmeDns01ViaCloudflare(inventory), true);
   assert.deepEqual(caddyApiDriver.statusPage, { suggestedPath: '/usr/share/caddy/index.html' });
   // issue #72: the same TLS sources as the file-based Caddy driver.
   assert.deepEqual(caddyApiDriver.capabilities.tlsSources, ['acme-dns', 'acme-http', 'internal', 'files']);

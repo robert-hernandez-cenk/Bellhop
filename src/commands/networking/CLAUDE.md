@@ -116,7 +116,7 @@ The guest PATCH runs outside any job, where a `logWarn` reaches only stderr (job
 
 ## prune-acme-challenges (#162)
 
-`prune-acme-challenges.ts` deletes stale `_acme-challenge` TXT records in the `domain`'s Cloudflare zone left by Caddy `cloudflare`-mode DNS-01 (aborted issuance, mid-challenge restart, removed/renamed subdomain). Dry-run/`--apply`; a failed delete is reported, the rest proceed (CLI exit 1).
+`prune-acme-challenges.ts` deletes stale `_acme-challenge` TXT records in the `domain`'s Cloudflare zone left by ACME DNS-01 through Cloudflare (`tlsSource: acme-dns`) (aborted issuance, mid-challenge restart, removed/renamed subdomain). Dry-run/`--apply`; a failed delete is reported, the rest proceed (CLI exit 1).
 
 ### Ownership: age-based and zone-wide
 
@@ -129,7 +129,7 @@ Deletable: name `_acme-challenge.<domain>` or `_acme-challenge.<labels>.<domain>
 
 ### When it runs
 
-- Last step of `syncProxyLive` (`src/web/proxy-sync.ts`), never failing it: if `getDriver(inventory).capabilities.acmeDns01ViaCloudflare(inventory)` is false it logs one skip line (`pruneAcmeDriverSkipMessage`: "is not configured to use ACME DNS-01 via Cloudflare") and skips Cloudflare; an unconfigured client logs its own; a throw becomes a `logWarn`. Nothing goes into `SyncProxyLiveResult`.
+- Last step of `syncProxyLive` (`src/web/proxy-sync.ts`), never failing it: if `usesCloudflareDns01(inventory, getDriver(inventory))` (`src/lib/proxy/tls.ts`: effective `tlsSource` is `acme-dns` and `acmeDnsProvider` is `cloudflare`) is false it logs one skip line (`pruneAcmeTlsSkipMessage`: `prune-acme-challenges: skipped, the TLS source is '<x>' (only acme-dns with the cloudflare DNS provider leaves challenge records)`) and skips Cloudflare. The decision is the TLS source alone, never the driver's identity (#72; before it, Caddy answered for `acme-dns` and Traefik for any named resolver, so Traefik under `acme-http` no longer prunes); an unconfigured client logs its own; a throw becomes a `logWarn`. Nothing goes into `SyncProxyLiveResult`.
 - It is always false for nginx, Nginx Proxy Manager, HAProxy, `none`; for Caddy unless the effective `tlsSource` is `acme-dns`; for Traefik when it is `files` or `external` (#72).
 - Only guest-edit and create/install/delete-guest paths prune; `sync-proxy`, `render-status-page`, `migrate-guest` (CLI, web, MCP) call `runSyncProxy`/`runRenderStatusPage` directly.
 

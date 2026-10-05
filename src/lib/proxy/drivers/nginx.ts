@@ -95,7 +95,7 @@ export const nginxDriver = fileDriver({
   // Always false, unaffected by any inventory setting -- the function
   // wrapper here exists only to satisfy the updated DriverCapabilities
   // type (issue #51).
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
   defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf',
   // The Debian/Ubuntu nginx package's default document root -- the same
   // platform this driver already assumes for its upstream CA bundle path --

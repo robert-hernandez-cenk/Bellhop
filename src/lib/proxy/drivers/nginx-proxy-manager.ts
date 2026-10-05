@@ -460,7 +460,7 @@ export function createNpmDriver(opts: { clientFor: (inventory: Inventory) => Npm
     // chooseCertificate above), never Cloudflare DNS-01. The function
     // wrapper here exists only to satisfy the updated DriverCapabilities
     // type (issue #51).
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['acme-http'], defaultTlsSource: 'acme-http' },
+    capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-http'], defaultTlsSource: 'acme-http' },
     defaultConfigPath: null,
     statusPage: null,
     // issue #73: the only driver that reads npmApiUrl/npmApiEmail/

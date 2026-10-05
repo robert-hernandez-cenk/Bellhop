@@ -314,11 +314,7 @@ test('render: the map and backends files use the same collision-suffixed name fo
 test('haproxyDriver declares its id, label, capabilities, default config path, status page and config path note', () => {
   assert.equal(haproxyDriver.id, 'haproxy');
   assert.equal(haproxyDriver.label, 'HAProxy');
-  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
-  // by its return value for a sample inventory rather than by deepEqual on
-  // the whole capabilities object (which would compare function identity).
   assert.deepEqual(haproxyDriver.capabilities.authModes, ['oidc']);
-  assert.equal(haproxyDriver.capabilities.acmeDns01ViaCloudflare(exampleInventory()), false);
   assert.equal(haproxyDriver.defaultConfigPath, '/etc/haproxy/bellhop.cfg');
   assert.equal(haproxyDriver.statusPage, null);
   assert.deepEqual(haproxyDriver.capabilities.tlsSources, ['external']);

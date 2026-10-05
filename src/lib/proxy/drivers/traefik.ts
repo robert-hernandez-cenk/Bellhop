@@ -539,27 +539,13 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
   return lines.join('\n');
 }
 
-// issue #51, User Story 4 (contract "Cloudflare prune decision"): Traefik's
-// own certificate resolver (ctx.certResolver, from inventory.proxyCertResolver)
-// can be configured for Cloudflare DNS-01 in the operator's own static
-// configuration, which is what prune-acme-challenges exists to clean up
-// stray records from -- true whenever routers name a resolver, i.e. under
-// tlsSource 'acme-dns' (the default here) or 'acme-http', and false under
-// 'files'/'external', which address no resolver at all. Interim (issue #72):
-// preserves the old "any named resolver" behavior until User Story 3
-// replaces this capability with usesCloudflareDns01 (src/lib/proxy/tls.ts).
-function traefikAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
-  const source = inventory.tlsSource ?? 'acme-dns';
-  return source === 'acme-dns' || source === 'acme-http';
-}
-
 export const traefikDriver = fileDriver({
   id: 'traefik',
   label: 'Traefik',
   // Traefik's forward-auth and OIDC both work the same way every other
   // driver's do -- see User Story 2 for the forward-auth objects, not yet
   // rendered by this file.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare, tlsSources: ['acme-dns', 'acme-http', 'files', 'external'], defaultTlsSource: 'acme-dns' },
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-dns', 'acme-http', 'files', 'external'], defaultTlsSource: 'acme-dns' },
   defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
   // Traefik has no static-file server of its own (research.md R11) -- an
   // operator who wants a status page serves it elsewhere.

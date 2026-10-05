@@ -37,7 +37,7 @@ function fakeDriver(id: string): ReverseProxyDriver {
   return {
     id: id as ProxyDriverId,
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
+    capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {
@@ -113,11 +113,7 @@ test('driverDeps resolves configPath to the Traefik driver default when proxyCon
 test('Traefik driver metadata: label, capabilities, default config path, status page, and cert-resolver/api-url hints', () => {
   assert.equal(traefikDriver.id, 'traefik');
   assert.equal(traefikDriver.label, 'Traefik');
-  // acmeDns01ViaCloudflare is now a function (issue #51), so it's compared
-  // by its return value for a sample inventory rather than by deepEqual on
-  // the whole capabilities object (which would compare function identity).
   assert.deepEqual(traefikDriver.capabilities.authModes, ['forward', 'oidc']);
-  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true);
   assert.equal(traefikDriver.defaultConfigPath, '/etc/traefik/dynamic/bellhop.yml');
   assert.equal(traefikDriver.statusPage, null);
   assert.equal(traefikDriver.usesCertResolver, true);
@@ -201,51 +197,6 @@ test('None driver metadata: label, defaultConfigPath, statusPage, capabilities',
   assert.equal(noneDriver.defaultConfigPath, null);
   assert.equal(noneDriver.statusPage, null);
   assert.deepEqual(noneDriver.capabilities.authModes, ['forward', 'oidc']);
-  assert.equal(noneDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), false);
-});
-
-// issue #51, User Story 4, T023 (contract "Cloudflare prune decision"): each
-// driver's acmeDns01ViaCloudflare now actually reads the inventory handed to
-// it rather than returning a fixed value regardless of mode. Since issue
-// #72 it reads tlsSource (interim, until User Story 3 replaces it).
-test('caddyDriver/caddyApiDriver.capabilities.acmeDns01ViaCloudflare: true for unset/acme-dns, false for acme-http/internal/files', () => {
-  for (const driver of [caddyDriver, caddyApiDriver]) {
-    assert.equal(driver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true, `${driver.id}: unset`);
-    assert.equal(
-      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'acme-dns' })),
-      true,
-      `${driver.id}: acme-dns`
-    );
-    for (const tlsSource of ['acme-http', 'internal', 'files'] as const) {
-      assert.equal(
-        driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource })),
-        false,
-        `${driver.id}: ${tlsSource}`
-      );
-    }
-  }
-});
-
-test('traefikDriver.capabilities.acmeDns01ViaCloudflare: true whenever routers name a resolver (unset/acme-dns/acme-http), false for files/external', () => {
-  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory()), true);
-  assert.equal(
-    traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ proxyCertResolver: 'my-resolver' })),
-    true
-  );
-  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'acme-http' })), true);
-  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'files' })), false);
-  assert.equal(traefikDriver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'external' })), false);
-});
-
-test('nginx/nginx-proxy-manager/haproxy/none drivers: acmeDns01ViaCloudflare is always false, regardless of inventory', () => {
-  for (const driver of [nginxDriver, nginxProxyManagerDriver, haproxyDriver, noneDriver]) {
-    assert.equal(driver.capabilities.acmeDns01ViaCloudflare(baseInventory()), false, driver.id);
-    assert.equal(
-      driver.capabilities.acmeDns01ViaCloudflare(baseInventory({ tlsSource: 'acme-dns', proxyCertResolver: 'cloudflare' })),
-      false,
-      driver.id
-    );
-  }
 });
 
 test('None driver: plan() previews the fixed message, apply() is a no-op with no SSH calls, snapshot() rejects with the named error', async () => {
@@ -370,7 +321,7 @@ test('a test-only fileDriver receives the same routes/context the Caddy driver w
   const testDriver = fileDriver({
     id: 'test-only-driver-t040' as ProxyDriverId,
     label: 'Test-only driver',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
+    capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/test-only/test.conf',
     // This test exercises runRenderStatusPage below, which throws for any
     // driver whose statusPage is null (issue #33), so this

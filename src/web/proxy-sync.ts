@@ -11,6 +11,8 @@ import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
 import { runPruneAcmeChallenges } from '../commands/networking/prune-acme-challenges.ts';
 import { getDriver } from '../lib/proxy/index.ts';
+import { effectiveTlsSource, usesCloudflareDns01 } from '../lib/proxy/tls.ts';
+import type { TlsSource } from '../lib/proxy/ids.ts';
 
 export interface SyncProxyLiveResult {
   // Slug conflicts reported by sync-authentik: entries with an authGroup set
@@ -54,16 +56,13 @@ export interface SyncProxyLiveResult {
 
 export const PRUNE_ACME_SKIP_MESSAGE = `prune-acme-challenges: skipped, ${CLOUDFLARE_UNCONFIGURED_MESSAGE}`;
 
-// The prune only ever makes sense for a driver/source combination that issues
-// certificates via ACME DNS-01 through Cloudflare -- the two Caddy drivers
-// under tlsSource 'acme-dns' (their default), or Traefik whenever its
-// routers name a resolver (issues #51, #72; before #51, Caddy's TLS_BLOCK
-// was the only, non-configurable path).
-// A driver/source that never touches Cloudflare's DNS never leaves stale
-// _acme-challenge TXT records behind in the first place, so there is
-// nothing here for this step to clean up.
-export function pruneAcmeDriverSkipMessage(driverId: string): string {
-  return `prune-acme-challenges: skipped, the '${driverId}' proxy driver is not configured to use ACME DNS-01 via Cloudflare`;
+// The prune only ever makes sense when certificates are obtained over ACME
+// DNS-01 through Cloudflare (issue #72: effective tlsSource 'acme-dns' with
+// the cloudflare provider, see usesCloudflareDns01). Any other source never
+// leaves stale _acme-challenge TXT records behind in the first place, so
+// there is nothing here for this step to clean up.
+export function pruneAcmeTlsSkipMessage(tlsSource: TlsSource): string {
+  return `prune-acme-challenges: skipped, the TLS source is '${tlsSource}' (only acme-dns with the cloudflare DNS provider leaves challenge records)`;
 }
 
 // Last step of the push-live sequence (issue #162). Every failure is turned
@@ -73,8 +72,8 @@ export function pruneAcmeDriverSkipMessage(driverId: string): string {
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
   const driver = getDriver(inventory);
-  if (!driver.capabilities.acmeDns01ViaCloudflare(inventory)) {
-    logInfo(pruneAcmeDriverSkipMessage(driver.id));
+  if (!usesCloudflareDns01(inventory, driver)) {
+    logInfo(pruneAcmeTlsSkipMessage(effectiveTlsSource(inventory, driver)));
     return;
   }
   if (!cloudflare.isConfigured()) {

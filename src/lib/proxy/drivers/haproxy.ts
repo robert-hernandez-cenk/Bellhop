@@ -188,7 +188,7 @@ export const haproxyDriver = fileDriver({
   // prune-acme-challenges to clean up after. Always false, unaffected by
   // any inventory setting -- the function wrapper here exists only to
   // satisfy the updated DriverCapabilities type (issue #51).
-  capabilities: { authModes: ['oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['external'], defaultTlsSource: 'external' },
+  capabilities: { authModes: ['oidc'], tlsSources: ['external'], defaultTlsSource: 'external' },
   defaultConfigPath: '/etc/haproxy/bellhop.cfg',
   // No document root of its own to serve a status page from (research R7).
   statusPage: null,

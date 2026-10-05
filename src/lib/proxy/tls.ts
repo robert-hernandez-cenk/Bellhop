@@ -33,8 +33,8 @@ export function checkTlsSource(inventory: Inventory, driver: TlsDriver): string 
 
 // Whether certificates are obtained over DNS-01 through Cloudflare -- the
 // only case that leaves _acme-challenge TXT records behind for
-// prune-acme-challenges to clean up (replaces the per-driver
-// acmeDns01ViaCloudflare capability).
+// prune-acme-challenges to clean up. Decided from the TLS source alone,
+// not the driver's identity.
 export function usesCloudflareDns01(inventory: Inventory, driver: TlsDriver): boolean {
   return effectiveTlsSource(inventory, driver) === 'acme-dns' && acmeDnsProvider(inventory) === 'cloudflare';
 }

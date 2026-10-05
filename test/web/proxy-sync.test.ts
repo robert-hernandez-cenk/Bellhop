@@ -170,6 +170,11 @@ test('syncProxyLive logWarns each conflict, since a Dashboard-triggered call run
   );
 });
 
+// logInfo prefixes its lines, so match by substring.
+function hasInfo(logs: { info: string[] }, message: string): boolean {
+  return logs.info.some((l) => l.includes(message));
+}
+
 // Captures console.log/console.error lines for the duration of fn.
 async function captureLogs(fn: () => Promise<unknown>): Promise<{ info: string[]; warn: string[] }> {
   const originalLog = console.log;
@@ -247,7 +252,7 @@ function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
   return {
     id: id as ReverseProxyDriver['id'],
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['files'], defaultTlsSource: 'files' },
+    capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {
@@ -260,7 +265,7 @@ function fakeDriverWithoutAcme(id: string): ReverseProxyDriver {
   };
 }
 
-test('syncProxyLive skips the prune step (no Cloudflare calls) when the active driver does not support ACME DNS-01 via Cloudflare', async () => {
+test('syncProxyLive skips the prune step (no Cloudflare calls) when the effective TLS source is not acme-dns via Cloudflare', async () => {
   const fake = fakeDriverWithoutAcme('fake-driver-no-acme-t016');
   const unregister = registerDriverForTests(fake);
   try {
@@ -274,15 +279,15 @@ test('syncProxyLive skips the prune step (no Cloudflare calls) when the active d
     const logs = await captureLogs(() =>
       syncProxyLive({ ssh, inventory: noStatusPage, authentik: new UnconfiguredAuthentikClient(), cloudflare })
     );
-    assert.deepEqual(cloudflare.history, [], 'the active driver has no ACME DNS-01-via-Cloudflare capability, so the prune never runs');
-    assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes(fake.id)));
+    assert.deepEqual(cloudflare.history, [], "the fake driver's default source is 'files', so the prune never runs");
+    assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'files' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
   } finally {
     unregister();
   }
 });
 
-// The real nginx driver's (issue #30, US1) acmeDns01ViaCloudflare always
-// returns false -- unlike the tests above, no registerDriverForTests fake is
+// The real nginx driver's (issue #30, US1) effective source is always
+// 'files' (issue #72) -- unlike the tests above, no registerDriverForTests fake is
 // needed here, since 'nginx' is a registered, shipped driver id.
 test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME prune, never touching Cloudflare', async () => {
   const nginxInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'nginx' };
@@ -293,13 +298,13 @@ test('syncProxyLive (real nginx driver) pushes nginx config and skips the ACME p
   );
   assert.equal(ssh.history.length, 1, 'only sync-proxy runs -- statusPagePath is unset and nothing is authGroup-gated');
   assert.match(ssh.history[0].command, /nginx -t/);
-  assert.deepEqual(cloudflare.history, [], "nginx's acmeDns01ViaCloudflare returns false, so the prune never calls Cloudflare");
-  assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx')));
+  assert.deepEqual(cloudflare.history, [], "nginx's TLS source is 'files', so the prune never calls Cloudflare");
+  assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'files' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
 });
 
-// Issue #32 (US1): the real HAProxy driver's acmeDns01ViaCloudflare also
-// always returns false -- it never obtains a certificate itself -- so the
-// prune is skipped by name the same way.
+// Issue #32 (US1): the real HAProxy driver never obtains a certificate
+// itself (its source is always 'external'), so the prune is skipped the
+// same way.
 test('syncProxyLive (real haproxy driver) pushes HAProxy config and skips the ACME prune, never touching Cloudflare', async () => {
   const haproxyInventory: Inventory = { ...inventory, statusPagePath: undefined, proxyDriver: 'haproxy' };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
@@ -310,11 +315,11 @@ test('syncProxyLive (real haproxy driver) pushes HAProxy config and skips the AC
   assert.equal(ssh.history.length, 1, 'only sync-proxy runs -- statusPagePath is unset and nothing is authGroup-gated');
   assert.match(ssh.history[0].command, /haproxy -c -f \/etc\/haproxy\/haproxy\.cfg/);
   assert.deepEqual(cloudflare.history, []);
-  assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes("'haproxy'")));
+  assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'external' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
 });
 
-// Issue #31 (US5, T022): the Nginx Proxy Manager driver's acmeDns01ViaCloudflare
-// also always returns false (it never touches DNS -- it either reuses an
+// Issue #31 (US5, T022): the Nginx Proxy Manager driver's source is always
+// 'acme-http' (issue #72; it never touches DNS -- it either reuses an
 // NPM certificate or has NPM request one over HTTP-01), so this is the same
 // generic mechanism the fake-driver and real-nginx-driver tests above already
 // exercise, just proven against the real registered 'nginx-proxy-manager'
@@ -338,8 +343,8 @@ test('syncProxyLive (real Nginx Proxy Manager driver, fake client) pushes NPM co
     );
     assert.equal(ssh.history.length, 0, 'the NPM driver reconciles over REST, never SSH');
     assert.ok(npmClient.writes().length > 0, 'sanity: the fake NPM client actually applied the plex-lxc route');
-    assert.deepEqual(cloudflare.history, [], "the NPM driver's acmeDns01ViaCloudflare returns false, so the prune never calls Cloudflare");
-    assert.ok(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('nginx-proxy-manager')));
+    assert.deepEqual(cloudflare.history, [], "the NPM driver's TLS source is 'acme-http', so the prune never calls Cloudflare");
+    assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'acme-http' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
   } finally {
     // Restore the real, buildNpmClient-backed driver under the same id --
     // registerDriverForTests's unregister() only deletes, it does not know
@@ -348,10 +353,9 @@ test('syncProxyLive (real Nginx Proxy Manager driver, fake client) pushes NPM co
   }
 });
 
-// issue #51, User Story 4, T024: the prune now follows the active driver's
-// configured TLS source (issue #72: tlsSource), not just its identity -- a
-// deployment opts out of Cloudflare DNS-01 with tlsSource without switching
-// drivers, for Caddy and Traefik alike.
+// issue #72 (US3): the prune follows the effective TLS source alone (acme-dns
+// with the cloudflare provider), not the driver's identity -- a deployment
+// opts out of Cloudflare DNS-01 with tlsSource without switching drivers.
 test('syncProxyLive (real caddy driver, tlsSource unset) still prunes Cloudflare', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
@@ -359,7 +363,7 @@ test('syncProxyLive (real caddy driver, tlsSource unset) still prunes Cloudflare
     syncProxyLive({ ssh, inventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
   );
   assert.ok(cloudflare.history.length > 0, 'an unset tlsSource still means acme-dns via cloudflare, so the prune runs');
-  assert.equal(logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('caddy')), false);
+  assert.equal(logs.info.some((l) => l.includes('prune-acme-challenges: skipped, the TLS source')), false);
 });
 
 test("syncProxyLive (real caddy driver, tlsSource 'internal') skips the ACME prune, never touching Cloudflare", async () => {
@@ -370,11 +374,46 @@ test("syncProxyLive (real caddy driver, tlsSource 'internal') skips the ACME pru
     syncProxyLive({ ssh, inventory: internalInventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
   );
   assert.deepEqual(cloudflare.history, [], "'internal' never touches Cloudflare DNS-01, so the prune never runs");
-  assert.ok(
-    logs.info.some(
-      (l) => l.includes('prune-acme-challenges: skipped') && l.includes("the 'caddy' proxy driver is not configured to use ACME DNS-01 via Cloudflare")
-    )
+  assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'internal' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
+});
+
+// issue #72 (US3): every other Caddy source skips with its own name in the line.
+for (const tlsSource of ['acme-http', 'files'] as const) {
+  test(`syncProxyLive (real caddy driver, tlsSource '${tlsSource}') skips the ACME prune, never touching Cloudflare`, async () => {
+    const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+    const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+    const logs = await captureLogs(() =>
+      syncProxyLive({ ssh, inventory: { ...inventory, tlsSource }, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+    );
+    assert.deepEqual(cloudflare.history, []);
+    assert.ok(hasInfo(logs, `prune-acme-challenges: skipped, the TLS source is '${tlsSource}' (only acme-dns with the cloudflare DNS provider leaves challenge records)`));
+  });
+}
+
+test("syncProxyLive (real caddy driver, tlsSource 'acme-dns') prunes Cloudflare", async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
+  const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+  await syncProxyLive({ ssh, inventory: { ...inventory, tlsSource: 'acme-dns' }, authentik: new UnconfiguredAuthentikClient(), cloudflare });
+  assert.ok(cloudflare.history.length > 0);
+});
+
+// Behavior change (US3 scenario 3): Traefik under acme-http names a resolver
+// but leaves no DNS-01 challenge records, so it no longer prunes.
+test("syncProxyLive (real traefik driver, tlsSource 'acme-http') skips the ACME prune", async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+  const logs = await captureLogs(() =>
+    syncProxyLive({ ssh, inventory: { ...inventory, statusPagePath: undefined, proxyDriver: 'traefik', tlsSource: 'acme-http' }, authentik: new UnconfiguredAuthentikClient(), cloudflare })
   );
+  assert.deepEqual(cloudflare.history, []);
+  assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'acme-http' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
+});
+
+test("syncProxyLive (real traefik driver, tlsSource 'acme-dns') prunes Cloudflare", async () => {
+  const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
+  const cloudflare = new FakeCloudflareClient({ zones: { 'example.com': 'zone-1' } });
+  await syncProxyLive({ ssh, inventory: { ...inventory, statusPagePath: undefined, proxyDriver: 'traefik', tlsSource: 'acme-dns' }, authentik: new UnconfiguredAuthentikClient(), cloudflare });
+  assert.ok(cloudflare.history.length > 0);
 });
 
 test("syncProxyLive (real traefik driver, tlsSource 'external') skips the ACME prune, never touching Cloudflare", async () => {
@@ -386,11 +425,7 @@ test("syncProxyLive (real traefik driver, tlsSource 'external') skips the ACME p
   );
   assert.equal(ssh.history.length, 1, 'only sync-proxy runs -- statusPagePath is unset and nothing is authGroup-gated');
   assert.deepEqual(cloudflare.history, []);
-  assert.ok(
-    logs.info.some(
-      (l) => l.includes('prune-acme-challenges: skipped') && l.includes("the 'traefik' proxy driver is not configured to use ACME DNS-01 via Cloudflare")
-    )
-  );
+  assert.ok(hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'external' (only acme-dns with the cloudflare DNS provider leaves challenge records)"));
 });
 
 // issue #26: the admin-API Caddy driver goes through the same push-live
@@ -472,8 +507,8 @@ test('syncProxyLive never reaches the prune when sync-proxy fails', async () => 
 // Issue #33 US2: under proxyDriver: 'none', syncProxyLive must make no SSH
 // calls at all (sync-proxy's own early return under 'none' means there is
 // nothing to write, so render-status-page's read/write never happens
-// either), log both the driver's status-page skip line and the existing
-// ACME-prune driver-capability skip line, and still reconcile Authentik
+// either), log both the driver's status-page skip line and the ACME-prune
+// TLS-source skip line, and still reconcile Authentik
 // when it is configured -- exactly as today.
 test("syncProxyLive under proxyDriver 'none' makes no SSH calls, logs both skip lines, and still runs sync-authentik", async () => {
   const noneInventory: Inventory = { ...inventory, proxyDriver: 'none' };
@@ -488,8 +523,8 @@ test("syncProxyLive under proxyDriver 'none' makes no SSH calls, logs both skip 
     'the driver status-page skip line must be logged'
   );
   assert.ok(
-    logs.info.some((l) => l.includes('prune-acme-challenges: skipped') && l.includes('none')),
-    'the existing ACME-prune driver-capability skip line must still be logged'
+    hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'external' (only acme-dns with the cloudflare DNS provider leaves challenge records)"),
+    "the ACME-prune skip line (the none driver's source is 'external') must still be logged"
   );
   // FakeAuthentikClient records what it was asked for; reaching this line
   // without throwing means sync-authentik still ran against it.
@@ -695,7 +730,7 @@ test('syncProxyLive: a failing sync-proxy still runs sync-authentik, skips the s
   const failing: ReverseProxyDriver = {
     id: 'fake-driver-apply-throws-f3' as ReverseProxyDriver['id'],
     label: 'Fake',
-    capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => true, tlsSources: ['files'], defaultTlsSource: 'files' },
+    capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: { suggestedPath: '/var/www/html/index.html' },
     async plan(): Promise<ProxyPlan> {

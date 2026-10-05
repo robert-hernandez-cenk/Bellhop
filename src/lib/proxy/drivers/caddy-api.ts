@@ -2,7 +2,6 @@ import type { DriverDeps, ProxyPlan, ReverseProxyDriver } from '../driver.ts';
 import type { ProxyContext, ProxyRoute } from '../routes.ts';
 import { formatCaddyPreview, formatConflictError, planCaddyConfig, type CaddyConfigPlan } from '../caddy-json.ts';
 import { readCaddyConfig, writeCaddyConfig } from '../caddy-admin.ts';
-import { caddyAcmeDns01ViaCloudflare } from './caddy.ts';
 
 // The payload plan() hands apply(): the reconciled configuration plus the
 // Etag it was computed from, so apply() writes exactly what was previewed
@@ -24,13 +23,9 @@ interface CaddyApiPayload {
 export const caddyApiDriver: ReverseProxyDriver = {
   id: 'caddy-api',
   label: 'Caddy (admin API)',
-  // Same as the file-based driver: Caddy enforces forward-auth itself, and
-  // caddyAcmeDns01ViaCloudflare (shared with drivers/caddy.ts, so neither
-  // copy can drift from the other) reports true only under tlsSource
-  // 'acme-dns' (unset defaults to it) -- the other sources never touch
-  // Cloudflare's DNS, so prune-acme-challenges has nothing to clean up after
-  // them.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare, tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
+  // Same as the file-based driver: Caddy enforces forward-auth itself and
+  // supports the same TLS sources (issue #72).
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-dns', 'acme-http', 'internal', 'files'], defaultTlsSource: 'acme-dns' },
   // No config file: driverDeps() resolves configPath to null, and the
   // Settings page hides Proxy config path for it.
   defaultConfigPath: null,

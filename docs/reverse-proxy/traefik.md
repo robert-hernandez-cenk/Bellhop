@@ -150,11 +150,13 @@ name. Under `acme-dns`/`acme-http` the output is unchanged from before
 (`tls: { certResolver: <name> }` on every router).
 
 The web UI's push-live step runs the stale `_acme-challenge` cleanup
-(`prune-acme-challenges`) under this driver whenever its routers name a
-resolver (`acme-dns` or `acme-http`) — a named resolver may be obtaining
-its own certificate through Cloudflare DNS-01 and so may leave one of those
-records behind; `files` and `external` never touch an ACME resolver at
-all, so there's nothing to clean up.
+(`prune-acme-challenges`) under this driver only for `tlsSource: acme-dns`
+with the `cloudflare` DNS provider, the same rule as every driver. Under
+`acme-http` the routers still name a resolver, but an HTTP challenge leaves
+no DNS records behind, so the cleanup is skipped (earlier releases ran it
+for any named resolver); `files` and `external` never touch an ACME
+resolver at all. If your resolver obtains certificates through Cloudflare
+DNS-01 and you want the cleanup, set `tlsSource` to `acme-dns`.
 
 ## Rendered file
 

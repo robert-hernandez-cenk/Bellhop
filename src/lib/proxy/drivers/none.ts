@@ -24,7 +24,7 @@ export const noneDriver: ReverseProxyDriver = {
   // unaffected by any inventory setting -- it manages no proxy, so it
   // never touches Cloudflare DNS either. The function wrapper here exists
   // only to satisfy the updated DriverCapabilities type (issue #51).
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: () => false, tlsSources: ['acme-dns', 'acme-http', 'internal', 'files', 'external'], defaultTlsSource: 'external' },
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-dns', 'acme-http', 'internal', 'files', 'external'], defaultTlsSource: 'external' },
   defaultConfigPath: null,
   statusPage: null,
 
