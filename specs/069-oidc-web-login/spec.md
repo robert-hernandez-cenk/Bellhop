@@ -31,19 +31,22 @@ A web user opens Bellhop in a browser. With no session, they are sent to Authent
 
 ---
 
-### User Story 2 - Sign out, and sessions that end on their own (Priority: P1)
+### User Story 2 - Sign out, and access that follows Authentik (Priority: P1)
 
-A signed-in user clicks Sign out and is signed out of Bellhop (and of Authentik, where Authentik supports it). A session that is never signed out ends by itself after a fixed lifetime, so a user the operator removes from a group, or deactivates, loses that access by the next sign-in at the latest.
+A signed-in user clicks Sign out and is signed out of Bellhop (and of Authentik, where Authentik supports it). While a user stays signed in, Bellhop silently re-checks them with Authentik every few minutes, so a user the operator removes from a group loses that access within minutes, and a user the operator deactivates is signed out, without anyone having to sign in again.
 
-**Why this priority**: without a way to end sessions, a removed admin would keep their rights indefinitely.
+**Why this priority**: without it, a removed admin would keep their rights for as long as their session lasts.
 
-**Independent Test**: sign in, sign out, and confirm the next API call returns 401 and the old session cookie no longer works. Separately, age a session past its lifetime and confirm it is refused.
+**Independent Test**: sign in, sign out, and confirm the next API call returns 401 and the old session cookie no longer works. Separately, with a session whose last check is older than 5 minutes, change the user's groups at the provider (or revoke them) and confirm the next request sees the new groups (or is refused).
 
 **Acceptance Scenarios**:
 
 1. **Given** a signed-in user, **When** they click Sign out, **Then** their session is destroyed server-side, the browser's cookie is cleared, and they are sent to Authentik's sign-out page when Authentik advertises one.
-2. **Given** a session older than 8 hours, **When** it is presented, **Then** it is refused as if absent and the user must sign in again.
-3. **Given** a signed-in user, **When** the Bellhop service restarts, **Then** they are still signed in.
+2. **Given** a session last checked more than 5 minutes ago, **When** it is presented, **Then** Bellhop re-checks it with Authentik before answering and uses the user's current groups.
+3. **Given** a session whose re-check Authentik refuses (user deactivated, access revoked, refresh token expired), **When** it is presented, **Then** the session is destroyed and the request is treated as unauthenticated.
+4. **Given** Authentik is unreachable during a re-check, **When** a session is presented, **Then** the request is served with the session's last-known identity, a warning is logged, and the re-check is retried on a later request.
+5. **Given** a session older than 30 days, **When** it is presented, **Then** it is refused and the user must sign in again.
+6. **Given** a signed-in user, **When** the Bellhop service restarts, **Then** they are still signed in.
 
 ---
 
@@ -123,6 +126,9 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 - A user signed in in two browsers has two independent sessions; signing out of one leaves the other.
 - `WEB_UI_DEV_USER` set (dev/test only) still supplies an identity when no session is present, in either mode's place as today; it must never be set in production.
 - Expired sessions and login attempts are removed, so the store does not grow without bound.
+- The provider rotates refresh tokens on use, so two concurrent re-checks of one session with the same token would make the second fail and wrongly end the session; re-checks of one session are therefore shared.
+- A provider that returns no refresh token at sign-in: the session cannot be re-checked, so it is refused at its first re-check point and the user signs in again (logged as a configuration problem naming the missing `offline_access`/refresh-token support).
+- A re-check that returns a different `sub` than the session's: treated as a refusal.
 
 ## Requirements *(mandatory)*
 
@@ -133,7 +139,7 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 - **FR-001**: The web UI auth mode MUST accept exactly `oidc` and `none`; an unset mode MUST mean `none`.
 - **FR-002**: A stored mode of `authentik` MUST be rewritten to `oidc`, and a stored `auto` MUST be cleared, the first time the settings store is opened after upgrade; the rewrite MUST be idempotent.
 - **FR-003**: An environment override of the mode set to any other value (including `auto` or `authentik`) MUST stop the service at start-up with a message naming the accepted values and, for the two removed ones, the replacement.
-- **FR-004**: In `none` mode every request MUST be served as the local operator, with the existing start-up warning and web UI banner.
+- **FR-004**: A valid session MUST identify the request in either mode. In `none` mode a request without one MUST be served as the local operator (or, dev/test only, `WEB_UI_DEV_USER`), with the existing start-up warning and web UI banner.
 
 **Configuration**
 
@@ -152,7 +158,9 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 **Sessions**
 
 - **FR-013**: A session MUST be held server-side and survive a service restart. The browser MUST hold only an unguessable session id (at least 256 bits of randomness) in a cookie marked `HttpOnly`, `Secure` and `SameSite=Lax`; the server MUST store only a one-way hash of that id.
-- **FR-014**: A session MUST expire 8 hours after sign-in regardless of activity. Expired sessions and attempts MUST be removed.
+- **FR-014**: A session MUST be re-checked with the identity provider, using the refresh token obtained at sign-in, on the first request after 5 minutes have passed since its last successful check; the re-check MUST replace the session's username, email and groups with the provider's current values. A refusal from the provider MUST destroy the session; a failure to reach it MUST keep the last-known identity, log a warning, and retry on a later request. Concurrent requests for one session MUST share a single re-check.
+- **FR-014a**: A session MUST end 30 days after sign-in regardless of re-checks. Expired sessions and login attempts MUST be removed.
+- **FR-014b**: The refresh token MUST be held only server-side, never sent to the browser or included in any response, log line or error.
 - **FR-015**: Sign-out MUST destroy the session server-side, clear the cookie, and send the browser to the identity provider's end-session endpoint when it advertises one (else to a signed-out page).
 
 **Request authentication**
@@ -184,7 +192,7 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 
 ### Key Entities
 
-- **Session**: the hash of the session id; the user's username, stable id, email and groups; created and expiry times.
+- **Session**: the hash of the session id; the user's username, stable id, email and groups; the refresh token and ID token (server-side only); created, last-checked and expiry times.
 - **Login attempt**: the `state`, PKCE verifier, nonce, return path and creation time of a sign-in in progress; deleted when used or expired.
 - **OIDC client settings**: issuer URL, client id, callback URL (settings) and client secret (secret).
 - **Web UI auth mode**: `oidc` or `none` (unset = `none`).
@@ -195,7 +203,7 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 
 - **SC-001**: In `oidc` mode, 100% of requests without a valid session are refused (401 or redirect to sign-in), including requests that carry forged identity headers, whatever proxy or network path they arrive by.
 - **SC-002**: A user can go from opening a Bellhop link to seeing that page signed in within one Authentik sign-in, with no other step.
-- **SC-003**: A user removed from the admin group loses admin access within 8 hours, and immediately on their next sign-in.
+- **SC-003**: A user removed from the admin group loses admin access within 5 minutes of their next request, and a deactivated user is signed out within the same bound, with no action by them or the operator.
 - **SC-004**: Signing out makes the old session unusable on the very next request.
 - **SC-005**: Restarting the service signs nobody out.
 - **SC-006**: Configuring the sign-in client takes one command after the existing Authentik reconcile, with no secret copied by hand.
@@ -209,7 +217,7 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 - One Bellhop instance per deployment; sessions are not shared across instances.
 - Authentik's issuer for an application is the per-application issuer `runOidcCredentials` already reports.
 - The callback path is fixed at `/auth/callback`; the operator lists `https://<bellhop host>/auth/callback` in Bellhop's entry's OIDC redirect URIs.
-- Group changes reaching an existing session within the 8-hour lifetime is acceptable (operator decision); there is no refresh-token or API re-check.
+- Authentik issues refresh tokens to its confidential OIDC clients (30-day validity on the operator's instance, rotated on use) and returns current claims from userinfo after a refresh (operator decision to re-check this way rather than rely on a session lifetime).
 - With header trust gone, the firewall's remote-address restriction no longer protects anything in `oidc` mode; in `none` mode the operator accepts that anyone who can reach the port is an admin (operator decision).
 
 ## Out of Scope
@@ -217,5 +225,4 @@ Bellhop's own route is no longer forward-gated, so its web UI is reachable and s
 - Identity providers other than Authentik (the flow is standard OIDC and should not preclude them, but only Authentik is tested).
 - The MCP server's authentication (stays the API key, #66).
 - The first-run setup walkthrough that creates the client and flips the mode (#70).
-- Refresh-token or Authentik-API re-checking of group membership during a session.
 - Sharing sessions across several Bellhop instances.

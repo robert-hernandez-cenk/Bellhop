@@ -32,4 +32,4 @@
 ## Notes
 
 - The spec names protocol-level security properties (authorization-code flow, PKCE, `state`/`nonce`, `HttpOnly`/`Secure`/`SameSite` cookie attributes, ID-token claim names). These are the security requirements themselves, not implementation choices, so they stay. Libraries, storage engine and file layout are left to the plan.
-- The three open decisions (default mode, group freshness, firewall scoping) were settled by the operator during brainstorming and are recorded in FR-001, FR-014 and FR-024 and in Assumptions.
+- The three open decisions (default mode, group freshness, firewall scoping) were settled by the operator during brainstorming and are recorded in FR-001, FR-014 and FR-024 and in Assumptions. Group freshness was first settled as an 8-hour session lifetime, then changed by the operator to refresh-token re-checking after reviewing the live Authentik token lifetimes (access 1h, refresh 30d, browser session 4 weeks).
