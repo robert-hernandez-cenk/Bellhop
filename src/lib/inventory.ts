@@ -667,7 +667,19 @@ function migrateCaddyToProxy(db: Database.Database): void {
 // had them. Runs on every openInventoryDb caller (load and save alike),
 // reading only this handle's meta table -- no config accessor, so it is
 // safe mid-open and on paths that never load the inventory.
+//
+// A one-row guard query runs first and returns when no legacy row exists --
+// every open after the first -- so the reads and the write lock below are
+// only ever paid once. The transaction is IMMEDIATE: it reads and then
+// writes, and a deferred one could hit SQLITE_BUSY_SNAPSHOT when two
+// processes (the web service and a CLI command) open a legacy database at
+// the same moment; taking the write lock up front makes the second wait
+// for the first, then find nothing left to convert.
 function migrateLegacyTlsSettings(db: Database.Database): void {
+  const hasLegacyRow = db
+    .prepare("SELECT 1 FROM meta WHERE key = 'proxyCaddyTls' OR (key = 'proxyCertResolver' AND value = 'none') LIMIT 1")
+    .get();
+  if (hasLegacyRow === undefined) return;
   const tx = db.transaction(() => {
     const read = (key: string): string | undefined =>
       (db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined)?.value;
@@ -687,7 +699,7 @@ function migrateLegacyTlsSettings(db: Database.Database): void {
     for (const key of conversion.remove) db.prepare('DELETE FROM meta WHERE key = ?').run(key);
     logInfo(`Migrated TLS settings to tlsSource (#72, one-time, irreversible): ${conversion.description}`);
   });
-  tx();
+  tx.immediate();
 }
 
 function openInventoryDb(path: string): Database.Database {

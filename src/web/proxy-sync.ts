@@ -11,6 +11,7 @@ import type { CloudflareClient } from '../lib/cloudflare-client.ts';
 import { UnconfiguredCloudflareClient, CLOUDFLARE_UNCONFIGURED_MESSAGE } from '../lib/cloudflare-client.ts';
 import { runPruneAcmeChallenges } from '../commands/networking/prune-acme-challenges.ts';
 import { getDriver } from '../lib/proxy/index.ts';
+import { managesProxy } from '../lib/proxy/driver.ts';
 import { effectiveTlsSource, usesCloudflareDns01 } from '../lib/proxy/tls.ts';
 import type { TlsSource } from '../lib/proxy/ids.ts';
 
@@ -65,6 +66,12 @@ export function pruneAcmeTlsSkipMessage(tlsSource: TlsSource): string {
   return `prune-acme-challenges: skipped, the TLS source is '${tlsSource}' (only acme-dns with the cloudflare DNS provider leaves challenge records)`;
 }
 
+// Under proxyDriver 'none' any challenge records belong to the operator's
+// own proxy, whatever tlsSource is stored, so the prune never runs -- the
+// same skip shape the status page step logs for 'none'.
+export const PRUNE_ACME_NO_PROXY_SKIP_MESSAGE =
+  "prune-acme-challenges: skipped, proxyDriver is 'none' (Bellhop manages no reverse proxy, so its challenge records are not Bellhop's)";
+
 // Last step of the push-live sequence (issue #162). Every failure is turned
 // into a warning: a stale TXT record is harmless, so a Cloudflare outage or a
 // bad token must never fail the Dashboard edit or provisioning job that
@@ -72,6 +79,10 @@ export function pruneAcmeTlsSkipMessage(tlsSource: TlsSource): string {
 // operator action a Dashboard banner could ask for.
 async function pruneAcmeChallengesLive(cloudflare: CloudflareClient, inventory: Inventory): Promise<void> {
   const driver = getDriver(inventory);
+  if (!managesProxy(driver)) {
+    logInfo(PRUNE_ACME_NO_PROXY_SKIP_MESSAGE);
+    return;
+  }
   if (!usesCloudflareDns01(inventory, driver)) {
     logInfo(pruneAcmeTlsSkipMessage(effectiveTlsSource(inventory, driver)));
     return;

@@ -55,7 +55,7 @@ acmeDnsProvider: AcmeDnsProvider    // resolved, default cloudflare
 - `effectiveTlsSource(inventory, driver) = inventory.tlsSource ?? driver.capabilities.defaultTlsSource`
 - `acmeDnsProvider(inventory) = inventory.acmeDnsProvider ?? DEFAULT_ACME_DNS_PROVIDER`
 - `checkTlsSource(inventory, driver): string | null` — message when the effective source is not in `tlsSources`
-- `usesCloudflareDns01(inventory, driver)` — `acme-dns` && `cloudflare`
+- `usesCloudflareDns01(inventory, driver)` — `managesProxy(driver)` && `checkTlsSource` passes && `acme-dns` && `cloudflare`
 
 ## Legacy conversion (`src/lib/proxy/legacy-tls.ts`)
 
@@ -66,7 +66,8 @@ convertLegacyTlsSettings({ proxyDriver?, proxyCaddyTls?, proxyCertResolver?, tls
 
 | Active driver | Legacy value | Writes `tlsSource` (if unset) | Removes |
 |---|---|---|---|
-| caddy / caddy-api / unset | proxyCaddyTls cloudflare / letsencrypt / internal / files | acme-dns / acme-http / internal / files | proxyCaddyTls |
+| caddy / caddy-api / unset | proxyCaddyTls cloudflare | — (left unset: Caddy's default, acme-dns) | proxyCaddyTls |
+| caddy / caddy-api / unset | proxyCaddyTls letsencrypt / internal / files | acme-http / internal / files | proxyCaddyTls |
 | traefik | proxyCertResolver none | external | proxyCertResolver |
 | any other | proxyCaddyTls any | — | proxyCaddyTls |
 | any other than traefik | proxyCertResolver none | — | proxyCertResolver |

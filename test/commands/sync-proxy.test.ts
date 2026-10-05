@@ -842,7 +842,7 @@ test('sync-proxy (caddy-api driver) previews the admin-API plan without needing 
 
 // --- TLS source refusal (issue #72, US2) ---
 const REFUSAL =
-  "tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page";
+  "tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- to use its default (files), run: bellhop set-config tlsSource --unset --apply, or set it on the web UI's Settings page";
 
 test('sync-proxy refuses a TLS source the driver cannot serve, dry run and --apply, before any SSH call (issue #72)', async () => {
   for (const apply of [false, true]) {

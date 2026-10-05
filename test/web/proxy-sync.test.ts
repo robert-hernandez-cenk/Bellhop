@@ -12,7 +12,7 @@ import {
 } from '../../src/commands/networking/sync-authentik.ts';
 import { FakeCloudflareClient, txtRecord } from '../support/fake-cloudflare-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
-import { PRUNE_ACME_SKIP_MESSAGE } from '../../src/web/proxy-sync.ts';
+import { PRUNE_ACME_SKIP_MESSAGE, PRUNE_ACME_NO_PROXY_SKIP_MESSAGE } from '../../src/web/proxy-sync.ts';
 import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 import { NO_PROXY_SYNC_MESSAGE } from '../../src/lib/proxy/driver.ts';
@@ -522,13 +522,30 @@ test("syncProxyLive under proxyDriver 'none' makes no SSH calls, logs both skip 
     logs.info.some((l) => l.includes("proxyDriver is 'none' -- skipping the status page render")),
     'the driver status-page skip line must be logged'
   );
-  assert.ok(
-    hasInfo(logs, "prune-acme-challenges: skipped, the TLS source is 'external' (only acme-dns with the cloudflare DNS provider leaves challenge records)"),
-    "the ACME-prune skip line (the none driver's source is 'external') must still be logged"
-  );
+  assert.ok(hasInfo(logs, PRUNE_ACME_NO_PROXY_SKIP_MESSAGE), "the ACME-prune skip line names the 'none' driver");
+  assert.ok(!logs.info.some((l) => l.includes('the TLS source is')), 'no TLS-source reason: no proxy is managed at all');
   // FakeAuthentikClient records what it was asked for; reaching this line
   // without throwing means sync-authentik still ran against it.
   assert.ok(Array.isArray(await authentik.listApplications()));
+});
+
+// Issue #72 review: a stored tlsSource 'acme-dns' outlives a switch to
+// proxyDriver 'none' (the setting is never checked on write). The stale
+// _acme-challenge records then belong to the operator's own proxy, so the
+// prune must still never touch Cloudflare.
+test("syncProxyLive under proxyDriver 'none' never prunes Cloudflare, even with tlsSource 'acme-dns' stored", async () => {
+  const noneInventory: Inventory = { ...inventory, proxyDriver: 'none', tlsSource: 'acme-dns', acmeDnsProvider: 'cloudflare' };
+  const ssh = new FakeSSHClient(() => ({ stdout: 'unused', stderr: '', code: 0 }));
+  const cloudflare = new FakeCloudflareClient({
+    zones: { 'example.com': 'zone-1' },
+    records: [txtRecord('old', '_acme-challenge.gone.example.com', STALE_MODIFIED_ON)],
+  });
+  const logs = await captureLogs(() =>
+    syncProxyLive({ ssh, inventory: noneInventory, authentik: new UnconfiguredAuthentikClient(), cloudflare })
+  );
+  assert.deepEqual(cloudflare.history, []);
+  assert.equal(cloudflare.records.length, 1);
+  assert.ok(hasInfo(logs, PRUNE_ACME_NO_PROXY_SKIP_MESSAGE));
 });
 
 // A driver that manages a proxy but serves no status page, with

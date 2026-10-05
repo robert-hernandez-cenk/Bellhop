@@ -21,6 +21,8 @@ import Database from 'better-sqlite3';
 import { loadInventory, saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
 import { FakeSSHClient } from '../../support/fake-ssh-client.ts';
+import { checkTlsSource } from '../../../src/lib/proxy/tls.ts';
+import { nginxDriver } from '../../../src/lib/proxy/drivers/nginx.ts';
 
 const base: Inventory = {
   domain: 'example.com',
@@ -113,4 +115,14 @@ test("traefik with legacy proxyCertResolver 'none' renders the pre-#72 resolver-
   assert.doesNotMatch(result.preview, /certResolver/);
   const explicit = await runSyncProxy({}, { ssh: quiet(), inventory: { ...base, proxyDriver: 'traefik', tlsSource: 'external' } });
   assert.equal(result.preview, explicit.preview);
+});
+
+// Code review (#72): the old default proxyCaddyTls 'cloudflare' migrates to
+// an unset tlsSource, not a pinned 'acme-dns' -- Caddy's output is the same
+// (pinned above), and a later switch to a driver without acme-dns falls
+// back to that driver's default instead of being refused.
+test("caddy with legacy proxyCaddyTls 'cloudflare' migrates to an unset tlsSource, so a switch to nginx is not refused", () => {
+  const inventory = legacyInventory('caddy', { proxyCaddyTls: 'cloudflare' });
+  assert.equal(inventory.tlsSource, undefined);
+  assert.equal(checkTlsSource({ ...inventory, proxyDriver: 'nginx' }, nginxDriver), null);
 });

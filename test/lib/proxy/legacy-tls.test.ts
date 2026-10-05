@@ -2,8 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { convertLegacyTlsSettings } from '../../../src/lib/proxy/legacy-tls.ts';
 
-test('caddy / caddy-api / unset driver: each proxyCaddyTls value maps to its tlsSource and is removed', () => {
-  const map = { cloudflare: 'acme-dns', letsencrypt: 'acme-http', internal: 'internal', files: 'files' } as const;
+// 'cloudflare' was proxyCaddyTls's default and maps to Caddy's default
+// tlsSource ('acme-dns'), so it is left unset rather than pinned: a pinned
+// acme-dns would make a later switch to nginx/haproxy/NPM be refused.
+test("caddy / caddy-api / unset driver: proxyCaddyTls 'cloudflare' is removed and leaves tlsSource unset (Caddy's default)", () => {
+  for (const driver of ['caddy', 'caddy-api', undefined] as const) {
+    const result = convertLegacyTlsSettings({ proxyDriver: driver, proxyCaddyTls: 'cloudflare' });
+    assert.equal(result.tlsSource, undefined, String(driver));
+    assert.deepEqual(result.remove, ['proxyCaddyTls']);
+    assert.equal(result.description, "proxyCaddyTls 'cloudflare' -> tlsSource left unset (Caddy's default, acme-dns); removed proxyCaddyTls");
+  }
+});
+
+test('caddy / caddy-api / unset driver: every other proxyCaddyTls value maps to its tlsSource and is removed', () => {
+  const map = { letsencrypt: 'acme-http', internal: 'internal', files: 'files' } as const;
   for (const driver of ['caddy', 'caddy-api', undefined] as const) {
     for (const [legacy, tlsSource] of Object.entries(map)) {
       const result = convertLegacyTlsSettings({ proxyDriver: driver, proxyCaddyTls: legacy });

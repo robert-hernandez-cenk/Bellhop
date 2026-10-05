@@ -37,6 +37,19 @@ export function proxyDriverOptions(
   }));
 }
 
+// The Settings page's ACME DNS provider <select> options (issue #72): the
+// server's provider list in its order, only the default suffixed
+// " (default)" -- same convention as proxyDriverOptions above.
+export function acmeDnsProviderOptions(
+  providers: readonly string[],
+  defaultProvider: string,
+): Array<{ value: string; label: string }> {
+  return providers.map((provider) => ({
+    value: provider,
+    label: provider === defaultProvider ? `${provider} (default)` : provider,
+  }));
+}
+
 // The Settings page's TLS source <select> options (issue #72): the
 // selected driver's own tlsSources, in the server's order, with only its
 // defaultTlsSource suffixed " (default)" -- same convention as

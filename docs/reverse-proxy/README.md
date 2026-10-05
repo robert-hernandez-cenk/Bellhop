@@ -33,7 +33,8 @@ plus the `defaultTlsSource` an unset `tlsSource` setting means for it — see
 runs `prune-acme-challenges` is not a driver property: it runs only when
 the effective `tlsSource` is `acme-dns` with the `cloudflare` DNS provider,
 since any other source leaves no `_acme-challenge` records behind for it to
-clean up. A driver implements three operations: `plan()` turns the routes
+clean up -- and never under `proxyDriver: none` (or for a source the
+driver can't serve), since then any such records are not Bellhop's. A driver implements three operations: `plan()` turns the routes
 derived from inventory into a preview and an opaque payload (the dry-run preview is
 always exactly what `--apply` sends); `apply()` sends that payload live and
 reloads the proxy, throwing on failure — a failed validate or write
@@ -158,10 +159,12 @@ produced — `sync-proxy` (dry run and `--apply`, before any SSH call),
 as a proxy failure while the guest edit itself is still saved:
 
 ```text
-tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page
+tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- to use its default (files), run: bellhop set-config tlsSource --unset --apply, or set it on the web UI's Settings page
 ```
 
-The fix always names the driver's own default. Under `proxyDriver: none`
+The fix unsets `tlsSource` so the driver's own default (named in the
+message) applies, rather than pinning it -- a later driver switch then
+falls back to that driver's default too. Under `proxyDriver: none`
 nothing is rendered, so nothing is refused.
 
 How each driver serves each source:

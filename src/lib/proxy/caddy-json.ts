@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
-import type { AcmeDnsProvider, TlsSource } from './ids.ts';
+import type { AcmeDnsProvider } from './ids.ts';
 import {
   ACME_DNS_RESOLVERS,
   AUTHENTIK_COPY_HEADERS,
@@ -253,18 +253,11 @@ function externalSourceError(): Error {
 
 // Whether Bellhop writes an automation policy of its own under this source
 // -- the sources whose untagged operator policies naming a Bellhop hostname
-// are conflicts (planCaddyConfig, research R4).
-function writesAutomationPolicy(source: TlsSource): boolean {
-  switch (source) {
-    case 'acme-dns':
-    case 'internal':
-      return true;
-    case 'acme-http':
-    case 'files':
-      return false;
-    case 'external':
-      throw externalSourceError();
-  }
+// are conflicts (planCaddyConfig, research R4). Derived from
+// renderTlsObjects itself rather than restated per source, so the two can
+// never disagree; it throws for 'external' exactly as rendering does.
+function writesAutomationPolicy(ctx: ProxyContext): boolean {
+  return renderTlsObjects([], ctx).policy !== undefined;
 }
 
 // The adapter's trailing `{}` connection policy: once a server has any
@@ -441,7 +434,7 @@ export function planCaddyConfig(
   // policies never claim: Bellhop's SNI policy is prepended, so it matches
   // first. Wildcards never match here. Throws for 'external' even with no
   // routes, so the backstop never depends on the inventory's contents.
-  const writesPolicy = writesAutomationPolicy(ctx.tlsSource);
+  const writesPolicy = writesAutomationPolicy(ctx);
   const claims = new Map<string, Omit<CaddyConflict, 'hostname' | 'owner'>>();
   for (const [name, server] of Object.entries(servers)) {
     for (const r of server.routes ?? []) {

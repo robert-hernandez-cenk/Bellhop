@@ -98,7 +98,8 @@ host. Load the same inventory and confirm it loads.
 1. **Given** the nginx driver and `tlsSource: internal`, **When** the
    operator runs `sync-proxy` (dry run or `--apply`), **Then** it fails
    with a message naming `internal`, the `nginx` driver, its supported
-   values (`files`), and a `bellhop set-config tlsSource ... --apply` fix,
+   values (`files`), and a `bellhop set-config tlsSource --unset --apply` fix
+   (the driver's default applies once `tlsSource` is unset),
    and nothing is written.
 2. **Given** an inventory with an unsupported combination, **When** any
    command or the web UI loads it, **Then** it loads normally.
@@ -159,10 +160,13 @@ configuration before and after.
 **Acceptance Scenarios**:
 
 1. **Given** a database with the Caddy driver (explicit or unset) and
-   `proxyCaddyTls` `cloudflare`/`letsencrypt`/`internal`/`files`, **When**
-   it is opened, **Then** `tlsSource` becomes
-   `acme-dns`/`acme-http`/`internal`/`files`, `proxyCaddyTls` is gone, and
-   the rendered output is unchanged.
+   `proxyCaddyTls` `letsencrypt`/`internal`/`files`, **When** it is
+   opened, **Then** `tlsSource` becomes `acme-http`/`internal`/`files`,
+   `proxyCaddyTls` is gone, and the rendered output is unchanged. With
+   `proxyCaddyTls: cloudflare` (its old default) `proxyCaddyTls` is removed
+   and `tlsSource` is left unset -- Caddy's default, `acme-dns`, so the
+   output is unchanged and a later switch to a driver without `acme-dns`
+   is not refused (code review).
 2. **Given** a database with the Traefik driver and
    `proxyCertResolver: none`, **When** it is opened, **Then** `tlsSource`
    becomes `external`, `proxyCertResolver` is removed, and the rendered
@@ -178,7 +182,9 @@ configuration before and after.
    opened, **Then** nothing changes and nothing is logged.
 6. **Given** a `hosts.yaml` containing `proxyCaddyTls` or
    `proxyCertResolver: none`, **When** it is imported, **Then** the same
-   mapping applies.
+   mapping applies; a `proxyCaddyTls` value the old setting never accepted
+   (a typo) fails the import with an error naming the key, the value and
+   the allowed values.
 
 ---
 
@@ -269,7 +275,9 @@ check which fields appear and the warning.
   rendering routers with an empty TLS section and listing the shared
   certificate/key pair in its dynamic configuration file.
 - **FR-009**: The Cloudflare ACME challenge prune after a live sync MUST
-  run only when the effective TLS source is `acme-dns` and the ACME DNS
+  run only when Bellhop manages the proxy (never under `proxyDriver:
+  none`, whatever `tlsSource` is stored), the active driver supports the
+  effective TLS source, that source is `acme-dns` and the ACME DNS
   provider is `cloudflare`; the skip log line MUST name the reason.
 - **FR-010**: The `proxyCaddyTls` setting and the reserved
   `proxyCertResolver` value `none` MUST be removed; `proxyCertResolver`
@@ -277,16 +285,19 @@ check which fields appear and the warning.
   `proxyTlsKey` MUST keep naming the shared pair.
 - **FR-011**: Opening an inventory database MUST migrate legacy values
   once: the value the active driver read is converted (`proxyCaddyTls`
-  `cloudflare`→`acme-dns`, `letsencrypt`→`acme-http`,
-  `internal`→`internal`, `files`→`files` for the Caddy drivers or an unset
-  driver; `proxyCertResolver: none`→`external` for Traefik), unless
+  `letsencrypt`→`acme-http`, `internal`→`internal`, `files`→`files` for
+  the Caddy drivers or an unset driver, while `cloudflare` -- the old
+  default -- leaves `tlsSource` unset, which means the same `acme-dns`;
+  `proxyCertResolver: none`→`external` for Traefik), unless
   `tlsSource` is already set; a legacy value the active driver did not
   read is not converted; every legacy value is removed; one log line is
   written only when something changed. (Each conversion targets only the
   driver that read the value, and that driver supports every converted
   value, so a migration can never produce an unsupported combination.)
 - **FR-012**: Importing a `hosts.yaml` inventory MUST apply the same
-  conversion to legacy values in the file.
+  conversion to legacy values in the file, and MUST reject a
+  `proxyCaddyTls` value outside `cloudflare`/`letsencrypt`/`internal`/
+  `files` with an error naming the key, the value and the allowed values.
 - **FR-013**: The Settings page's Proxy tab MUST show one TLS source
   dropdown for any driver that manages a proxy, listing only that driver's
   supported sources in a fixed order and marking its default.

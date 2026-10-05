@@ -22,8 +22,8 @@ Key suites: `test/lib/proxy/tls.test.ts`, `test/lib/proxy/legacy-tls.test.ts`,
 1. Seed a fixture: `npm run bellhop -- import-yaml-inventory --yaml-path inventory/hosts.yaml.example --db-path <tmp>/bellhop.db --apply`, then `export INVENTORY_FILE=<tmp>/bellhop.db`.
 2. `npm run bellhop -- sync-proxy` — Caddy, unset `tlsSource`: every block ends with the Cloudflare `tls { dns cloudflare ... }` clause.
 3. `npm run bellhop -- set-config tlsSource acme-http --apply`, then `sync-proxy` — no TLS clause.
-4. `npm run bellhop -- set-config proxyDriver nginx --apply`, then `sync-proxy` — refused: `tlsSource 'acme-http' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page`.
-5. `npm run bellhop -- set-config tlsSource files --apply`, then `sync-proxy` — nginx preview with `ssl_certificate` lines.
+4. `npm run bellhop -- set-config proxyDriver nginx --apply`, then `sync-proxy` — refused: `tlsSource 'acme-http' is not supported by the 'nginx' proxy driver (it supports: files) -- to use its default (files), run: bellhop set-config tlsSource --unset --apply, or set it on the web UI's Settings page`.
+5. `npm run bellhop -- set-config tlsSource --unset --apply`, then `sync-proxy` — nginx preview with `ssl_certificate` lines.
 6. `set-config proxyDriver traefik` + `set-config tlsSource files` — preview has routers with `tls: {}` and a top-level `tls.certificates` entry.
 
 ## Migration (fixture)

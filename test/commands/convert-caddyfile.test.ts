@@ -166,7 +166,7 @@ test('refuses a TLS source caddy-api cannot serve before any SSH call (issue #72
   const ssh = fakeProxyHost();
   await assert.rejects(
     () => runConvertCaddyfile({}, { ssh, inventory: { ...inventory, tlsSource: 'external' } }),
-    /^Error: tlsSource 'external' is not supported by the 'caddy-api' proxy driver \(it supports: acme-dns, acme-http, internal, files\) -- run: bellhop set-config tlsSource acme-dns --apply/
+    /^Error: tlsSource 'external' is not supported by the 'caddy-api' proxy driver \(it supports: acme-dns, acme-http, internal, files\) -- to use its default \(acme-dns\), run: bellhop set-config tlsSource --unset --apply/
   );
   assert.deepEqual(ssh.history, []);
 });

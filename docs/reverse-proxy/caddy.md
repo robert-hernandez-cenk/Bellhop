@@ -36,7 +36,10 @@ bellhop set-config tlsSource acme-http --apply
 Each source renders exactly the Caddyfile clause the matching old
 `proxyCaddyTls` mode did (`cloudflare` → `acme-dns`, `letsencrypt` →
 `acme-http`, `internal` and `files` unchanged), so a deployment moving
-to `tlsSource` sees no change in its Caddyfile.
+to `tlsSource` sees no change in its Caddyfile. On upgrade a stored
+`proxyCaddyTls: cloudflare` (the old default) just leaves `tlsSource`
+unset, which already means `acme-dns` here; the other modes are written
+as an explicit `tlsSource`.
 
 Switching between any two sources needs only the setting change and one
 `sync-proxy --apply` — there's no manual cleanup of Caddy's own

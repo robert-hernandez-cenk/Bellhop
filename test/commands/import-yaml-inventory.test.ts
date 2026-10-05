@@ -187,6 +187,40 @@ test('runImportYamlInventory converts a legacy proxyCaddyTls to tlsSource', asyn
   assert.equal(loadInventory(dbPath).tlsSource, 'acme-http');
 });
 
+test("runImportYamlInventory drops proxyCaddyTls 'cloudflare' and leaves tlsSource unset (Caddy's default)", async () => {
+  const yamlPath = tempYamlFile(`proxyDriver: caddy\nproxyCaddyTls: cloudflare\n${VALID_YAML}`);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  const result = await runImportYamlInventory({ yamlPath, dbPath, apply: true });
+  assert.equal(result.inventory.tlsSource, undefined);
+  assert.equal(loadInventory(dbPath).tlsSource, undefined);
+});
+
+// The pre-#72 schema rejected an unknown proxyCaddyTls with an enum error;
+// a typo must still fail the import rather than vanish (the database open
+// path can't fail a load, so only this path rejects it).
+test('runImportYamlInventory rejects an unknown proxyCaddyTls value, naming the key, value and allowed values', async () => {
+  for (const driver of ['caddy', 'nginx']) {
+    const yamlPath = tempYamlFile(`proxyDriver: ${driver}\nproxyCaddyTls: letsencrpyt\n${VALID_YAML}`);
+    const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+    await assert.rejects(
+      () => runImportYamlInventory({ yamlPath, dbPath, apply: true }),
+      (err: Error) => {
+        assert.equal(
+          err.message,
+          "hosts.yaml has proxyCaddyTls 'letsencrpyt', which is not one of: cloudflare, letsencrypt, internal, files -- proxyCaddyTls was replaced by tlsSource in #72; fix the value (or set tlsSource instead) and re-run"
+        );
+        return true;
+      }
+    );
+  }
+});
+
+test('runImportYamlInventory rejects a non-string proxyCaddyTls value', async () => {
+  const yamlPath = tempYamlFile(`proxyDriver: caddy\nproxyCaddyTls: 5\n${VALID_YAML}`);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  await assert.rejects(() => runImportYamlInventory({ yamlPath, dbPath }), /hosts\.yaml has proxyCaddyTls '5', which is not one of/);
+});
+
 test('runImportYamlInventory converts traefik + proxyCertResolver none to tlsSource external', async () => {
   const yamlPath = tempYamlFile(`proxyDriver: traefik\nproxyCertResolver: none\n${VALID_YAML}`);
   const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');

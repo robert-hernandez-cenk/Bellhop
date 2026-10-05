@@ -12,6 +12,7 @@ import {
   fieldsForTab,
   fieldState,
   isSecretField,
+  acmeDnsProviderOptions,
   effectiveWebUiAuthMode,
   needsConfirmation,
   confirmationMessage,
@@ -425,7 +426,7 @@ export function SettingsPage() {
     }
     if (key === 'acmeDnsProvider') {
       // The server's provider list, only its default suffixed " (default)"
-      // -- same convention as proxyDriverOptions (issue #72).
+      // (acmeDnsProviderOptions, issue #72).
       return (
         <select
           id={`setting-${key}`}
@@ -434,11 +435,12 @@ export function SettingsPage() {
           disabled={!data}
           onChange={(e) => setDrafts({ ...drafts, acmeDnsProvider: e.target.value })}
         >
-          {data?.acmeDnsProviders.map((provider) => (
-            <option key={provider} value={provider}>
-              {provider === data.defaultAcmeDnsProvider ? `${provider} (default)` : provider}
-            </option>
-          ))}
+          {data &&
+            acmeDnsProviderOptions(data.acmeDnsProviders, data.defaultAcmeDnsProvider).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
         </select>
       );
     }

@@ -22,7 +22,7 @@ Every renderer reads the effective `ctx.tlsSource` (#72; `buildProxyContext(inve
 | `haproxy` | external | external | nothing (certificates live in the operator's frontend) |
 | `none` | all five | external | nothing |
 
-No driver declares whether it uses Cloudflare DNS-01: the push-live prune follows `usesCloudflareDns01` (the TLS source alone), so only `acme-dns` prunes, on any driver that supports it.
+No driver declares whether it uses Cloudflare DNS-01: the push-live prune follows `usesCloudflareDns01` (the TLS source, for a managed driver that supports it), so only `acme-dns` prunes, on any driver that supports it, and never under `none`.
 
 ## Caddy driver (`caddy.ts`)
 

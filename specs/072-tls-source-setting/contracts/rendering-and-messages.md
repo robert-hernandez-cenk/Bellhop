@@ -36,7 +36,7 @@ Output unchanged; their single supported source is their default.
 ## Refusal (`checkTlsSource`, thrown by `runSyncProxy` and `convert-caddyfile`)
 
 ```text
-tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page
+tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- to use its default (files), run: bellhop set-config tlsSource --unset --apply, or set it on the web UI's Settings page
 ```
 
 - Raised before `driverDeps`, `buildRoutes`, any preview, or any SSH call;
@@ -51,7 +51,15 @@ tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: 
 prune-acme-challenges: skipped, the TLS source is 'acme-http' (only acme-dns with the cloudflare DNS provider leaves challenge records)
 ```
 
-When the source is `acme-dns` and the provider `cloudflare`, the existing
+Under `proxyDriver: none` the prune never runs, whatever `tlsSource` is
+stored (any challenge records belong to the operator's own proxy):
+
+```text
+prune-acme-challenges: skipped, proxyDriver is 'none' (Bellhop manages no reverse proxy, so its challenge records are not Bellhop's)
+```
+
+When the driver is managed and supports the source, the source is
+`acme-dns` and the provider `cloudflare`, the existing
 Cloudflare-credentials check and prune run unchanged.
 
 ## Migration log line (`openInventoryDb`, only when something changed)
@@ -60,5 +68,5 @@ Cloudflare-credentials check and prune run unchanged.
 Migrated TLS settings to tlsSource (#72, one-time, irreversible): <details>
 ```
 
-`<details>` names the converted value (e.g. `proxyCaddyTls 'letsencrypt' -> tlsSource 'acme-http'`)
+`<details>` names the converted value (e.g. `proxyCaddyTls 'letsencrypt' -> tlsSource 'acme-http'`, or `proxyCaddyTls 'cloudflare' -> tlsSource left unset (Caddy's default, acme-dns)`)
 and the removed keys. Never logged for a database with no legacy rows.

@@ -7,12 +7,17 @@ import { DEFAULT_PROXY_DRIVER_ID, type ProxyDriverId, type TlsSource } from './i
 // cycle.
 //
 //   caddy / caddy-api / unset driver, proxyCaddyTls:
-//       cloudflare -> acme-dns, letsencrypt -> acme-http,
-//       internal -> internal, files -> files        (removes proxyCaddyTls)
+//       cloudflare -> tlsSource left unset (Caddy's default, acme-dns),
+//       letsencrypt -> acme-http, internal -> internal, files -> files
+//                                                    (removes proxyCaddyTls)
 //   traefik, proxyCertResolver 'none' -> external   (removes proxyCertResolver)
 //   any other driver: proxyCaddyTls is removed with no tlsSource;
 //   proxyCertResolver 'none' is removed with no tlsSource (any non-traefik
 //   driver); a named proxyCertResolver is never touched.
+//
+// 'cloudflare' (proxyCaddyTls's own default) is not pinned as 'acme-dns':
+// the output is identical either way, and a pinned acme-dns would make a
+// later switch to a driver without it (nginx, HAProxy, NPM) be refused.
 //
 // An existing tlsSource is never overwritten, though the legacy values are
 // still removed.
@@ -31,15 +36,24 @@ export interface LegacyTlsConversion {
   description?: string;
 }
 
+// What a legacy value converts to: a tlsSource to write, or 'default' to
+// leave tlsSource unset because the value was the driver's own default.
+type LegacyTarget = TlsSource | 'default';
+
 // A Map, not an object literal: the migration runs on raw database/YAML
 // strings before any validation, and a stray legacy value like
 // 'constructor' or 'toString' must not resolve to an Object.prototype member.
-const CADDY_TLS_TO_SOURCE = new Map<string, TlsSource>([
-  ['cloudflare', 'acme-dns'],
+const CADDY_TLS_TO_SOURCE = new Map<string, LegacyTarget>([
+  ['cloudflare', 'default'],
   ['letsencrypt', 'acme-http'],
   ['internal', 'internal'],
   ['files', 'files'],
 ]);
+
+// Every value the removed proxyCaddyTls setting accepted -- what the
+// pre-#72 schema enum allowed, so import-yaml-inventory can still reject a
+// typo in a hosts.yaml rather than silently dropping it.
+export const LEGACY_CADDY_TLS_VALUES: readonly string[] = [...CADDY_TLS_TO_SOURCE.keys()];
 
 export function convertLegacyTlsSettings(input: LegacyTlsInput): LegacyTlsConversion {
   const driver = input.proxyDriver ?? DEFAULT_PROXY_DRIVER_ID;
@@ -48,14 +62,18 @@ export function convertLegacyTlsSettings(input: LegacyTlsInput): LegacyTlsConver
   const removals: string[] = [];
   let tlsSource: TlsSource | undefined;
 
-  // Records one legacy key as removed and, when it names a tlsSource and
-  // none is set yet, the conversion.
-  function convert(key: 'proxyCaddyTls' | 'proxyCertResolver', value: string, mapped: TlsSource | undefined): void {
+  // Records one legacy key as removed and, when it names a target and no
+  // tlsSource is set yet, the conversion.
+  function convert(key: 'proxyCaddyTls' | 'proxyCertResolver', value: string, mapped: LegacyTarget | undefined): void {
     remove.push(key);
     let removal = `removed ${key}`;
     if (mapped && input.tlsSource === undefined) {
-      tlsSource = mapped;
-      conversions.push(`${key} '${value}' -> tlsSource '${mapped}'`);
+      if (mapped === 'default') {
+        conversions.push(`${key} '${value}' -> tlsSource left unset (Caddy's default, acme-dns)`);
+      } else {
+        tlsSource = mapped;
+        conversions.push(`${key} '${value}' -> tlsSource '${mapped}'`);
+      }
     } else if (mapped) {
       removal += ' (tlsSource already set)';
     }

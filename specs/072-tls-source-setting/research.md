@@ -27,8 +27,11 @@ records a design decision made while reading the existing code.
   `proxyCaddyTls`, `proxyCertResolver` and `tlsSource` strings and returns
   the `tlsSource` to write (if any) and the keys to delete. The active
   driver is `proxyDriver ?? DEFAULT_PROXY_DRIVER_ID`.
-  - `caddy`/`caddy-api` with `proxyCaddyTls` set: `cloudflare`→`acme-dns`,
-    `letsencrypt`→`acme-http`, `internal`→`internal`, `files`→`files`.
+  - `caddy`/`caddy-api` with `proxyCaddyTls` set: `letsencrypt`→`acme-http`,
+    `internal`→`internal`, `files`→`files`; `cloudflare` (the old default)
+    writes no `tlsSource`: unset already means Caddy's `acme-dns`, and a
+    pinned `acme-dns` would make a later switch to nginx/HAProxy/NPM be
+    refused (code review).
   - `traefik` with `proxyCertResolver === 'none'`: → `external`.
   - An explicit `tlsSource` is never overwritten.
   - `proxyCaddyTls` is always deleted; `proxyCertResolver` is deleted only
@@ -78,8 +81,12 @@ records a design decision made while reading the existing code.
   guest edit saves and the push-live step reports the refusal as
   `proxySynced: false` (spec US2 scenario 3).
 - **Message**: `tlsSource '<value>' is not supported by the '<driver>'
-  proxy driver (it supports: <a>, <b>) -- run: bellhop set-config
-  tlsSource <driver default> --apply` (built with `settingFix`).
+  proxy driver (it supports: <a>, <b>) -- to use its default
+  (<driver default>), run: bellhop set-config tlsSource --unset --apply,
+  or set it on the web UI's Settings page` (built with
+  `settingFix('tlsSource', '--unset')`). The fix unsets rather than pins
+  the default (code review): a pinned default would be refused again on
+  the next driver switch.
 - **Renderer backstop**: each renderer's `switch` throws a programming-error
   message on a value its driver does not support, so a missed check can
   never render a silently wrong configuration (HAProxy's forward-auth

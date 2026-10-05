@@ -678,6 +678,6 @@ test('commitGuestEdit saves an edit under an unsupported TLS source and reports 
   assert.deepEqual(loadInventory(inventoryPath).guests.find((g) => g.name === 'ungated-app')?.subdomains, ['ungated']);
   assert.equal(result.proxySynced, false);
   if (!result.proxySynced) {
-    assert.match(result.proxyError, /^tlsSource 'internal' is not supported by the 'nginx' proxy driver \(it supports: files\) -- run: bellhop set-config tlsSource files --apply/);
+    assert.match(result.proxyError, /^tlsSource 'internal' is not supported by the 'nginx' proxy driver \(it supports: files\) -- to use its default \(files\), run: bellhop set-config tlsSource --unset --apply/);
   }
 });

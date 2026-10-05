@@ -39,14 +39,14 @@ test('checkTlsSource: null when unset or supported', () => {
 test('checkTlsSource: unsupported source gives the contract message', () => {
   assert.equal(
     checkTlsSource(inv({ tlsSource: 'internal' }), nginxDriver),
-    "tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- run: bellhop set-config tlsSource files --apply, or set it on the web UI's Settings page",
+    "tlsSource 'internal' is not supported by the 'nginx' proxy driver (it supports: files) -- to use its default (files), run: bellhop set-config tlsSource --unset --apply, or set it on the web UI's Settings page",
   );
 });
 
 test('checkTlsSource: lists every supported source, comma-separated, in declared order', () => {
   assert.equal(
     checkTlsSource(inv({ tlsSource: 'external' }), caddyDriver),
-    "tlsSource 'external' is not supported by the 'caddy' proxy driver (it supports: acme-dns, acme-http, internal, files) -- run: bellhop set-config tlsSource acme-dns --apply, or set it on the web UI's Settings page",
+    "tlsSource 'external' is not supported by the 'caddy' proxy driver (it supports: acme-dns, acme-http, internal, files) -- to use its default (acme-dns), run: bellhop set-config tlsSource --unset --apply, or set it on the web UI's Settings page",
   );
 });
 
@@ -64,4 +64,14 @@ test('usesCloudflareDns01 truth table: only acme-dns with the cloudflare provide
   assert.equal(usesCloudflareDns01(inv(), caddyDriver), true);
   assert.equal(usesCloudflareDns01(inv(), nginxDriver), false);
   assert.equal(usesCloudflareDns01(inv(), noneDriver), false);
+});
+
+// A stored acme-dns must not prune when Bellhop manages no proxy (the
+// operator's own proxy owns those records) or when the driver cannot serve
+// it (sync-proxy refuses that configuration, so nothing obtained them).
+test('usesCloudflareDns01: false under the none driver or an unsupported source, even with acme-dns stored', () => {
+  const acmeDns = inv({ tlsSource: 'acme-dns', acmeDnsProvider: 'cloudflare' });
+  assert.equal(usesCloudflareDns01(acmeDns, noneDriver), false);
+  assert.equal(usesCloudflareDns01(acmeDns, nginxDriver), false);
+  assert.equal(usesCloudflareDns01(acmeDns, caddyDriver), true);
 });

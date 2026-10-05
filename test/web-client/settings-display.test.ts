@@ -6,6 +6,7 @@ import {
   proxyDriverOptions,
   proxyFieldView,
   tlsSourceOptions,
+  acmeDnsProviderOptions,
   SETTINGS_TABS,
   fieldsForTab,
   fieldState,
@@ -362,6 +363,15 @@ test('tlsSourceOptions lists the driver sources in order, suffixing only its def
     { value: 'files', label: 'files' },
     { value: 'external', label: 'external' },
   ]);
+});
+
+test('acmeDnsProviderOptions lists the providers in order, suffixing only the default " (default)"', () => {
+  assert.deepEqual(acmeDnsProviderOptions(['cloudflare'], 'cloudflare'), [{ value: 'cloudflare', label: 'cloudflare (default)' }]);
+  assert.deepEqual(acmeDnsProviderOptions(['cloudflare', 'route53'], 'route53'), [
+    { value: 'cloudflare', label: 'cloudflare' },
+    { value: 'route53', label: 'route53 (default)' },
+  ]);
+  assert.deepEqual(acmeDnsProviderOptions([], 'cloudflare'), []);
 });
 
 test('tlsSourceOptions appends an unsupported shown source as "<value> (not supported)"', () => {

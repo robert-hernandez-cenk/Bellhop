@@ -93,7 +93,7 @@ export interface ReverseProxyDriver {
 // such driver ever ships, this function is the one place to change.
 // statusPage === null is a separate question (does a managed driver serve a
 // status page?) and is never used to mean this.
-export function managesProxy(driver: ReverseProxyDriver): boolean {
+export function managesProxy(driver: Pick<ReverseProxyDriver, 'id'>): boolean {
   return driver.id !== NO_PROXY_DRIVER_ID;
 }
 

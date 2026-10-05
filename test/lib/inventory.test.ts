@@ -1376,8 +1376,28 @@ function captureLog(fn: () => void): string[] {
 const TLS_MIGRATION_LOG = 'Migrated TLS settings to tlsSource (#72, one-time, irreversible): ';
 const migrationLines = (lines: string[]) => lines.filter((l) => l.includes(TLS_MIGRATION_LOG));
 
-test('opening a database converts each legacy proxyCaddyTls value for caddy, caddy-api and an unset driver (issue #72)', () => {
-  const map = { cloudflare: 'acme-dns', letsencrypt: 'acme-http', internal: 'internal', files: 'files' } as const;
+test("opening a database removes proxyCaddyTls 'cloudflare' for caddy, caddy-api and an unset driver without pinning tlsSource (issue #72)", () => {
+  for (const driver of ['caddy', 'caddy-api', undefined]) {
+    const dest = legacyDb({ ...(driver ? { proxyDriver: driver } : {}), proxyCaddyTls: 'cloudflare' });
+    let loaded!: Inventory;
+    const lines = captureLog(() => {
+      loaded = loadInventory(dest);
+    });
+    assert.equal(loaded.tlsSource, undefined, String(driver));
+    assert.equal(metaRow(dest, 'proxyCaddyTls'), undefined);
+    assert.equal(metaRow(dest, 'tlsSource'), undefined);
+    assert.equal(lines.length, 1);
+    assert.ok(
+      lines[0].endsWith(
+        "Migrated TLS settings to tlsSource (#72, one-time, irreversible): proxyCaddyTls 'cloudflare' -> tlsSource left unset (Caddy's default, acme-dns); removed proxyCaddyTls"
+      ),
+      lines[0]
+    );
+  }
+});
+
+test('opening a database converts each other legacy proxyCaddyTls value for caddy, caddy-api and an unset driver (issue #72)', () => {
+  const map = { letsencrypt: 'acme-http', internal: 'internal', files: 'files' } as const;
   for (const driver of ['caddy', 'caddy-api', undefined]) {
     for (const [legacy, tlsSource] of Object.entries(map)) {
       const dest = legacyDb({ ...(driver ? { proxyDriver: driver } : {}), proxyCaddyTls: legacy });
@@ -1439,13 +1459,13 @@ test('an existing tlsSource is never overwritten by the migration, though the le
 });
 
 test('the TLS migration is one-time: a second open changes and logs nothing', () => {
-  const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'cloudflare' });
+  const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'letsencrypt' });
   const firstOpen = captureLog(() => {
     loadInventory(dest);
   });
   assert.equal(migrationLines(firstOpen).length, 1, 'the matcher sees the real log line');
   const lines = captureLog(() => {
-    assert.equal(loadInventory(dest).tlsSource, 'acme-dns');
+    assert.equal(loadInventory(dest).tlsSource, 'acme-http');
   });
   assert.equal(migrationLines(lines).length, 0);
 });
@@ -1456,6 +1476,26 @@ test('a database with no legacy TLS rows logs nothing and gains no tlsSource', (
     assert.equal(loadInventory(dest).tlsSource, undefined);
   });
   assert.equal(migrationLines(lines).length, 0);
+});
+
+// The migration takes its write lock (an IMMEDIATE transaction, so two
+// processes opening a legacy database can't both read then race to write)
+// only when a legacy row is actually present: a cheap guard query returns
+// early otherwise, so every later open of a migrated database neither
+// re-runs the reads nor waits on another connection's write lock.
+test('opening a database with no legacy TLS rows takes no write lock: it loads while another connection holds one', () => {
+  const dest = legacyDb({ proxyDriver: 'caddy', proxyCertResolver: 'my-resolver' });
+  const writer = new Database(dest, { timeout: 0 });
+  writer.exec('BEGIN IMMEDIATE');
+  try {
+    const lines = captureLog(() => {
+      assert.equal(loadInventory(dest).proxyDriver, 'caddy');
+    });
+    assert.equal(migrationLines(lines).length, 0);
+  } finally {
+    writer.exec('ROLLBACK');
+    writer.close();
+  }
 });
 
 test('saveInventory also migrates legacy TLS rows on open, so a leftover row never lingers', () => {
