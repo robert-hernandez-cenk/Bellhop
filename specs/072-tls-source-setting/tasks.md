@@ -101,7 +101,7 @@ description: "Task list for the driver-independent TLS source setting (#72)"
 - [x] T025 [US5] `web-client/src/api/types.ts`: `ProxyDriverInfo` drops `usesSharedCertificate`/`usesCaddyTls`, gains `tlsSources: string[]`, `defaultTlsSource: string`; `SettingsResponse` drops `caddyTlsModes`/`defaultCaddyTls`, gains `acmeDnsProviders: string[]`, `defaultAcmeDnsProvider: string`; `SettingsValues` gains `tlsSource?`, `acmeDnsProvider?`, loses `proxyCaddyTls?`.
 - [x] T026 [US5] `web-client/src/lib/settings-display.ts`: replace `caddyTlsOptions` with `tlsSourceOptions(driver, shownSource)` (driver order, ` (default)` suffix on its default, unsupported shown value appended as `<value> (not supported)`); change `proxyFieldView(selectedId, drivers, draftOrStoredTlsSource)` to resolve the shown source (`draft || stored || driver.defaultTlsSource`) and return `showTlsSourceField`, `showAcmeDnsProviderField` (`acme-dns`), `showTlsFields` (`files`), `showCertResolverField` (`usesCertResolver` && `acme-dns`/`acme-http`), `showApiUrlField`, `showNpmApiFields`, `tlsSourceOptions`, and `tlsSourceWarning` (`The <label> driver does not support '<value>'. It supports: <a>, <b>.` or null); TAB_FIELDS proxy order per contracts/settings-api-and-ui.md (`tlsSource`, `acmeDnsProvider` replace `proxyCaddyTls`). TDD in `test/web-client/settings-display.test.ts` covering every visibility row, options, and warning.
 - [x] T027 [US5] `web-client/src/pages/SettingsPage.tsx` (and wherever field labels/help live, e.g. a field-help map): render the TLS source `<select>` from `tlsSourceOptions`, the ACME DNS provider `<select>` from `acmeDnsProviders`, the warning under the TLS source field using existing warning styles, remove the Caddy TLS dropdown; help text for both new fields. `npm run web:build` passes.
-- [ ] T028 [US5] Browser verification with `npm run demo` (127.0.0.1:3100) at desktop width and ≤640px per quickstart.md "Web UI"; kill the demo process tree by PID afterwards and confirm the port is free (PowerShell `Get-NetTCPConnection`).
+- [x] T028 [US5] Browser verification with `npm run demo` (127.0.0.1:3100) at desktop width and ≤640px per quickstart.md "Web UI"; kill the demo process tree by PID afterwards and confirm the port is free (PowerShell `Get-NetTCPConnection`).
 - [x] T029 [US5] Regenerate `docs/images/settings-proxy-driver.png` with `npm run docs:screenshots` (only that image if the script allows; otherwise review every changed image) and check it by eye for example-only values; update `web-client/CLAUDE.md` Settings page section (TLS fields by source, removed per-driver TLS flags).
 
 **Checkpoint**: typecheck, tests, web:build green. Commit `Show Settings TLS fields by TLS source (#72, US5)`.
@@ -110,9 +110,9 @@ description: "Task list for the driver-independent TLS source setting (#72)"
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T030 Grep the tree for leftovers: `proxyCaddyTls`, `caddyTls`, `CADDY_TLS_MODES`, `NO_CERT_RESOLVER`, `acmeDns01ViaCloudflare`, `usesCaddyTls`, `usesSharedCertificate` outside `specs/0*` historical specs; fix any in `src/`, `web-client/`, `docs/`, `test/`, `scripts/`, `README.md`, `CONTRIBUTING.md`.
-- [ ] T031 Run quickstart.md CLI walk-through against a temp fixture (`INVENTORY_FILE`), including the migration step; paste outputs into the verification notes.
-- [ ] T032 Final `npm run typecheck`, `npm test`, `npm run web:build`; root `CLAUDE.md` stays ≤250 lines and README ≤200 (enforced by `test/docs/links.test.ts`).
+- [x] T030 Grep the tree for leftovers: `proxyCaddyTls`, `caddyTls`, `CADDY_TLS_MODES`, `NO_CERT_RESOLVER`, `acmeDns01ViaCloudflare`, `usesCaddyTls`, `usesSharedCertificate` outside `specs/0*` historical specs; fix any in `src/`, `web-client/`, `docs/`, `test/`, `scripts/`, `README.md`, `CONTRIBUTING.md`.
+- [x] T031 Run quickstart.md CLI walk-through against a temp fixture (`INVENTORY_FILE`), including the migration step; paste outputs into the verification notes.
+- [x] T032 Final `npm run typecheck`, `npm test`, `npm run web:build`; root `CLAUDE.md` stays ≤250 lines and README ≤200 (enforced by `test/docs/links.test.ts`).
 
 ---
 

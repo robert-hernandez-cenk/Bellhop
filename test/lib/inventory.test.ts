@@ -2510,7 +2510,7 @@ test('loadInventory rejects an out-of-list tlsSource or acmeDnsProvider written 
     const db = new Database(dest);
     db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
     db.close();
-    assert.throws(() => loadInventory(dest), /./, key);
+    assert.throws(() => loadInventory(dest), new RegExp(key), key);
   }
 });
 

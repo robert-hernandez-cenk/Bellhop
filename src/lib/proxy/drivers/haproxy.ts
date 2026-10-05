@@ -184,10 +184,7 @@ export const haproxyDriver = fileDriver({
   // forward-gated entry is refused by checkCapabilities with the standard
   // message before render() ever sees it (research R8). HAProxy cannot
   // obtain certificates either -- the operator's frontend serves its own
-  // (research R7) -- so there is no ACME DNS-01 record for
-  // prune-acme-challenges to clean up after. Always false, unaffected by
-  // any inventory setting -- the function wrapper here exists only to
-  // satisfy the updated DriverCapabilities type (issue #51).
+  // (research R7) -- so its only TLS source is 'external' (also its default).
   capabilities: { authModes: ['oidc'], tlsSources: ['external'], defaultTlsSource: 'external' },
   defaultConfigPath: '/etc/haproxy/bellhop.cfg',
   // No document root of its own to serve a status page from (research R7).

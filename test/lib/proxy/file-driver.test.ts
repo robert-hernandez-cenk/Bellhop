@@ -264,8 +264,8 @@ test('fileDriver.plan/apply/snapshot throw a named programming-error message whe
 });
 
 // issue #35 (T006): usesCertResolver/usesApiUrl pass through fileDriver's
-// returned driver the same conditional-spread way usesSharedCertificate
-// already does -- present only when the driver definition sets them.
+// returned driver as a conditional spread -- present only when the driver
+// definition sets them.
 
 test('fileDriver: usesCertResolver/usesApiUrl are absent when the driver definition does not set them', () => {
   const driver = fileDriver({

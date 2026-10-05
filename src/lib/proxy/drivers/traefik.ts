@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { parse, stringify, Scalar } from 'yaml';
-import type { Inventory } from '../../inventory.ts';
 import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';

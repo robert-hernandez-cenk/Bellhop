@@ -401,13 +401,13 @@ function movedObjects(before: CaddyConfigObject, after: CaddyConfigObject): Cadd
 // Reconciles the desired routes against the live configuration (research
 // R5/R6, issue #51 research R3/R4): strips every Bellhop object, leaves out
 // routes whose hostnames an untagged object already claims (conflicts),
-// prepends the rest -- routes to the HTTPS server, and the active TLS source's
-// objects to their own lists (the automation policy to the automation
-// policies, the load_files entry to load_files, the connection policies to
-// that same HTTPS server) -- prunes any container a removed Bellhop object
-// leaves empty, and reports what changed. Switching TLS sources is just this
-// rebuild: every bellhop-tls* object is stripped and the current source's
-// added back. The input is never mutated.
+// prepends the rest -- routes to the HTTPS server, and the active TLS
+// source's objects to their own lists (the automation policy to the
+// automation policies, the load_files entry to load_files, the connection
+// policies to that same HTTPS server) -- prunes any container a removed
+// Bellhop object leaves empty, and reports what changed. Switching TLS
+// sources is just this rebuild: every bellhop-tls* object is stripped and
+// the current source's added back. The input is never mutated.
 export function planCaddyConfig(
   current: CaddyConfig,
   routes: ProxyRoute[],

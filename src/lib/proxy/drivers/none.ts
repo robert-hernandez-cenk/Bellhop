@@ -20,10 +20,9 @@ export const noneDriver: ReverseProxyDriver = {
   // it via managesProxy() before buildRoutes()/checkCapabilities() ever run
   // (research.md R2). Declaring both modes here means this driver never
   // itself produces a spurious capability mismatch if some future caller
-  // ever did call checkCapabilities against it directly. Always false,
-  // unaffected by any inventory setting -- it manages no proxy, so it
-  // never touches Cloudflare DNS either. The function wrapper here exists
-  // only to satisfy the updated DriverCapabilities type (issue #51).
+  // ever did call checkCapabilities against it directly. It likewise lists
+  // every TLS source (defaulting to 'external'), since it manages no proxy
+  // and so never rejects a tlsSource setting.
   capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-dns', 'acme-http', 'internal', 'files', 'external'], defaultTlsSource: 'external' },
   defaultConfigPath: null,
   statusPage: null,

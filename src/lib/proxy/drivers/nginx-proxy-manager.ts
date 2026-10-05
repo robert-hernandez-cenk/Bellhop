@@ -455,11 +455,9 @@ export function createNpmDriver(opts: { clientFor: (inventory: Inventory) => Npm
   return {
     id: 'nginx-proxy-manager',
     label: 'Nginx Proxy Manager',
-    // Always false, unaffected by any inventory setting: NPM requests its
-    // own certificates over HTTP-01 or reuses an uploaded one (see
-    // chooseCertificate above), never Cloudflare DNS-01. The function
-    // wrapper here exists only to satisfy the updated DriverCapabilities
-    // type (issue #51).
+    // NPM requests its own certificates over HTTP-01 or reuses an uploaded
+    // one (see chooseCertificate above), never Cloudflare DNS-01, so its
+    // only TLS source is 'acme-http'.
     capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-http'], defaultTlsSource: 'acme-http' },
     defaultConfigPath: null,
     statusPage: null,

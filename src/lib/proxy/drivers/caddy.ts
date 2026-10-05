@@ -1,4 +1,3 @@
-import type { Inventory } from '../../inventory.ts';
 import type { ProxyContext, ProxyRoute } from '../routes.ts';
 import type { AcmeDnsProvider } from '../ids.ts';
 import type { FileSpec } from '../file-driver.ts';

@@ -29,11 +29,12 @@ settings](../configuration.md#inventory-wide-settings).
 A driver declares what it can enforce (`authModes`, e.g. Caddy supports
 both `forward` and `oidc`), which TLS sources it can serve (`tlsSources`,
 plus the `defaultTlsSource` an unset `tlsSource` setting means for it — see
-[TLS sources](#tls-sources) below). Whether the web UI's push-live step runs `prune-acme-challenges` is not
-a driver property: it runs only when the effective `tlsSource` is `acme-dns`
-with the `cloudflare` DNS provider, since any other source leaves no
-`_acme-challenge` records behind for it to clean up. A driver implements three operations: `plan()` turns the routes derived from
-inventory into a preview and an opaque payload (the dry-run preview is
+[TLS sources](#tls-sources) below). Whether the web UI's push-live step
+runs `prune-acme-challenges` is not a driver property: it runs only when
+the effective `tlsSource` is `acme-dns` with the `cloudflare` DNS provider,
+since any other source leaves no `_acme-challenge` records behind for it to
+clean up. A driver implements three operations: `plan()` turns the routes
+derived from inventory into a preview and an opaque payload (the dry-run preview is
 always exactly what `--apply` sends); `apply()` sends that payload live and
 reloads the proxy, throwing on failure — a failed validate or write
 restores the proxy's previous configuration rather than leaving it
