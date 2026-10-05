@@ -21,6 +21,8 @@ export interface FakeSSHCall {
   // below) -- never as explicit undefined keys.
   sshPort?: number;
   sshIdentityFile?: string;
+  // Only for a password target (#86's one-time key install).
+  sshPassword?: string;
 }
 
 export interface FakePutFileCall {
@@ -35,12 +37,15 @@ export interface FakePutFileCall {
 // undefined: several tests use assert.deepEqual (strict) against a literal
 // { sshTarget, sshUser, command }, and a key holding undefined counts as a
 // difference there.
-function recordedTarget(target: SshTarget): Pick<FakeSSHCall, 'sshTarget' | 'sshUser' | 'sshPort' | 'sshIdentityFile'> {
+function recordedTarget(
+  target: SshTarget
+): Pick<FakeSSHCall, 'sshTarget' | 'sshUser' | 'sshPort' | 'sshIdentityFile' | 'sshPassword'> {
   return {
     sshTarget: target.host,
     sshUser: target.user,
     ...(target.port === undefined ? {} : { sshPort: target.port }),
     ...(target.identityFile === undefined ? {} : { sshIdentityFile: target.identityFile }),
+    ...(target.password === undefined ? {} : { sshPassword: target.password }),
   };
 }
 

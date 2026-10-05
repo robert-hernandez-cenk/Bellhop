@@ -160,3 +160,12 @@ test('buildAuthorizedKeysEnsurePresentScript preserves multiple keys as separate
   assert.match(script, /^ssh-ed25519 KEYONE user@laptop$/m);
   assert.match(script, /^ssh-ed25519 KEYTWO user@desktop$/m);
 });
+
+// Issue #86: the setup walkthrough installs Bellhop's key for whichever SSH
+// user a host is reached as, not only root.
+test('buildAuthorizedKeysEnsurePresentScript writes to the given .ssh directory', () => {
+  const script = buildAuthorizedKeysEnsurePresentScript('ssh-ed25519 AAAAKEY bellhop', '/home/admin/.ssh');
+  assert.ok(script.includes('mkdir -p /home/admin/.ssh && chmod 700 /home/admin/.ssh'));
+  assert.ok(script.includes('grep -qxF "$line" /home/admin/.ssh/authorized_keys'));
+  assert.ok(!script.includes('/root/.ssh'));
+});

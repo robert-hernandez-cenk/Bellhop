@@ -75,11 +75,16 @@ export function buildAuthorizedKeysWriteScript(vmid: number, keysContent: string
 // (including a key that arrived some other way) is ever touched or
 // removed -- unlike buildAuthorizedKeysWriteScript's overwrite, this is
 // safe to run against a guest that already has other keys.
-export function buildAuthorizedKeysEnsurePresentScript(keysContent: string): string {
+//
+// sshDir defaults to root's; the setup walkthrough (#86) passes the .ssh
+// directory of whichever user it connects as. It is interpolated unquoted,
+// so it must be a plain absolute path (the caller builds it from a
+// validated user name).
+export function buildAuthorizedKeysEnsurePresentScript(keysContent: string, sshDir = '/root/.ssh'): string {
   const delimiter = 'BELLHOP_KEYS_EOF';
   return [
-    'mkdir -p /root/.ssh && chmod 700 /root/.ssh',
-    'touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys',
+    `mkdir -p ${sshDir} && chmod 700 ${sshDir}`,
+    `touch ${sshDir}/authorized_keys && chmod 600 ${sshDir}/authorized_keys`,
     // Guard against a file that exists but doesn't end in a newline (e.g.
     // written by `echo -n`, an editor that strips a trailing newline, or a
     // manually `pct push`'d file) -- without this, the first `printf ... >>`
@@ -92,10 +97,10 @@ export function buildAuthorizedKeysEnsurePresentScript(keysContent: string): str
     // (non-empty, triggers the fix); `-s` excludes the still-empty file
     // left by `touch` above, where `tail -c1` would also be empty but for
     // an unrelated, harmless reason.
-    'if [ -s /root/.ssh/authorized_keys ] && [ -n "$(tail -c1 /root/.ssh/authorized_keys)" ]; then',
-    '  printf \'\\n\' >> /root/.ssh/authorized_keys',
+    `if [ -s ${sshDir}/authorized_keys ] && [ -n "$(tail -c1 ${sshDir}/authorized_keys)" ]; then`,
+    `  printf '\\n' >> ${sshDir}/authorized_keys`,
     'fi',
-    `while IFS= read -r line; do [ -z "$line" ] && continue; grep -qxF "$line" /root/.ssh/authorized_keys || printf '%s\\n' "$line" >> /root/.ssh/authorized_keys; done <<'${delimiter}'`,
+    `while IFS= read -r line; do [ -z "$line" ] && continue; grep -qxF "$line" ${sshDir}/authorized_keys || printf '%s\\n' "$line" >> ${sshDir}/authorized_keys; done <<'${delimiter}'`,
     keysContent,
     delimiter,
   ].join('\n');
