@@ -1272,6 +1272,9 @@ test('SETTINGS_KEYS lists exactly the twenty-seven settings keys', () => {
     'pveUserRealm',
     'statusPagePath',
     'webUiAuthMode',
+    'webUiOidcClientId',
+    'webUiOidcIssuer',
+    'webUiOidcRedirectUri',
   ]);
 });
 
@@ -2329,13 +2332,13 @@ test('withFreshSettings takes every setting from the database and everything els
   };
   saveInventory(dbPath, stale);
   // Another process changes and clears settings after `stale` was loaded.
-  saveInventory(dbPath, { ...stale, nfsServer: '192.0.2.6', dnsServer: undefined, webUiAuthMode: 'authentik' });
+  saveInventory(dbPath, { ...stale, nfsServer: '192.0.2.6', dnsServer: undefined, webUiAuthMode: 'oidc' });
 
   const edited: Inventory = { ...stale, guests: [{ name: 'app', type: 'lxc', vmid: 101, host: 'pve1' }] };
   const merged = withFreshSettings(dbPath, edited);
   assert.equal(merged.nfsServer, '192.0.2.6');
   assert.equal(merged.dnsServer, undefined);
-  assert.equal(merged.webUiAuthMode, 'authentik');
+  assert.equal(merged.webUiAuthMode, 'oidc');
   assert.deepEqual(merged.guests, edited.guests, 'non-settings fields come from the given copy');
   assert.equal(edited.nfsServer, '192.0.2.5', 'the given copy is not mutated');
 
@@ -2350,4 +2353,58 @@ test('withFreshSettings returns the given copy unchanged when the database does 
   const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'fresh-settings-')), 'missing.db');
   const inv: Inventory = { domain: 'example.com', nfsServer: '192.0.2.5', hosts: [], guests: [] };
   assert.deepEqual(withFreshSettings(dbPath, inv), inv);
+});
+
+// #69: the web UI's auth modes became oidc | none. An old 'authentik' means
+// "sign-in required" and so becomes 'oidc'; an old 'auto' (the dev-fallback
+// default) is just the unset state now, so its row goes away.
+function dbWithMode(mode: string | undefined): string {
+  const dbPath = tempInventoryDb();
+  const db = new Database(dbPath);
+  db.prepare("DELETE FROM meta WHERE key = 'webUiAuthMode'").run();
+  if (mode !== undefined) db.prepare("INSERT INTO meta (key, value) VALUES ('webUiAuthMode', ?)").run(mode);
+  db.close();
+  return dbPath;
+}
+
+function storedMode(dbPath: string): string | undefined {
+  const db = new Database(dbPath, { readonly: true });
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'webUiAuthMode'").get() as { value: string } | undefined;
+  db.close();
+  return row?.value;
+}
+
+test('opening a database rewrites webUiAuthMode authentik to oidc and logs it', () => {
+  const dbPath = dbWithMode('authentik');
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => void lines.push(args.join(' '));
+  try {
+    loadInventory(dbPath);
+  } finally {
+    console.log = original;
+  }
+  assert.equal(storedMode(dbPath), 'oidc');
+  assert.ok(lines.some((l) => l.includes('webUiAuthMode') && l.includes('authentik') && l.includes('oidc')), lines.join(' | '));
+  // Idempotent: a second open changes nothing and logs nothing.
+  const again: string[] = [];
+  console.log = (...args: unknown[]) => void again.push(args.join(' '));
+  try {
+    loadInventory(dbPath);
+  } finally {
+    console.log = original;
+  }
+  assert.equal(storedMode(dbPath), 'oidc');
+  assert.ok(!again.some((l) => l.includes('webUiAuthMode')), again.join(' | '));
+});
+
+test('opening a database deletes a webUiAuthMode of auto, and leaves oidc, none and absent alone', () => {
+  const auto = dbWithMode('auto');
+  loadInventory(auto);
+  assert.equal(storedMode(auto), undefined);
+  for (const mode of ['oidc', 'none', undefined]) {
+    const dbPath = dbWithMode(mode);
+    loadInventory(dbPath);
+    assert.equal(storedMode(dbPath), mode);
+  }
 });

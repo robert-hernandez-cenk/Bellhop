@@ -121,7 +121,7 @@ test('demo server answers every screenshotted page request as a signed-in admin,
     // not the environment, and the example secrets read as "set" -- with no
     // part of any secret value anywhere in the response.
     assert.equal(process.env.WEB_UI_AUTH_MODE, undefined);
-    assert.equal(settings.settings.webUiAuthMode, 'authentik');
+    assert.equal(settings.settings.webUiAuthMode, 'oidc');
     assert.equal(settings.sources.webUiAuthMode, 'settings');
     assert.deepEqual(settings.environment, {});
     for (const key of Object.keys(DEMO_SECRET_SETTINGS)) {

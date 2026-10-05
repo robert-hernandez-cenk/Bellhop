@@ -99,11 +99,11 @@ test('configValue with no store registered reads the environment only', () => {
 });
 
 test('configValue with a registered store reads meta rows and secret_settings', () => {
-  const dbPath = tempDb({ authentikApiUrl: 'https://auth.example.com', webUiAuthMode: 'authentik' });
+  const dbPath = tempDb({ authentikApiUrl: 'https://auth.example.com', webUiAuthMode: 'oidc' });
   writeSecret(dbPath, 'authentikApiToken', 'example-token-abc');
   useConfigStore(dbPath);
   assert.deepEqual(configValue('authentikApiUrl', {}), { value: 'https://auth.example.com', source: 'settings' });
-  assert.deepEqual(configValue('webUiAuthMode', {}), { value: 'authentik', source: 'settings' });
+  assert.deepEqual(configValue('webUiAuthMode', {}), { value: 'oidc', source: 'settings' });
   assert.deepEqual(configValue('authentikApiToken', {}), { value: 'example-token-abc', source: 'settings' });
   assert.deepEqual(configValue('npmApiPassword', {}), { source: 'none' });
   // The environment still wins over a stored secret.

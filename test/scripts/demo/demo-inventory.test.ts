@@ -302,6 +302,6 @@ test('example-data guard: every demo secret is an obviously fake demo-example- v
   assert.equal(buildDemoInventory().authentikApiUrl, undefined);
 });
 
-test('buildDemoInventory stores webUiAuthMode authentik rather than relying on WEB_UI_AUTH_MODE', () => {
-  assert.equal(buildDemoInventory().webUiAuthMode, 'authentik');
+test('buildDemoInventory stores webUiAuthMode oidc rather than relying on WEB_UI_AUTH_MODE', () => {
+  assert.equal(buildDemoInventory().webUiAuthMode, 'oidc');
 });

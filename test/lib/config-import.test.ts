@@ -43,7 +43,7 @@ const AUTHENTIK_ENV = [
   'AUTHENTIK_API_URL=https://auth.example.com',
   'AUTHENTIK_API_TOKEN=example-authentik-token',
   'AUTHENTIK_ADMIN_GROUP=example-admins',
-  'WEB_UI_AUTH_MODE=authentik',
+  'WEB_UI_AUTH_MODE=oidc',
   '',
 ].join('\n');
 
@@ -72,7 +72,7 @@ test('imports non-secret keys to meta, secrets to secret_settings, WEB_UI_AUTH_M
   const inv = loadInventory(dbPath);
   assert.equal(inv.authentikApiUrl, 'https://auth.example.com');
   assert.equal(inv.authentikAdminGroup, 'example-admins');
-  assert.equal(inv.webUiAuthMode, 'authentik');
+  assert.equal(inv.webUiAuthMode, 'oidc');
   assert.equal(inv.npmApiEmail, 'admin@example.com');
   // Secrets are never on Inventory, only in secret_settings. The cast only
   // widens the type so a key Inventory deliberately lacks can be indexed.

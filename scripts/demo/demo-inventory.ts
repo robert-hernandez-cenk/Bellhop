@@ -37,7 +37,7 @@ export function buildDemoInventory(): Inventory {
     // Stored rather than set through WEB_UI_AUTH_MODE (issue #64): the demo
     // signs every request in with injected forward-auth headers, the same
     // way a production deployment does with this setting stored.
-    webUiAuthMode: 'authentik',
+    webUiAuthMode: 'oidc',
     // Two moved Authentik settings, so that Settings tab isn't all
     // placeholders. Both are the stock defaults.
     authentikOutpostName: 'authentik Embedded Outpost',

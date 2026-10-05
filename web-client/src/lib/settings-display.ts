@@ -178,6 +178,11 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'pveUserRealm',
     'pveCreatorRole',
     'webUiAuthMode',
+    // #69: Bellhop's own OIDC web login, beside the mode it feeds.
+    'webUiOidcIssuer',
+    'webUiOidcClientId',
+    'webUiOidcRedirectUri',
+    'webUiOidcClientSecret',
   ],
   proxy: [
     'proxyDriver',
@@ -214,7 +219,7 @@ export function fieldsForTab(tab: SettingsTab): readonly SettingsFieldKey[] {
   return TAB_FIELDS[tab];
 }
 
-const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken'];
+const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken', 'webUiOidcClientSecret'];
 
 export function isSecretField(key: SettingsFieldKey): key is SecretSettingKey {
   return (SECRET_KEYS as readonly string[]).includes(key);
@@ -273,7 +278,7 @@ export function needsConfirmation(
   next: string | null | undefined,
 ): boolean {
   if (ADMIN_GROUP_KEYS.includes(key)) return (current ?? '') !== (next ?? '');
-  if (key === 'webUiAuthMode') return current === 'authentik' && (next || 'auto') !== 'authentik';
+  if (key === 'webUiAuthMode') return (current === 'authentik' || current === 'oidc') && (next || 'auto') !== current;
   return false;
 }
 

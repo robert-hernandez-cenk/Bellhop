@@ -618,6 +618,7 @@ test('GET /api/settings reports every secret as { set, source } and never its va
       cloudflareDnsApiToken: { set: false, source: 'none' },
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: true, source: 'environment' },
+      webUiOidcClientSecret: { set: false, source: 'none' },
     });
     const body = JSON.stringify(res.body);
     assert.ok(!body.includes('STORED-MARKER') && !body.includes('ENV-MARKER'), 'no secret value in the response');
@@ -779,7 +780,7 @@ test('PATCH /api/settings refuses webUiAuthMode: authentik from a request with n
     // No x-authentik-username header -> falls to the WEB_UI_DEV_USER=test-user
     // dev identity (set for the whole `npm test` run), which is never
     // viaForwardAuth.
-    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'authentik' });
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'oidc' });
     assert.equal(res.status, 409);
     assert.equal(
       res.body.error,
@@ -794,23 +795,19 @@ test('PATCH /api/settings refuses webUiAuthMode: authentik from a request with n
 
 test('PATCH /api/settings allows webUiAuthMode: authentik from a request with forward-auth headers', async () => {
   const { app, inventoryPath } = testApp();
-  const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
   assert.equal(res.status, 200);
-  assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+  assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
 });
 
-test('PATCH /api/settings allows clearing webUiAuthMode and setting auto/none with no forward-auth check', async () => {
-  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: 'authentik' });
+test('PATCH /api/settings allows clearing webUiAuthMode and setting none with no forward-auth check', async () => {
+  const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: 'oidc' });
   const originalGroups = process.env.WEB_UI_DEV_GROUPS;
   process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
   try {
     const cleared = await request(app).patch('/api/settings').send({ webUiAuthMode: null });
     assert.equal(cleared.status, 200);
     assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
-
-    const auto = await request(app).patch('/api/settings').send({ webUiAuthMode: 'auto' });
-    assert.equal(auto.status, 200);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'auto');
 
     const none = await request(app).patch('/api/settings').send({ webUiAuthMode: 'none' });
     assert.equal(none.status, 200);
@@ -849,7 +846,7 @@ test('GET /api/settings reports a pinned key\'s stored copy: its value for a non
 // Registers the test app's own database as the config store, so its stored
 // webUiAuthMode is the mode requireAuth actually runs under.
 async function withStoredAuthMode(
-  mode: 'auto' | 'authentik' | 'none',
+  mode: 'oidc' | 'none' | undefined,
   fn: (app: ReturnType<typeof testApp>['app'], inventoryPath: string) => Promise<void>
 ): Promise<void> {
   const { app, inventoryPath } = testApp({ ...baseInventory(), webUiAuthMode: mode });
@@ -861,23 +858,23 @@ async function withStoredAuthMode(
   }
 }
 
-test('PATCH webUiAuthMode: authentik in auto mode with admin forward-auth headers is allowed', async () => {
-  await withStoredAuthMode('auto', async (app, inventoryPath) => {
-    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
+test('PATCH webUiAuthMode: oidc in unset mode with admin forward-auth headers is allowed', async () => {
+  await withStoredAuthMode(undefined, async (app, inventoryPath) => {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
     assert.equal(res.status, 200);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
   });
 });
 
-test('PATCH webUiAuthMode: authentik in none mode with admin forward-auth headers is allowed', async () => {
+test('PATCH webUiAuthMode: oidc in none mode with admin forward-auth headers is allowed', async () => {
   await withStoredAuthMode('none', async (app, inventoryPath) => {
-    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'authentik' });
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
     assert.equal(res.status, 200);
-    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'authentik');
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
   });
 });
 
-test('PATCH webUiAuthMode: authentik in none mode with non-admin forward-auth headers is refused', async () => {
+test('PATCH webUiAuthMode: oidc in none mode with non-admin forward-auth headers is refused', async () => {
   await withStoredAuthMode('none', async (app, inventoryPath) => {
     // none mode serves this request as the (admin) local operator, so it
     // passes requireAdminGroup; the Authentik identity it carries is not.
@@ -885,7 +882,7 @@ test('PATCH webUiAuthMode: authentik in none mode with non-admin forward-auth he
       .patch('/api/settings')
       .set('x-authentik-username', 'someone')
       .set('x-authentik-groups', 'family')
-      .send({ webUiAuthMode: 'authentik' });
+      .send({ webUiAuthMode: 'oidc' });
     assert.equal(res.status, 409);
     assert.equal(
       res.body.error,
@@ -895,9 +892,9 @@ test('PATCH webUiAuthMode: authentik in none mode with non-admin forward-auth he
   });
 });
 
-test('PATCH webUiAuthMode: authentik in none mode with no forward-auth headers is refused', async () => {
+test('PATCH webUiAuthMode: oidc in none mode with no forward-auth headers is refused', async () => {
   await withStoredAuthMode('none', async (app, inventoryPath) => {
-    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'authentik' });
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'oidc' });
     assert.equal(res.status, 409);
     assert.equal(
       res.body.error,
@@ -907,10 +904,10 @@ test('PATCH webUiAuthMode: authentik in none mode with no forward-auth headers i
   });
 });
 
-test('PATCH webUiAuthMode: authentik checks the header identity against the admin groups the same request sets', async () => {
+test('PATCH webUiAuthMode: oidc checks the header identity against the admin groups the same request sets', async () => {
   await withStoredAuthMode('none', async (app, inventoryPath) => {
     const res = await asAdmin(request(app).patch('/api/settings')).send({
-      webUiAuthMode: 'authentik',
+      webUiAuthMode: 'oidc',
       authentikAdminGroup: 'example-other-admins',
     });
     assert.equal(res.status, 409);
@@ -922,7 +919,7 @@ test('PATCH webUiAuthMode: authentik checks the header identity against the admi
 // -- Final review M7: leaving authentik is logged ------------------------------
 
 test('PATCH /api/settings logs a warning naming the real user when webUiAuthMode leaves authentik', async (t) => {
-  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'authentik' });
+  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'oidc' });
   const errors: string[] = [];
   t.mock.method(console, 'error', (message: string) => errors.push(message));
   const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
@@ -936,7 +933,7 @@ test('PATCH /api/settings logs a warning naming the real user when webUiAuthMode
 });
 
 test('PATCH /api/settings logs nothing about sign-in mode for a change that does not leave authentik', async (t) => {
-  const { app } = testApp({ ...baseInventory(), webUiAuthMode: 'auto' });
+  const { app } = testApp({ ...baseInventory() });
   const errors: string[] = [];
   t.mock.method(console, 'error', (message: string) => errors.push(message));
   const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });

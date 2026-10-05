@@ -295,7 +295,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // the local operator even when the proxy did send them. Clearing it or
     // setting auto/none needs no such check: confirming that leaving
     // "authentik" is deliberate is the Settings page's job (client-side).
-    if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'authentik') {
+    if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'oidc') {
       const identity = forwardAuthIdentity(req.headers);
       if (!identity) {
         res.status(409).json({
@@ -342,7 +342,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // Leaving authentik turns sign-in off for the whole web UI, so it is
     // worth a line in the service log naming who did it (the real user,
     // never an impersonated view). An unset mode is auto.
-    if (authModeBefore === 'authentik' && 'webUiAuthMode' in updates && updates.webUiAuthMode !== 'authentik') {
+    if (authModeBefore === 'oidc' && 'webUiAuthMode' in updates && updates.webUiAuthMode !== 'oidc') {
       const who = (req.realUser ?? req.user)?.username ?? 'unknown';
       logWarn(
         `Sign-in mode changed from authentik to ${updates.webUiAuthMode ?? 'auto'} by ${who} -- the web UI no longer requires Authentik sign-in`

@@ -60,6 +60,11 @@ export interface AuthUser {
 // docs/authentik.md.
 export type AuthMode = 'auto' | 'authentik' | 'none';
 
+// TRANSITIONAL (#69 batch D1a): the settings store now holds 'oidc' | 'none'
+// (openInventoryDb migrates a stored 'authentik' to 'oidc'). Until the
+// request-auth rewrite lands, a stored or env 'oidc' means what 'authentik'
+// always meant here: trusted headers required, 401 otherwise.
+
 // Read through the config accessor (issue #64): WEB_UI_AUTH_MODE wins, then
 // the stored webUiAuthMode setting. A stored value was already validated by
 // the accessor, so the check below only ever rejects the environment
@@ -67,6 +72,7 @@ export type AuthMode = 'auto' | 'authentik' | 'none';
 export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {
   const raw = configValue('webUiAuthMode', env).value;
   if (raw === undefined) return 'auto';
+  if (raw === 'oidc') return 'authentik';
   if (raw === 'auto' || raw === 'authentik' || raw === 'none') return raw;
   throw new Error(`WEB_UI_AUTH_MODE must be one of auto, authentik, none -- got: ${raw}`);
 }

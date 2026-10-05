@@ -305,6 +305,9 @@ export interface SettingsValues {
   authentikInvalidationFlowSlug?: string;
   authentikOidcSigningKeyName?: string;
   webUiAuthMode?: string;
+  webUiOidcIssuer?: string;
+  webUiOidcClientId?: string;
+  webUiOidcRedirectUri?: string;
   npmApiUrl?: string;
   npmApiEmail?: string;
 }
@@ -376,7 +379,7 @@ export interface EnvironmentPin {
   storedValue?: string;
 }
 
-export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken';
+export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken' | 'webUiOidcClientSecret';
 export interface SecretStatus {
   set: boolean;
   source: SettingSource;

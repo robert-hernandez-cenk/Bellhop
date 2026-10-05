@@ -484,6 +484,7 @@ function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsRe
       cloudflareDnsApiToken: { set: false, source: 'none' },
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: false, source: 'none' },
+      webUiOidcClientSecret: { set: false, source: 'none' },
     },
     ...overrides,
   };
@@ -515,6 +516,7 @@ test('mergeSettingsResponse takes only the saved secret status from the response
       cloudflareDnsApiToken: { set: true, source: 'settings' },
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: false, source: 'none' },
+      webUiOidcClientSecret: { set: false, source: 'none' },
     },
   });
   const merged = mergeSettingsResponse(prev, res, 'authentikApiToken');

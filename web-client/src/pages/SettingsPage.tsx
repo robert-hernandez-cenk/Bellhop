@@ -112,6 +112,27 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
     label: 'Web UI sign-in',
     help: "How the web UI decides who is signed in. auto: use Authentik's forward-auth headers when a request has them, otherwise serve it as the local administrator. authentik: require the forward-auth headers and reject every request without them -- saving this is refused from a session that did not come through Authentik, since every later request would be rejected. none: ignore the headers; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE in the service environment or run bellhop set-config webUiAuthMode auto --apply on the server. Unset: auto.",
   },
+  // #69: the four settings behind Bellhop's own OIDC sign-in. Set by
+  // `bellhop configure-web-login`; the dedicated Settings UI for them is a
+  // later batch of #69.
+  webUiOidcIssuer: {
+    label: 'OIDC issuer URL',
+    placeholder: 'https://authentik.example.com/application/o/bellhop/',
+    help: "The OIDC provider's issuer URL for Bellhop's own sign-in. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+  },
+  webUiOidcClientId: {
+    label: 'OIDC client ID',
+    help: "The client ID Bellhop signs in with. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+  },
+  webUiOidcRedirectUri: {
+    label: 'OIDC redirect URI',
+    placeholder: 'https://bellhop.example.com/auth/callback',
+    help: "Where the provider sends the browser after sign-in; its path must be /auth/callback. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+  },
+  webUiOidcClientSecret: {
+    label: 'OIDC client secret',
+    help: "The client secret Bellhop signs in with. Write-only. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+  },
   authentikApiUrl: {
     label: 'Authentik API URL',
     placeholder: 'https://auth.example.com',
@@ -186,8 +207,8 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
 };
 
 const WEB_UI_AUTH_MODE_OPTIONS = [
-  { value: 'auto', label: 'auto (default)' },
-  { value: 'authentik', label: 'authentik' },
+  { value: '', label: 'unset' },
+  { value: 'oidc', label: 'oidc' },
   { value: 'none', label: 'none' },
 ];
 
@@ -424,7 +445,7 @@ export function SettingsPage() {
         <select
           id={`setting-${key}`}
           className="field-input"
-          value={drafts.webUiAuthMode || 'auto'}
+          value={drafts.webUiAuthMode ?? ''}
           onChange={(e) => setDrafts({ ...drafts, webUiAuthMode: e.target.value })}
         >
           {WEB_UI_AUTH_MODE_OPTIONS.map((option) => (

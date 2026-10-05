@@ -43,7 +43,7 @@ test('authMode defaults to auto when the variable is unset or empty', () => {
 });
 
 test('authMode rejects an unrecognized value, listing the valid ones', () => {
-  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'oidc' }), /must be one of auto, authentik, none/);
+  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'bogus' }), /must be one of auto, authentik, none/);
 });
 
 test('auto mode with no headers yields the synthetic local operator, who is an admin', () => {
@@ -207,19 +207,19 @@ test('requireAdminGroup returns 403 when req.user is undefined', () => {
 afterEach(() => resetConfigStore());
 
 test('authMode reads the stored webUiAuthMode when a config store is registered', () => {
-  tempConfigStore({ webUiAuthMode: 'authentik' });
+  tempConfigStore({ webUiAuthMode: 'oidc' });
   assert.equal(authMode({}), 'authentik');
   assert.equal(resolveAuthUser({}, {}), undefined);
 });
 
 test('authMode: WEB_UI_AUTH_MODE overrides the stored webUiAuthMode', () => {
-  tempConfigStore({ webUiAuthMode: 'authentik' });
+  tempConfigStore({ webUiAuthMode: 'oidc' });
   assert.equal(authMode({ WEB_UI_AUTH_MODE: 'none' }), 'none');
 });
 
 test('authMode still rejects an invalid WEB_UI_AUTH_MODE with a store registered', () => {
-  tempConfigStore({ webUiAuthMode: 'auto' });
-  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'oidc' }), /must be one of auto, authentik, none/);
+  tempConfigStore({ webUiAuthMode: 'none' });
+  assert.throws(() => authMode({ WEB_UI_AUTH_MODE: 'bogus' }), /must be one of auto, authentik, none/);
 });
 
 test('resolveAuthUser marks a forward-auth header identity with viaForwardAuth', () => {

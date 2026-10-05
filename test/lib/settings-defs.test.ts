@@ -28,12 +28,17 @@ const EXPECTED: Record<string, [string, string, boolean]> = {
   npmApiEmail: ['NPM_API_EMAIL', 'proxy', false],
   npmApiPassword: ['NPM_API_PASSWORD', 'proxy', true],
   githubApiToken: ['GITHUB_API_TOKEN', 'github', true],
+  // #69: Bellhop's own OIDC web login.
+  webUiOidcIssuer: ['WEB_UI_OIDC_ISSUER', 'general', false],
+  webUiOidcClientId: ['WEB_UI_OIDC_CLIENT_ID', 'general', false],
+  webUiOidcRedirectUri: ['WEB_UI_OIDC_REDIRECT_URI', 'general', false],
+  webUiOidcClientSecret: ['WEB_UI_OIDC_CLIENT_SECRET', 'general', true],
 };
 
 // The data/ file each variable lived in before #64 -- named in the Settings
 // page's env-pinned refusal. githubApiToken is new and never had one.
 function expectedEnvFile(envVar: string): string | undefined {
-  if (envVar.startsWith('AUTHENTIK_') || envVar === 'WEB_UI_AUTH_MODE') return 'authentik.env';
+  if (envVar.startsWith('AUTHENTIK_') || envVar === 'WEB_UI_AUTH_MODE' || envVar.startsWith('WEB_UI_OIDC_')) return 'authentik.env';
   if (envVar === 'CLOUDFLARE_DNS_API_TOKEN') return 'cloudflare-api.env';
   if (envVar.startsWith('NPM_API_')) return 'nginx-proxy-manager.env';
   return undefined;
@@ -53,8 +58,8 @@ test('SETTING_DEFS carries exactly the env var, group, secret flag and env file 
   }
 });
 
-test('SETTINGS_KEYS includes the 12 non-secret moved keys and no secret key', () => {
-  assert.equal(MOVED_NON_SECRET.length, 12);
+test('SETTINGS_KEYS includes the 15 non-secret moved keys and no secret key', () => {
+  assert.equal(MOVED_NON_SECRET.length, 15);
   for (const key of MOVED_NON_SECRET) {
     assert.ok((SETTINGS_KEYS as string[]).includes(key), `${key} missing from SETTINGS_KEYS`);
   }
@@ -64,10 +69,10 @@ test('SETTINGS_KEYS includes the 12 non-secret moved keys and no secret key', ()
   assert.deepEqual(Object.keys(MovedSettingsSchema.shape).sort(), MOVED_NON_SECRET.sort());
 });
 
-test('SECRET_SETTINGS_KEYS is exactly the four tokens/passwords', () => {
+test('SECRET_SETTINGS_KEYS is exactly the five tokens/passwords', () => {
   assert.deepEqual(
     [...SECRET_SETTINGS_KEYS].sort(),
-    ['authentikApiToken', 'cloudflareDnsApiToken', 'githubApiToken', 'npmApiPassword']
+    ['authentikApiToken', 'cloudflareDnsApiToken', 'githubApiToken', 'npmApiPassword', 'webUiOidcClientSecret']
   );
   assert.deepEqual(Object.keys(SecretSettingsSchema.shape).sort(), [...SECRET_SETTINGS_KEYS].sort());
 });
@@ -93,13 +98,43 @@ test('positive integer string rule for authentikOutpostPort', () => {
   }
 });
 
-test('webUiAuthMode accepts exactly auto | authentik | none', () => {
-  for (const ok of ['auto', 'authentik', 'none']) assert.ok(accepts(SettingsSchema, 'webUiAuthMode', ok), ok);
-  for (const bad of ['Auto', 'oidc', '']) assert.ok(!accepts(SettingsSchema, 'webUiAuthMode', bad), bad);
+test('webUiAuthMode accepts exactly oidc | none', () => {
+  for (const ok of ['oidc', 'none']) assert.ok(accepts(SettingsSchema, 'webUiAuthMode', ok), ok);
+  for (const bad of ['auto', 'authentik', 'Oidc', '']) assert.ok(!accepts(SettingsSchema, 'webUiAuthMode', bad), bad);
+  const result = SettingsSchema.safeParse({ webUiAuthMode: 'auto' });
+  assert.ok(!result.success);
+  assert.deepEqual(result.error.issues.map((i) => i.message), ['must be one of: oidc, none']);
 });
 
-test('the three tokens must be non-empty with no whitespace', () => {
-  for (const key of ['authentikApiToken', 'cloudflareDnsApiToken', 'githubApiToken']) {
+test('webUiOidcIssuer is an http(s) URL; webUiOidcClientId is non-empty', () => {
+  assert.ok(accepts(SettingsSchema, 'webUiOidcIssuer', 'https://authentik.example.com/application/o/bellhop/'));
+  for (const bad of ['ftp://authentik.example.com', 'not a url', '']) {
+    assert.ok(!accepts(SettingsSchema, 'webUiOidcIssuer', bad), bad);
+  }
+  assert.ok(accepts(SettingsSchema, 'webUiOidcClientId', 'example-client-id'));
+  assert.ok(!accepts(SettingsSchema, 'webUiOidcClientId', ''));
+});
+
+test('webUiOidcRedirectUri is an http(s) URL whose path is /auth/callback', () => {
+  assert.ok(accepts(SettingsSchema, 'webUiOidcRedirectUri', 'https://bellhop.example.com/auth/callback'));
+  assert.ok(accepts(SettingsSchema, 'webUiOidcRedirectUri', 'http://192.0.2.10:3000/auth/callback'));
+  for (const bad of [
+    'https://bellhop.example.com/callback',
+    'https://bellhop.example.com/auth/callback/extra',
+    'https://bellhop.example.com',
+    'ftp://bellhop.example.com/auth/callback',
+    'not a url',
+    '',
+  ]) {
+    assert.ok(!accepts(SettingsSchema, 'webUiOidcRedirectUri', bad), bad);
+  }
+  const result = SettingsSchema.safeParse({ webUiOidcRedirectUri: 'https://bellhop.example.com/x' });
+  assert.ok(!result.success);
+  assert.deepEqual(result.error.issues.map((i) => i.message), ['must be an http:// or https:// URL whose path is /auth/callback']);
+});
+
+test('the four tokens must be non-empty with no whitespace', () => {
+  for (const key of ['authentikApiToken', 'cloudflareDnsApiToken', 'githubApiToken', 'webUiOidcClientSecret']) {
     assert.ok(accepts(SecretSettingsSchema, key, 'example-token-123'), key);
     for (const bad of ['', 'two words', 'trailing\n', '\ttab']) {
       assert.ok(!accepts(SecretSettingsSchema, key, bad), `${key}: ${JSON.stringify(bad)}`);
