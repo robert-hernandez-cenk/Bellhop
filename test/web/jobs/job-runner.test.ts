@@ -9,6 +9,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { logInfo } from '../../../src/lib/log.ts';
+import { withCapturedConsole } from '../../../src/web/console-capture.ts';
+import { gate } from '../../support/gate.ts';
+import { captureWarnings } from '../../support/capture-warnings.ts';
 import type { ExecResult, SSHClient, SshTarget } from '../../../src/lib/ssh-client.ts';
 import Database from 'better-sqlite3';
 
@@ -212,9 +215,9 @@ test('run() receives the job signal, which aborts on cancel()', async () => {
   store.close();
 });
 
-test('cancel() skips a job that is still waiting its turn behind another running job', async () => {
+test('cancel() skips a job that is still waiting its turn behind another running job', { timeout: 5000 }, async () => {
   const { store, dir, runner } = makeRunner();
-  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const release = gate();
   let secondRan = false;
 
   const firstId = runner.enqueue({
@@ -222,7 +225,7 @@ test('cancel() skips a job that is still waiting its turn behind another running
     category: 'maintenance',
     argsJson: '{}',
     run: async () => {
-      await delay(30);
+      await release.promise;
     },
   });
   const secondId = runner.enqueue({
@@ -234,9 +237,10 @@ test('cancel() skips a job that is still waiting its turn behind another running
     },
   });
 
+  const finished = Promise.all([waitForFinished(runner, firstId), waitForFinished(runner, secondId)]);
   assert.equal(runner.cancel(secondId), true);
-  await waitForFinished(runner, firstId);
-  await waitForFinished(runner, secondId);
+  release.open();
+  await finished;
 
   assert.equal(store.get(secondId)?.status, 'cancelled');
   assert.equal(secondRan, false);
@@ -288,6 +292,174 @@ test('a second enqueue while one job is running is queued, not run concurrently'
   await waitForFinished(runner, secondId);
 
   assert.equal(secondStartedBeforeFirstFinished, false);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// Issue #78 US2 (T001): JobRunner runs one job at a time through its own
+// queue. A test-controlled gate,
+// not delay(), proves B genuinely waits for A rather than merely losing a
+// race.
+test('a second enqueue while a job runs stays queued until released, then both run and succeed (#78 US2)', async () => {
+  const { store, dir, runner } = makeRunner();
+  let releaseA!: () => void;
+  const gateA = new Promise<void>((resolve) => {
+    releaseA = resolve;
+  });
+  let bRunCalled = false;
+
+  const aId = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await gateA;
+    },
+  });
+  await waitForStatus(runner, aId, 'running');
+
+  const bId = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      bRunCalled = true;
+    },
+  });
+
+  assert.equal(store.get(bId)?.status, 'queued');
+  assert.equal(bRunCalled, false);
+
+  releaseA();
+  await waitForFinished(runner, bId);
+
+  assert.equal(store.get(aId)?.status, 'success');
+  assert.equal(store.get(bId)?.status, 'success');
+  assert.equal(bRunCalled, true);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// Issue #78 US2 (T002/FR-004): a job cancelled while still queued behind a
+// running one is finished as cancelled at once -- not when its turn comes --
+// never runs, and does not hold up the job queued after it.
+test('a cancelled queued job is marked cancelled immediately, never runs, and does not hold up the next queued job (#78 US2, FR-004)', { timeout: 5000 }, async () => {
+  const { store, log, dir, runner } = makeRunner();
+  const releaseA = gate();
+  let bRunCalled = false;
+  let cRunCalled = false;
+
+  const aId = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      await releaseA.promise;
+    },
+  });
+  await waitForStatus(runner, aId, 'running');
+
+  const bId = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      bRunCalled = true;
+    },
+  });
+  const cId = runner.enqueue({
+    command: 'c',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      cRunCalled = true;
+    },
+  });
+
+  const bStatuses: string[] = [];
+  runner.events.on('status', (payload: any) => {
+    if (payload.jobId === bId) bStatuses.push(payload.status);
+  });
+  const finished = Promise.all([waitForFinished(runner, aId), waitForFinished(runner, cId)]);
+
+  assert.equal(runner.cancel(bId), true);
+  // Still before A is released: B is already over.
+  assert.equal(store.get(bId)?.status, 'cancelled');
+  assert.equal(store.get(bId)?.errorMessage, 'Cancelled by operator');
+  assert.deepEqual(bStatuses, ['cancelled']);
+  assert.equal(store.get(aId)?.status, 'running');
+  assert.equal(runner.cancel(bId), false);
+
+  releaseA.open();
+  await finished;
+
+  assert.equal(bRunCalled, false);
+  assert.deepEqual(bStatuses, ['cancelled']);
+  assert.equal(store.get(bId)?.status, 'cancelled');
+  const bLog = log.read(store.get(bId)!.logFile);
+  assert.equal(bLog.match(/Job cancelled by operator/g)?.length, 1);
+  assert.equal(store.get(aId)?.status, 'success');
+  assert.equal(store.get(cId)?.status, 'success');
+  assert.equal(cRunCalled, true);
+  assert.equal(runner.hasControlPoller(), false);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// Issue #78 US2 (T003/FR-005): a job that throws ends failed, and that must
+// not stop the job queued after it from starting and succeeding.
+test('a job whose run throws ends failed, and the job queued after it still starts and succeeds (#78 US2, FR-005)', async () => {
+  const { store, dir, runner } = makeRunner();
+  let secondRan = false;
+
+  const firstId = runner.enqueue({
+    command: 'a',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      throw new Error('boom');
+    },
+  });
+  const secondId = runner.enqueue({
+    command: 'b',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      secondRan = true;
+    },
+  });
+
+  await waitForFinished(runner, secondId);
+
+  assert.equal(store.get(firstId)?.status, 'failed');
+  assert.equal(store.get(secondId)?.status, 'success');
+  assert.equal(secondRan, true);
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
+});
+
+// If execute() itself rejects (here: the store cannot record the job's end),
+// the queue logs a warning naming the job and still runs the next job.
+test('an execute() rejection is logged with the job id and does not stop the queue (#78)', { timeout: 5000 }, async () => {
+  const { store, dir, runner } = makeRunner();
+  let brokenId = -1;
+  const realMarkFinished = store.markFinished.bind(store);
+  store.markFinished = (id, result) => {
+    if (id === brokenId) throw new Error('store write failed');
+    realMarkFinished(id, result);
+  };
+
+  const { warnings } = await captureWarnings(async () => {
+    brokenId = runner.enqueue({ command: 'a', category: 'maintenance', argsJson: '{}', run: async () => {} });
+    const secondId = runner.enqueue({ command: 'b', category: 'maintenance', argsJson: '{}', run: async () => {} });
+    await waitForFinished(runner, secondId);
+    assert.equal(store.get(secondId)?.status, 'success');
+  });
+
+  assert.ok(
+    warnings.some((w) => w.includes(`Job ${brokenId}`) && w.includes('store write failed')),
+    `expected a warning naming job ${brokenId}, got: ${JSON.stringify(warnings)}`
+  );
   rmSync(dir, { recursive: true, force: true });
   store.close();
 });
@@ -687,8 +859,9 @@ test('enqueue stamps the runner owner on each job, defaulting to web (#16)', asy
   const mcpRunner = new JobRunner(store, log, ssh, { owner: 'mcp:42' });
   const a = webRunner.enqueue({ command: 'x', category: 'maintenance', argsJson: '{}', run: async () => {} });
   const b = mcpRunner.enqueue({ command: 'y', category: 'maintenance', argsJson: '{}', run: async () => {} });
-  await waitForFinished(webRunner, a);
-  await waitForFinished(mcpRunner, b);
+  // Both waiters are registered before either is awaited: the two runners
+  // run concurrently (#78), so b can finish while a is still being awaited.
+  await Promise.all([waitForFinished(webRunner, a), waitForFinished(mcpRunner, b)]);
   assert.equal(store.get(a)?.owner, 'web');
   assert.equal(store.get(b)?.owner, 'mcp:42');
   rmSync(dir, { recursive: true, force: true });
@@ -1096,4 +1269,100 @@ test('execute() finally closes a control request left pending when its job finis
   store.close();
   rmSync(dir, { recursive: true, force: true });
   rmSync(logDir, { recursive: true, force: true });
+});
+
+test('two separate JobRunners do not serialize against each other (#78)', { timeout: 5000 }, async () => {
+  const one = makeRunner();
+  const two = makeRunner();
+  const release = gate();
+  const id1 = one.runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      console.log('runner one waiting');
+      await release.promise;
+    },
+  });
+  await waitForStatus(one.runner, id1, 'running');
+
+  const id2 = two.runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async () => {
+      console.log('runner two ran');
+    },
+  });
+  await waitForFinished(two.runner, id2);
+  assert.equal(two.store.get(id2)!.status, 'success');
+  assert.equal(one.store.get(id1)!.status, 'running');
+
+  release.open();
+  await waitForFinished(one.runner, id1);
+  assert.equal(one.store.get(id1)!.status, 'success');
+  assert.match(one.log.read(one.store.get(id1)!.logFile), /runner one waiting/);
+  assert.doesNotMatch(one.log.read(one.store.get(id1)!.logFile), /runner two ran/);
+  assert.match(two.log.read(two.store.get(id2)!.logFile), /runner two ran/);
+  for (const r of [one, two]) {
+    rmSync(r.dir, { recursive: true, force: true });
+    r.store.close();
+  }
+});
+
+test('a job\'s SSH and EventEmitter callback lines stay in its log while a preview captures concurrently (#78)', { timeout: 5000 }, async () => {
+  const { EventEmitter } = await import('node:events');
+  const store = new JobStore(':memory:');
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobrunner-'));
+  const log = createJobLog(dir);
+  const ssh = new FakeSSHClient((_target, _user, command) => {
+    console.log(`responder saw ${command}`);
+    return { stdout: 'remote output', stderr: '', code: 0 };
+  });
+  const runner = new JobRunner(store, log, ssh);
+
+  const jobStarted = gate();
+  const previewLogged = gate();
+  const jobLineLogged = gate();
+
+  const id = runner.enqueue({
+    command: 'update-all',
+    category: 'maintenance',
+    argsJson: '{}',
+    run: async (jobSsh) => {
+      jobStarted.open();
+      await previewLogged.promise;
+      await jobSsh.exec({ host: 'pve1.local', user: 'root' }, 'apt-get update');
+      const emitter = new EventEmitter();
+      emitter.on('done', () => {
+        console.log('job emitter line');
+        jobLineLogged.open();
+      });
+      await new Promise<void>((resolve) =>
+        setImmediate(() => {
+          emitter.emit('done');
+          resolve();
+        })
+      );
+    },
+  });
+
+  const preview = withCapturedConsole(async () => {
+    await jobStarted.promise;
+    console.log('preview line');
+    previewLogged.open();
+    await jobLineLogged.promise;
+    console.log('preview after');
+  });
+
+  const [{ text }] = await Promise.all([preview, waitForFinished(runner, id)]);
+  const row = store.get(id)!;
+  assert.equal(row.status, 'success');
+  const jobLog = log.read(row.logFile);
+  assert.match(jobLog, /job emitter line/);
+  assert.match(jobLog, /responder saw apt-get update/);
+  assert.doesNotMatch(jobLog, /preview line|preview after/);
+  assert.equal(text, 'preview line\npreview after');
+  rmSync(dir, { recursive: true, force: true });
+  store.close();
 });

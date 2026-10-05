@@ -14,6 +14,8 @@ import type { Operation, OperationDeps } from '../../src/operations/types.ts';
 import { saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { reqStr, optStr } from '../../src/operations/fields.ts';
 import { UPSTREAM_STABLE_BASE, UPSTREAM_DEV_BASE } from '../../src/lib/app-source.ts';
+import { withCapturedConsole } from '../../src/web/console-capture.ts';
+import { gate } from '../support/gate.ts';
 import {
   parseOperationInput,
   redactSecrets,
@@ -61,6 +63,16 @@ function waitForFinished(store: JobStore, id: number): Promise<void> {
     const check = () => {
       const status = store.get(id)?.status;
       if (status && status !== 'queued' && status !== 'running') resolve();
+      else setTimeout(check, 10);
+    };
+    check();
+  });
+}
+
+function waitForStatus(store: JobStore, id: number, status: string): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (store.get(id)?.status === status) resolve();
       else setTimeout(check, 10);
     };
     check();
@@ -126,6 +138,54 @@ test('enqueueWithoutPreview runs apply without a preview banner', async () => {
   const text = log.read(store.get(jobId)!.logFile);
   assert.doesNotMatch(text, /dry-run preview/);
   assert.match(text, /touched g2/);
+});
+
+// T016 (#78, US1): the reported defect, fixed end to end through
+// previewAndEnqueue -- the path the web routes and MCP apply tools share.
+// A first job's apply blocks on a test-controlled gate; a second operation's
+// preview (which itself uses withCapturedConsole, like almost every real
+// preview() does) must resolve with its preview text and a queued job row
+// while the first job is still running, not wait behind it.
+test('T016: previewAndEnqueue for a second operation resolves right away while a first job is still running', { timeout: 5000 }, async () => {
+  const { store, log, runner, deps } = setup();
+  const firstJobGate = gate();
+  const firstOp: Operation = {
+    ...op,
+    id: 'first-op',
+    apply: async () => {
+      await firstJobGate.promise;
+    },
+  };
+  const secondOp: Operation = {
+    ...op,
+    id: 'second-op',
+    // A realistic preview(): it uses withCapturedConsole itself, the same
+    // way almost every real command's preview() does.
+    preview: async (i) => {
+      const { text } = await withCapturedConsole(async () => {
+        console.log(`would touch ${i.guest}`);
+      });
+      return text;
+    },
+  };
+
+  const jobId1 = enqueueWithoutPreview(firstOp, { guest: 'g1' }, deps, runner, {});
+  await waitForStatus(store, jobId1, 'running');
+
+  const { jobId: jobId2, preview } = await previewAndEnqueue(secondOp, { guest: 'g2' }, deps, runner, {});
+  assert.equal(preview, 'would touch g2');
+  // The second job was accepted (a row exists) and is queued, not run yet --
+  // the first job is still running at this point.
+  assert.equal(store.get(jobId1)!.status, 'running');
+  assert.equal(store.get(jobId2)!.status, 'queued');
+
+  firstJobGate.open();
+  await waitForFinished(store, jobId1);
+  await waitForFinished(store, jobId2);
+  assert.equal(store.get(jobId1)!.status, 'success');
+  assert.equal(store.get(jobId2)!.status, 'success');
+  const text2 = log.read(store.get(jobId2)!.logFile);
+  assert.match(text2, /^----- dry-run preview -----\nwould touch g2\n----- end dry-run preview -----/);
 });
 
 // --- resolvesApp / custom script repository pin-once (issue #11, research R5) ---

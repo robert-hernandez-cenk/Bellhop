@@ -15,8 +15,10 @@ import { buildMcpServer } from './build-server.ts';
 
 // MCP stdio entry point (#16). stdout is the protocol channel, so any
 // console.log outside a job's captured console (a command's dry-run notice,
-// a stray log line) must go to stderr instead. withCapturedConsole saves and
-// restores whatever console.log is at call time, so this redirect survives it.
+// a stray log line) must go to stderr instead. withCapturedConsole saves
+// whatever console.log is when the first concurrent capture starts, uses it
+// as the fallback for lines logged outside any capture, and puts it back once
+// the last capture ends, so this redirect still applies (#78).
 console.log = console.error;
 
 // Same ordering and roles as src/web/server.ts (issue #64): the data/*.env
