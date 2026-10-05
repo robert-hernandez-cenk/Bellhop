@@ -27,6 +27,10 @@ import { impersonationRoutes } from './routes/impersonation.ts';
 import { networkingRoutes } from './routes/networking.ts';
 import { oidcRoutes } from './routes/oidc.ts';
 import { tasksRoutes } from './routes/tasks.ts';
+import { authRoutes } from './routes/auth.ts';
+import { SessionStore } from './login/session-store.ts';
+import { SessionService } from './login/sessions.ts';
+import { RealWebLoginClient, type WebLoginClient } from './login/oidc-client.ts';
 
 export interface AppDeps {
   inventory: Inventory;
@@ -62,12 +66,24 @@ export interface AppDeps {
   // it started; optional so tests that don't care need no changes, and the
   // /api/tasks routes answer 503 when it's absent.
   taskScheduler?: TaskScheduler;
+  // Bellhop's own web-login sessions (#69). server.ts passes one backed by
+  // data/sessions.sqlite3, and hands the same instance to
+  // attachJobsWebSocket so the job-log socket resolves cookies identically.
+  // Defaulted to an in-memory store so tests that do not sign anyone in need
+  // no changes; tests that do pass test/support/web-session.ts's service.
+  sessions?: SessionService;
+  // The provider client for /auth/login and /auth/callback. Defaults to the
+  // session service's own client; a test can inject a fake here.
+  webLogin?: WebLoginClient;
 }
 
 export function buildApp(deps: AppDeps): express.Express {
   const app = express();
   const impersonationStore: ImpersonationStore = deps.impersonationStore ?? new Map();
   const cloudflare: CloudflareClient = deps.cloudflare ?? new UnconfiguredCloudflareClient();
+  const sessions: SessionService =
+    deps.sessions ??
+    new SessionService({ store: new SessionStore(':memory:'), client: deps.webLogin ?? new RealWebLoginClient() });
   app.use(express.json());
   // Drop the config accessor's snapshot at the start of every /api request
   // (issue #64, research R3), so a setting saved by another process (the
@@ -79,7 +95,15 @@ export function buildApp(deps: AppDeps): express.Express {
     invalidateConfigSnapshot();
     next();
   });
-  app.use(requireAuth);
+  // Sign-in reads the OIDC settings, so it gets the same fresh read. Then
+  // the /auth routes themselves, ahead of requireAuth: signing in must never
+  // need a session (#69, contracts/http-auth.md).
+  app.use('/auth', (_req, _res, next) => {
+    invalidateConfigSnapshot();
+    next();
+  });
+  app.use('/auth', authRoutes(sessions, deps.webLogin ?? sessions.client));
+  app.use(requireAuth(sessions));
   app.use(applyImpersonation(impersonationStore));
   // Reload inventory from disk before every /api request so a change
   // written by another process (a direct DB edit, a CLI command, a

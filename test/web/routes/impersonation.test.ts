@@ -14,6 +14,11 @@ import { UnconfiguredAuthentikClient } from '../../../src/lib/authentik-client.t
 import type { AuthentikClient } from '../../../src/lib/authentik-client.ts';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
 
@@ -30,6 +35,7 @@ function testApp(
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
   return buildApp({
+    sessions,
     inventory,
     baseSsh: ssh,
     jobStore,
@@ -42,15 +48,14 @@ function testApp(
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 test('POST /api/impersonate rejects a non-admin', async () => {
   const app = testApp(new Map());
   const res = await request(app)
     .post('/api/impersonate')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }))
     .send({ group: 'bellhop-viewers' });
   assert.equal(res.status, 403);
 });
@@ -78,6 +83,7 @@ test('POST /api/impersonate accepts a valid group and whoami reflects it on the 
   assert.equal(whoami.status, 200);
   assert.deepEqual(whoami.body, {
     username: 'admin',
+    uid: 'uid-admin',
     groups: ['bellhop-viewers'],
     impersonating: 'bellhop-viewers',
     localOperator: false,
@@ -106,6 +112,7 @@ test('DELETE /api/impersonate clears an active impersonation even though the cal
   const whoami = await asAdmin(request(app).get('/api/whoami'));
   assert.deepEqual(whoami.body, {
     username: 'admin',
+    uid: 'uid-admin',
     groups: ['bellhop-admins'],
     localOperator: false,
     isAdmin: true,

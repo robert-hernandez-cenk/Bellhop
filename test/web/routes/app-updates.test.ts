@@ -13,6 +13,11 @@ import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import { replaceAppUpdateResults, type AppUpdateResult } from '../../../src/lib/app-update-store.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 function baseInventory(): Inventory {
   return {
@@ -35,6 +40,7 @@ function testApp(inv: Inventory = baseInventory(), impersonationStore?: Imperson
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inv);
   const app = buildApp({
+    sessions,
     inventory: inv,
     baseSsh: ssh,
     jobStore,
@@ -48,7 +54,7 @@ function testApp(inv: Inventory = baseInventory(), impersonationStore?: Imperson
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 test('GET /api/app-updates returns saved rows in the contract shape, with optional fields omitted when unset', async () => {
@@ -126,7 +132,7 @@ test('GET /api/app-updates drops a row for a guest a block-list group cannot see
     resources: [{ type: 'guest', name: 'media' }],
   });
 
-  const res = await request(app).get('/api/app-updates').set('x-authentik-username', 'kid').set('x-authentik-groups', 'family');
+  const res = await request(app).get('/api/app-updates').set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.results.map((r: AppUpdateResult) => r.guest), ['web-lxc']);
 });
@@ -142,7 +148,7 @@ test('GET /api/app-updates drops a row for a guest an allow-list group cannot se
     resources: [{ type: 'guest', name: 'web-lxc' }],
   });
 
-  const res = await request(app).get('/api/app-updates').set('x-authentik-username', 'kid').set('x-authentik-groups', 'family');
+  const res = await request(app).get('/api/app-updates').set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.results.map((r: AppUpdateResult) => r.guest), ['web-lxc']);
 });
@@ -178,8 +184,7 @@ test('GET /api/app-updates filters by the impersonated group, not the real admin
   ]);
   await request(app)
     .put('/api/permissions/family')
-    .set('x-authentik-username', 'setup-admin')
-    .set('x-authentik-groups', 'bellhop-admins')
+    .set('Cookie', sessionCookie(sessions, { username: 'setup-admin', groups: ['bellhop-admins'] }))
     .send({ mode: 'block-list', resources: [{ type: 'guest', name: 'media' }] });
 
   const res = await asAdmin(request(app).get('/api/app-updates'));
@@ -217,12 +222,12 @@ test('GET /api/app-updates includes a guest\'s result for its creator even thoug
     resources: [{ type: 'host', name: 'pve1' }],
   });
 
-  const creator = await request(app).get('/api/app-updates').set('x-authentik-username', 'test-user').set('x-authentik-groups', 'app-users');
+  const creator = await request(app).get('/api/app-updates').set('Cookie', sessionCookie(sessions, { username: 'test-user', groups: ['app-users'] }));
   assert.equal(creator.status, 200);
   assert.deepEqual(creator.body.results.map((r: AppUpdateResult) => r.guest), ['web-lxc']);
 
   // Another user in the same group, not the creator, sees neither row.
-  const other = await request(app).get('/api/app-updates').set('x-authentik-username', 'other-user').set('x-authentik-groups', 'app-users');
+  const other = await request(app).get('/api/app-updates').set('Cookie', sessionCookie(sessions, { username: 'other-user', groups: ['app-users'] }));
   assert.equal(other.status, 200);
   assert.deepEqual(other.body.results, []);
 });

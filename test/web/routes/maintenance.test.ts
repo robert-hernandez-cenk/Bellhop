@@ -13,6 +13,11 @@ import path from 'node:path';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
 import { MAINTENANCE_ACTIONS } from '../../../src/web/commands-meta.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -38,6 +43,7 @@ function testApp(
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   return {
     app: buildApp({
+      sessions,
       inventory,
       baseSsh: ssh,
       jobStore,
@@ -52,7 +58,7 @@ function testApp(
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 function waitForFinished(store: JobStore, id: number): Promise<void> {
@@ -128,6 +134,7 @@ test('POST /api/maintenance/sync-proxy/preview returns the generated configurati
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventoryWithProxy);
   const app = buildApp({
+    sessions,
     inventory: inventoryWithProxy,
     baseSsh: ssh,
     jobStore,
@@ -314,6 +321,7 @@ test('POST /api/maintenance/sync-inventory/apply updates the shared in-memory in
   const invPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(invPath, inventoryWithNoGuests);
   const app = buildApp({
+    sessions,
     inventory: inventoryWithNoGuests,
     baseSsh: ssh,
     jobStore,
@@ -343,8 +351,7 @@ test('POST /api/maintenance/guest-power returns 403 for a restricted group targe
 
   const res = await request(app)
     .post('/api/maintenance/guest-power')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ guest: 'plex-lxc', state: 'stop' });
   assert.equal(res.status, 403);
 });
@@ -359,8 +366,7 @@ test('POST /api/maintenance/set-guest-vpn returns 403 for a restricted group tar
 
   const res = await request(app)
     .post('/api/maintenance/set-guest-vpn')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ guest: 'plex-lxc', vpn: 'none' });
   assert.equal(res.status, 403);
 });
@@ -371,8 +377,7 @@ test('POST /api/maintenance/update-all/run returns 403 for a non-admin', async (
 
   const res = await request(app)
     .post('/api/maintenance/update-all/run')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ selector: { all: true } });
   assert.equal(res.status, 403);
 });
@@ -383,8 +388,7 @@ test('POST /api/maintenance/audit-nfs-mounts/run returns 403 for a non-admin', a
 
   const res = await request(app)
     .post('/api/maintenance/audit-nfs-mounts/run')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({});
   assert.equal(res.status, 403);
 });
@@ -395,8 +399,7 @@ test('POST /api/maintenance/sync-inventory/apply returns 403 for a non-admin', a
 
   const res = await request(app)
     .post('/api/maintenance/sync-inventory/apply')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({});
   assert.equal(res.status, 403);
 });
@@ -411,8 +414,7 @@ test('POST /api/maintenance/update-app/preview returns 403 for a restricted grou
 
   const res = await request(app)
     .post('/api/maintenance/update-app/preview')
-    .set('x-authentik-username', 'kid')
-    .set('x-authentik-groups', 'family')
+    .set('Cookie', sessionCookie(sessions, { username: 'kid', groups: ['family'] }))
     .send({ guest: 'plex-lxc' });
   assert.equal(res.status, 403);
 });

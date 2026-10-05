@@ -22,6 +22,11 @@ import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
 import { setupMcp, waitForFinished } from '../support/mcp-harness.ts';
+import { newTestSessions, sessionCookie } from '../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 // Issue #64 US2 (T026): every secret is seeded with a unique marker, then
 // every place a value could surface is searched for any of them. A secret is
@@ -85,6 +90,7 @@ function testApp(inventoryPath: string) {
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   return buildApp({
+    sessions,
     inventory: loadInventory(inventoryPath),
     baseSsh: ssh,
     jobStore,
@@ -95,7 +101,7 @@ function testApp(inventoryPath: string) {
   });
 }
 
-const asAdmin = (req: request.Test) => req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+const asAdmin = (req: request.Test) => req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 
 test('GET and PATCH /api/settings (and GET /api/inventory) never return a secret, nor log one', async () => {
   const inventoryPath = seededStore();

@@ -14,6 +14,11 @@ import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import { TaskScheduler } from '../../../src/web/tasks/scheduler.ts';
 import type { TaskDefinition } from '../../../src/web/tasks/registry.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 function baseInventory(): Inventory {
   return {
@@ -61,6 +66,7 @@ function testApp(opts: { withScheduler?: boolean; inv?: Inventory; impersonation
       })
     : undefined;
   const app = buildApp({
+    sessions,
     inventory: inv,
     baseSsh: ssh,
     jobStore,
@@ -75,11 +81,11 @@ function testApp(opts: { withScheduler?: boolean; inv?: Inventory; impersonation
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 function asNonAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'family');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }));
 }
 
 test('GET /api/tasks returns the registered tasks in the contract shape', async () => {
@@ -154,6 +160,7 @@ test('PATCH /api/tasks/:id surfaces a non-timeOfDay scheduler failure as 500', a
     tasks: [FAKE_TASK],
   });
   const app = buildApp({
+    sessions,
     inventory: inv,
     baseSsh: ssh,
     jobStore,

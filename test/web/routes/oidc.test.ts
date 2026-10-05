@@ -15,6 +15,11 @@ import type { AuthentikClient } from '../../../src/lib/authentik-client.ts';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
 import type { ImpersonationStore } from '../../../src/web/impersonation.ts';
 import { captureWarnings } from '../../support/capture-warnings.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 function oidcInventory(): Inventory {
   return {
@@ -68,15 +73,15 @@ function testApp(
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
-  return buildApp({ inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik, impersonationStore });
+  return buildApp({ sessions,  inventory, baseSsh: ssh, jobStore, jobLog, jobRunner, inventoryPath, authentik, impersonationStore });
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 function asNonAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'someone').set('x-authentik-groups', 'family');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['family'] }));
 }
 
 test('GET /api/oidc/:entry/credentials returns 200 with all three values for an admin', async () => {

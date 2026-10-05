@@ -157,10 +157,10 @@ export function dashboardRoutes(
   // process.env read -- so it can never disagree with what every other
   // Authentik-backed route on this same client is about to do.
   router.get('/whoami', (req, res) => {
-    // viaForwardAuth (issue #64) is the server's own guard input for the
-    // Settings page's webUiAuthMode refusal, not part of the identity the
-    // client renders, so it is left out of the response.
-    const { viaForwardAuth: _viaForwardAuth, ...user } = req.user!;
+    // viaOidc (#69) is the server's own guard input for the Settings page's
+    // webUiAuthMode refusal, not part of the identity the client renders, so
+    // it is left out of the response (the shape is unchanged from before).
+    const { viaOidc: _viaOidc, ...user } = req.user!;
     const config = authentikConfig();
     res.json({
       ...user,

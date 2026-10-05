@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { forwardAuthIdentity, isAdminOf, requireAdminGroup } from '../auth.ts';
+import { isAdminOf, requireAdminGroup } from '../auth.ts';
 import { logWarn } from '../../lib/log.ts';
 import {
   loadInventory,
@@ -285,28 +285,28 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       }
     }
 
-    // Issue #64 US6: refuse switching webUiAuthMode to 'authentik' unless
-    // the identity authentik mode would see on this very request -- its
-    // forward-auth headers, parsed as authentik mode parses them -- exists
-    // and is an administrator under the admin groups this request leaves in
-    // place. Otherwise every later request, including the one needed to
-    // undo it, would be rejected or lose this page. The headers are read
-    // directly rather than from req.user, because in none mode req.user is
-    // the local operator even when the proxy did send them. Clearing it or
-    // setting auto/none needs no such check: confirming that leaving
-    // "authentik" is deliberate is the Settings page's job (client-side).
+    // Refuse switching webUiAuthMode to oidc unless the real requester (never
+    // an impersonated view) is signed in through Bellhop's own web login and
+    // is an administrator under the admin groups this request leaves in place
+    // (#69, was the issue #64 forward-auth check). Otherwise every later
+    // request, including the one needed to undo it, would be refused or lose
+    // this page. A session is honored in none mode too (research R6), which
+    // is what lets the operator prove they can sign in before turning it on.
+    // Clearing it or setting none needs no such check: confirming that
+    // leaving oidc is deliberate is the Settings page's job (client-side).
+    // TODO(#69 US4, T039/T041): add the OIDC-settings completeness check and
+    // skip the guard when the effective mode is already oidc.
     if ('webUiAuthMode' in updates && updates.webUiAuthMode === 'oidc') {
-      const identity = forwardAuthIdentity(req.headers);
-      if (!identity) {
+      const requester = req.realUser ?? req.user;
+      if (!requester?.viaOidc) {
         res.status(409).json({
-          error:
-            'Refusing to set webUiAuthMode to authentik: this request did not come through Authentik forward-auth, so every later request would be rejected',
+          error: 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change',
         });
         return;
       }
-      if (!isAdminOf(identity.groups, adminGroupsAfter)) {
+      if (!isAdminOf(requester.groups, adminGroupsAfter)) {
         res.status(409).json({
-          error: `Refusing to set webUiAuthMode to authentik: the Authentik identity on this request (${identity.username}) is not an administrator, so it would lose access to this page`,
+          error: `You are signed in as ${requester.username}, who would not be an admin after this change`,
         });
         return;
       }
@@ -339,13 +339,13 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
       return;
     }
-    // Leaving authentik turns sign-in off for the whole web UI, so it is
-    // worth a line in the service log naming who did it (the real user,
-    // never an impersonated view). An unset mode is auto.
+    // Leaving oidc turns sign-in off for the whole web UI, so it is worth a
+    // line in the service log naming who did it (the real user, never an
+    // impersonated view). An unset mode is none.
     if (authModeBefore === 'oidc' && 'webUiAuthMode' in updates && updates.webUiAuthMode !== 'oidc') {
       const who = (req.realUser ?? req.user)?.username ?? 'unknown';
       logWarn(
-        `Sign-in mode changed from authentik to ${updates.webUiAuthMode ?? 'auto'} by ${who} -- the web UI no longer requires Authentik sign-in`
+        `Sign-in mode changed from oidc to ${updates.webUiAuthMode ?? 'none'} by ${who} -- the web UI no longer requires sign-in`
       );
     }
     // Reflect the write in the shared in-memory object immediately rather

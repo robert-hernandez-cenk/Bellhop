@@ -4,6 +4,8 @@ import { authentikConfig } from '../lib/authentik-config.ts';
 import { configValue } from '../lib/config.ts';
 import { UNCONFIGURED_MESSAGE } from '../lib/authentik-client.ts';
 import type { AuthentikClient } from '../lib/authentik-client.ts';
+import { parseCookies, SESSION_COOKIE } from './login/cookies.ts';
+import type { SessionService } from './login/sessions.ts';
 
 declare global {
   namespace Express {
@@ -29,56 +31,47 @@ export interface AuthUser {
   // play (see authMode below). Drives the web UI's unauthenticated banner;
   // admin rights come from group membership like everyone else.
   localOperator?: boolean;
-  // The identity provider's stable user id (Authentik's X-authentik-uid,
-  // issue #58) -- used to match a guest's recorded creator across
-  // username renames (src/lib/permissions.ts's isGuestCreator) rather than
-  // by username alone. Absent for dev/test identities and the synthetic
-  // local operator, which have no such id.
+  // The identity provider's stable user id (the OIDC `sub` claim, issue #58
+  // and #69) -- used to match a guest's recorded creator across username
+  // renames (src/lib/permissions.ts's isGuestCreator) rather than by
+  // username alone. Always set for a session identity; absent for dev/test
+  // identities and the synthetic local operator, which have no such id.
   uid?: string;
-  // Set only when the identity came from Authentik forward-auth headers
-  // (issue #64) -- never for the dev user or the local operator. The
-  // Settings page's webUiAuthMode guard reads the headers itself through
-  // forwardAuthIdentity, since in none mode req.user is the local operator
-  // even when they are present.
-  viaForwardAuth?: true;
   // Set only for an identity resolved from a Bellhop web-login session
   // (#69, src/web/login/sessions.ts) -- never for the dev user or the local
   // operator. Survives the impersonation overlay, which replaces only groups.
+  // The Settings page's webUiAuthMode guard reads it: only a requester who
+  // has proved they can sign in may switch sign-in on. Not part of whoami.
   viaOidc?: true;
 }
 
-// Axis 1 of issue #123's design. The default is inferred rather than
-// fail-closed on purpose: most adopters either grow into an identity
-// provider over time or never want one, and a 401 wall on first run is a
-// poor introduction to a toolkit whose other commands have nothing to do
-// with Authentik.
+// #69 research R10. The modes are:
 //
-//   auto (default) -- trusted headers if present, else the local operator
-//   authentik      -- trusted headers required, 401 otherwise
-//   none           -- always the local operator, headers ignored
+//   oidc -- a Bellhop web-login session is required: /api answers 401 and
+//           a page navigation is sent to /auth/login without one
+//   none -- no authentication: a request with no session is served as the
+//           full-admin local operator (the default, so a fresh clone works
+//           before any identity provider exists)
 //
-// 'authentik' exists because 'auto' cannot detect the one failure it cannot
-// see: a Caddy config that *lost* its forward_auth directive looks identical
-// to a deployment that never had one. Any instance where authentication is
-// load-bearing should set it -- see "Running without Authentik" in
-// docs/authentik.md.
-export type AuthMode = 'auto' | 'authentik' | 'none';
-
-// TRANSITIONAL (#69 batch D1a): the settings store now holds 'oidc' | 'none'
-// (openInventoryDb migrates a stored 'authentik' to 'oidc'). Until the
-// request-auth rewrite lands, a stored or env 'oidc' means what 'authentik'
-// always meant here: trusted headers required, 401 otherwise.
+// A session is honored in both modes (R6), which is what lets an operator
+// sign in and prove an admin identity before switching to oidc.
+export type AuthMode = 'oidc' | 'none';
 
 // Read through the config accessor (issue #64): WEB_UI_AUTH_MODE wins, then
 // the stored webUiAuthMode setting. A stored value was already validated by
-// the accessor, so the check below only ever rejects the environment
-// variable -- echoing it, as before, since it is the operator's own value.
+// the accessor (and openInventoryDb migrated the retired ones), so the
+// checks below only ever reject the environment variable -- echoing it, as
+// before, since it is the operator's own value.
 export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {
   const raw = configValue('webUiAuthMode', env).value;
-  if (raw === undefined) return 'auto';
-  if (raw === 'oidc') return 'authentik';
-  if (raw === 'auto' || raw === 'authentik' || raw === 'none') return raw;
-  throw new Error(`WEB_UI_AUTH_MODE must be one of auto, authentik, none -- got: ${raw}`);
+  if (raw === undefined) return 'none';
+  if (raw === 'oidc' || raw === 'none') return raw;
+  if (raw === 'auto' || raw === 'authentik') {
+    throw new Error(
+      `WEB_UI_AUTH_MODE=${raw} is no longer supported -- use oidc (sign-in required) or none (no authentication); see docs/authentik.md`
+    );
+  }
+  throw new Error(`WEB_UI_AUTH_MODE must be one of oidc, none -- got: ${raw}`);
 }
 
 // The local operator's username: WEB_UI_LOCAL_USER, else 'local'. Exported for
@@ -100,68 +93,65 @@ function localOperator(env: NodeJS.ProcessEnv): AuthUser {
   };
 }
 
-// Caddy's forward_auth to Authentik's embedded outpost adds these headers
-// once a request is authenticated. WEB_UI_DEV_USER
-// remains the local-dev/test affordance: unlike the local operator, it can
-// simulate *specific non-admin group memberships* via WEB_UI_DEV_GROUPS,
-// which is what most of this repo's web tests rely on.
-export function resolveAuthUser(
+// The signed-in user for a request, or undefined when it is unauthenticated
+// (#69 research R6). Takes only the request's headers, and of those reads
+// only Cookie, so the raw WebSocket upgrade (src/web/routes/jobs.ts) resolves
+// a user exactly as requireAuth does. X-authentik-* headers are never read
+// (FR-018): with Bellhop's own sign-in, a header is just something any client
+// can send.
+//
+//   1. a valid bellhop_session cookie -- in either mode, re-checked with the
+//      provider when due (SessionService.resolve);
+//   2. WEB_UI_DEV_USER -- the local-dev/test affordance. Unlike the local
+//      operator it can simulate *specific non-admin group memberships* via
+//      WEB_UI_DEV_GROUPS, which most of this repo's web tests rely on. It
+//      outranks the local operator so the suite's global
+//      WEB_UI_DEV_USER=test-user keeps working with the none default, and it
+//      applies in oidc mode too -- which is exactly why it must never be set
+//      in a production environment;
+//   3. none mode -- the local operator;
+//   4. otherwise unauthenticated.
+export async function resolveRequestUser(
   headers: IncomingHttpHeaders,
+  sessions: SessionService,
   env: NodeJS.ProcessEnv = process.env
-): AuthUser | undefined {
-  const mode = authMode(env);
-  if (mode === 'none') return localOperator(env);
+): Promise<AuthUser | undefined> {
+  const sessionId = parseCookies(headers.cookie)[SESSION_COOKIE];
+  if (sessionId) {
+    const user = await sessions.resolve(sessionId);
+    if (user) return user;
+  }
 
-  const fromHeaders = forwardAuthIdentity(headers);
-  if (fromHeaders) return fromHeaders;
-
-  // Checked before the mode gate below, so this bypasses authentication even
-  // in strict 'authentik' mode -- intended, and what this repo's own tests
-  // rely on (see CLAUDE.md's "Web UI authentication" section), but it does
-  // mean strict mode is not an absolute guarantee w.r.t. this variable. This
-  // is exactly why WEB_UI_DEV_USER must never be set in a production
-  // environment.
   const devUser = env.WEB_UI_DEV_USER;
   if (devUser) {
     const devGroups = env.WEB_UI_DEV_GROUPS;
     return { username: devUser, groups: devGroups ? devGroups.split('|') : [] };
   }
 
-  return mode === 'auto' ? localOperator(env) : undefined;
+  return authMode(env) === 'none' ? localOperator(env) : undefined;
 }
 
-// The identity the forward-auth headers describe, or undefined when the
-// request carries none -- whatever the configured mode, and never the dev
-// user or the local operator. resolveAuthUser uses it in auto/authentik
-// mode; the Settings page also calls it directly (issue #64), since in
-// none mode the request's own identity is the local operator even when
-// the proxy did send these headers.
-export function forwardAuthIdentity(headers: IncomingHttpHeaders): AuthUser | undefined {
-  const username = headers['x-authentik-username'];
-  if (typeof username !== 'string' || username.length === 0) return undefined;
-  const email = headers['x-authentik-email'];
-  const groupsHeader = headers['x-authentik-groups'];
-  const uid = headers['x-authentik-uid'];
-  return {
-    username,
-    email: typeof email === 'string' ? email : undefined,
-    groups: typeof groupsHeader === 'string' && groupsHeader.length > 0 ? groupsHeader.split('|') : [],
-    // A conditional spread, not `uid: ... ?? undefined`, so a request
-    // with no (or an empty) x-authentik-uid header round-trips without
-    // a uid key at all rather than one set to `undefined`.
-    ...(typeof uid === 'string' && uid.length > 0 ? { uid } : {}),
-    viaForwardAuth: true,
-  };
-}
-
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const user = resolveAuthUser(req.headers);
-  if (!user) {
+// The global authentication middleware (contracts/http-auth.md). Mounted in
+// buildApp after the /auth routes, so sign-in itself never needs a session.
+// Unauthenticated: an /api call gets 401 JSON (the client's fetch wrapper
+// turns that into a redirect to sign in); a page GET/HEAD is redirected to
+// /auth/login carrying the path and query it asked for; anything else gets
+// 401, since a redirect cannot replay a form post.
+export function requireAuth(sessions: SessionService): RequestHandler {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const user = await resolveRequestUser(req.headers, sessions);
+    if (user) {
+      req.user = user;
+      next();
+      return;
+    }
+    const isApi = req.originalUrl === '/api' || req.originalUrl.startsWith('/api/') || req.originalUrl.startsWith('/api?');
+    if (!isApi && (req.method === 'GET' || req.method === 'HEAD')) {
+      res.redirect(302, `/auth/login?returnTo=${encodeURIComponent(req.originalUrl)}`);
+      return;
+    }
     res.status(401).json({ error: 'unauthorized' });
-    return;
-  }
-  req.user = user;
-  next();
+  };
 }
 
 // The single admin predicate. Before issue #123 this expression was written

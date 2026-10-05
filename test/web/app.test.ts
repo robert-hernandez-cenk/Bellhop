@@ -13,6 +13,11 @@ import { FakeAuthentikClient } from '../support/fake-authentik-client.ts';
 import { saveInventory, type Inventory } from '../../src/lib/inventory.ts';
 import { setConfigClock } from '../../src/lib/config.ts';
 import { resetConfigStore, tempConfigStore, writeMetaRow } from '../support/config-store.ts';
+import { newTestSessions, sessionCookie } from '../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 test('GET /api/inventory reflects a DB write made by another process, with no app restart', async () => {
   const initial: Inventory = {
@@ -28,6 +33,7 @@ test('GET /api/inventory reflects a DB write made by another process, with no ap
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const jobRunner = new JobRunner(jobStore, jobLog, ssh);
   const app = buildApp({
+    sessions,
     inventory: initial,
     baseSsh: ssh,
     jobStore,
@@ -71,6 +77,7 @@ test('a setting written to the DB between two /api requests is used by the secon
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const app = buildApp({
+    sessions,
     inventory: { domain: 'example.com', hosts: [], guests: [] },
     baseSsh: ssh,
     jobStore,
@@ -80,7 +87,7 @@ test('a setting written to the DB between two /api requests is used by the secon
     authentik: new FakeAuthentikClient(),
   });
   const whoami = () =>
-    request(app).get('/api/whoami').set('x-authentik-username', 'alice').set('x-authentik-groups', 'custom-admins');
+    request(app).get('/api/whoami').set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['custom-admins'] }));
 
   const before = await whoami();
   assert.equal(before.status, 200);
@@ -101,6 +108,7 @@ test('the auth mode itself is re-read on the very next request (invalidated befo
   const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const app = buildApp({
+    sessions,
     inventory: { domain: 'example.com', hosts: [], guests: [] },
     baseSsh: ssh,
     jobStore,
@@ -109,10 +117,17 @@ test('the auth mode itself is re-read on the very next request (invalidated befo
     inventoryPath,
     authentik: new FakeAuthentikClient(),
   });
-  const whoami = () => request(app).get('/api/whoami').set('x-authentik-username', 'alice');
-
-  assert.equal((await whoami()).body.username, 'alice');
-  writeMetaRow(inventoryPath, 'webUiAuthMode', 'none');
-  // 'none' ignores the headers and always yields the local operator.
-  assert.equal((await whoami()).body.username, 'local');
+  // No session and no dev user: oidc refuses the request, none serves it as
+  // the local operator -- so the answer flips with the stored mode alone.
+  const whoami = () => request(app).get('/api/whoami');
+  const originalDevUser = process.env.WEB_UI_DEV_USER;
+  delete process.env.WEB_UI_DEV_USER;
+  try {
+    writeMetaRow(inventoryPath, 'webUiAuthMode', 'oidc');
+    assert.equal((await whoami()).status, 401);
+    writeMetaRow(inventoryPath, 'webUiAuthMode', 'none');
+    assert.equal((await whoami()).body.username, 'local');
+  } finally {
+    if (originalDevUser !== undefined) process.env.WEB_UI_DEV_USER = originalDevUser;
+  }
 });

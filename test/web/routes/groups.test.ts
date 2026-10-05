@@ -13,6 +13,11 @@ import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { UnconfiguredAuthentikClient } from '../../../src/lib/authentik-client.ts';
 import type { AuthentikClient, AuthentikGroup } from '../../../src/lib/authentik-client.ts';
 import { saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
+import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+
+// #69: one web-login session service for the file, passed to every
+// buildApp; sessionCookie() mints a signed-in Cookie header on it.
+const sessions = newTestSessions();
 
 const inventory: Inventory = { domain: 'example.com', hosts: [], guests: [] };
 
@@ -28,6 +33,7 @@ function testApp(seed: { groups?: AuthentikGroup[]; authentik?: AuthentikClient 
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
   saveInventory(inventoryPath, inventory);
   const app = buildApp({
+    sessions,
     inventory,
     baseSsh: ssh,
     jobStore,
@@ -40,15 +46,14 @@ function testApp(seed: { groups?: AuthentikGroup[]; authentik?: AuthentikClient 
 }
 
 function asAdmin(req: request.Test): request.Test {
-  return req.set('x-authentik-username', 'admin').set('x-authentik-groups', 'bellhop-admins');
+  return req.set('Cookie', sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }));
 }
 
 test('GET /api/groups returns 403 for a non-admin', async () => {
   const { app } = testApp();
   const res = await request(app)
     .get('/api/groups')
-    .set('x-authentik-username', 'someone')
-    .set('x-authentik-groups', 'homelab');
+    .set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['homelab'] }));
   assert.equal(res.status, 403);
 });
 

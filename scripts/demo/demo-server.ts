@@ -16,6 +16,10 @@ import path from 'node:path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { IncomingHttpHeaders } from 'node:http';
+import { SessionStore } from '../../src/web/login/session-store.ts';
+import { SessionService } from '../../src/web/login/sessions.ts';
+import { RealWebLoginClient } from '../../src/web/login/oidc-client.ts';
+import { SESSION_COOKIE } from '../../src/web/login/cookies.ts';
 import { loadInventory, saveInventory } from '../../src/lib/inventory.ts';
 import { UnconfiguredAuthentikClient } from '../../src/lib/authentik-client.ts';
 import { UnconfiguredCloudflareClient } from '../../src/lib/cloudflare-client.ts';
@@ -57,25 +61,47 @@ export interface DemoServer {
 // the two can never disagree (localhost may resolve to ::1 first).
 const DEMO_HOST = '127.0.0.1';
 
-// The identity a reverse proxy's Authentik forward-auth would add for a
-// signed-in admin (research R4). With these present, the Sidebar shows a
-// normal signed-in admin instead of the "no authentication configured"
-// warning a real header-less deployment deserves. Exported so the
-// example-data guard can check the username, email, and group it carries.
-export const DEMO_IDENTITY_HEADERS = {
-  'x-authentik-username': 'admin',
-  'x-authentik-email': 'admin@example.com',
-  'x-authentik-groups': 'bellhop-admins',
+// The signed-in admin every demo request is served as (research R4; #69
+// replaced the forward-auth headers this used to inject with a seeded
+// web-login session). With it, the Sidebar shows a normal signed-in admin
+// instead of the "no authentication configured" warning a deployment with
+// no sign-in deserves. Exported so the example-data guard can check the
+// username, email, and group it carries.
+export const DEMO_IDENTITY = {
+  username: 'admin',
+  email: 'admin@example.com',
+  groups: ['bellhop-admins'],
+  uid: 'example-demo-admin-uid',
 } as const;
 
-function setDemoIdentity(headers: IncomingHttpHeaders): void {
-  Object.assign(headers, DEMO_IDENTITY_HEADERS);
+// An in-memory session store holding one session for DEMO_IDENTITY. Its clock
+// is frozen at creation, so the session is never due a provider re-check
+// (the demo has no provider) and never expires while the demo runs.
+function demoSessions(): { sessions: SessionService; cookie: string } {
+  const createdAt = Date.now();
+  const sessions = new SessionService({
+    store: new SessionStore(':memory:', () => createdAt),
+    client: new RealWebLoginClient(),
+  });
+  const id = sessions.create({
+    username: DEMO_IDENTITY.username,
+    email: DEMO_IDENTITY.email,
+    groups: [...DEMO_IDENTITY.groups],
+    uid: DEMO_IDENTITY.uid,
+    refreshToken: 'example-demo-refresh-token',
+    idToken: 'example-demo-id-token',
+  });
+  return { sessions, cookie: `${SESSION_COOKIE}=${id}` };
+}
+
+function setDemoIdentity(headers: IncomingHttpHeaders, cookie: string): void {
+  headers.cookie = cookie;
 }
 
 // Makes the demo independent of the developer's environment (FR-006): no
 // dev-user bypass, no environment override of any stored setting (so the
-// demo inventory's own webUiAuthMode -- strict header auth, with the headers
-// above as the only identity -- default Authentik group names, and its
+// demo inventory's own webUiAuthMode -- oidc, with the seeded session above
+// as the only identity -- default Authentik group names, and its
 // example secrets are what's in effect), and the path resolvers pointed at
 // the temp directory in case anything ever calls inventoryPath()/dataDir().
 // Mutating process.env is intended -- the demo owns its process.
@@ -148,6 +174,7 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
     const taskScheduler = new TaskScheduler({ inventory, inventoryPath, jobRunner, jobStore, fetchImpl: demoFetch });
 
     const impersonationStore: ImpersonationStore = new Map();
+    const { sessions, cookie } = demoSessions();
     const app = buildApp({
       inventory,
       baseSsh: ssh,
@@ -161,11 +188,12 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
       goBuilder: demoGoBuilder,
       fetchImpl: demoFetch,
       taskScheduler,
+      sessions,
     });
 
     const outer = express();
     outer.use((req, _res, next) => {
-      setDemoIdentity(req.headers);
+      setDemoIdentity(req.headers, cookie);
       next();
     });
     outer.use(app);
@@ -179,10 +207,10 @@ export async function startDemoServer({ port, serveClient = true }: StartDemoSer
 
     const server = http.createServer(outer);
     // /ws/jobs/:id is handled on the raw server, outside Express -- prepended
-    // so the headers are in place before attachJobsWebSocket's own listener
-    // resolves the user.
-    server.prependListener('upgrade', (req) => setDemoIdentity(req.headers));
-    const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, inventory, impersonationStore);
+    // so the session cookie is in place before attachJobsWebSocket's own
+    // listener resolves the user.
+    server.prependListener('upgrade', (req) => setDemoIdentity(req.headers, cookie));
+    const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, inventory, impersonationStore, sessions);
 
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error) => {

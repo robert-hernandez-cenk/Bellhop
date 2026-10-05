@@ -6,7 +6,7 @@ import path from 'node:path';
 import { loadInventory, saveInventory, effectiveAuth } from '../../../src/lib/inventory.ts';
 import { buildDemoInventory, DEMO_SECRET_SETTINGS } from '../../../scripts/demo/demo-inventory.ts';
 import { DEMO_JOB_DEFS, DEMO_JOB_LOGS } from '../../../scripts/demo/demo-jobs.ts';
-import { DEMO_IDENTITY_HEADERS } from '../../../scripts/demo/demo-server.ts';
+import { DEMO_IDENTITY } from '../../../scripts/demo/demo-server.ts';
 import { DemoSSHClient, DEMO_AUTHORIZED_KEY, DEMO_PACKAGE_MANAGER, demoSimulatedOutput } from '../../../scripts/demo/demo-ssh.ts';
 import { demoFetch, DEMO_CATALOG_SLUGS } from '../../../scripts/demo/demo-fetch.ts';
 
@@ -247,7 +247,7 @@ test('example-data guard: every demo value uses documentation IPs and example do
     ['demo inventory', JSON.stringify(buildDemoInventory())],
     ...Object.entries(DEMO_JOB_LOGS).map(([name, log]): [string, string] => [`job log ${name}`, log]),
     ...DEMO_JOB_DEFS.map((job): [string, string] => [`seeded job ${job.command}`, JSON.stringify(job)]),
-    ['demo identity headers', JSON.stringify(DEMO_IDENTITY_HEADERS)],
+    ['demo identity', JSON.stringify(DEMO_IDENTITY)],
     ['demo secret settings', JSON.stringify(DEMO_SECRET_SETTINGS)],
     ...(await allDemoSshOutputs()).map((out, i): [string, string] => [`DemoSSHClient output #${i}`, out]),
     ...(await allDemoCatalogText()).map((text, i): [string, string] => [`demo catalog #${i}`, text]),
@@ -267,7 +267,7 @@ test('example-data guard: every demo value uses documentation IPs and example do
 test('example-data guard: every demo username and email is an example one', async () => {
   const usernames: Array<[string, string]> = [
     ...DEMO_JOB_DEFS.map((job): [string, string] => [`seeded job ${job.command} triggeredByUsername`, job.triggeredByUsername]),
-    ['demo identity x-authentik-username', DEMO_IDENTITY_HEADERS['x-authentik-username']],
+    ['demo identity username', DEMO_IDENTITY.username],
   ];
   const badUsers = usernames.filter(([, user]) => !EXAMPLE_USERNAMES.has(user)).map(([where, user]) => `${where}: ${user}`);
   assert.deepEqual(badUsers, []);
@@ -275,14 +275,14 @@ test('example-data guard: every demo username and email is an example one', asyn
   const texts = [
     JSON.stringify(buildDemoInventory()),
     JSON.stringify(DEMO_JOB_DEFS),
-    JSON.stringify(DEMO_IDENTITY_HEADERS),
+    JSON.stringify(DEMO_IDENTITY),
     ...(await allDemoSshOutputs()),
   ];
   const emails = texts.flatMap((text) => text.match(EMAIL_RE) ?? []);
   // The matcher itself: an ssh target is not an email, a real-looking one is.
   assert.deepEqual('ssh root@198.51.100.3 or me@home.lan'.match(EMAIL_RE), ['me@home.lan']);
-  // Not vacuous: the identity headers carry the signed-in admin's email.
-  assert.ok(emails.includes(DEMO_IDENTITY_HEADERS['x-authentik-email']));
+  // Not vacuous: the demo identity carries the signed-in admin's email.
+  assert.ok(emails.includes(DEMO_IDENTITY.email));
   const badEmails = emails.filter((email) => !email.toLowerCase().endsWith('@example.com'));
   assert.deepEqual(badEmails, []);
 });
