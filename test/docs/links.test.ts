@@ -5,25 +5,31 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Documentation link check (specs/013-condense-readme-docs/contracts/link-check.md).
-// Scans README.md, CONTRIBUTING.md, CLAUDE.md and every *.md under docs/, and
-// fails once listing every relative link or anchor that no longer resolves.
+// Scans README.md, CONTRIBUTING.md, CLAUDE.md, every *.md under docs/ and the
+// nested CLAUDE.md files under src/ and web-client/ (issue #80), and fails once
+// listing every relative link or anchor that no longer resolves.
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const README_LINE_LIMIT = 200;
+// The root CLAUDE.md is loaded into every Claude Code session; subsystem
+// detail lives in the nested CLAUDE.md files instead (issue #80).
+const CLAUDE_MD_LINE_LIMIT = 250;
 
 function markdownFiles(): string[] {
   // CONTRIBUTING.md and CLAUDE.md link into the README (#prerequisites,
   // #setup), so renaming one of its headings must fail here too.
   const files = ['README.md', 'CONTRIBUTING.md', 'CLAUDE.md'].map((name) => join(REPO_ROOT, name));
-  const walk = (dir: string): void => {
+  const walk = (dir: string, wanted: (name: string) => boolean): void => {
     if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.isFile() && entry.name.endsWith('.md')) files.push(full);
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules') walk(full, wanted);
+      } else if (entry.isFile() && wanted(entry.name)) files.push(full);
     }
   };
-  walk(join(REPO_ROOT, 'docs'));
+  walk(join(REPO_ROOT, 'docs'), (name) => name.endsWith('.md'));
+  for (const dir of ['src', 'web-client']) walk(join(REPO_ROOT, dir), (name) => name === 'CLAUDE.md');
   return files;
 }
 
@@ -174,6 +180,21 @@ test(`README.md stays within its ${README_LINE_LIMIT}-line budget`, () => {
     lines <= README_LINE_LIMIT,
     `README.md has ${lines} lines; the limit is ${README_LINE_LIMIT}`,
   );
+});
+
+test(`root CLAUDE.md stays within its ${CLAUDE_MD_LINE_LIMIT}-line budget`, () => {
+  const lines = countLines(readFileSync(join(REPO_ROOT, 'CLAUDE.md'), 'utf8'));
+  assert.ok(
+    lines <= CLAUDE_MD_LINE_LIMIT,
+    `CLAUDE.md has ${lines} lines; the limit is ${CLAUDE_MD_LINE_LIMIT}. Subsystem detail belongs in the nested CLAUDE.md for its directory`,
+  );
+});
+
+test('the link check covers the nested CLAUDE.md files', () => {
+  const scanned = markdownFiles().map((file) => relative(REPO_ROOT, file).replace(/\\/g, '/'));
+  assert.ok(scanned.includes('src/lib/CLAUDE.md'), 'src/lib/CLAUDE.md is not scanned');
+  assert.ok(scanned.includes('web-client/CLAUDE.md'), 'web-client/CLAUDE.md is not scanned');
+  assert.ok(!scanned.some((file) => file.includes('node_modules/')), 'node_modules is scanned');
 });
 
 test('every relative link and anchor in README.md, docs/ and the contributor docs resolves', () => {
