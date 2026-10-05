@@ -9,36 +9,40 @@ Shared rules:
 - Forward-auth passes five identity headers: username, groups, email, name, uid (no `entitlements`).
 - `ctx.outpost` is read only for `'forward'` routes; `buildRoutes` throws its missing-authentik error before producing one without an outpost.
 
-## Caddy certificate modes (`proxyCaddyTls`)
+## TLS source by driver
 
-`caddy` and `caddy-api` read it as `ctx.caddyTls` (inert elsewhere):
+Every renderer reads the effective `ctx.tlsSource` (#72; `buildProxyContext(inventory, driver)` resolves an unset setting to the driver's `defaultTlsSource`) and switches on it exhaustively, throwing `<driver> driver cannot render tlsSource '<x>' (checkTlsSource should have refused it)` for a source the driver doesn't list. Output for each source is byte-identical to the pre-#72 setting it replaced (FR-007).
 
-- `cloudflare` (default; unset is byte-identical to the original): Cloudflare DNS-01, fixed `ACME_DNS_RESOLVERS`; Caddyfile clause `CLOUDFLARE_TLS_BLOCK`.
-- `letsencrypt`: Caddy's automatic HTTPS, no DNS provider; no clause.
-- `internal`: Caddy's self-signed CA; `tls internal`.
-- `files`: shared `proxyTlsCertificate`/`proxyTlsKey` pair (`ctx.tls`) nginx also reads; `tls <cert> <key>`.
+| Driver | `tlsSources` | Default | Rendering |
+|---|---|---|---|
+| `caddy`, `caddy-api` | acme-dns, acme-http, internal, files | acme-dns | `acme-dns` (old `proxyCaddyTls: cloudflare`): DNS-01 via `ctx.acmeDnsProvider` (only `cloudflare`: `CLOUDFLARE_TLS_BLOCK`, fixed `ACME_DNS_RESOLVERS`); `acme-http` (old `letsencrypt`): no clause, Caddy's automatic HTTPS; `internal`: `tls internal`; `files`: `tls <cert> <key>` from `ctx.tls`; `external` throws |
+| `traefik` | acme-dns, acme-http, files, external | acme-dns | `acme-dns`/`acme-http`: every router `tls: { certResolver }`; `external` (old reserved `proxyCertResolver: none`): `tls: {}`; `files`: `tls: {}` plus a top-level `tls.certificates` entry from `ctx.tls`; `internal` throws |
+| `nginx` | files | files | `ssl_certificate`/`ssl_certificate_key` from `ctx.tls` |
+| `nginx-proxy-manager` | acme-http | acme-http | covering certificate or an NPM HTTP-01 request |
+| `haproxy` | external | external | nothing (certificates live in the operator's frontend) |
+| `none` | all five | external | nothing |
 
-Both drivers' `acmeDns01ViaCloudflare` is `caddyAcmeDns01ViaCloudflare` (`caddyTlsMode(inventory) === 'cloudflare'`, from `caddy.ts`): `prune-acme-challenges` runs only in `cloudflare` mode.
+No driver declares whether it uses Cloudflare DNS-01: the push-live prune follows `usesCloudflareDns01` (the TLS source, for a managed driver that supports it), so only `acme-dns` prunes, on any driver that supports it, and never under `none`.
 
 ## Caddy driver (`caddy.ts`)
 
-Default; `fileDriver`-based. `authModes: ['forward', 'oidc']`, `acmeDns01ViaCloudflare: caddyAcmeDns01ViaCloudflare`, `defaultConfigPath: '/etc/caddy/Caddyfile'`, validate `caddy validate --adapter caddyfile --config <path>`, reload `systemctl reload caddy`. `'managed-section'` file: content outside the markers is untouched; appended when no marker exists yet.
+Default; `fileDriver`-based. `authModes: ['forward', 'oidc']`, `defaultConfigPath: '/etc/caddy/Caddyfile'`, validate `caddy validate --adapter caddyfile --config <path>`, reload `systemctl reload caddy`. `'managed-section'` file: content outside the markers is untouched; appended when no marker exists yet.
 
 `render()` must stay byte-identical to the original generator: `unauthenticatedPaths` come from the raw stored strings in stored order, never rebuilt from `PathPattern[]`.
 
 - One site block per host, guest, or external site (`ExternalSiteSchema`, `src/lib/inventory.ts`: a non-Proxmox target such as a NAS, never SSH/exec'd); hostnames comma-joined, canonical first.
-- `tlsClause(ctx)` adds the mode's clause to every block; `files` paths are quoted by `caddyfileToken` when they hold whitespace, `"` or `\`, escaping only `"` (Caddy's only escape in a quoted token).
+- `tlsClause(ctx)` adds the source's clause to every block (`acmeDnsBlock` is exhaustive over `AcmeDnsProvider`); `files` paths are quoted by `caddyfileToken` when they hold whitespace, `"` or `\`, escaping only `"` (Caddy's only escape in a quoted token).
 - Block-form `reverse_proxy` with unconditional `header_up X-Forwarded-Port 443` (`EXTERNAL_PORT`); `insecureTls: true` adds `transport http { tls_insecure_skip_verify }`.
 - Forward-gated with exempt paths: `forward_auth` inside `@auth_required { not path <patterns...> }`, omitted when empty. `handle /outpost.goauthentik.io/*` routes outpost traffic regardless of exemptions.
 - `'oidc'` routes get no `forward_auth`/`@auth_required`/outpost passthrough.
 
 Exports `OUTPOST_AUTH_URI`/`OUTPOST_PATH_PREFIX`/`AUTHENTIK_COPY_HEADERS`/`CLOUDFLARE_TOKEN_PLACEHOLDER`/`ACME_DNS_RESOLVERS` for the admin-API driver.
 
-Single-operator assumption: in `cloudflare` mode only, fixed `ACME_DNS_RESOLVERS`, one domain, one DNS provider (`CLOUDFLARE_TLS_BLOCK`).
+Single-operator assumption: only under `tlsSource: acme-dns` with `acmeDnsProvider: cloudflare` (FR-017), fixed `ACME_DNS_RESOLVERS`, one domain, Cloudflare the only DNS-01 provider (`CLOUDFLARE_TLS_BLOCK`).
 
 ## nginx driver (`nginx.ts`)
 
-`fileDriver`-based. `authModes: ['forward', 'oidc']`, `acmeDns01ViaCloudflare: () => false`, `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`, `statusPage: { suggestedPath: '/var/www/html/index.html' }` (Debian/Ubuntu docroot, served by the operator's own block), `usesSharedCertificate: true`, a `configPathNote` (whole file replaced, foreign file refused), validate `nginx -t`, reload `systemctl reload nginx`.
+`fileDriver`-based. `authModes: ['forward', 'oidc']`, `label: 'nginx'`, `defaultConfigPath: '/etc/nginx/conf.d/bellhop.conf'`, `statusPage: { suggestedPath: '/var/www/html/index.html' }` (Debian/Ubuntu docroot, served by the operator's own block), `tlsSources: ['files']` (its only source, so the Settings page shows the TLS path fields under it), a `configPathNote` (whole file replaced, foreign file refused), validate `nginx -t`, reload `systemctl reload nginx`.
 
 Shared `renderServerBody` (`src/lib/proxy/nginx-locations.ts`) renders everything from the `map` blocks to the last `location`, so NPM's `advanced_config` can't drift.
 
@@ -63,7 +67,7 @@ Single-operator assumptions: CA bundle path and `conf.d` default path assume Deb
 
 ## Nginx Proxy Manager driver (`nginx-proxy-manager.ts`, `src/lib/npm-client.ts`)
 
-No config file: `defaultConfigPath: null` (why `DriverDeps.configPath` is `string | null`); Settings hides Proxy config path, Status page path, TLS fields. `usesNpmApi: true` (#73) shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` at the end of the Proxy tab. `authModes: ['forward', 'oidc']`, `acmeDns01ViaCloudflare: () => false`, `statusPage: null`. Tested on NPM 2.16 (older releases may reject sent fields).
+No config file: `defaultConfigPath: null` (why `DriverDeps.configPath` is `string | null`); Settings hides Proxy config path, Status page path, TLS fields. `usesNpmApi: true` (#73) shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` at the end of the Proxy tab. `authModes: ['forward', 'oidc']`, `statusPage: null`. Tested on NPM 2.16 (older releases may reject sent fields).
 
 **`NpmClient`** (`AuthentikClient` pattern): interface, `zod`-validated `RealNpmClient`, `buildNpmClient(inventory)` reading `npmApiEmail`, secret `npmApiPassword`, optional `npmApiUrl` (else the `proxy: true` entry's `ip`, port 81) via the config accessor at call time (`NPM_API_EMAIL`/`NPM_API_PASSWORD`/`NPM_API_URL` override; `Settings store` in `src/lib/CLAUDE.md`). No credential or URL: named error before any request.
 
@@ -96,7 +100,7 @@ Validate `haproxy -c -f /etc/haproxy/haproxy.cfg -f '<configPath>'` (backends al
 - Body: `mode http`; `timeout server`/`timeout tunnel 1d` (SSE's client side stays under the frontend's `timeout client`; docs say raise it); first `http-request del-header x-authentik- -m beg` (no backend is forward-gated, so these are spoofed); `X-Forwarded-For` *set* to `%[src]`; `X-Forwarded-Proto https`; `X-Forwarded-Host` original Host; `X-Forwarded-Port` `ctx.externalPort`; one `server app <ip>:<port>`, no `check`.
 - TLS: `ssl verify none` (`insecureTls`); `ssl verify required ca-file /etc/ssl/certs/ca-certificates.crt` (443); else plain. Chain only, not name (no `sni`/`verifyhost`): documented, not worked around.
 
-**Auth.** `authModes: ['oidc']`, `acmeDns01ViaCloudflare: () => false`. `checkCapabilities` refuses forward entries; `render()` still throws `HAProxy cannot enforce forward-auth for entry '<name>'` as a backstop so none deploys ungated. `oidc` renders like ungated; no `unauthenticatedPaths`. No `usesSharedCertificate`, so Settings shows only Proxy config path, with a `configPathNote` on the map file and ownership refusal.
+**Auth.** `authModes: ['oidc']`, `checkCapabilities` refuses forward entries; `render()` still throws `HAProxy cannot enforce forward-auth for entry '<name>'` as a backstop so none deploys ungated. `oidc` renders like ungated; no `unauthenticatedPaths`. `tlsSources: ['external']` (certificates live in the operator's frontend), so Settings shows no TLS path fields, only Proxy config path, with a `configPathNote` on the map file and ownership refusal.
 
 Hand-checked with `haproxy -c` on 2.6/3.4 (not in `npm test`).
 
@@ -118,7 +122,7 @@ Single-operator assumptions: `/etc/haproxy/haproxy.cfg`, the CA bundle (shared w
 
 **Forward-auth.** `bellhop-authentik`: `forwardAuth` at `http://<outpost ip>:<port>/outpost.goauthentik.io/auth/traefik`, `trustForwardHeader: true`, five identity headers (Authentik's recipe).
 
-**Cert resolver.** `tls.certResolver` = `certResolverName(inventory)` = `proxyCertResolver ?? DEFAULT_CERT_RESOLVER` (`'cloudflare'`, `src/lib/proxy/routes.ts`), carried as always-present `ProxyContext.certResolver`. Reserved `NO_CERT_RESOLVER = 'none'` (`routes.ts`, regex-admitted) makes `routerTls(ctx)` render `tls: {}` (file-provider or default cert). `acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare` (resolver `!== NO_CERT_RESOLVER`; any named one may be Cloudflare DNS-01). `authModes: ['forward', 'oidc']`; `statusPage: null` (covered by `statusPageUnsupportedError`/`statusPageSkipReason`).
+**Cert resolver and TLS source.** `routerTls(ctx)` switches on `ctx.tlsSource` (#72): `acme-dns`/`acme-http` set `tls.certResolver` = `certResolverName(inventory)` = `proxyCertResolver ?? DEFAULT_CERT_RESOLVER` (`'cloudflare'`, `src/lib/proxy/routes.ts`), carried as always-present `ProxyContext.certResolver` (which challenge the resolver uses is the operator's static config); `external` (the old reserved `proxyCertResolver: none`, byte-identical) and `files` render `tls: {}`; `internal` throws. Under `files`, `render()` adds a top-level `tls: { certificates: [{ certFile, keyFile }] }` from `ctx.tls` after `http:` in both `stringify` passes, so the generation hash covers it (research R5; no `tls.stores` override; shape pinned by unit tests, not checked against a live Traefik). No resolver name is reserved any more. `authModes: ['forward', 'oidc']`; `statusPage: null` (covered by `statusPageUnsupportedError`/`statusPageSkipReason`).
 
 Traefik-only settings (`usesCertResolver`/`usesApiUrl`): `proxyCertResolver` (`^[A-Za-z0-9_-]+$`, Traefik's rule); `proxyApiUrl` (`new URL`, `http:`/`https:`; the no-single-quote check is only defensive).
 
@@ -134,19 +138,19 @@ Known gaps (`docs/reverse-proxy/traefik.md`): the timeout is fixed, and each che
 
 Out of scope: Docker labels, a Bellhop-served HTTP provider, static config; only the file provider's directory is written.
 
-Single-operator assumptions: entry point fixed at `websecure`; unset `proxyCertResolver` means `cloudflare`; the fixed API-check timeout.
+Single-operator assumptions: entry point fixed at `websecure`; unset `proxyCertResolver` means `cloudflare` (read only under `tlsSource` `acme-dns`/`acme-http`); the fixed API-check timeout.
 
 ## Caddy admin-API driver (`caddy-api.ts`)
 
 `proxyDriver: 'caddy-api'`, label "Caddy (admin API)": the Caddy driver's output, reconciled into Caddy's live JSON config via its admin API. Not `fileDriver`; `defaultConfigPath: null`, so Settings hides Proxy config path but shows Status page path (`/usr/share/caddy/index.html`). Capabilities match Caddy's.
 
-**`src/lib/proxy/caddy-json.ts` (pure).** `renderRoute`; `renderTlsObjects(hostnames, ctx)` -> `{ policy }` (automation) for `cloudflare`/`internal`, `{ loadFile, connectionPolicy }` for `files`, `{}` for `letsencrypt`. `planCaddyConfig` places `renderDefaultConnectionPolicy()` (the adapter's trailing catch-all), as need depends on the live server. Parity with `caddy adapt` of `caddy.test.ts`'s characterization block is pinned per mode by `test/fixtures/caddy/{characterization,tls-internal,tls-files,tls-letsencrypt}-adapted.json` (Caddy v2.10.2).
+**`src/lib/proxy/caddy-json.ts` (pure).** `renderRoute`; `renderTlsObjects(hostnames, ctx)` switches on `ctx.tlsSource`: `{ policy }` (automation) for `acme-dns` (DNS-01 provider object exhaustive over `AcmeDnsProvider`)/`internal`, `{ loadFile, connectionPolicy }` for `files`, `{}` for `acme-http`; `external` throws (as does `planCaddyConfig`, even with no routes). `planCaddyConfig` places `renderDefaultConnectionPolicy()` (the adapter's trailing catch-all), as need depends on the live server. Parity with `caddy adapt` of `caddy.test.ts`'s characterization block is pinned per source by `test/fixtures/caddy/{characterization,tls-internal,tls-files,tls-letsencrypt}-adapted.json` (Caddy v2.10.2; `characterization` is `acme-dns`, `tls-letsencrypt` is `acme-http`; unchanged by #72).
 
 **`planCaddyConfig(current, routes, ctx, host)`.**
 
-- Bellhop `@id`s start `bellhop-`: `bellhop-route-<canonical hostname>`; per mode `bellhop-tls` (automation policy; `cloudflare`/`internal`), and in `files` only: `bellhop-tls-files` (`load_files` entry, cert tagged `bellhop-cert` not `cert0`), `bellhop-tls-connection` (SNI policy selecting that tag), `bellhop-tls-default` (catch-all, only if the server has no untagged catch-all). Untagged objects are never changed.
+- Bellhop `@id`s start `bellhop-`: `bellhop-route-<canonical hostname>`; per source `bellhop-tls` (automation policy; `acme-dns`/`internal`), and in `files` only: `bellhop-tls-files` (`load_files` entry, cert tagged `bellhop-cert` not `cert0`), `bellhop-tls-connection` (SNI policy selecting that tag), `bellhop-tls-default` (catch-all, only if the server has no untagged catch-all). Untagged objects are never changed.
 - Routes are prepended to the single server on 443 (empty config gets `srv0` on `:443`; zero or several HTTPS servers throws naming them). The policy is prepended to `apps.tls.automation.policies` and removed when no route remains (empty `subjects` would match everything); `files` objects are pruned likewise.
-- `CaddyConflict` (route left out): an untagged route naming an inventory hostname exactly (case-insensitive; not wildcards), always; an untagged automation policy naming one, only in `cloudflare`/`internal` (otherwise Bellhop writes no policy and an operator catch-all should apply).
+- `CaddyConflict` (route left out): an untagged route naming an inventory hostname exactly (case-insensitive; not wildcards), always; an untagged automation policy naming one, only under `acme-dns`/`internal` (`writesAutomationPolicy`; otherwise Bellhop writes no policy and an operator catch-all should apply).
 - Key-order-insensitive comparison (`canonicalJson`; Caddy sorts keys): no change plans `config: null`, writing nothing.
 
 **`src/lib/proxy/caddy-admin.ts` (POSIX `sh` via `runRemote`).**
@@ -159,4 +163,4 @@ Single-operator assumptions: entry point fixed at `websecure`; unset `proxyCertR
 
 **Limit.** A guest proxy host gets the config as one `sh -c` argument via `pct exec`, so Linux's 128 KiB single-argument limit applies (documented in `docs/reverse-proxy/caddy-api.md`, not engineered around).
 
-Single-operator assumptions: admin address `localhost:2019` on the `proxy: true` entry; systemd packaged unit names (`caddy.service` checked, `caddy-api.service` documented); `curl` on the proxy host; `cloudflare` mode's fixed `ACME_DNS_RESOLVERS`.
+Single-operator assumptions: admin address `localhost:2019` on the `proxy: true` entry; systemd packaged unit names (`caddy.service` checked, `caddy-api.service` documented); `curl` on the proxy host; fixed `ACME_DNS_RESOLVERS` and Cloudflare as the only DNS-01 provider, only under `tlsSource: acme-dns` with `acmeDnsProvider: cloudflare`.

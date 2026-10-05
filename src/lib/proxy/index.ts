@@ -9,17 +9,14 @@ import { nginxProxyManagerDriver } from './drivers/nginx-proxy-manager.ts';
 import { haproxyDriver } from './drivers/haproxy.ts';
 import { traefikDriver } from './drivers/traefik.ts';
 import { noneDriver } from './drivers/none.ts';
-import { PROXY_DRIVER_IDS, type ProxyDriverId } from './ids.ts';
+import { PROXY_DRIVER_IDS, DEFAULT_PROXY_DRIVER_ID, type ProxyDriverId } from './ids.ts';
 
 // Re-exported rather than redefined -- ids.ts is the dependency-free source,
 // so both src/lib/inventory.ts's proxyDriver enum and any
 // caller importing from here see the exact same list/type.
-export { PROXY_DRIVER_IDS, type ProxyDriverId };
-
-// inventory.proxyDriver ?? DEFAULT_PROXY_DRIVER_ID when unset -- exported so
-// getDriver below and any caller needing the same fallback (e.g. a future
-// Settings-page default) share the one literal.
-export const DEFAULT_PROXY_DRIVER_ID: ProxyDriverId = 'caddy';
+// DEFAULT_PROXY_DRIVER_ID (the fallback for an unset proxyDriver) moved to
+// ids.ts in issue #72 and is re-exported so existing importers keep working.
+export { PROXY_DRIVER_IDS, DEFAULT_PROXY_DRIVER_ID, type ProxyDriverId };
 
 // Keyed by plain string (not ProxyDriverId) so registerDriverForTests can
 // register a driver under an id PROXY_DRIVER_IDS doesn't list -- getDriver
@@ -93,9 +90,8 @@ export function driverDeps(inventory: Inventory, ssh: SSHClient, driver: Reverse
 // enables this) and returns a function that removes it again. No production
 // code path calls this; it exists so a test can exercise getDriver/a
 // capability check against a driver other than the real caddyDriver
-// (e.g. test/web/proxy-sync.test.ts's case where acmeDns01ViaCloudflare
-// returns false)
-// without mutating the real, shipped driver list.
+// (e.g. test/web/proxy-sync.test.ts's case where the driver's TLS source is
+// not acme-dns) without mutating the real, shipped driver list.
 export function registerDriverForTests(driver: ReverseProxyDriver): () => void {
   DRIVERS.set(driver.id, driver);
   return () => {

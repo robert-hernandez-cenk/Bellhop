@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parse, stringify, Scalar } from 'yaml';
-import type { Inventory } from '../../inventory.ts';
 import type { PathPattern, ProxyContext, ProxyRoute } from '../routes.ts';
-import { NO_CERT_RESOLVER, certResolverName } from '../routes.ts';
 import type { FileSpec } from '../file-driver.ts';
 import { fileDriver, singleQuote } from '../file-driver.ts';
 import { settingFix } from '../../settings-hint.ts';
@@ -163,16 +161,43 @@ function patternRule(pattern: PathPattern): string {
 
 const OUTPOST_PATH_PREFIX = '/outpost.goauthentik.io/';
 
-// Every router's tls object (contract "Traefik router TLS"): empty when the
-// active resolver is the reserved NO_CERT_RESOLVER value (issue #51, User
-// Story 3; defined in routes.ts beside DEFAULT_CERT_RESOLVER), so Traefik
-// serves whatever default/static-config certificate applies (its own
-// self-signed default, or one supplied some other way in the operator's
-// static configuration) rather than requesting one through a resolver;
-// otherwise naming it as before. One function so the main/outpost/exempt router sites below
-// can never render this differently from one another.
+// Every router's tls object by TLS source (issue #72, specs/
+// 072-tls-source-setting/contracts/rendering-and-messages.md "Traefik"):
+//   - acme-dns, acme-http: names ctx.certResolver, the resolver the
+//     operator's static configuration defines (which challenge it uses is
+//     configured there, not here);
+//   - external: empty, so Traefik serves whatever default/static-config
+//     certificate applies (its own self-signed default, or one supplied some
+//     other way) -- byte-identical to the old reserved proxyCertResolver
+//     'none' (issue #51, User Story 3);
+//   - files: empty too -- the certificate comes from the top-level
+//     tls.certificates entry render() adds (filesTlsSection), selected by SNI;
+//   - internal: not supported -- a programming error (renderer backstop,
+//     research R4; checkTlsSource refuses it first).
+// One function so the main/outpost/exempt router sites below can never
+// render this differently from one another.
 function routerTls(ctx: ProxyContext): { certResolver?: string } {
-  return ctx.certResolver === NO_CERT_RESOLVER ? {} : { certResolver: ctx.certResolver };
+  switch (ctx.tlsSource) {
+    case 'acme-dns':
+    case 'acme-http':
+      return { certResolver: ctx.certResolver };
+    case 'files':
+    case 'external':
+      return {};
+    case 'internal':
+      throw new Error("traefik driver cannot render tlsSource 'internal' (checkTlsSource should have refused it)");
+  }
+}
+
+// The top-level dynamic-configuration tls section for tlsSource 'files'
+// (issue #72, research R5): the shared ctx.tls pair, which Traefik's file
+// provider adds to its default certificate store and selects by SNI for a
+// router with tls: {}. No tls.stores default-certificate override is
+// written, so an operator's own default store stays untouched. null under
+// every other source -- nothing is rendered.
+function filesTlsSection(ctx: ProxyContext): Record<string, unknown> | null {
+  if (ctx.tlsSource !== 'files') return null;
+  return { certificates: [{ certFile: ctx.tls.certificatePath, keyFile: ctx.tls.keyPath }] };
 }
 
 // The route's own forward-auth-only object names (research.md R7), from the
@@ -384,10 +409,19 @@ export function render(routes: ProxyRoute[], ctx: ProxyContext, configPath: stri
     return http;
   }
 
-  const contentWithoutMarker = `${HEADER}\n${stringify({ http: buildHttp(null) }, STRINGIFY_OPTIONS)}`;
+  // tlsSource 'files' adds a top-level tls: section after http: (issue #72,
+  // research R5) -- in both passes, so the generation hash covers it.
+  const tlsSection = filesTlsSection(ctx);
+  function buildDocument(withMarker: Record<string, unknown> | null): Record<string, unknown> {
+    const doc: Record<string, unknown> = { http: buildHttp(withMarker) };
+    if (tlsSection !== null) doc.tls = tlsSection;
+    return doc;
+  }
+
+  const contentWithoutMarker = `${HEADER}\n${stringify(buildDocument(null), STRINGIFY_OPTIONS)}`;
   const hash = createHash('sha256').update(contentWithoutMarker).digest('hex').slice(0, 12);
   const markerName = `bellhop-generation-${hash}`;
-  const content = `${HEADER}\n${stringify({ http: buildHttp({ [markerName]: generationMarkerMiddleware(hash) }) }, STRINGIFY_OPTIONS)}`;
+  const content = `${HEADER}\n${stringify(buildDocument({ [markerName]: generationMarkerMiddleware(hash) }), STRINGIFY_OPTIONS)}`;
 
   return [{ path: configPath, content, mode: 'owned', ownedHeader: HEADER, atomic: ATOMIC }];
 }
@@ -504,25 +538,13 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
   return lines.join('\n');
 }
 
-// issue #51, User Story 4 (contract "Cloudflare prune decision"): Traefik's
-// own certificate resolver (ctx.certResolver, from inventory.proxyCertResolver)
-// can be configured for Cloudflare DNS-01 in the operator's own static
-// configuration, which is what prune-acme-challenges exists to clean up
-// stray records from -- true for any named resolver (including the unset
-// default, 'cloudflare'), false only for the reserved NO_CERT_RESOLVER
-// value, which addresses no resolver at all and so can never leave a
-// Cloudflare DNS-01 challenge record behind.
-function traefikAcmeDns01ViaCloudflare(inventory: Inventory): boolean {
-  return certResolverName(inventory) !== NO_CERT_RESOLVER;
-}
-
 export const traefikDriver = fileDriver({
   id: 'traefik',
   label: 'Traefik',
   // Traefik's forward-auth and OIDC both work the same way every other
   // driver's do -- see User Story 2 for the forward-auth objects, not yet
   // rendered by this file.
-  capabilities: { authModes: ['forward', 'oidc'], acmeDns01ViaCloudflare: traefikAcmeDns01ViaCloudflare },
+  capabilities: { authModes: ['forward', 'oidc'], tlsSources: ['acme-dns', 'acme-http', 'files', 'external'], defaultTlsSource: 'acme-dns' },
   defaultConfigPath: '/etc/traefik/dynamic/bellhop.yml',
   // Traefik has no static-file server of its own (research.md R11) -- an
   // operator who wants a status page serves it elsewhere.

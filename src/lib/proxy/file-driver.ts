@@ -311,12 +311,10 @@ export function fileDriver(def: {
   // defaulted, so a new driver has to decide whether it serves one instead
   // of quietly opting out by omission.
   statusPage: { suggestedPath: string } | null;
-  // See ReverseProxyDriver in ./driver.ts -- all five optional, absent =
+  // See ReverseProxyDriver in ./driver.ts -- all three optional, absent =
   // false/no note.
-  usesSharedCertificate?: boolean;
   usesCertResolver?: boolean;
   usesApiUrl?: boolean;
-  usesCaddyTls?: boolean;
   configPathNote?: string;
   render(routes: ProxyRoute[], ctx: ProxyContext, configPath: string): FileSpec[];
   // Returns null when there is nothing to validate (Traefik with no
@@ -350,10 +348,8 @@ export function fileDriver(def: {
     capabilities: def.capabilities,
     defaultConfigPath: def.defaultConfigPath,
     statusPage: def.statusPage,
-    ...(def.usesSharedCertificate !== undefined ? { usesSharedCertificate: def.usesSharedCertificate } : {}),
     ...(def.usesCertResolver !== undefined ? { usesCertResolver: def.usesCertResolver } : {}),
     ...(def.usesApiUrl !== undefined ? { usesApiUrl: def.usesApiUrl } : {}),
-    ...(def.usesCaddyTls !== undefined ? { usesCaddyTls: def.usesCaddyTls } : {}),
     ...(def.configPathNote !== undefined ? { configPathNote: def.configPathNote } : {}),
 
     async plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan> {

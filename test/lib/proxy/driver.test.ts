@@ -27,7 +27,7 @@ function fakeDriver(id: string, authModes: ('forward' | 'oidc')[]): ReverseProxy
   return {
     id: id as ProxyDriverId,
     label: 'Fake',
-    capabilities: { authModes, acmeDns01ViaCloudflare: () => false },
+    capabilities: { authModes, tlsSources: ['files'], defaultTlsSource: 'files' },
     defaultConfigPath: '/etc/fake/fake.conf',
     statusPage: null,
     async plan(): Promise<ProxyPlan> {

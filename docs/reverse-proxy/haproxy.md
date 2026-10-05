@@ -133,7 +133,7 @@ cat /tmp/example.com.crt /tmp/example.com.key \
 
 Every browser warns on an untrusted self-signed certificate unless its
 root is installed on the client — the same trade-off Caddy's own
-`internal` TLS mode has.
+`tlsSource: internal` has.
 
 ## Applying
 
@@ -233,8 +233,10 @@ so such a backend needs `insecureBackendTls` under every driver.
   another driver, and the web UI's push-live step logs a warning when
   `statusPagePath` is set. The Settings page hides the Status page path
   field while HAProxy is selected.
-- **No shared-certificate settings.** Certificates live in your frontend,
-  so `proxyTlsCertificate`/`proxyTlsKey` don't apply and are hidden too.
+- **TLS source `external` only.** Certificates live in your frontend, so
+  HAProxy supports only `tlsSource: external` (its default — see [TLS
+  sources](README.md#tls-sources)). For the same reason
+  `proxyTlsCertificate`/`proxyTlsKey` don't apply and are hidden too.
 
 ## Assumptions
 

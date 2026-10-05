@@ -29,97 +29,132 @@ export function proxyDriverOptions(
   }));
 }
 
-// The Settings page's Caddy TLS <select> options (issue #51), same
-// "only the default mode gets ' (default)'" convention as
-// proxyDriverOptions above -- `modes` is the server's own caddyTlsModes
-// list (its order), `defaultMode` its defaultCaddyTls.
-export function caddyTlsOptions(modes: string[], defaultMode: string): Array<{ value: string; label: string }> {
-  return modes.map((mode) => ({
-    value: mode,
-    label: mode === defaultMode ? `${mode} (default)` : mode,
+// The Settings page's ACME DNS provider <select> options (issue #72): the
+// server's provider list in its order, only the default suffixed
+// " (default)" -- same convention as proxyDriverOptions above.
+export function acmeDnsProviderOptions(
+  providers: readonly string[],
+  defaultProvider: string,
+): Array<{ value: string; label: string }> {
+  return providers.map((provider) => ({
+    value: provider,
+    label: provider === defaultProvider ? `${provider} (default)` : provider,
   }));
 }
 
-// What the Settings page's Proxy config path/Status page path fields show
-// for whichever driver is currently selected in the (possibly unsaved)
-// dropdown -- issue #33's US3. `selectedId` is the caller's already-resolved
-// choice (`drafts.proxyDriver || data.defaultProxyDriver`, so it tracks the
-// unsaved selection per FR-006/FR-007's acceptance scenario 5), not looked
-// up against a separate default here. A driver that manages no proxy (only
-// "No proxy" today) hides all of them. A managed driver with a config file
-// shows the config path field with its defaultConfigPath as the placeholder
-// and help text naming that default (plus its configPathNote, if any); a
-// managed driver with no
-// config file at all (defaultConfigPath: null -- issue #31, e.g. a
-// REST-managed driver like Nginx Proxy Manager) hides it, the same as a
-// driver that manages no proxy, since there is no file for the field to
-// override. Either way the status page field shows only when the driver
-// suggests a status page path. An id with no matching entry in `drivers` at all
-// (never reachable through the dropdown itself, but defensive against a
-// stale selection) hides both, same as FR-006's "unknown means nothing to
-// show". Hiding is display-only (R6): callers must not clear the field's
-// draft/stored value just because it stopped being shown (FR-008).
+// The Settings page's TLS source <select> options (issue #72): the
+// selected driver's own tlsSources, in the server's order, with only its
+// defaultTlsSource suffixed " (default)" -- same convention as
+// proxyDriverOptions above. A shown source the driver does not support
+// (stored before a driver switch, say) is appended as
+// "<value> (not supported)" so the <select> can still display it.
+export function tlsSourceOptions(
+  driver: ProxyDriverInfo,
+  shownSource: string,
+): Array<{ value: string; label: string }> {
+  const options = driver.tlsSources.map((source) => ({
+    value: source,
+    label: source === driver.defaultTlsSource ? `${source} (default)` : source,
+  }));
+  if (!driver.tlsSources.includes(shownSource)) {
+    options.push({ value: shownSource, label: `${shownSource} (not supported)` });
+  }
+  return options;
+}
+
+// What the Settings page's Proxy tab shows for whichever driver is currently
+// selected in the (possibly unsaved) dropdown -- issue #33's US3. `selectedId`
+// is the caller's already-resolved choice (`drafts.proxyDriver ||
+// data.defaultProxyDriver`, so it tracks the unsaved selection per
+// FR-006/FR-007's acceptance scenario 5), not looked up against a separate
+// default here. A driver that manages no proxy (only "No proxy" today) hides
+// every driver-dependent field. A managed driver with a config file shows the
+// config path field with its defaultConfigPath as the placeholder and help
+// text naming that default (plus its configPathNote, if any); a managed
+// driver with no config file at all (defaultConfigPath: null -- issue #31,
+// e.g. a REST-managed driver like Nginx Proxy Manager) hides it, since there
+// is no file for the field to override. Either way the status page field
+// shows only when the driver suggests a status page path. An id with no
+// matching entry in `drivers` at all (never reachable through the dropdown
+// itself, but defensive against a stale selection) hides everything, same as
+// FR-006's "unknown means nothing to show". Hiding is display-only (R6):
+// callers must not clear the field's draft/stored value just because it
+// stopped being shown (FR-008).
 export interface ProxyFieldView {
   showConfigPath: boolean;
   configPathPlaceholder?: string;
   configPathHelp?: string;
   showStatusPagePath: boolean;
   statusPagePlaceholder?: string;
-  // Proxy TLS certificate/key: shown for a managed driver whose metadata
-  // says it serves the shared certificate those settings name
-  // (usesSharedCertificate, nginx -- issue #30), or for a driver whose
-  // metadata says it reads proxyCaddyTls (usesCaddyTls, the two Caddy
-  // drivers -- issue #51) while its *shown* Caddy TLS mode is 'files' --
-  // never an id comparison here.
+  // Issue #72: the TLS source the page shows -- the drafted/stored tlsSource,
+  // else the selected driver's defaultTlsSource. Absent for an unmanaged or
+  // unknown driver.
+  shownTlsSource?: string;
+  // TLS source dropdown: shown for every managed driver.
+  showTlsSourceField: boolean;
+  // ACME DNS provider dropdown: shown while the shown source is 'acme-dns'.
+  showAcmeDnsProviderField: boolean;
+  // Proxy TLS certificate/key: shown while the shown source is 'files' --
+  // the only source that reads proxyTlsCertificate/proxyTlsKey.
   showTlsFields: boolean;
-  // Caddy TLS dropdown (issue #51): shown only for a driver whose metadata
-  // says it reads proxyCaddyTls (usesCaddyTls) -- independent of which mode
-  // is currently shown, unlike showTlsFields above.
-  showCaddyTlsField: boolean;
-  // Proxy cert resolver/API URL (issue #35): shown only for a managed
-  // driver whose metadata says it reads proxyCertResolver/proxyApiUrl
-  // (usesCertResolver/usesApiUrl) -- Traefik today, same "metadata, never
-  // an id comparison" rule as showTlsFields above.
+  // Proxy cert resolver (issue #35): shown only for a driver whose metadata
+  // says it reads proxyCertResolver (usesCertResolver -- Traefik today) while
+  // the shown source is an ACME one ('acme-dns'/'acme-http'), the only sources
+  // that use a resolver. Proxy API URL (usesApiUrl) and the Nginx Proxy
+  // Manager fields (usesNpmApi, issue #73) follow driver metadata alone --
+  // never an id comparison.
   showCertResolverField: boolean;
   showApiUrlField: boolean;
-  // Nginx Proxy Manager API URL/email/password (issue #73): shown only for
-  // a managed driver whose metadata says it reads them (usesNpmApi) --
-  // the Nginx Proxy Manager driver today, same "metadata, never an id
-  // comparison" rule as showTlsFields/showCertResolverField above.
   showNpmApiFields: boolean;
+  // The TLS source dropdown's options (tlsSourceOptions); empty when the
+  // field is hidden.
+  tlsSourceOptions: Array<{ value: string; label: string }>;
+  // Shown under the TLS source field when the shown source is not in the
+  // selected driver's tlsSources; null otherwise.
+  tlsSourceWarning: string | null;
 }
 
-// `caddyTls` is the shown (possibly unsaved) Caddy TLS value -- resolved by
-// the caller the same way `selectedId` already is
-// (`drafts.proxyCaddyTls || data.defaultCaddyTls`). Required rather than
-// defaulted (final review F9): a silent default here would let a caller
-// forget the unsaved Caddy TLS value and quietly hide the certificate
-// fields while 'files' is selected.
+// `tlsSource` is the drafted-or-stored value (`drafts.tlsSource ||
+// data.settings.tlsSource`), undefined/empty when neither is set -- the
+// driver default is resolved here, since it depends on the selected driver.
+// Required rather than optional (as with issue #51's final review F9): a
+// caller that forgot the unsaved value would quietly show the wrong fields.
 export function proxyFieldView(
   selectedId: string,
   drivers: ProxyDriverInfo[],
-  caddyTls: string,
+  tlsSource: string | undefined,
 ): ProxyFieldView {
   const driver = drivers.find((d) => d.id === selectedId);
   if (!driver || !driver.managesProxy) {
     return {
       showConfigPath: false,
       showStatusPagePath: false,
+      showTlsSourceField: false,
+      showAcmeDnsProviderField: false,
       showTlsFields: false,
-      showCaddyTlsField: false,
       showCertResolverField: false,
       showApiUrlField: false,
       showNpmApiFields: false,
+      tlsSourceOptions: [],
+      tlsSourceWarning: null,
     };
   }
+  const shownTlsSource = tlsSource || driver.defaultTlsSource;
   const shared = {
     showStatusPagePath: driver.suggestedStatusPagePath !== null,
     statusPagePlaceholder: driver.suggestedStatusPagePath ?? undefined,
-    showTlsFields: driver.usesSharedCertificate || (driver.usesCaddyTls && caddyTls === 'files'),
-    showCaddyTlsField: driver.usesCaddyTls,
-    showCertResolverField: driver.usesCertResolver,
+    shownTlsSource,
+    showTlsSourceField: true,
+    showAcmeDnsProviderField: shownTlsSource === 'acme-dns',
+    showTlsFields: shownTlsSource === 'files',
+    showCertResolverField:
+      driver.usesCertResolver && (shownTlsSource === 'acme-dns' || shownTlsSource === 'acme-http'),
     showApiUrlField: driver.usesApiUrl,
     showNpmApiFields: driver.usesNpmApi,
+    tlsSourceOptions: tlsSourceOptions(driver, shownTlsSource),
+    tlsSourceWarning: driver.tlsSources.includes(shownTlsSource)
+      ? null
+      : `The ${driver.label} driver does not support '${shownTlsSource}'. It supports: ${driver.tlsSources.join(', ')}.`,
   };
   // A managed driver with no config file at all (defaultConfigPath: null --
   // issue #31, e.g. a REST-managed driver like Nginx Proxy Manager) hides
@@ -180,7 +215,10 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'proxyDriver',
     'proxyConfigPath',
     'statusPagePath',
-    'proxyCaddyTls',
+    // issue #72: the TLS source and its ACME DNS provider, shown by
+    // proxyFieldView (showTlsSourceField/showAcmeDnsProviderField).
+    'tlsSource',
+    'acmeDnsProvider',
     'proxyTlsCertificate',
     'proxyTlsKey',
     'proxyCertResolver',

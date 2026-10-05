@@ -284,10 +284,11 @@ export interface SettingsValues {
   // Traefik's own two settings (issue #35) -- inert for every other driver.
   proxyCertResolver?: string;
   proxyApiUrl?: string;
-  // Which of the four ways the two Caddy drivers obtain a certificate
-  // (issue #51) -- inert for every other driver. Unset means 'cloudflare'
-  // (defaultCaddyTls on SettingsResponse below).
-  proxyCaddyTls?: string;
+  // Where the proxy's certificates come from, and the DNS provider for
+  // 'acme-dns' (issue #72). Unset tlsSource means the selected driver's
+  // defaultTlsSource; unset acmeDnsProvider means defaultAcmeDnsProvider.
+  tlsSource?: string;
+  acmeDnsProvider?: string;
   // The Proxmox VM-creator grant (issue #53) -- always-visible, not tied
   // to any proxy driver.
   pveUserRealm?: string;
@@ -324,19 +325,15 @@ export interface ProxyDriverInfo {
   // false only for "No proxy" -- the server's managesProxy(), so the page
   // never has to compare ids to decide whether proxy fields apply.
   managesProxy: boolean;
-  // true only for a driver that serves every site with the one shared
-  // certificate the proxyTlsCertificate/proxyTlsKey settings name (nginx
-  // today, issue #30) -- the page shows those two fields only then.
-  usesSharedCertificate: boolean;
+  // The TLS sources this driver supports (issue #72), in the server's
+  // TLS_SOURCES order, and which one an unset tlsSource resolves to for it.
+  tlsSources: string[];
+  defaultTlsSource: string;
   // true only for a driver that reads the proxyCertResolver/proxyApiUrl
   // settings (Traefik today, issue #35) -- the page shows the matching
   // field only then.
   usesCertResolver: boolean;
   usesApiUrl: boolean;
-  // true only for a driver that reads the proxyCaddyTls setting (issue #51,
-  // the two Caddy drivers only) -- the page shows the Caddy TLS dropdown
-  // only then.
-  usesCaddyTls: boolean;
   // true only for a driver that reads the npmApiUrl/npmApiEmail/
   // npmApiPassword settings (Nginx Proxy Manager today, issue #73) -- the
   // page shows those three fields on the Proxy tab only then.
@@ -353,11 +350,11 @@ export interface SettingsResponse {
   };
   proxyDrivers: ProxyDriverInfo[];
   defaultProxyDriver: string;
-  // The four ways the two Caddy drivers can obtain a certificate (issue
-  // #51), and which one an unset proxyCaddyTls resolves to -- same
-  // "independent of inventory" shape as proxyDrivers/defaultProxyDriver.
-  caddyTlsModes: string[];
-  defaultCaddyTls: string;
+  // The DNS providers the 'acme-dns' TLS source can use (issue #72), and
+  // which one an unset acmeDnsProvider resolves to -- same "independent of
+  // inventory" shape as proxyDrivers/defaultProxyDriver.
+  acmeDnsProviders: string[];
+  defaultAcmeDnsProvider: string;
   // Issue #64: where each non-secret setting's effective value comes from
   // (`settings` above holds only the stored values), and every key an
   // environment variable currently pins -- shown read-only. A pinned secret
