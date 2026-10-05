@@ -73,6 +73,14 @@ test('runSetConfig round-trips customScriptsRepo through --apply and --unset', (
   assert.equal(loadInventory(inventoryPath).customScriptsRepo, undefined);
 });
 
+test('runSetConfig round-trips bellhopGuest through --apply and --unset', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'bellhopGuest', value: 'web-lxc', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).bellhopGuest, 'web-lxc');
+  runSetConfig({ key: 'bellhopGuest', unset: true, apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).bellhopGuest, undefined);
+});
+
 test('runSetConfig round-trips customScriptsBranch through --apply and --unset', () => {
   const inventoryPath = tempInventoryPath();
   runSetConfig({ key: 'customScriptsBranch', value: 'my-apps', apply: true }, { inventoryPath });

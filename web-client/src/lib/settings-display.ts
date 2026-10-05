@@ -200,6 +200,7 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'nfsServer',
     'backupStorage',
     'dnsServer',
+    'bellhopGuest',
     'customScriptsRepo',
     'customScriptsBranch',
     'pveUserRealm',

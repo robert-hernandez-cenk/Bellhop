@@ -17,7 +17,7 @@ description: "Task list for running the web service as an LXC container (#67)"
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the fork branch: `git -C C:/Users/rcher/Dev/ProxmoxVED switch -c bellhop main` (confirm the working tree is clean first, and that `main` is up to date with `origin/main` via `git fetch origin` + `git merge --ff-only`)
+- [x] T001 Create the fork branch `bellhop` from `main` in its own fork worktree (`git -C C:/Users/rcher/Dev/ProxmoxVED worktree add -b bellhop <scratch-path> main`), leaving the operator's fork checkout on `local`; `main` and `local` confirmed in sync with origin
 
 ---
 
@@ -25,10 +25,10 @@ description: "Task list for running the web service as an LXC container (#67)"
 
 **Purpose**: the setting the installer seeds (US1) and the guard reads (US3).
 
-- [ ] T002 Write a failing test in test/commands/set-config.test.ts: `set-config bellhopGuest web-lxc --apply` stores the value, and a subsequent load returns `bellhopGuest: 'web-lxc'`
-- [ ] T003 Add `bellhopGuest: z.string().min(1).optional()` to `SettingsSchema` in src/lib/inventory.ts, with a comment naming issue #67 and the guard that reads it ("data-model.md: non-empty when set (`z.string().min(1).optional()`), same as `nfsServer`"); fix any key-set tests that enumerate `SETTINGS_KEYS` (e.g. test/lib/inventory.test.ts, test/web/routes/settings.test.ts)
-- [ ] T004 [P] Add `bellhopGuest?: string` to `SettingsValues` in web-client/src/api/types.ts, add `'bellhopGuest'` to the General tab's `TAB_FIELDS` (after `dnsServer`) in web-client/src/lib/settings-display.ts, and add its `FIELDS` entry in web-client/src/pages/SettingsPage.tsx (label "Bellhop's own guest", placeholder `bellhop`, help: which guest Bellhop runs in; update-app, delete-guest, migrate-guest and start/shutdown refuse it and update-all skips it; unset: nothing is protected)
-- [ ] T005 Verify any web-client settings test (test/web-client/settings-display.test.ts) still passes or is updated for the new field
+- [x] T002 Write a failing test in test/commands/set-config.test.ts: `set-config bellhopGuest web-lxc --apply` stores the value, and a subsequent load returns `bellhopGuest: 'web-lxc'`
+- [x] T003 Add `bellhopGuest: z.string().min(1).optional()` to `SettingsSchema` in src/lib/inventory.ts, with a comment naming issue #67 and the guard that reads it ("data-model.md: non-empty when set (`z.string().min(1).optional()`), same as `nfsServer`"); fix any key-set tests that enumerate `SETTINGS_KEYS` (e.g. test/lib/inventory.test.ts, test/web/routes/settings.test.ts)
+- [x] T004 [P] Add `bellhopGuest?: string` to `SettingsValues` in web-client/src/api/types.ts, add `'bellhopGuest'` to the General tab's `TAB_FIELDS` (after `dnsServer`) in web-client/src/lib/settings-display.ts, and add its `FIELDS` entry in web-client/src/pages/SettingsPage.tsx (label "Bellhop's own guest", placeholder `bellhop`, help: which guest Bellhop runs in; update-app, delete-guest, migrate-guest and start/shutdown refuse it and update-all skips it; unset: nothing is protected)
+- [x] T005 Verify any web-client settings test (test/web-client/settings-display.test.ts) still passes or is updated for the new field
 
 **Checkpoint**: `npm run typecheck`, `npm test` and `npm run web:build` pass.
 

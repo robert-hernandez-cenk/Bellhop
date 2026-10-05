@@ -451,6 +451,13 @@ export const SettingsSchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9._-]+$/, 'must contain only letters, digits, ., - and _')
     .optional(),
+  // The inventory name of the guest Bellhop itself runs in (issue #67) --
+  // update-app, delete-guest, migrate-guest and guest power refuse it, and
+  // update-all skips it (src/lib/bellhop-guest.ts). Unset means nothing is
+  // guarded. Deliberately not checked against the guests list: the LXC
+  // installer seeds it with the container's hostname before sync-inventory
+  // has added that guest.
+  bellhopGuest: z.string().min(1).optional(),
   // The values issue #64 moved out of data/*.env files (Authentik, web UI
   // auth mode, Nginx Proxy Manager). Defined in the leaf settings-defs.ts
   // so src/lib/config.ts can validate them without importing this file

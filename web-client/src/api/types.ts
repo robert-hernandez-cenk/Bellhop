@@ -274,6 +274,8 @@ export interface SettingsValues {
   nfsServer?: string;
   backupStorage?: string;
   dnsServer?: string;
+  // Issue #67: the guest Bellhop itself runs in -- guarded actions refuse it.
+  bellhopGuest?: string;
   statusPagePath?: string;
   customScriptsRepo?: string;
   customScriptsBranch?: string;

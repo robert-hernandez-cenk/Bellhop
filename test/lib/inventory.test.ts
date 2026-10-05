@@ -1243,7 +1243,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the twenty-eight settings keys', () => {
+test('SETTINGS_KEYS lists exactly the twenty-nine settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'acmeDnsProvider',
     'authentikAdminGroup',
@@ -1256,6 +1256,7 @@ test('SETTINGS_KEYS lists exactly the twenty-eight settings keys', () => {
     'authentikOutpostName',
     'authentikOutpostPort',
     'backupStorage',
+    'bellhopGuest',
     'customScriptsBranch',
     'customScriptsRepo',
     'dnsServer',
