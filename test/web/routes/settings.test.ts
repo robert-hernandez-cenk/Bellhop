@@ -98,7 +98,7 @@ test('GET /api/settings returns current and derived values', async () => {
   assert.equal(res.body.settings.dnsServer, '10.0.0.53');
   assert.equal(res.body.settings.nfsServer, undefined);
   assert.deepEqual(res.body.derived.lanGateways, [{ host: 'pve1', gateway: '10.0.0.1' }]);
-  assert.deepEqual(res.body.derived.proxy, { name: 'proxy', ip: '10.0.0.2' });
+  assert.ok(!('proxy' in res.body.derived), 'derived.proxy is gone: the firewall rule is no longer scoped to the proxy');
   assert.ok(!('caddy' in res.body.derived), 'derived.caddy is renamed, not aliased');
 });
 

@@ -5,7 +5,6 @@ import {
   loadInventory,
   saveInventory,
   refreshInventory,
-  findProxyEntry,
   SettingsSchema,
   SETTINGS_KEYS,
   assignSetting,
@@ -119,17 +118,14 @@ function currentSettings(inv: Inventory): Settings {
   return settings;
 }
 
-// The two values that are derived rather than configured (issue #124):
-// set-guest-vpn's LAN gateway comes from each host's own midScheme, and
-// the Windows service's firewall scope comes from the proxy: true entry.
+// The value that is derived rather than configured (issue #124):
+// set-guest-vpn's LAN gateway comes from each host's own midScheme.
 // Shown read-only so an admin can see what they actually resolve to.
 function derivedValues(inv: Inventory) {
-  const proxy = findProxyEntry(inv);
   return {
     lanGateways: inv.hosts
       .filter((h) => h.midScheme)
       .map((h) => ({ host: h.name, gateway: h.midScheme!.gateway })),
-    proxy: proxy?.ip ? { name: proxy.name, ip: proxy.ip } : null,
   };
 }
 

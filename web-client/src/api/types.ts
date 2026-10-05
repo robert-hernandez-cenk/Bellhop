@@ -350,7 +350,6 @@ export interface SettingsResponse {
   settings: SettingsValues;
   derived: {
     lanGateways: Array<{ host: string; gateway: string }>;
-    proxy: { name: string; ip: string } | null;
   };
   proxyDrivers: ProxyDriverInfo[];
   defaultProxyDriver: string;

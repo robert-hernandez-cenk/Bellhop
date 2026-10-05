@@ -4,7 +4,6 @@ import type { SecretSettingKey, SettingsResponse, SettingsValues } from '../api/
 import { PageDescription } from '../components/PageDescription';
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal';
 import {
-  proxyHostText,
   LAN_GATEWAYS_EMPTY_TEXT,
   proxyDriverOptions,
   proxyFieldView,
@@ -563,10 +562,9 @@ export function SettingsPage() {
       <div className="settings-fields" role="tabpanel">
         {visibleFields.map(renderField)}
       </div>
-      {/* The derived values are what the General (set-guest-vpn's LAN
-          gateway) and Proxy (the firewall scope) settings resolve against,
-          so they show under both of those tabs. */}
-      {(tab === 'general' || tab === 'proxy') && (
+      {/* The derived value is what the General tab's set-guest-vpn LAN
+          gateway setting resolves against, so it shows under that tab. */}
+      {tab === 'general' && (
         <>
           <h3>Derived (read-only)</h3>
           <PageDescription>
@@ -583,7 +581,6 @@ export function SettingsPage() {
             ) : (
               <li>{LAN_GATEWAYS_EMPTY_TEXT}</li>
             )}
-            <li>Proxy IP (firewall scope): {proxyHostText(data?.derived.proxy ?? null)}</li>
           </ul>
         </>
       )}

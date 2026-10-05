@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  proxyHostText,
   LAN_GATEWAYS_EMPTY_TEXT,
   proxyDriverOptions,
   proxyFieldView,
@@ -20,13 +19,6 @@ import { SETTINGS_KEYS } from '../../src/lib/inventory.ts';
 import type { SettingsResponse } from '../../web-client/src/api/types.ts';
 import { SECRET_SETTINGS_KEYS } from '../../src/lib/settings-defs.ts';
 
-test('proxyHostText returns "<name> (<ip>)" for a set proxy entry', () => {
-  assert.equal(proxyHostText({ name: 'proxy', ip: '10.0.0.2' }), 'proxy (10.0.0.2)');
-});
-
-test('proxyHostText explains the empty state for null', () => {
-  assert.equal(proxyHostText(null), 'not set — no inventory entry has proxy: true with an IP yet');
-});
 
 test('LAN_GATEWAYS_EMPTY_TEXT explains the empty state', () => {
   assert.equal(LAN_GATEWAYS_EMPTY_TEXT, 'LAN gateways: none yet — no host has a midScheme');
@@ -474,7 +466,7 @@ test('secretStatusText names whether a secret is set and where it comes from', (
 function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsResponse {
   return {
     settings: {},
-    derived: { lanGateways: [], proxy: null },
+    derived: { lanGateways: [] },
     proxyDrivers: [],
     defaultProxyDriver: 'caddy',
     caddyTlsModes: ['cloudflare'],
@@ -502,7 +494,7 @@ test('mergeSettingsResponse takes only the saved non-secret key from the respons
   const res = settingsResponse({
     settings: { nfsServer: '192.0.2.6' },
     sources: { nfsServer: 'settings', dnsServer: 'none' },
-    derived: { lanGateways: [{ host: 'pve-a', gateway: '192.0.2.1' }], proxy: null },
+    derived: { lanGateways: [{ host: 'pve-a', gateway: '192.0.2.1' }] },
   });
   const merged = mergeSettingsResponse(prev, res, 'nfsServer');
   assert.deepEqual(merged.settings, { nfsServer: '192.0.2.6', dnsServer: '192.0.2.53' });

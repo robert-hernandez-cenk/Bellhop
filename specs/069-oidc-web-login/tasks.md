@@ -166,12 +166,12 @@ description: "Task list for web UI login through Bellhop's own OIDC client (#69)
 
 ### Tests first
 
-- [ ] T048 [P] [US6] Tests: the firewall rule command built by scripts/windows-service.ts has no `remoteip=` (extract a pure `firewallRuleCommand(port)` and test it in test/scripts/windows-service.test.ts); `GET /api/settings` has no `derived.proxy` (test/web/routes/settings.test.ts)
+- [x] T048 [P] [US6] Tests: the firewall rule command built by scripts/windows-service.ts has no `remoteip=` (extract a pure `firewallRuleCommand(port)` and test it in test/scripts/windows-service.test.ts); `GET /api/settings` has no `derived.proxy` (test/web/routes/settings.test.ts)
 
 ### Implementation
 
-- [ ] T049 [US6] Drop `resolveProxyIp` and `remoteip=` in scripts/windows-service.ts
-- [ ] T050 [US6] Remove `derived.proxy` from `derivedValues()` in src/web/routes/settings.ts and the "Proxy IP (firewall scope)" line in web-client/src/pages/SettingsPage.tsx (and its type in web-client/src/api/types.ts)
+- [x] T049 [US6] Drop `resolveProxyIp` and `remoteip=` in scripts/windows-service.ts
+- [x] T050 [US6] Remove `derived.proxy` from `derivedValues()` in src/web/routes/settings.ts and the "Proxy IP (firewall scope)" line in web-client/src/pages/SettingsPage.tsx (and its type in web-client/src/api/types.ts)
 
 ---
 
