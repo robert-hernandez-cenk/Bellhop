@@ -1,6 +1,6 @@
 import type { Inventory } from '../inventory.ts';
 import { effectiveAuth, isValidUnauthenticatedPath, UNAUTHENTICATED_PATH_MESSAGE } from '../inventory.ts';
-import { publicHostname } from '../hostname.ts';
+import { publicHostname, requireDomain } from '../hostname.ts';
 import { authentikConfig } from '../authentik-config.ts';
 import type { AcmeDnsProvider, TlsSource } from './ids.ts';
 // Type-only, so this file never imports the driver registry (routes.ts ->
@@ -169,7 +169,7 @@ function deriveRoute(type: OwnerType, entry: ProxyCandidate, inventory: Inventor
 
   return {
     owner: { type, name: entry.name },
-    hostnames: (entry.subdomains ?? []).map((s) => publicHostname(s, inventory.domain)),
+    hostnames: (entry.subdomains ?? []).map((s) => publicHostname(s, requireDomain(inventory))),
     backend: {
       // Non-null: validateInventory() already enforces that a non-manual
       // entry with subdomains has an ip -- entries reaching this point

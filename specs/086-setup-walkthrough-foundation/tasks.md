@@ -19,9 +19,9 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 
 ## Phase 2: Foundational (blocks every story)
 
-- [ ] T002 Write failing tests in `test/lib/inventory.test.ts`: an inventory with no `domain` loads and saves; `SettingsSchema` accepts `example.com` and rejects `not_a_domain` with "must be a domain name such as example.com"; `validateInventory` reports an entry with subdomains while `domain` is unset, with the `settingFix('domain', '<domain>')` remedy
-- [ ] T003 Move `domain` into `SettingsSchema` as an optional DNS name (regex and message from research R10), drop `InventorySchema`'s required `domain`, load/save it through `SETTINGS_KEYS` (keep the `meta` row key `domain`), and add the subdomains-need-a-domain rule to `validateInventory` in `src/lib/inventory.ts`
-- [ ] T004 Add `requireDomain(inventory)` to `src/lib/hostname.ts`, throwing "domain is not set -- " + `settingFix('domain', '<domain>')`; update every `inventory.domain` reader the compiler flags (`src/lib/proxy/routes.ts`, `src/commands/networking/{adopt-oidc-client,prune-acme-challenges,sync-authentik}.ts`, `src/commands/provisioning/set-guest-vpn.ts`, `src/web/routes/dashboard.ts`, `src/lib/hostname.ts`, plus any others) to use it or handle `undefined`; fix the test fixtures that relied on the required field; `npm run typecheck` and `npm test` green
+- [x] T002 Write failing tests in `test/lib/inventory.test.ts`: an inventory with no `domain` loads and saves; `SettingsSchema` accepts `example.com` and rejects `not_a_domain` with "must be a domain name such as example.com"; `validateInventory` reports an entry with subdomains while `domain` is unset, with the `settingFix('domain', '<domain>')` remedy
+- [x] T003 Move `domain` into `SettingsSchema` as an optional DNS name (regex and message from research R10), drop `InventorySchema`'s required `domain`, load/save it through `SETTINGS_KEYS` (keep the `meta` row key `domain`), and add the subdomains-need-a-domain rule to `validateInventory` in `src/lib/inventory.ts`
+- [x] T004 Add `requireDomain(inventory)` to `src/lib/hostname.ts`, throwing "domain is not set -- " + `settingFix('domain', '<domain>')`; update every `inventory.domain` reader the compiler flags (`src/lib/proxy/routes.ts`, `src/commands/networking/{adopt-oidc-client,prune-acme-challenges,sync-authentik}.ts`, `src/commands/provisioning/set-guest-vpn.ts`, `src/web/routes/dashboard.ts`, `src/lib/hostname.ts`, plus any others) to use it or handle `undefined`; fix the test fixtures that relied on the required field; `npm run typecheck` and `npm test` green
 
 ## Phase 3: User Story 1: Open the walkthrough safely (P1) 🎯 MVP
 
@@ -85,9 +85,9 @@ description: "Task list for the first-run setup walkthrough foundation (#86)"
 
 **Independent Test**: `set-config domain` valid/invalid/unset-with-subdomains; Settings PATCH the same.
 
-- [ ] T029 [P] [US5] Tests in `test/commands/set-config.test.ts`: `set-config domain example.net --apply` saves it; an invalid value is refused with the schema message; `--unset` while an entry has subdomains is refused with the subdomain rule
-- [ ] T030 [P] [US5] Tests in `test/web/routes/settings.test.ts`: GET includes `domain`; a PATCH with an invalid domain gives 400; a PATCH clearing it while subdomains exist is refused
-- [ ] T031 [US5] Make the Settings route return and accept `domain` (`src/web/routes/settings.ts`; it may need nothing beyond T003), and add the domain field with help text to `web-client/src/pages/SettingsPage.tsx` (and `web-client/src/lib/settings-display.ts` if field metadata lives there)
+- [x] T029 [P] [US5] Tests in `test/commands/set-config.test.ts`: `set-config domain example.net --apply` saves it; an invalid value is refused with the schema message; `--unset` while an entry has subdomains is refused with the subdomain rule
+- [x] T030 [P] [US5] Tests in `test/web/routes/settings.test.ts`: GET includes `domain`; a PATCH with an invalid domain gives 400; a PATCH clearing it while subdomains exist is refused
+- [x] T031 [US5] Make the Settings route return and accept `domain` (`src/web/routes/settings.ts`; it may need nothing beyond T003), and add the domain field with help text to `web-client/src/pages/SettingsPage.tsx` (and `web-client/src/lib/settings-display.ts` if field metadata lives there)
 
 ## Phase 8: User Story 6: `import-yaml-inventory` is gone (P3)
 

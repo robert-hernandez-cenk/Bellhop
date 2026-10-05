@@ -1140,12 +1140,15 @@ test('refreshInventory leaves the existing object untouched when the reload fail
   const originalDomain = inv.domain;
   const originalGuestCount = inv.guests.length;
 
-  // An empty/never-written DB path has no `domain` row, so loadInventory's
-  // own InventorySchema validation (domain: z.string().min(1)) throws --
-  // openInventoryDb auto-creates an empty DB file for a path that doesn't
-  // exist yet rather than erroring, so this reliably exercises the
-  // reload-failure branch without needing to hand-corrupt a file.
-  const emptyDbPath = path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-test-')), 'empty.db');
+  // A stored domain that fails SettingsSchema makes loadInventory's own
+  // InventorySchema validation throw, which reliably exercises the
+  // reload-failure branch. (An empty database no longer does: since #86 it
+  // loads without a domain.)
+  const emptyDbPath = path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-test-')), 'invalid.db');
+  saveInventory(emptyDbPath, { hosts: [], guests: [] });
+  const raw = new Database(emptyDbPath);
+  raw.prepare("INSERT INTO meta (key, value) VALUES ('domain', 'not_a_domain')").run();
+  raw.close();
 
   const errors: string[] = [];
   const originalError = console.error;
@@ -1243,7 +1246,7 @@ test('SettingsSchema rejects an empty string value', () => {
   assert.equal(result.success, false);
 });
 
-test('SETTINGS_KEYS lists exactly the twenty-eight settings keys', () => {
+test('SETTINGS_KEYS lists exactly the twenty-nine settings keys', () => {
   assert.deepEqual([...SETTINGS_KEYS].sort(), [
     'acmeDnsProvider',
     'authentikAdminGroup',
@@ -1259,6 +1262,7 @@ test('SETTINGS_KEYS lists exactly the twenty-eight settings keys', () => {
     'customScriptsBranch',
     'customScriptsRepo',
     'dnsServer',
+    'domain',
     'nfsServer',
     'npmApiEmail',
     'npmApiUrl',
@@ -2623,4 +2627,44 @@ test('an inventory with nginx and tlsSource internal loads and validates clean',
   assert.equal(loaded.proxyDriver, 'nginx');
   assert.equal(loaded.tlsSource, 'internal');
   assert.deepEqual(validateInventory(loaded), []);
+});
+
+// Issue #86: a fresh install's database has no domain until the setup
+// walkthrough's second step saves one, so loading must not require it.
+test('an inventory with no domain loads and saves', () => {
+  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'inv-nodomain-')), 'bellhop.db');
+  saveInventory(dbPath, { hosts: [], guests: [] });
+  const loaded = loadInventory(dbPath);
+  assert.equal(loaded.domain, undefined);
+  assert.deepEqual(loaded.hosts, []);
+});
+
+test('a database created empty loads without a domain', () => {
+  const dbPath = path.join(mkdtempSync(path.join(tmpdir(), 'inv-empty-')), 'bellhop.db');
+  const loaded = loadInventory(dbPath);
+  assert.equal(loaded.domain, undefined);
+  assert.deepEqual(loaded.guests, []);
+});
+
+test('domain is a setting validated as a DNS name', () => {
+  assert.ok(SETTINGS_KEYS.includes('domain'));
+  assert.equal(SettingsSchema.safeParse({ domain: 'example.com' }).success, true);
+  assert.equal(SettingsSchema.safeParse({ domain: 'home.example.test' }).success, true);
+  for (const bad of ['not_a_domain', 'example', 'example.com.', ' example.com', '-bad.example.com']) {
+    const parsed = SettingsSchema.safeParse({ domain: bad });
+    assert.equal(parsed.success, false, bad);
+    assert.equal(parsed.error?.issues[0].message, 'must be a domain name such as example.com');
+  }
+});
+
+test('validateInventory requires a domain once an entry has subdomains', () => {
+  const inv: Inventory = {
+    hosts: [{ name: 'pve1', ssh_target: '192.0.2.10', ssh_user: 'root' }],
+    guests: [{ name: 'web', type: 'lxc', vmid: 101, host: 'pve1', ip: '192.0.2.21', subdomains: ['web'] }],
+  };
+  const errors = validateInventory(inv);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /subdomains but no domain is set/);
+  assert.match(errors[0], /set-config domain <domain> --apply/);
+  assert.deepEqual(validateInventory({ ...inv, domain: 'example.com' }), []);
 });

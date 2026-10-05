@@ -34,6 +34,11 @@ type SettingKey = keyof SettingsValues;
 // optional rather than adding a second, near-identical field-def shape.
 // A Record over every key, so a setting with no label/help fails to compile.
 const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; help: string }> = {
+  domain: {
+    label: 'Domain',
+    placeholder: 'example.com',
+    help: 'Base domain every subdomain is served under (a subdomain "media" becomes media.<domain>). Unset: no entry can have subdomains, so the proxy and Authentik have nothing to serve.',
+  },
   nfsServer: {
     label: 'NFS server',
     placeholder: '10.0.0.5',

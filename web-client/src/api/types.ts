@@ -271,6 +271,7 @@ export interface WhoAmI {
 }
 
 export interface SettingsValues {
+  domain?: string;
   nfsServer?: string;
   backupStorage?: string;
   dnsServer?: string;
