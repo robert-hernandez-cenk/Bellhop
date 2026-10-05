@@ -42,11 +42,11 @@ description: "Task list for running the web service as an LXC container (#67)"
 
 ### Tests for User Story 1
 
-- [ ] T006 [US1] Write a failing test in test/bin/bellhop-shim.test.ts that spawns `node <repo>/bin/bellhop.js --help` with `cwd` set to an `mkdtempSync` directory and asserts exit code 0 and usage text (research R5)
+- [x] T006 [US1] Write a failing test in test/bin/bellhop-shim.test.ts that spawns `node <repo>/bin/bellhop.js --help` with `cwd` set to an `mkdtempSync` directory and asserts exit code 0 and usage text (research R5)
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Fix bin/bellhop.js to pass `import.meta.resolve('tsx')` (resolved relative to the shim) to `--import` instead of the bare `tsx` specifier, with a comment explaining why (Node resolves a bare `--import` specifier against the caller's cwd)
+- [x] T007 [US1] Fix bin/bellhop.js to pass `import.meta.resolve('tsx')` (resolved relative to the shim) to `--import` instead of the bare `tsx` specifier, with a comment explaining why (Node resolves a bare `--import` specifier against the caller's cwd)
 - [ ] T008 [P] [US1] fork: write install/bellhop-install.sh per contracts/installer.md (steps 1-12): dependencies, `NODE_VERSION="24" setup_nodejs`, `fetch_and_deploy_gh_release "bellhop" "robert-hernandez-cenk/Bellhop" "tarball"`, `npm ci` + `npm run web:build`, data dirs, root ed25519 key only if absent (no service user: fork anti-patterns 9/12), /etc/default/bellhop, /usr/local/bin/bellhop wrapper, bellhop.service (User=root, `EnvironmentFile=/etc/default/bellhop`, `Restart=on-failure`), (the ct footer prints the key and the `bellhop set-config bellhopGuest <hostname> --apply` line, research R7), `motd_ssh`/`customize`/`cleanup_lxc`. Never prompts.
 - [ ] T009 [P] [US1] fork: write ct/bellhop.sh per contracts/installer.md (header, `var_*` defaults 2/2048/8/debian/13/unprivileged, `start`/`build_container`/`description`, final URL `http://${IP}:3000` and docs pointer). `update_script()` is in T012.
 - [ ] T010 [P] [US1] fork: write json/bellhop.json following the shelfarr manifest shape (slug `bellhop`, `type` ct, `updateable` true, `privileged` false, `interface_port` 3000, `config_path` /etc/default/bellhop, resources matching ct/bellhop.sh, notes on the SSH key, sign-in and the data location); pick `categories` from the fork's category list
