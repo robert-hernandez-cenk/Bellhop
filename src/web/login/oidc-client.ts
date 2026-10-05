@@ -53,7 +53,14 @@ export type RecheckIdentity = Omit<LoginIdentity, 'idToken'> & { idToken?: strin
 export type RecheckResult =
   | { kind: 'ok'; identity: RecheckIdentity }
   | { kind: 'refused'; reason: string }
-  | { kind: 'unreachable'; reason: string };
+  // When the refresh grant itself succeeded but a later step (userinfo) could
+  // not get an answer, the provider has already consumed the presented
+  // refresh token (Authentik rotates on use). `refreshToken`/`idToken` then
+  // carry what the grant returned, and the caller MUST persist them while
+  // keeping the last-known identity -- otherwise its next re-check presents
+  // the consumed token, gets invalid_grant, and signs the user out over a
+  // transient outage. Both are absent when the grant never returned.
+  | { kind: 'unreachable'; reason: string; refreshToken?: string; idToken?: string };
 
 export interface WebLoginClient {
   startLogin(cfg: WebLoginSettings): Promise<StartedLogin>;
@@ -208,8 +215,12 @@ export class RealWebLoginClient implements WebLoginClient {
       // 404 from a mistyped issuer) says nothing about this session.
       return { kind: 'unreachable', reason: (err as Error).message };
     }
+    // Set once the grant returns: from then on the presented refresh token
+    // is spent, so every later failure has to hand the new one back.
+    let granted: { refreshToken?: string; idToken?: string } | undefined;
     try {
       const tokens = await oidc.refreshTokenGrant(config, refreshToken);
+      granted = { refreshToken: tokens.refresh_token, idToken: tokens.id_token };
       // A refreshed ID token is optional; when present its iss/aud/exp were
       // validated by openid-client, but its sub must still be the same user.
       const claims = tokens.claims();
@@ -223,8 +234,16 @@ export class RealWebLoginClient implements WebLoginClient {
         },
       };
     } catch (err) {
-      const kind = classify(err);
-      return { kind, reason: `Re-check with ${cfg.issuer} ${kind === 'refused' ? 'was refused' : 'failed'}: ${describe(err)}` };
+      if (classify(err) === 'refused') {
+        // The session is deleted, so a rotated token has nothing to go to.
+        return { kind: 'refused', reason: `Re-check with ${cfg.issuer} was refused: ${describe(err)}` };
+      }
+      return {
+        kind: 'unreachable',
+        reason: `Re-check with ${cfg.issuer} failed: ${describe(err)}`,
+        ...(granted?.refreshToken ? { refreshToken: granted.refreshToken } : {}),
+        ...(granted?.idToken ? { idToken: granted.idToken } : {}),
+      };
     }
   }
 
@@ -262,27 +281,22 @@ function buildIdentity(sub: string, userinfo: Claims, idClaims: Claims | undefin
   };
 }
 
-// R4's split. Refused: the provider answered and said no -- an OAuth error
-// response or any 4xx from the token or userinfo endpoint (invalid_grant,
-// invalid_client, a 401), a sub mismatch, an ID token whose claims fail
-// validation, or an identity Bellhop cannot accept. Unreachable: no answer,
-// or an answer that says nothing about the session -- connection errors,
-// timeouts, 5xx, unparseable responses. Anything unrecognised is treated as
-// unreachable, which keeps the session for now rather than signing a user
-// out on an error we cannot interpret.
+// R4's split, decided by whether there is evidence the provider answered.
+// Unreachable -- no answer: a network error (fetch's TypeError), a timeout or
+// abort, or an HTTP 5xx. Refused -- everything else, because the provider
+// did answer and the answer does not hold up: an OAuth error or any non-5xx
+// error status (invalid_grant, invalid_client, a userinfo 401), a sub
+// mismatch, and any failure processing a 2xx response (an ID token with a bad
+// signature, wrong aud/iss, expired, a missing required claim, an
+// unparseable body) -- the same treatment as a wrong aud. Discovery failures
+// never reach here; recheck() maps them to unreachable itself.
 function classify(err: unknown): 'refused' | 'unreachable' {
-  if (err instanceof IdentityError) return 'refused';
   const status = httpStatus(err);
-  if (status !== undefined) return status >= 400 && status < 500 ? 'refused' : 'unreachable';
-  if (err instanceof oidc.ClientError) {
-    switch (err.code) {
-      case 'OAUTH_JWT_CLAIM_COMPARISON_FAILED':
-      case 'OAUTH_JSON_ATTRIBUTE_COMPARISON_FAILED': // userinfo sub mismatch
-      case 'OAUTH_JWT_TIMESTAMP_CHECK_FAILED':
-        return 'refused';
-    }
-  }
-  return 'unreachable';
+  if (status !== undefined) return status >= 500 ? 'unreachable' : 'refused';
+  if (err instanceof TypeError) return 'unreachable';
+  if (err instanceof oidc.ClientError && (err.code === 'OAUTH_TIMEOUT' || err.code === 'OAUTH_ABORT')) return 'unreachable';
+  if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) return 'unreachable';
+  return 'refused';
 }
 
 function httpStatus(err: unknown): number | undefined {

@@ -260,6 +260,55 @@ test('recheck is unreachable when the provider does not answer within the timeou
   assert.equal(result.kind, 'unreachable');
 });
 
+// Authentik consumes the presented refresh token as soon as the grant
+// succeeds. If userinfo then fails, the unreachable result must carry the
+// rotated token, or the caller's next re-check presents the consumed one,
+// gets invalid_grant and signs the user out over a transient outage.
+test('recheck that fails after the refresh grant is unreachable and carries the rotated tokens', async () => {
+  const client = newClient();
+  const { identity } = await signIn(client);
+  provider.behavior.failures.userinfo = { status: 503 };
+  const first = await client.recheck(settings(), identity.refreshToken, identity.uid);
+  assert.equal(first.kind, 'unreachable');
+  if (first.kind !== 'unreachable') return;
+  assert.ok(first.refreshToken);
+  assert.notEqual(first.refreshToken, identity.refreshToken);
+  assert.equal(first.refreshToken, provider.issuedRefreshTokens.at(-1));
+  assert.equal(first.idToken, provider.issuedIdTokens.at(-1));
+
+  delete provider.behavior.failures.userinfo;
+  const second = await client.recheck(settings(), first.refreshToken, identity.uid);
+  assert.equal(second.kind, 'ok');
+});
+
+test('recheck that cannot reach the token endpoint carries no refresh token', async () => {
+  const client = newClient();
+  const { identity } = await signIn(client);
+  provider.behavior.failures.token = { status: 503 };
+  const result = await client.recheck(settings(), identity.refreshToken, identity.uid);
+  assert.equal(result.kind, 'unreachable');
+  if (result.kind === 'unreachable') assert.equal(result.refreshToken, undefined);
+});
+
+// The provider answered 200 but its response does not validate: that is a
+// refusal (like a wrong aud), not an outage.
+test('recheck is refused when the refreshed ID token has a bad signature', async () => {
+  const client = newClient();
+  const { identity } = await signIn(client);
+  provider.behavior.signWithForeignKey = true;
+  provider.behavior.idTokenOnRefresh = true;
+  const result = await client.recheck(settings(), identity.refreshToken, identity.uid);
+  assert.equal(result.kind, 'refused');
+  if (result.kind === 'refused') assert.match(result.reason, /signature/);
+});
+
+test('recheck is refused when the token response is not a valid token response', async () => {
+  const client = newClient();
+  const { identity } = await signIn(client);
+  provider.behavior.failures.token = { status: 200, body: { unexpected: true } };
+  assert.equal((await client.recheck(settings(), identity.refreshToken, identity.uid)).kind, 'refused');
+});
+
 async function closedPortIssuer(): Promise<string> {
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
