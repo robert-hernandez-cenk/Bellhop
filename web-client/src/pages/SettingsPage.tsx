@@ -593,7 +593,7 @@ export function SettingsPage() {
       <h2>Settings</h2>
       <PageDescription>
         Settings are grouped by integration, and every one is optional -- each field says what
-        happens while it is unset. Secrets (API tokens and passwords) are write-only: the page shows
+        happens while it is unset. Secrets (API tokens, passwords and keys) are write-only: the page shows
         only whether one is set and where it comes from, and never shows the value again. A field
         set by an environment variable is read-only here until that variable is removed. The same
         values can be set from the CLI with{' '}

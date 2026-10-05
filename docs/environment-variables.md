@@ -49,6 +49,7 @@ necessarily share the web service's environment.
 | `NPM_API_EMAIL` | `npmApiEmail` | |
 | `NPM_API_PASSWORD` | `npmApiPassword` | yes |
 | `GITHUB_API_TOKEN` | `githubApiToken` | yes |
+| `MCP_API_KEY` | `mcpApiKey` | yes |
 
 What each setting does, and its default, is in [Integration settings and
 secrets](configuration.md#integration-settings-and-secrets).

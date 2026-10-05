@@ -44,6 +44,23 @@ Bellhop's own route is not forward-gated, so the HAProxy driver serves it like a
 
 The session store and the re-check single-flighting assume one Bellhop service process: sessions live in one `data/sessions.sqlite3` and the `inflight` map and `ImpersonationStore` are in-process, so two instances would not share them (a rotated refresh token could sign a user out). Sign-in also assumes the service is reached over HTTPS under one origin (`Secure` cookie, one registered redirect URI).
 
+## MCP over HTTP
+
+#65/#66. `src/web/mcp/` serves `buildMcpServer`'s tools over Streamable HTTP at `/mcp`, mounted by `buildApp` (via `buildMcpHttp`, `index.ts`) **ahead of `requireAuth`**: a session cookie never authenticates it, only `Authorization: Bearer`. Contract: `specs/065-mcp-https-transport/contracts/http-mcp.md`.
+
+- **Checks** (`routes.ts`, in order, before any MCP handling): neither sign-in nor `mcpApiKey` configured → `503` naming both fixes; bad/missing bearer → `401` (+ `resource_metadata` while sign-in is on); signed-in caller no longer admin → `403`; then `McpHttpHost`.
+- **Host** (`http-host.ts`): one `McpServer` + `StreamableHTTPServerTransport` per `Mcp-Session-Id`, created only by an `initialize` without a session id, bound to the caller's principal (`api-key` or `grant:<id>`); another principal → `403`, unknown id → `404`; idle 30 min → closed by an unref'd sweep. All sessions share the web `JobRunner` (jobs are `owner: 'web'`, outlive the client) and one `PromptTracker`.
+- **API key** (`api-key.ts`): `mcpApiKey`/`MCP_API_KEY`, read per request, compared as SHA-256 digests with `timingSafeEqual`; principal and username `api-key`.
+- **Authorization server**: the SDK's `mcpAuthRouter` (discovery, `/register`, `/authorize`, `/token`, `/revoke` — root paths the SDK fixes) with `BellhopOAuthProvider` (`oauth-provider.ts`). Issuer = origin of `webUiOidcRedirectUri`; the router is built on first use per issuer and cached (hence express-rate-limit's `creationStack` check is off; `xForwardedForHeader` too, since the app sets no `trust proxy`). Not mounted while sign-in is unconfigured or the issuer is neither https nor localhost/127.0.0.1.
+- **Consent** (`consent.ts`): `/authorize` stores a pending request (`McpAuthStore`) and renders a page naming the client and its return origin; the pending id is bound to the browser by a per-request cookie (`bellhop_mcp_<hash prefix>`, path `/auth`, Lax). `POST /auth/mcp/consent`: deny → `access_denied` to the client; approve → `beginSignIn` (`routes/auth.ts`, shared with `/auth/login`) with the attempt carrying `mcpPendingHash`.
+- **Callback**: an attempt with `mcpPendingHash` goes to `mcpSignInFinisher` instead of setting a cookie: non-admin → `403` page, nothing issued; admin → `SessionService.createDetached` (a session row whose raw id is discarded; only its hash is kept), a code, and a redirect to the client.
+- **Tokens** (`auth-store.ts`, tables in `data/sessions.sqlite3`, every token-like value SHA-256'd): codes single use/10 min; access 1 h; refresh rotates on use; a grant ends with its session row (refused re-check, 30 days) or on revoke. `verifyAccessToken` resolves access → grant → `SessionService.resolveHash` (the web re-check policy) → `isAdminUser`.
+- Registered clients' own secrets are stored as registered: the SDK's client authentication compares them in plain text.
+
+### Single-operator assumptions (MCP over HTTP)
+
+MCP sessions and the shared `PromptTracker` are in-process, and the authorization server's issuer is the one origin of `webUiOidcRedirectUri` — the same one-service, one-origin assumptions as web sign-in. Behind the proxy every client shares one rate-limit bucket.
+
 ## Inventory reload
 
 `inventory` loads once at startup (`src/web/server.ts`); a global middleware in `buildApp` (`src/web/app.ts`) calls `refreshInventory(deps.inventory, deps.inventoryPath)` per `/api` request, `Object.assign`ing a fresh `loadInventory` onto the *existing* object so route closures see DB/CLI edits without restart. A failed reload (e.g. lock) is `logWarn`ed; the last good copy is used. It also invalidates the config snapshot (`src/lib/CLAUDE.md`).
