@@ -233,3 +233,10 @@ test('after step 1 a fresh app over the same database resumes with the host and 
   // Bellhop's key survives the restart, so the walkthrough can show it again.
   assert.equal(res.body.key.mode, 'generated');
 });
+
+test('hosts/test refuses a node name that is not a plain hostname', async () => {
+  const { app, cookie } = await withKey({ responder: () => ok(`pve1; reboot\n${fixture('version')}\n`) });
+  const res = await request(app).post('/api/setup/hosts/test').set('Cookie', cookie).send(endpoint);
+  assert.equal(res.status, 502);
+  assert.match(res.body.error, /node name/);
+});

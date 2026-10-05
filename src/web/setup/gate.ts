@@ -37,7 +37,9 @@ function isAssetPath(path: string): boolean {
 export function setupGate(setup: SetupService): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!setup.isPending()) return next();
-    const path = req.path;
+    // Express routes case-insensitively, so compare lowercased: /API/jobs/x.y
+    // must not slip through as an asset past the /api check.
+    const path = req.path.toLowerCase();
     if (path === '/setup' || path === '/api/setup' || path.startsWith('/api/setup/')) return next();
     if (path === '/api' || path.startsWith('/api/') || path === '/auth' || path.startsWith('/auth/')) {
       res.status(503).json({ error: SETUP_REQUIRED_ERROR, setupRequired: true });

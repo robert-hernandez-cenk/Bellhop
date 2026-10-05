@@ -38,12 +38,12 @@ export function Dashboard() {
   };
 
   const load = () => {
-    apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain: string; customScripts: CustomScripts | null }>(
+    apiGet<{ hosts: HostEntry[]; guests: GuestEntry[]; domain?: string; customScripts: CustomScripts | null }>(
       '/inventory'
     ).then((data) => {
       setHosts(data.hosts);
       setGuests(data.guests);
-      setDomain(data.domain);
+      setDomain(data.domain ?? '');
       setCustomScripts(data.customScripts);
     });
   };

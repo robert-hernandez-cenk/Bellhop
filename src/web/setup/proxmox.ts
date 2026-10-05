@@ -110,11 +110,18 @@ export async function testHost(ssh: SSHClient, endpoint: HostEndpoint, keyPath: 
     );
   }
   const [nodeName, ...rest] = result.stdout.trim().split('\n');
+  let version: string;
   try {
-    return { nodeName: nodeName.trim(), version: parseVersion(rest.join('\n')) };
+    version = parseVersion(rest.join('\n'));
   } catch {
     throw new SetupActionError(`${endpointLabel(endpoint)} did not answer like a Proxmox node`, 502);
   }
+  // The node name becomes the host's inventory name and lands in later pvesh
+  // commands, so it must be a plain hostname.
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(nodeName.trim())) {
+    throw new SetupActionError(`${endpointLabel(endpoint)} reported a node name Bellhop can't use`, 502);
+  }
+  return { nodeName: nodeName.trim(), version };
 }
 
 export interface SavedHost {

@@ -103,3 +103,16 @@ test('after setup finished, the gate is off and the old token is refused', async
   const state = await request(app).get('/api/setup/state').set('Cookie', first.cookie);
   assert.equal(state.status, 404);
 });
+
+test('while setup is pending, a mixed-case API or sign-in path is gated like its lowercase form', async () => {
+  const { app } = setupTestApp();
+  // Express routes case-insensitively, so /API/... reaches the same handlers;
+  // a dotted last segment must not read as a static asset.
+  for (const path of ['/API/jobs/a.b', '/Api/inventory.json', '/AUTH/login.php', '/Auth/callback']) {
+    const res = await request(app).get(path);
+    assert.equal(res.status, 503, path);
+    assert.equal(res.body.setupRequired, true, path);
+  }
+  const post = await request(app).post('/API/jobs/a.b').send({});
+  assert.equal(post.status, 503);
+});
