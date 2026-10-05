@@ -7,6 +7,7 @@ Other commands here have their detail elsewhere:
 - `update-all` targeting (`selectUpdateTargets`, VM exclusion) and package-manager detection: see `src/lib/CLAUDE.md` (targets, package managers).
 - `update-app`: `src/commands/provisioning/CLAUDE.md` (install-app/update-app). It re-runs the same `ct/<app>.sh` inside the guest via `runRemote`, exporting `TERM`/`PHS_SILENT` but not `mode`; the inner `bash -c` is deliberate (community-scripts needs it).
 - `set-config`: Settings store in `src/lib/CLAUDE.md`; secrets rule in the root CLAUDE.md.
+- `update-app`, `guest-power` and `update-all` refuse or skip Bellhop's own guest (`bellhopGuest`): see `src/lib/CLAUDE.md` ("Bellhop's own guest").
 - The daily scheduler that runs `check-app-updates`: see `src/web/tasks/CLAUDE.md` (scheduler).
 
 ## `sync-inventory`

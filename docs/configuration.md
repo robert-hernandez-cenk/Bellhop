@@ -41,7 +41,7 @@ go there too — see the commented `nfsServer`/`backupStorage`/`dnsServer`/
 
 ## Inventory-wide settings
 
-Fifteen values live in the inventory database rather than in code, because
+Seventeen values live in the inventory database rather than in code, because
 they are specific to your network (the integration settings are covered
 separately, under [Integration settings and
 secrets](#integration-settings-and-secrets)). Set them with `set-config`:
@@ -88,6 +88,7 @@ value — see
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 | `pveUserRealm` | `create-vm`'s web-UI creator grant | the creator grant is off entirely |
 | `pveCreatorRole` | same as `pveUserRealm` | `PVEVMAdmin` |
+| `bellhopGuest` | `update-app`, `delete-guest`, `migrate-guest`, guest start/shutdown (all refuse it), `update-all` (skips it) | no guest is protected — see [Bellhop's own guest](lxc-container.md#bellhops-own-guest) |
 
 See [Reverse proxy drivers](reverse-proxy/README.md) for what `proxyDriver`, `proxyConfigPath`,
 `tlsSource`/`acmeDnsProvider` ([TLS sources](reverse-proxy/README.md#tls-sources)),
@@ -203,9 +204,10 @@ non-200 status is reported verbatim) rather than silently falling back to
 upstream. Setting a [GitHub token](#github-token) lifts the limit for
 every Bellhop request to GitHub's API.
 
-Two related values are *derived*, not configured: `set-guest-vpn --vpn
-none` restores the guest's parent host's `midScheme.gateway`, and the
-Windows service's firewall rule scopes to the `proxy: true` entry's `ip`.
+One related value is *derived*, not configured: `set-guest-vpn --vpn
+none` restores the guest's parent host's `midScheme.gateway`. (The
+deprecated Windows service's firewall rule used to scope to the
+`proxy: true` entry's `ip`; since #69 it is not address-scoped.)
 This is a real behavior narrowing, not just a literal removed: previously
 `--vpn none` always restored the same hardcoded LAN gateway regardless of
 the guest's host; now it requires that host to have a `midScheme`

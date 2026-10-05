@@ -24,7 +24,7 @@ Setting `webUiAuthMode` (env `WEB_UI_AUTH_MODE` overrides), read per request by 
 
 Lockout guard: a Settings PATCH switching to `oidc` is refused unless sign-in is configured and the requester has a session and would still be admin (details under "PATCH validation and refusals"). CLI/MCP writes are unrestricted (host trust), the recovery path: `set-config webUiAuthMode none --apply`, or `WEB_UI_AUTH_MODE=none` (`docs/authentik.md`, "Locked out").
 
-`WEB_UI_DEV_USER` simulates a specific non-admin group membership (the local operator can't). It applies in every mode, `oidc` included, so it must stay unset in production. `scripts/windows-service.ts`'s `buildService()` sets only `PORT`/`USERPROFILE`, so any other override reaches production only through the dotenv-loaded `data/*.env` files; never set `WEB_UI_DEV_USER` there. Tests that assert an unauthenticated outcome must delete it (`npm test` sets `WEB_UI_DEV_USER=test-user` globally).
+`WEB_UI_DEV_USER` simulates a specific non-admin group membership (the local operator can't). It applies in every mode, `oidc` included, so it must stay unset in production. The LXC container's service reads `/etc/default/bellhop` (`PORT`, `INVENTORY_FILE`, `WEB_DATA_DIR`), and the deprecated `scripts/windows-service.ts`'s `buildService()` sets only `PORT`/`USERPROFILE`, so any other override reaches production only through those or the dotenv-loaded `data/*.env` files; never set `WEB_UI_DEV_USER` in any of them. Tests that assert an unauthenticated outcome must delete it (`npm test` sets `WEB_UI_DEV_USER=test-user` globally).
 
 ### Admin predicate
 
@@ -36,7 +36,7 @@ Lockout guard: a Settings PATCH switching to `oidc` is refused unless sign-in is
 
 ### Firewall and HAProxy
 
-Browsers now reach the service directly (the proxy no longer injects identity), so `scripts/windows-service.ts`'s `addFirewallRule` is not scoped to an address: no `remoteip=`, and `resolveProxyIp` is gone (`scripts/firewall-rule.ts`). The session cookie, not network position, is the boundary.
+Browsers now reach the service directly (the proxy no longer injects identity), so `scripts/windows-service.ts`'s `addFirewallRule` is not scoped to an address: no `remoteip=`, and `resolveProxyIp` is gone (`scripts/firewall-rule.ts`). The session cookie, not network position, is the boundary, which is also why the LXC container (#67, `docs/lxc-container.md`) has no firewall rule at all. The Windows service is deprecated (it prints a notice) and is removed in #68.
 
 Bellhop's own route is not forward-gated, so the HAProxy driver serves it like any other backend: no `proxyManual` is needed (`docs/reverse-proxy/haproxy.md`, "Limits"). Bellhop's entry must be `authMode: oidc` with its `/auth/callback` URL in `oidcRedirectUris` (`sync-authentik`), and `configure-web-login` stores the client (`src/commands/networking/CLAUDE.md`).
 

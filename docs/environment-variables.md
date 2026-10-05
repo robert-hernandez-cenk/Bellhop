@@ -155,13 +155,15 @@ These are not settings and can only be set in the environment.
   inventory/hosts.yaml.example --db-path <temp-path> --apply`), for
   testing without touching real infrastructure. The settings store lives
   in this same database, so the override also selects which settings are
-  read.
+  read. The [LXC container](lxc-container.md) sets it to
+  `/var/lib/bellhop/inventory/bellhop.db` in `/etc/default/bellhop`.
 - `PORT` — port the web UI's Express server listens on (see [Web UI](web-ui.md)).
   Defaults to 3000 if unset, but both `web:dev` and `web:start` set it to
   3001 themselves.
 - `WEB_DATA_DIR` — directory the web UI stores its job history SQLite DB
   and job logs in, and where the `data/*.env` files above are looked for.
-  Defaults to `data/` in the repo root.
+  Defaults to `data/` in the repo root. The [LXC container](lxc-container.md)
+  sets it to `/var/lib/bellhop/data`, and `PORT` to 3000.
 - `WEB_UI_LOCAL_USER` — the username of the synthetic local operator
   described under [Sign-in mode](#sign-in-mode). Defaults to `local`.
   Shown in the UI's "Signed in as" line and recorded as a job's
@@ -173,8 +175,8 @@ These are not settings and can only be set in the environment.
   included). A real session takes precedence, and the bypass applies in
   `oidc` mode as well as `none`. `web:dev` sets this automatically (to
   `local-dev`); `npm test` sets it too (to `test-user`) so the existing
-  test suite doesn't need to sign in on every request. **Never set this in the production
-  Windows service's environment** — doing so would disable auth entirely
+  test suite doesn't need to sign in on every request. **Never set this in a production
+  service's environment** (`/etc/default/bellhop` in the container) — doing so would disable auth entirely
   for the real deployment (see [Web UI](web-ui.md)).
 - `SSH_AUTH_SOCK` — the SSH agent socket, used only when none of the
   default identity files (`~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`) exists

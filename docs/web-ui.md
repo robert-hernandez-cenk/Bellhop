@@ -16,6 +16,17 @@ npm run web:start                 # production: one Express server serving both 
 `index.html`. Only `web:dev` runs a separate frontend process (Vite's dev
 server, for hot-reload), proxying API calls to the same backend.
 
+## Running the web service
+
+To keep the web UI running, run it as an [LXC container](lxc-container.md)
+on one of your Proxmox hosts, created by a community-scripts installer. It
+starts at boot, restarts on failure, and updates in place.
+
+The Windows service (`npm run service:install` / `npm run
+service:uninstall`, from an elevated prompt) still works, but it is
+deprecated and prints a notice saying so. It will be removed in a future
+update (#68).
+
 ## Demo
 
 ```bash

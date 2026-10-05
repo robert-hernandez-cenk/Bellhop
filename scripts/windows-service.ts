@@ -7,6 +7,7 @@ import nodeWindows from 'node-windows';
 import { dataDir, inventoryPath } from '../src/lib/paths.ts';
 import { importEnvFilesAndUseStore } from '../src/lib/config-import.ts';
 import { FIREWALL_RULE_NAME, firewallRuleCommand } from './firewall-rule.ts';
+import { WINDOWS_SERVICE_DEPRECATION_NOTICE } from './windows-service-notice.ts';
 
 const { Service, elevate } = nodeWindows;
 
@@ -169,6 +170,9 @@ async function uninstall(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Before the elevation check, so it lands in the console the operator is
+  // watching rather than only in the elevated child's.
+  console.warn(WINDOWS_SERVICE_DEPRECATION_NOTICE);
   const action = process.argv[2] as Action | undefined;
   if (action !== 'install' && action !== 'uninstall') {
     console.error('Usage: tsx scripts/windows-service.ts <install|uninstall>');

@@ -29,6 +29,11 @@ Proxmox Server Solutions GmbH.
 
 ## Setup
 
+The recommended way to run Bellhop is an LXC container on one of your
+Proxmox hosts, created by a community-scripts installer: see [Running Bellhop
+in an LXC container](docs/lxc-container.md). The steps below run it from a
+checkout instead, which is also how you develop it.
+
 ```bash
 npm install
 npm link   # exposes the `bellhop` command globally; optional, you can
@@ -119,6 +124,8 @@ behaves.
 
 ## Documentation
 
+- [Running Bellhop in an LXC container](docs/lxc-container.md) — the
+  installer, where data lives, first run, updates, and Bellhop's own guest.
 - [Commands](docs/commands.md) — every command, with examples.
 - [Configuration](docs/configuration.md) — the inventory file, inventory-wide
   settings, integration settings and secrets, and installing apps from your

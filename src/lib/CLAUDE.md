@@ -91,12 +91,13 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `proxyTlsCertificate`/`proxyTlsKey` (#30): the shared cert/key pair served under `tlsSource: files`.
 - `proxyCertResolver`/`proxyApiUrl` (#35): Traefik only; `proxyCertResolver` is read under `acme-dns`/`acme-http`, and no value is reserved (`none` was, until #72's `external` replaced it).
 - `pveUserRealm`/`pveCreatorRole` (#53): unset `pveUserRealm` = creator grant off.
+- `bellhopGuest` (#67): the inventory name of the guest Bellhop runs in; see "Bellhop's own guest" below. Never checked against the guests list (it is set right after an import, before `sync-inventory` adds the guest).
 - #64's twelve integration settings (`authentikApiUrl` + eight other `authentik*`, `webUiAuthMode`, `npmApiUrl`, `npmApiEmail`): `settings-defs.ts`'s `MovedSettingsSchema`, spread into `SettingsSchema`. `webUiAuthMode` accepts only `oidc`/`none` (#69; `openInventoryDb` migrates a stored `authentik` to `oidc` and deletes a stored `auto`).
 - #69's web login: `webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri` (must end in `/auth/callback`, and be `https://` except on loopback, since the sign-in cookies are `Secure`) and the secret `webUiOidcClientSecret` (env `WEB_UI_OIDC_*`, file `authentik.env`); read together by `src/web/login/config.ts`, written by `configure-web-login`.
 
 Writers: `set-config <key> [value] [--unset] [--apply]` (`src/commands/maintenance/set-config.ts`) and the admin-only web Settings page, both validating against `SettingsSchema`.
 
-Derived, not configured: `set-guest-vpn --vpn none`'s LAN gateway is the parent host's `midScheme.gateway`. (The Windows service firewall rule is no longer address-scoped, #69.)
+Derived, not configured: `set-guest-vpn --vpn none`'s LAN gateway is the parent host's `midScheme.gateway`. (The deprecated Windows service's firewall rule is no longer address-scoped, #69.)
 
 ### `saveInventory` transaction
 
@@ -177,6 +178,12 @@ A signal-killed remote process reported `code: null`, the old `code ?? 0` called
 - `{ group: 'vm' }` / `{ host: <vm-name> }` reject: `update-all does not update VMs...`.
 - Everything else delegates to `selectTargets` (incl. its unknown-host error).
 - `TargetSelector.group` allows `'vm'` (other callers) and CLI `--group` takes any string; `selectUpdateTargets` rejects it at runtime. Web/MCP `group` is `z.enum(['pve', 'lxc'])`.
+
+`runUpdateAll` then drops Bellhop's own guest (below) into `skippedSelf`, not a failure, and the operation preview names it, so preview and apply still agree.
+
+### Bellhop's own guest (`bellhop-guest.ts`)
+
+With `bellhopGuest` set (#67), `assertNotBellhopGuest` makes `runUpdateApp`, `runDeleteGuest`, `runMigrateGuest` and `runGuestPower` refuse that guest before any remote call, in a dry run too, with no override: acting on it would cut off the service doing the acting. The check is in the `run*` functions, so CLI, web and MCP refuse alike. The `delete-guest` operation checks again before its Authentik teardown, which runs ahead of `runDeleteGuest`. A name match only; unset or unmatched guards nothing. A new command that could stop, replace or move a guest calls it too.
 
 ### Package-manager detection (`package-manager.ts`)
 

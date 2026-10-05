@@ -39,7 +39,7 @@ Bellhop's own inventory entry is gated like any OIDC app. Each step is a real ch
 
 The callback URL must be HTTPS (the session cookie is `Secure`), and Bellhop must be reached at that one origin.
 
-**Upgrading from forward-auth.** A deployment that set `WEB_UI_AUTH_MODE=authentik` in `data/authentik.env` must change that line to `WEB_UI_AUTH_MODE=oidc` (or delete it and store the setting), then restart the service; with the old value the service refuses to start. A deployment that had stored `authentik` is converted to `oidc` the first time this version opens its database, so finish steps 1 to 4 first, or it will require a sign-in that is not set up yet (see [Locked out](#locked-out)). The Windows service's firewall rule is no longer limited to the proxy's address; reinstall the service to widen it.
+**Upgrading from forward-auth.** A deployment that set `WEB_UI_AUTH_MODE=authentik` in `data/authentik.env` must change that line to `WEB_UI_AUTH_MODE=oidc` (or delete it and store the setting), then restart the service; with the old value the service refuses to start. A deployment that had stored `authentik` is converted to `oidc` the first time this version opens its database, so finish steps 1 to 4 first, or it will require a sign-in that is not set up yet (see [Locked out](#locked-out)). The (deprecated) Windows service's firewall rule is no longer limited to the proxy's address; reinstall the service to widen it.
 
 ### Sessions and group changes
 
