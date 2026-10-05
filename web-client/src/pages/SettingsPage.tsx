@@ -8,7 +8,6 @@ import {
   LAN_GATEWAYS_EMPTY_TEXT,
   proxyDriverOptions,
   proxyFieldView,
-  caddyTlsOptions,
   SETTINGS_TABS,
   fieldsForTab,
   fieldState,
@@ -29,7 +28,8 @@ type SettingKey = keyof SettingsValues;
 // Each field names what breaks while it is unset, so the page explains its
 // own consequences rather than assuming the reader knows which command
 // consumes which value. `placeholder` is unused for the <select> fields
-// (`proxyDriver`/`proxyCaddyTls`, issue #33/#51; `webUiAuthMode`, issue #64)
+// (`proxyDriver`, issue #33; `tlsSource`/`acmeDnsProvider`, issue #72;
+// `webUiAuthMode`, issue #64)
 // and for secrets, whose masked input never shows an example -- kept
 // optional rather than adding a second, near-identical field-def shape.
 // A Record over every key, so a setting with no label/help fails to compile.
@@ -63,35 +63,30 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
     placeholder: '/etc/caddy/Caddyfile',
     help: "Overrides the active driver's own default config path. Unset: that default.",
   },
-  proxyCaddyTls: {
-    label: 'Caddy TLS',
-    help:
-      "How the Caddy drivers obtain a certificate for each site. cloudflare: DNS-01 through Cloudflare, needs a Caddy build with caddy-dns/cloudflare. letsencrypt: Caddy's automatic HTTPS over a public HTTP/TLS-ALPN challenge, needs ports 80/443 reachable from the internet. internal: Caddy's own internal CA -- self-signed, trust its root certificate on your clients. files: the shared certificate/key pair named by the Proxy TLS certificate/key fields below. Unset: cloudflare.",
-  },
-  // issue #72: not rendered yet (isVisible hides both); the real labels and
-  // help arrive with the TLS source UI.
+  // issue #72: one driver-independent TLS setting; the dropdown lists only
+  // the selected driver's own sources.
   tlsSource: {
     label: 'TLS source',
-    help: "Where certificates come from: acme-dns, acme-http, internal, files or external. Unset: the proxy driver's default.",
+    help: "Where the proxy's certificates come from. acme-dns: the proxy obtains them over ACME DNS-01 through the ACME DNS provider below. acme-http: over a public ACME HTTP challenge, needs ports 80/443 reachable from the internet. internal: the proxy's own internal CA -- self-signed, trust its root certificate on your clients. files: the certificate/key pair named by the Proxy TLS certificate/key fields below. external: something else issues and installs certificates; Bellhop renders no certificate configuration. Only the selected driver's sources are listed. Unset: the selected driver's default.",
   },
   acmeDnsProvider: {
     label: 'ACME DNS provider',
-    help: 'The DNS provider the acme-dns TLS source uses. Unset: cloudflare.',
+    help: 'The DNS provider the proxy proves domain ownership through for the acme-dns TLS source; cloudflare needs a proxy build with its DNS plugin. Unset: cloudflare.',
   },
   proxyTlsCertificate: {
     label: 'Proxy TLS certificate',
     placeholder: '/etc/letsencrypt/live/example.com/fullchain.pem',
-    help: "Absolute path on the proxy host to the TLS certificate the nginx driver serves for every site, or a Caddy driver in 'files' Caddy TLS mode. Unset: certbot's own path for the inventory domain.",
+    help: "Absolute path on the proxy host to the TLS certificate served for every site under the files TLS source. Unset: certbot's own path for the inventory domain.",
   },
   proxyTlsKey: {
     label: 'Proxy TLS key',
     placeholder: '/etc/letsencrypt/live/example.com/privkey.pem',
-    help: "Absolute path on the proxy host to the TLS private key the nginx driver serves for every site, or a Caddy driver in 'files' Caddy TLS mode. Unset: certbot's own path for the inventory domain.",
+    help: "Absolute path on the proxy host to the TLS private key served for every site under the files TLS source. Unset: certbot's own path for the inventory domain.",
   },
   proxyCertResolver: {
     label: 'Proxy cert resolver',
     placeholder: 'cloudflare',
-    help: "The Traefik certificate resolver every Bellhop router names, defined in Traefik's own static configuration. Unset: cloudflare. The reserved value none gives routers TLS with no resolver, so certificates come from Traefik's file provider or its default certificate.",
+    help: "The Traefik certificate resolver every Bellhop router names under the acme-dns and acme-http TLS sources, defined in Traefik's own static configuration. Unset: cloudflare.",
   },
   proxyApiUrl: {
     label: 'Proxy API URL',
@@ -350,14 +345,13 @@ export function SettingsPage() {
   // the (possibly unsaved) dropdown -- null while `data` hasn't loaded yet,
   // in which case every field still renders with its static FIELDS text.
   const selectedDriver = drafts.proxyDriver || data?.defaultProxyDriver;
-  // issue #51: same resolution rule as selectedDriver above, for whichever
-  // Caddy TLS mode is currently shown -- passed to proxyFieldView so
-  // showTlsFields can tell a Caddy driver in 'files' mode from one in any
-  // other mode.
-  const selectedCaddyTls = drafts.proxyCaddyTls || data?.defaultCaddyTls;
+  // issue #72: `drafts.tlsSource` is the unsaved choice, else the stored
+  // value (applyResponse seeds drafts from settings); proxyFieldView falls
+  // back to the selected driver's defaultTlsSource, so the shown source
+  // tracks an unsaved driver switch too.
   const view =
     data && selectedDriver
-      ? proxyFieldView(selectedDriver, data.proxyDrivers, drafts.proxyCaddyTls || data.defaultCaddyTls)
+      ? proxyFieldView(selectedDriver, data.proxyDrivers, drafts.tlsSource)
       : null;
 
   // Hiding a field is display-only: it is simply left out of this list, so
@@ -367,13 +361,12 @@ export function SettingsPage() {
   const isVisible = (key: SettingsFieldKey): boolean => {
     if (key === 'proxyConfigPath') return !view || view.showConfigPath;
     if (key === 'statusPagePath') return !view || view.showStatusPagePath;
-    // Before `data` loads there is no driver list to consult, and the Caddy
-    // TLS dropdown and TLS fields mean something for specific drivers
-    // only -- so unlike the two fields above they stay hidden until a view
-    // says the selected driver uses them.
-    if (key === 'proxyCaddyTls') return view?.showCaddyTlsField ?? false;
-    // issue #72: no UI for the new TLS settings yet.
-    if (key === 'tlsSource' || key === 'acmeDnsProvider') return false;
+    // Before `data` loads there is no driver list to consult, and the TLS
+    // source fields mean something per driver and source only -- so unlike
+    // the two fields above they stay hidden until a view says they apply
+    // (issue #72).
+    if (key === 'tlsSource') return view?.showTlsSourceField ?? false;
+    if (key === 'acmeDnsProvider') return view?.showAcmeDnsProviderField ?? false;
     if (key === 'proxyTlsCertificate' || key === 'proxyTlsKey') return view?.showTlsFields ?? false;
     // Same "hidden until loaded" rule as the TLS fields above -- these two
     // mean something for Traefik alone (issue #35).
@@ -409,23 +402,43 @@ export function SettingsPage() {
         </select>
       );
     }
-    if (key === 'proxyCaddyTls') {
-      // Same "always a <select>, disabled with no options until loaded"
-      // rule as proxyDriver above (issue #51).
+    if (key === 'tlsSource') {
+      // Only rendered once a view exists (isVisible): its options are the
+      // selected driver's own sources, plus the shown value labelled
+      // "(not supported)" when the driver lacks it, so the <select> can
+      // still display a stored value from before a driver switch (issue #72).
       return (
         <select
           id={`setting-${key}`}
           className="field-input"
-          value={selectedCaddyTls ?? ''}
-          disabled={!data}
-          onChange={(e) => setDrafts({ ...drafts, proxyCaddyTls: e.target.value })}
+          value={view?.shownTlsSource ?? ''}
+          disabled={!view}
+          onChange={(e) => setDrafts({ ...drafts, tlsSource: e.target.value })}
         >
-          {data &&
-            caddyTlsOptions(data.caddyTlsModes, data.defaultCaddyTls).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
+          {view?.tlsSourceOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    if (key === 'acmeDnsProvider') {
+      // The server's provider list, only its default suffixed " (default)"
+      // -- same convention as proxyDriverOptions (issue #72).
+      return (
+        <select
+          id={`setting-${key}`}
+          className="field-input"
+          value={drafts.acmeDnsProvider || data?.defaultAcmeDnsProvider || ''}
+          disabled={!data}
+          onChange={(e) => setDrafts({ ...drafts, acmeDnsProvider: e.target.value })}
+        >
+          {data?.acmeDnsProviders.map((provider) => (
+            <option key={provider} value={provider}>
+              {provider === data.defaultAcmeDnsProvider ? `${provider} (default)` : provider}
+            </option>
+          ))}
         </select>
       );
     }
@@ -500,12 +513,15 @@ export function SettingsPage() {
           {field.label} <span className="settings-optional">Optional</span>
         </label>
         {renderInput(key, placeholder)}
+        {key === 'tlsSource' && view?.tlsSourceWarning && (
+          <div className="custom-override-warning">{view.tlsSourceWarning}</div>
+        )}
         <p className="settings-help">{help}</p>
         <div className="actions-cell">
           <button
             type="button"
             className="button"
-            disabled={savingKey === key || ((key === 'proxyDriver' || key === 'proxyCaddyTls') && !data)}
+            disabled={savingKey === key || ((key === 'proxyDriver' || key === 'tlsSource' || key === 'acmeDnsProvider') && !data)}
             onClick={() => requestSave(key, drafts[key] === '' ? null : drafts[key])}
           >
             {savingKey === key ? 'Saving...' : 'Save'}
