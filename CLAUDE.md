@@ -33,7 +33,7 @@ Every command imports from `src/lib/`, the single place that knows how to reach 
 | `src/commands/provisioning/CLAUDE.md` | `install-app`/`update-app`, script catalog and custom script sources, `attach-nfs-mount`, `migrate-nfs-mount`, `migrate-guest`, VPN gateway deploy credentials |
 | `src/commands/maintenance/CLAUDE.md` | `sync-inventory`, `audit-nfs-mounts`, `check-app-updates`, `backfill-guest-creators` |
 | `src/operations/CLAUDE.md` | The shared `Operation` layer used by web and MCP, `previewAndEnqueue`, `commitGuestEdit` |
-| `src/web/CLAUDE.md` | Web server: inventory reload, Web UI authentication, users/groups, per-resource permissions and creator access, impersonation, `syncProxyLive`, Settings page API |
+| `src/web/CLAUDE.md` | Web server: inventory reload, first-run setup gate, Web UI authentication, users/groups, per-resource permissions and creator access, impersonation, `syncProxyLive`, Settings page API |
 | `src/web/jobs/CLAUDE.md` | Job runner, prompt relay and detection tiers, cross-process job watching and control |
 | `src/web/tasks/CLAUDE.md` | The daily task scheduler and `task_schedules` |
 | `src/mcp/CLAUDE.md` | MCP server tools, `wait_for_job` elicitation, job ownership |

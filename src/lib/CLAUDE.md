@@ -52,7 +52,7 @@ On hosts, guests, and external sites (`ExternalSiteSchema`: a proxy target that 
 - at most one `authentik: true` entry;
 - if any entry is forward-gated (`effectiveAuth() === 'forward'`, incl. external sites), an `authentik: true` entry exists and has an `ip` (OIDC-gated entries need neither);
 - every guest's `host` exists;
-- non-empty `subdomains` requires `ip` unless `proxyManual`;
+- non-empty `subdomains` requires `ip` unless `proxyManual`, and requires the `domain` setting (#86);
 - no subdomain claimed twice;
 - no two hosts share `midScheme.vmidBase` or `midScheme.ipPrefix` (`resolveMid` would hand out colliding VMIDs/IPs).
 
@@ -76,14 +76,16 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `hosts`, `guests`, `external_sites`.
 - `subdomains`: one row each, `owner_type`/`owner_name` -> owner.
 - `proxy_owner`: single row (`CHECK (id = 1)`) naming the `proxy: true` entry; written by `saveInventory`, never read (`loadInventory` reads the owning row's `proxy` column).
-- `meta`: `domain` plus operator settings.
+- `meta`: operator settings, `domain` among them (#86: optional, since a fresh install has none; `requireDomain()` in `hostname.ts` is the reader that needs it and names `settingFix('domain', ...)`).
 - `secret_settings` (`key`/`value`, `SECRET_SETTINGS_TABLE_SQL` in `config.ts`): the four secrets.
-- Never touched by `saveInventory`: `secret_settings`, `permission_groups`/`permission_rules`, `script_catalog`/`script_catalog_meta`, `task_schedules`, `app_update_status`.
+- `setup_state` (#86, `setup-state.ts`): single row (`CHECK (id = 1)`), `status` `pending`/`finished`, the setup `token` (NULL once finished), `completed_steps_json`. `setupPhase()` is `pending` with no row and no hosts, `not-applicable` with no row but hosts (an existing deployment upgrading), else the row's status; `finished` is permanent even if every host is later deleted. Opened through `openDb` with its own `CREATE TABLE IF NOT EXISTS`.
+- Never touched by `saveInventory`: `setup_state`, `secret_settings`, `permission_groups`/`permission_rules`, `script_catalog`/`script_catalog_meta`, `task_schedules`, `app_update_status`.
 
 ### `meta` settings
 
 `SettingsSchema`/`SETTINGS_KEYS` (`inventory.ts`), spread flat into `InventorySchema` like `domain`:
 
+- `domain` (#86): optional DNS name, one rule shared by `set-config`, the Settings page and the setup walkthrough. `validateInventory` refuses an entry with `subdomains` while it is unset, which also refuses clearing it.
 - `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath` (#124): readers fail with a named error, never a hardcoded fallback (a wrong IP is worse than none), ending with `settingFix(key, valueHint)` (`settings-hint.ts`, #20), which names both `set-config` and the Settings page.
 - `customScriptsRepo`/`customScriptsBranch` (#11): each validated (owner/repo; git branch name). Both-or-neither is not in the schema (`set-config` writes one key at a time); `customScriptSource()` (`app-source.ts`) enforces it on read.
 - `proxyDriver`/`proxyConfigPath`: `getDriver()`'s driver and its config file.
@@ -150,10 +152,15 @@ Guest commands are wrapped `sh -c ${shellQuote(cmd)}` (POSIX single-quote escapi
 
 - **Auth order**: first of `~/.ssh/id_ed25519`/`id_ecdsa`/`id_rsa` as `privateKey` (like plain `ssh` without an agent); only if none exist, an agent (`SSH_AUTH_SOCK`, `'pageant'` on Windows). `ssh_identity_file` overrides.
 - 5s connect timeout: a bad key fails fast.
-- **`SshTarget`** `{ host, user, port?, identityFile? }` is the one argument of all three `SSHClient` methods. Only `Ssh2SSHClient.connectConfig()` maps it to ssh2 options and only `hostSshTarget(host)` (`targets.ts`) builds it from an entry, so a new per-host setting is threaded only there.
+- **`SshTarget`** `{ host, user, port?, identityFile?, password? }` (`password` is only the setup walkthrough's one-time key install, #86: it replaces key/agent auth for that connection, `hostSshTarget` never sets it, and it is never stored or logged). is the one argument of all three `SSHClient` methods. Only `Ssh2SSHClient.connectConfig()` maps it to ssh2 options and only `hostSshTarget(host)` (`targets.ts`) builds it from an entry, so a new per-host setting is threaded only there.
 - **Null exit code**: `'close'` with `code === null` (signal-terminated; 2nd arg is the signal name) is a failure (`code: 1`, signal name in `stderr` if nothing else captured), never `0`.
 - **Stdin closed**: `stream.end()` right after open, so a command reading stdin fails on EOF, not hangs (e.g. `paperless-gpt`/`paperless-ngx` `read -p` prompts). `onStdinReady` instead keeps stdin open with a pty (web prompt relay; `src/web/jobs/CLAUDE.md`).
 - `execInteractive()`: real remote pty for the CLI's interactive `install-app` (`src/commands/provisioning/CLAUDE.md`).
+
+### Setup-walkthrough helpers (#86)
+
+- `bellhop-key.ts`: Bellhop's own ed25519 key under `<dataDir>/ssh/` (`ensureBellhopKey`, created once, never overwritten) or an unencrypted key file (`keyFromFile`); hosts added by the walkthrough record the path as `ssh_identity_file`.
+- `pve-discovery.ts`: zod parsers for `pvesh get /version`, `/cluster/status` and `/nodes/<node>/network`, tested against captured fixtures (`test/fixtures/proxmox/`). `mid-suggest.ts` derives a `midScheme` suggestion from the bridge address.
 
 ### phantom-success: why a null exit code is a failure
 
