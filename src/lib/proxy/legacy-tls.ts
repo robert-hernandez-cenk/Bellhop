@@ -31,12 +31,15 @@ export interface LegacyTlsConversion {
   description?: string;
 }
 
-const CADDY_TLS_TO_SOURCE: Record<string, TlsSource> = {
-  cloudflare: 'acme-dns',
-  letsencrypt: 'acme-http',
-  internal: 'internal',
-  files: 'files',
-};
+// A Map, not an object literal: the migration runs on raw database/YAML
+// strings before any validation, and a stray legacy value like
+// 'constructor' or 'toString' must not resolve to an Object.prototype member.
+const CADDY_TLS_TO_SOURCE = new Map<string, TlsSource>([
+  ['cloudflare', 'acme-dns'],
+  ['letsencrypt', 'acme-http'],
+  ['internal', 'internal'],
+  ['files', 'files'],
+]);
 
 export function convertLegacyTlsSettings(input: LegacyTlsInput): LegacyTlsConversion {
   const driver = input.proxyDriver ?? DEFAULT_PROXY_DRIVER_ID;
@@ -61,7 +64,7 @@ export function convertLegacyTlsSettings(input: LegacyTlsInput): LegacyTlsConver
 
   if (input.proxyCaddyTls !== undefined) {
     const isCaddy = driver === 'caddy' || driver === 'caddy-api';
-    convert('proxyCaddyTls', input.proxyCaddyTls, isCaddy ? CADDY_TLS_TO_SOURCE[input.proxyCaddyTls] : undefined);
+    convert('proxyCaddyTls', input.proxyCaddyTls, isCaddy ? CADDY_TLS_TO_SOURCE.get(input.proxyCaddyTls) : undefined);
   }
   if (input.proxyCertResolver === 'none') {
     convert('proxyCertResolver', 'none', driver === 'traefik' ? 'external' : undefined);

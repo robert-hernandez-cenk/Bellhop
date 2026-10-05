@@ -8,7 +8,8 @@ import { MovedSettingsSchema } from './settings-defs.ts';
 import { SECRET_SETTINGS_TABLE_SQL, effectiveValue, invalidateConfigSnapshot } from './config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
 // module -- importing index.ts here would cycle back into this file.
-import { PROXY_DRIVER_IDS, TLS_SOURCES, ACME_DNS_PROVIDERS } from './proxy/ids.ts';
+import { PROXY_DRIVER_IDS, TLS_SOURCES, ACME_DNS_PROVIDERS, type ProxyDriverId, type TlsSource } from './proxy/ids.ts';
+import { convertLegacyTlsSettings } from './proxy/legacy-tls.ts';
 
 export const BridgeEntrySchema = z.object({
   name: z.string().min(1),
@@ -653,9 +654,47 @@ function migrateCaddyToProxy(db: Database.Database): void {
   tx();
 }
 
+// One-time #72 migration: the pre-#72 TLS settings (the Caddy-only
+// proxyCaddyTls meta row, and Traefik's reserved proxyCertResolver 'none')
+// become the driver-neutral tlsSource setting, and the legacy rows are
+// deleted. The conversion rules live in the pure convertLegacyTlsSettings
+// (src/lib/proxy/legacy-tls.ts, data-model.md "Legacy conversion"); this
+// reads the raw meta strings -- unvalidated, hence the pure function's
+// own-key-only lookup -- and applies the result in one transaction. An
+// already-set tlsSource is never overwritten. Self-idempotent like #10 and
+// #158: once the legacy rows are gone the conversion has nothing to do and
+// nothing is logged, and a database created fresh by current code never
+// had them. Runs on every openInventoryDb caller (load and save alike),
+// reading only this handle's meta table -- no config accessor, so it is
+// safe mid-open and on paths that never load the inventory.
+function migrateLegacyTlsSettings(db: Database.Database): void {
+  const tx = db.transaction(() => {
+    const read = (key: string): string | undefined =>
+      (db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined)?.value;
+    const conversion = convertLegacyTlsSettings({
+      proxyDriver: read('proxyDriver') as ProxyDriverId | undefined,
+      proxyCaddyTls: read('proxyCaddyTls'),
+      proxyCertResolver: read('proxyCertResolver'),
+      tlsSource: read('tlsSource') as TlsSource | undefined,
+    });
+    if (conversion.description === undefined) return;
+    if (conversion.tlsSource !== undefined) {
+      db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
+        'tlsSource',
+        conversion.tlsSource
+      );
+    }
+    for (const key of conversion.remove) db.prepare('DELETE FROM meta WHERE key = ?').run(key);
+    logInfo(`Migrated TLS settings to tlsSource (#72, one-time, irreversible): ${conversion.description}`);
+  });
+  tx();
+}
+
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
   migrateCaddyToProxy(db);
+  // Order-independent of the column work below -- it touches only meta.
+  migrateLegacyTlsSettings(db);
   ensureColumn(db, 'hosts', 'proxy_manual', 'proxy_manual INTEGER');
   ensureColumn(db, 'guests', 'proxy_manual', 'proxy_manual INTEGER');
   ensureColumn(db, 'guests', 'vpn_gateway', 'vpn_gateway TEXT');

@@ -85,3 +85,14 @@ test('nothing to do: no tlsSource, empty remove, no description', () => {
     assert.equal(result.description, undefined);
   }
 });
+
+// The migration runs on raw strings before validation, so a stray legacy
+// value must never resolve to an Object.prototype member (issue #72).
+test('a prototype-member proxyCaddyTls value converts to nothing and is just removed', () => {
+  for (const stray of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const result = convertLegacyTlsSettings({ proxyDriver: 'caddy', proxyCaddyTls: stray });
+    assert.equal(result.tlsSource, undefined, stray);
+    assert.deepEqual(result.remove, ['proxyCaddyTls'], stray);
+    assert.equal(result.description, 'removed proxyCaddyTls', stray);
+  }
+});

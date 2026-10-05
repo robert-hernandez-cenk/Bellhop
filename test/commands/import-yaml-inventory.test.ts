@@ -174,3 +174,33 @@ test('runImportYamlInventory rejects a guest still using the old caddyManual key
     return true;
   });
 });
+
+// issue #72: a pre-#72 hosts.yaml still carries proxyCaddyTls / a Traefik
+// proxyCertResolver 'none'. The schema strips unknown keys, so without the
+// same conversion the database open path applies, the TLS choice would be
+// dropped silently on import.
+test('runImportYamlInventory converts a legacy proxyCaddyTls to tlsSource', async () => {
+  const yamlPath = tempYamlFile(`proxyDriver: caddy\nproxyCaddyTls: letsencrypt\n${VALID_YAML}`);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  const result = await runImportYamlInventory({ yamlPath, dbPath, apply: true });
+  assert.equal(result.inventory.tlsSource, 'acme-http');
+  assert.equal(loadInventory(dbPath).tlsSource, 'acme-http');
+});
+
+test('runImportYamlInventory converts traefik + proxyCertResolver none to tlsSource external', async () => {
+  const yamlPath = tempYamlFile(`proxyDriver: traefik\nproxyCertResolver: none\n${VALID_YAML}`);
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  const result = await runImportYamlInventory({ yamlPath, dbPath, apply: true });
+  assert.equal(result.inventory.tlsSource, 'external');
+  assert.equal(result.inventory.proxyCertResolver, undefined);
+});
+
+test('runImportYamlInventory keeps a named proxyCertResolver and an explicit tlsSource', async () => {
+  const yamlPath = tempYamlFile(
+    `proxyDriver: traefik\nproxyCertResolver: letsencrypt-prod\ntlsSource: acme-http\n${VALID_YAML}`
+  );
+  const dbPath = path.join(path.dirname(yamlPath), 'bellhop.db');
+  const result = await runImportYamlInventory({ yamlPath, dbPath });
+  assert.equal(result.inventory.proxyCertResolver, 'letsencrypt-prod');
+  assert.equal(result.inventory.tlsSource, 'acme-http');
+});

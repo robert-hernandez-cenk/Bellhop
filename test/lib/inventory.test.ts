@@ -1328,35 +1328,149 @@ test('SettingsSchema accepts proxyDriver "haproxy", and an inventory naming it r
 });
 
 // issue #72: proxyCaddyTls (issue #51) is gone -- tlsSource replaced it.
-// Until User Story 4's one-time migration converts and removes a leftover
-// proxyCaddyTls meta row, the database must still load and save around it:
-// loadInventory reads only SETTINGS_KEYS, so the row is ignored, and
-// saveInventory writes/deletes only SETTINGS_KEYS, so it leaves the row
-// alone rather than crashing on it.
+// A database still holding a legacy proxyCaddyTls / proxyCertResolver 'none'
+// meta row is converted once, on open, by migrateLegacyTlsSettings (User
+// Story 4); the conversion table itself is pinned in
+// test/lib/proxy/legacy-tls.test.ts, so these tests pin the database side:
+// rows written/removed, the log line, and idempotence.
 
 test('SettingsSchema has no proxyCaddyTls setting', () => {
   assert.equal('proxyCaddyTls' in SettingsSchema.shape, false);
   assert.equal((SETTINGS_KEYS as string[]).includes('proxyCaddyTls'), false);
 });
 
-test('a leftover proxyCaddyTls meta row is ignored on load and left in place on save', () => {
+// A fresh database with the given raw meta rows inserted behind the
+// schema's back, the way a pre-#72 database holds them.
+function legacyDb(rows: Record<string, string>): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'bellhop-test-'));
   const dest = path.join(dir, 'bellhop.db');
   saveInventory(dest, FIXTURE_INVENTORY);
   const writer = new Database(dest);
-  writer.prepare("INSERT INTO meta (key, value) VALUES ('proxyCaddyTls', 'letsencrypt')").run();
+  for (const [k, v] of Object.entries(rows)) {
+    writer.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, v);
+  }
   writer.close();
+  return dest;
+}
 
-  const loaded = loadInventory(dest);
-  assert.equal('proxyCaddyTls' in loaded, false);
-  assert.equal(loaded.tlsSource, undefined);
-
-  saveInventory(dest, { ...loaded, proxyDriver: 'caddy' });
-  assert.equal(loadInventory(dest).proxyDriver, 'caddy');
+function metaRow(dest: string, key: string): string | undefined {
   const db = new Database(dest, { readonly: true });
-  const row = db.prepare("SELECT value FROM meta WHERE key = 'proxyCaddyTls'").get();
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
   db.close();
-  assert.deepEqual(row, { value: 'letsencrypt' });
+  return row?.value;
+}
+
+// Runs fn with console.log captured; returns the captured lines.
+function captureLog(fn: () => void): string[] {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (msg: string) => lines.push(msg);
+  try {
+    fn();
+  } finally {
+    console.log = original;
+  }
+  return lines;
+}
+
+const TLS_MIGRATION_LOG = /Migrated TLS settings to tlsSource (#72, one-time, irreversible): /;
+
+test('opening a database converts each legacy proxyCaddyTls value for caddy, caddy-api and an unset driver (issue #72)', () => {
+  const map = { cloudflare: 'acme-dns', letsencrypt: 'acme-http', internal: 'internal', files: 'files' } as const;
+  for (const driver of ['caddy', 'caddy-api', undefined]) {
+    for (const [legacy, tlsSource] of Object.entries(map)) {
+      const dest = legacyDb({ ...(driver ? { proxyDriver: driver } : {}), proxyCaddyTls: legacy });
+      let loaded!: Inventory;
+      const lines = captureLog(() => {
+        loaded = loadInventory(dest);
+      });
+      assert.equal(loaded.tlsSource, tlsSource, `${driver}/${legacy}`);
+      assert.equal(metaRow(dest, 'proxyCaddyTls'), undefined);
+      assert.equal(metaRow(dest, 'tlsSource'), tlsSource);
+      assert.equal(lines.length, 1);
+      assert.ok(
+        lines[0].endsWith(
+          `Migrated TLS settings to tlsSource (#72, one-time, irreversible): proxyCaddyTls '${legacy}' -> tlsSource '${tlsSource}'; removed proxyCaddyTls`
+        ),
+        lines[0]
+      );
+    }
+  }
+});
+
+test('opening a database converts traefik proxyCertResolver none to tlsSource external and removes it', () => {
+  const dest = legacyDb({ proxyDriver: 'traefik', proxyCertResolver: 'none' });
+  let loaded!: Inventory;
+  const lines = captureLog(() => {
+    loaded = loadInventory(dest);
+  });
+  assert.equal(loaded.tlsSource, 'external');
+  assert.equal(loaded.proxyCertResolver, undefined);
+  assert.equal(metaRow(dest, 'proxyCertResolver'), undefined);
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].endsWith(": proxyCertResolver 'none' -> tlsSource 'external'; removed proxyCertResolver"), lines[0]);
+});
+
+test('legacy rows under any other driver are removed without writing tlsSource; a named resolver is untouched', () => {
+  const dest = legacyDb({ proxyDriver: 'nginx', proxyCaddyTls: 'internal', proxyCertResolver: 'none' });
+  const lines = captureLog(() => {
+    loadInventory(dest);
+  });
+  assert.equal(metaRow(dest, 'tlsSource'), undefined);
+  assert.equal(metaRow(dest, 'proxyCaddyTls'), undefined);
+  assert.equal(metaRow(dest, 'proxyCertResolver'), undefined);
+  assert.equal(lines.length, 1);
+
+  const named = legacyDb({ proxyDriver: 'traefik', proxyCertResolver: 'my-resolver' });
+  const namedLines = captureLog(() => {
+    loadInventory(named);
+  });
+  assert.equal(metaRow(named, 'proxyCertResolver'), 'my-resolver');
+  assert.equal(namedLines.filter((l) => TLS_MIGRATION_LOG.test(l)).length, 0);
+});
+
+test('an existing tlsSource is never overwritten by the migration, though the legacy row is removed', () => {
+  const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'letsencrypt', tlsSource: 'internal' });
+  captureLog(() => {
+    assert.equal(loadInventory(dest).tlsSource, 'internal');
+  });
+  assert.equal(metaRow(dest, 'proxyCaddyTls'), undefined);
+});
+
+test('the TLS migration is one-time: a second open changes and logs nothing', () => {
+  const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'cloudflare' });
+  captureLog(() => {
+    loadInventory(dest);
+  });
+  const lines = captureLog(() => {
+    assert.equal(loadInventory(dest).tlsSource, 'acme-dns');
+  });
+  assert.equal(lines.filter((l) => TLS_MIGRATION_LOG.test(l)).length, 0);
+});
+
+test('a database with no legacy TLS rows logs nothing and gains no tlsSource', () => {
+  const dest = legacyDb({ proxyDriver: 'caddy' });
+  const lines = captureLog(() => {
+    assert.equal(loadInventory(dest).tlsSource, undefined);
+  });
+  assert.equal(lines.filter((l) => TLS_MIGRATION_LOG.test(l)).length, 0);
+});
+
+test('saveInventory also migrates legacy TLS rows on open, so a leftover row never lingers', () => {
+  const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'letsencrypt' });
+  captureLog(() => {
+    saveInventory(dest, { ...FIXTURE_INVENTORY, proxyDriver: 'caddy', tlsSource: 'acme-http' });
+  });
+  assert.equal(metaRow(dest, 'proxyCaddyTls'), undefined);
+  assert.equal(metaRow(dest, 'tlsSource'), 'acme-http');
+});
+
+test('a prototype-member proxyCaddyTls row is removed without crashing or writing tlsSource', () => {
+  const dest = legacyDb({ proxyDriver: 'caddy', proxyCaddyTls: 'constructor' });
+  captureLog(() => {
+    assert.equal(loadInventory(dest).tlsSource, undefined);
+  });
+  assert.equal(metaRow(dest, 'proxyCaddyTls'), undefined);
 });
 
 test('saveInventory/loadInventory round-trips proxyDriver and proxyConfigPath', () => {
