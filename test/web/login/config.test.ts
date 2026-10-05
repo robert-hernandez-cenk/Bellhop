@@ -50,3 +50,36 @@ test('webLoginConfig names every missing key, never a value', () => {
     missing: ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'],
   });
 });
+
+// configValue validates stored values but passes an environment override
+// through as-is, so webLoginConfig checks each env-sourced OIDC value itself.
+// The error names the key and its env var, never the value -- the secret's
+// value in particular must not reach a log or an HTTP page.
+test('webLoginConfig rejects an invalid environment value, naming the key and env var but not the value', () => {
+  resetConfigStore();
+  const cases: Array<[keyof typeof ENV, string, string]> = [
+    ['WEB_UI_OIDC_ISSUER', 'not-a-url-example', 'webUiOidcIssuer'],
+    ['WEB_UI_OIDC_REDIRECT_URI', 'https://bellhop.example.com/wrong-path', 'webUiOidcRedirectUri'],
+    ['WEB_UI_OIDC_CLIENT_SECRET', 'example token with spaces', 'webUiOidcClientSecret'],
+  ];
+  for (const [envVar, bad, key] of cases) {
+    assert.throws(
+      () => webLoginConfig({ ...ENV, [envVar]: bad }),
+      (err: Error) => {
+        assert.match(err.message, new RegExp(key));
+        assert.match(err.message, new RegExp(envVar));
+        assert.ok(!err.message.includes(bad), `message leaked the value: ${err.message}`);
+        return true;
+      }
+    );
+  }
+});
+
+test('webLoginConfig accepts a valid environment value even when another key comes from the store', () => {
+  tempConfigStore({ webUiOidcClientId: 'example-client-id' }, { webUiOidcClientSecret: 'stored-example-token' });
+  const result = webLoginConfig({
+    WEB_UI_OIDC_ISSUER: ENV.WEB_UI_OIDC_ISSUER,
+    WEB_UI_OIDC_REDIRECT_URI: ENV.WEB_UI_OIDC_REDIRECT_URI,
+  });
+  assert.equal(result.configured, true);
+});
