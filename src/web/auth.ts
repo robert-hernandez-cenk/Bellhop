@@ -41,6 +41,10 @@ export interface AuthUser {
   // forwardAuthIdentity, since in none mode req.user is the local operator
   // even when they are present.
   viaForwardAuth?: true;
+  // Set only for an identity resolved from a Bellhop web-login session
+  // (#69, src/web/login/sessions.ts) -- never for the dev user or the local
+  // operator. Survives the impersonation overlay, which replaces only groups.
+  viaOidc?: true;
 }
 
 // Axis 1 of issue #123's design. The default is inferred rather than

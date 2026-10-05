@@ -114,6 +114,26 @@ test('markCheckAttempt sets last_attempt_at without touching identity', () => {
   assert.equal(s?.refreshToken, 'example-refresh-token');
 });
 
+// An unreachable re-check whose refresh grant already succeeded: the
+// presented token is spent, so the rotated one must be kept even though the
+// identity is not refreshed.
+test('markCheckAttempt stores rotated tokens when given, still leaving identity and last_checked_at alone', () => {
+  const { store, clock } = storeWithClock();
+  const id = store.createSession(SESSION);
+  clock.now += 10 * MIN;
+  store.markCheckAttempt(id, { refreshToken: 'rotated-refresh-token', idToken: 'new-id-token' });
+  let s = store.getSession(id);
+  assert.equal(s?.refreshToken, 'rotated-refresh-token');
+  assert.equal(s?.idToken, 'new-id-token');
+  assert.equal(s?.lastAttemptAt, clock.now);
+  assert.equal(s?.lastCheckedAt, 1_000_000);
+  assert.equal(s?.username, 'test-user');
+  store.markCheckAttempt(id, { refreshToken: 'rotated-again' });
+  s = store.getSession(id);
+  assert.equal(s?.refreshToken, 'rotated-again');
+  assert.equal(s?.idToken, 'new-id-token', 'an absent ID token keeps the previous one');
+});
+
 test('checkDue: 5 minutes since the last check, and 1 minute since a failed attempt', () => {
   const { store, clock } = storeWithClock();
   const id = store.createSession(SESSION);

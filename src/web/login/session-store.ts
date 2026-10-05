@@ -98,7 +98,8 @@ interface AttemptRow {
   created_at: number;
 }
 
-const hashId = (id: string): string => createHash('sha256').update(id).digest('hex');
+// Exported for SessionService's single-flight map, keyed like the table.
+export const hashId = (id: string): string => createHash('sha256').update(id).digest('hex');
 const newId = (): string => randomBytes(32).toString('base64url');
 
 export class SessionStore {
@@ -193,9 +194,19 @@ export class SessionStore {
   }
 
   // A re-check that could not reach the provider: identity is left as it
-  // was, and the next attempt waits CHECK_RETRY_MS.
-  markCheckAttempt(id: string): void {
-    this.db.prepare('UPDATE sessions SET last_attempt_at = ? WHERE id_hash = ?').run(this.now(), hashId(id));
+  // was, and the next attempt waits CHECK_RETRY_MS. `tokens` carries what a
+  // refresh grant returned before a later step failed (RecheckResult's
+  // `unreachable`): the presented refresh token is already spent, so the
+  // rotated one must be kept or the next attempt would be refused. An absent
+  // field keeps the stored value.
+  markCheckAttempt(id: string, tokens: { refreshToken?: string; idToken?: string } = {}): void {
+    this.db
+      .prepare(
+        `UPDATE sessions SET last_attempt_at = ?, refresh_token = COALESCE(?, refresh_token),
+           id_token = COALESCE(?, id_token)
+         WHERE id_hash = ?`
+      )
+      .run(this.now(), tokens.refreshToken ?? null, tokens.idToken ?? null, hashId(id));
   }
 
   // Sign-out, or a re-check the provider refused.
