@@ -17,7 +17,7 @@ import { authentikConfig } from '../../../src/lib/authentik-config.ts';
 import { FakeSSHClient, defaultResponder } from '../../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
-import { newTestSessions, type TestSessions } from '../../support/web-session.ts';
+import { newTestSessions, sessionCookie, type TestSessions } from '../../support/web-session.ts';
 import { listen, connectHttpClient, rawPost, INITIALIZE } from '../../support/mcp-http-harness.ts';
 import { parse } from '../../support/mcp-harness.ts';
 
@@ -329,12 +329,18 @@ test('a non-admin is refused at the callback: no code, an explanatory page', asy
   assert.match(await callback.text(), /MCP access is limited to Bellhop admins/);
 });
 
+// FR-010, both ways (review finding: the first version signed out no
+// session at all). The person is signed in to the web UI and to MCP.
 test('signing out of the web UI leaves MCP access working', async (t) => {
   const f = await setup();
   t.after(f.close);
+  const browser = sessionCookie(f.sessions, { username: 'admin', groups: [ADMIN_GROUP], uid: 'uid-admin' });
   const { tokens } = await signedInTokens(f);
-  const out = await fetch(`${f.base}/auth/logout`, { method: 'POST', redirect: 'manual' });
+  assert.equal((await fetch(`${f.base}/api/whoami`, { headers: { cookie: browser } })).status, 200);
+  f.sessions.client.endSessionUrlResults.push(undefined);
+  const out = await fetch(`${f.base}/auth/logout`, { method: 'POST', redirect: 'manual', headers: { cookie: browser } });
   assert.equal(out.status, 303);
+  assert.equal((await fetch(`${f.base}/api/whoami`, { headers: { cookie: browser } })).status, 401, 'web session ended');
   const { call } = await connectHttpClient(`${f.base}/mcp`, { headers: { authorization: `Bearer ${tokens.access_token}` } });
   assert.equal(parse(await call('get_inventory')).domain, 'example.com');
 });
@@ -362,4 +368,84 @@ test('a sign-in the provider refuses on re-check ends the token with 401', async
   assert.equal((await rawPost(`${f.base}/mcp`, { authorization: `Bearer ${tokens.access_token}` }, INITIALIZE)).status, 401);
   const refresh = await token(f, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: clientId });
   assert.equal(refresh.status, 400, 'the grant is gone too');
+});
+
+// Review finding: approving restarts the pending request's 10 minutes, so a
+// slow consent plus a slow Authentik sign-in (MFA) still completes.
+test('approval restarts the pending clock, so a slow consent and sign-in still get a code', async (t) => {
+  const f = await setup();
+  t.after(f.close);
+  const clientId = await register(f);
+  const { pending, cookies } = await authorize(f, clientId, b64url(randomBytes(32)));
+  f.clock.now += 9.5 * MIN;
+  f.sessions.client.startLoginResults.push({
+    authorizationUrl: 'https://authentik.example.com/authorize?state=slow-state',
+    state: 'slow-state',
+    nonce: 'nonce-1',
+    codeVerifier: 'idp-verifier-1',
+  });
+  const approved = await consent(f, pending, cookies, 'approve');
+  assert.equal(approved.status, 302);
+  f.clock.now += 1 * MIN;
+  f.sessions.client.completeLoginResults.push(ADMIN);
+  const callback = await fetch(`${f.base}/auth/callback?state=slow-state&code=idp-code`, {
+    redirect: 'manual',
+    headers: { cookie: cookieHeader(cookiesFrom(approved)) },
+  });
+  assert.equal(callback.status, 302);
+  assert.ok(new URL(callback.headers.get('location')!).searchParams.get('code'));
+});
+
+// Review finding: a failed MCP sign-in hands the client an OAuth error
+// instead of a web-login page whose links start a browser sign-in.
+test('the provider refusing the sign-in sends the client access_denied', async (t) => {
+  const f = await setup();
+  t.after(f.close);
+  const clientId = await register(f);
+  const { pending, cookies } = await authorize(f, clientId, b64url(randomBytes(32)));
+  f.sessions.client.startLoginResults.push({
+    authorizationUrl: 'https://authentik.example.com/authorize?state=deny-state',
+    state: 'deny-state',
+    nonce: 'nonce-1',
+    codeVerifier: 'idp-verifier-1',
+  });
+  const approved = await consent(f, pending, cookies, 'approve');
+  const callback = await fetch(`${f.base}/auth/callback?state=deny-state&error=access_denied`, {
+    redirect: 'manual',
+    headers: { cookie: cookieHeader(cookiesFrom(approved)) },
+  });
+  assert.equal(callback.status, 302);
+  const location = new URL(callback.headers.get('location')!);
+  assert.equal(`${location.origin}${location.pathname}`, CLIENT_REDIRECT);
+  assert.equal(location.searchParams.get('error'), 'access_denied');
+  assert.equal(location.searchParams.get('state'), 'client-state');
+});
+
+test('an unreachable identity provider at approval sends the client temporarily_unavailable', async (t) => {
+  const f = await setup();
+  t.after(f.close);
+  const clientId = await register(f);
+  const { pending, cookies } = await authorize(f, clientId, b64url(randomBytes(32)));
+  f.sessions.client.startLoginResults.push(() => {
+    throw new Error('connect ECONNREFUSED');
+  });
+  const approved = await consent(f, pending, cookies, 'approve');
+  assert.equal(approved.status, 302);
+  const location = new URL(approved.headers.get('location')!);
+  assert.equal(`${location.origin}${location.pathname}`, CLIENT_REDIRECT);
+  assert.equal(location.searchParams.get('error'), 'temporarily_unavailable');
+});
+
+test('revoking MCP access leaves the web UI session working', async (t) => {
+  const f = await setup();
+  t.after(f.close);
+  const browser = sessionCookie(f.sessions, { username: 'admin', groups: [ADMIN_GROUP], uid: 'uid-admin' });
+  const { clientId, tokens } = await signedInTokens(f);
+  await fetch(`${f.base}/revoke`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token: tokens.refresh_token, client_id: clientId }).toString(),
+  });
+  assert.equal((await rawPost(`${f.base}/mcp`, { authorization: `Bearer ${tokens.access_token}` }, INITIALIZE)).status, 401);
+  assert.equal((await fetch(`${f.base}/api/whoami`, { headers: { cookie: browser } })).status, 200);
 });

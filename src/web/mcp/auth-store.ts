@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { createHash, randomBytes } from 'node:crypto';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { openDb } from '../../lib/sqlite.ts';
+import { ensureColumn, openDb } from '../../lib/sqlite.ts';
+import { SESSION_MAX_AGE_MS } from '../login/session-store.ts';
 
 // Persistence for Bellhop's MCP authorization server (#65/#66,
 // data-model.md): registered clients, pending consents, authorization
@@ -131,6 +132,9 @@ export class McpAuthStore {
     private readonly now: () => number = Date.now
   ) {
     this.db = openDb(path, SCHEMA);
+    // Set once a client has signed in; only never-used registrations are
+    // purged, since MCP clients cache and reuse their client_id.
+    ensureColumn(this.db, 'mcp_clients', 'used', 'used INTEGER NOT NULL DEFAULT 0');
   }
 
   // --- clients ---------------------------------------------------------------
@@ -138,10 +142,7 @@ export class McpAuthStore {
   saveClient(info: OAuthClientInformationFull): void {
     const now = this.now();
     this.db
-      .prepare(
-        `DELETE FROM mcp_clients WHERE created_at + ? <= ?
-           AND client_id NOT IN (SELECT client_id FROM mcp_grants)`
-      )
+      .prepare('DELETE FROM mcp_clients WHERE used = 0 AND created_at + ? <= ?')
       .run(UNUSED_CLIENT_TTL_MS, now);
     this.db
       .prepare('INSERT OR REPLACE INTO mcp_clients (client_id, info_json, created_at) VALUES (?, ?, ?)')
@@ -183,6 +184,12 @@ export class McpAuthStore {
   getPending(idHash: string): PendingRecord | undefined {
     const row = this.db.prepare('SELECT * FROM mcp_pending WHERE id_hash = ?').get(idHash) as PendingRow | undefined;
     return row && this.now() < row.created_at + PENDING_TTL_MS ? toPending(row) : undefined;
+  }
+
+  // Approval restarts the clock, so the 10 minutes cover the Authentik
+  // sign-in that follows rather than the time spent reading the page.
+  touchPending(idHash: string): void {
+    this.db.prepare('UPDATE mcp_pending SET created_at = ? WHERE id_hash = ?').run(this.now(), idHash);
   }
 
   // Read-and-delete in one transaction: a pending consent completes once.
@@ -242,6 +249,12 @@ export class McpAuthStore {
 
   createGrant(input: { clientId: string; sessionHash: string; resource?: string }): IssuedTokens {
     const refreshToken = newSecret();
+    // A grant cannot outlive its sign-in (30 days); drop any that did, with
+    // their access tokens, so dead rows don't accumulate.
+    const cutoff = this.now() - SESSION_MAX_AGE_MS;
+    this.db.prepare('DELETE FROM mcp_access_tokens WHERE grant_id IN (SELECT id FROM mcp_grants WHERE created_at <= ?)').run(cutoff);
+    this.db.prepare('DELETE FROM mcp_grants WHERE created_at <= ?').run(cutoff);
+    this.db.prepare('UPDATE mcp_clients SET used = 1 WHERE client_id = ?').run(input.clientId);
     const result = this.db
       .prepare('INSERT INTO mcp_grants (client_id, session_hash, refresh_hash, resource, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(input.clientId, input.sessionHash, sha256(refreshToken), input.resource ?? null, this.now());
@@ -293,15 +306,15 @@ export class McpAuthStore {
 
   // RFC 7009: a refresh token ends its grant (and every access token from
   // it); an access token ends only itself; anything else is ignored. Only
-  // the presenting client's own tokens are touched.
-  revoke(clientId: string, token: string): void {
+  // the presenting client's own tokens are touched. Returns the ended
+  // grant's session hash, for the caller to end that sign-in too.
+  revoke(clientId: string, token: string): string | undefined {
     const hash = sha256(token);
     const grant = this.db.prepare('SELECT id, client_id FROM mcp_grants WHERE refresh_hash = ?').get(hash) as
       | { id: number; client_id: string }
       | undefined;
     if (grant) {
-      if (grant.client_id === clientId) this.deleteGrant(grant.id);
-      return;
+      return grant.client_id === clientId ? this.deleteGrant(grant.id) : undefined;
     }
     this.db
       .prepare(
@@ -309,12 +322,20 @@ export class McpAuthStore {
            AND grant_id IN (SELECT id FROM mcp_grants WHERE client_id = ?)`
       )
       .run(hash, clientId);
+    return undefined;
   }
 
-  deleteGrant(grantId: number): void {
-    this.db.transaction(() => {
+  // Ends a grant and its access tokens; returns the session hash it held
+  // (undefined if there was no such grant), for the caller to delete that
+  // sign-in -- the store does not own the sessions table.
+  deleteGrant(grantId: number): string | undefined {
+    return this.db.transaction((): string | undefined => {
+      const row = this.db.prepare('SELECT session_hash FROM mcp_grants WHERE id = ?').get(grantId) as
+        | { session_hash: string }
+        | undefined;
       this.db.prepare('DELETE FROM mcp_access_tokens WHERE grant_id = ?').run(grantId);
       this.db.prepare('DELETE FROM mcp_grants WHERE id = ?').run(grantId);
+      return row?.session_hash;
     })();
   }
 

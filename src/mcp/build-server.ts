@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { refreshInventory } from '../lib/inventory.ts';
 import { getGuestStatuses } from '../lib/guest-status.ts';
@@ -38,7 +39,12 @@ export interface McpServerOptions {
   // by all its sessions, so two sessions never both ask about one prompt
   // (FR-005); unset builds one for this server alone, as stdio needs.
   tracker?: PromptTracker;
+  // Which transport serves this server, for the tool descriptions: over
+  // HTTP (#65/#66) jobs belong to the web service and outlive the client.
+  transport?: 'stdio' | 'http';
 }
+
+const PING_TIMEOUT_MS = 5000;
 
 export function toolName(operationId: string): string {
   return operationId.replace(/-/g, '_');
@@ -65,8 +71,13 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
   // upgrading this repo's own SDK dependency wouldn't fix it for real MCP
   // clients (Claude Code and others, each bundling their own SDK) -- only
   // removable once those clients' own SDKs fix _oncancel.
+  //
+  // Sent as a plain request with a short timeout: over HTTP (#65/#66) the
+  // client may have no stream open yet for a server->client request, and
+  // the id is burned the moment it is sent whether or not it is answered,
+  // so there is no reason to keep it pending for the SDK's 60s default.
   server.server.oninitialized = () => {
-    server.server.ping().catch(() => {});
+    server.server.request({ method: 'ping' }, EmptyResultSchema, { timeout: PING_TIMEOUT_MS }).catch(() => {});
   };
   // Mirrors the web UI's per-request reload (issue #98): pick up CLI and
   // web-UI writes made since the last tool call.
@@ -74,7 +85,12 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
   // One per server (or one shared by every HTTP session), subscribed before
   // any job can run (#58).
   const tracker = options.tracker ?? new PromptTracker(deps.jobRunner.events);
-  const triggeredByUsername = options.actor?.username ?? 'mcp';
+  // Read per call: the HTTP host updates its actor on every request.
+  const actorName = () => options.actor?.username ?? 'mcp';
+  const overHttp = options.transport === 'http';
+  const jobLifetime = overHttp
+    ? 'Jobs run in the Bellhop web service and keep running if this client disconnects. '
+    : 'Jobs still running when this MCP server exits are interrupted. ';
 
   for (const op of MCP_OPERATIONS) {
     // internalFields (e.g. deploy-vpn-gateway's connectPollAttempts/
@@ -93,7 +109,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
           (op.watchForPrompts
             ? 'The job may pause on an interactive installer question; wait_for_job shows it to the user when the client supports elicitation, and otherwise returns it for answer_job_prompt. '
             : '') +
-          'Jobs still running when this MCP server exits are interrupted. ' +
+          jobLifetime +
           'Previews wait for any job currently running in this server (including one paused at an unanswered prompt) before returning.',
         inputSchema: { ...publicShape, apply: z.boolean().default(false).describe('Execute for real (default: preview only)') },
       },
@@ -102,7 +118,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
         const { apply, ...raw } = args;
         const input = parseOperationInput(op, raw);
         if (!apply) return text(scrubSecretValues(op, input, await op.preview(input, deps)));
-        const { jobId, preview } = await previewAndEnqueue(op, raw, deps, deps.jobRunner, { triggeredByUsername, triggeredVia: 'mcp' });
+        const { jobId, preview } = await previewAndEnqueue(op, raw, deps, deps.jobRunner, { triggeredByUsername: actorName(), triggeredVia: 'mcp' });
         return json({ jobId, preview: scrubSecretValues(op, input, preview) });
       }
     );
@@ -302,7 +318,9 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'wait_for_job',
     {
       description:
-        'Block until a job this server started finishes, pauses on an interactive prompt, or maxWaitSeconds passes. ' +
+        (overHttp
+          ? 'Block until a job run by the Bellhop web service finishes, pauses on an interactive prompt, or maxWaitSeconds passes. '
+          : 'Block until a job this server started finishes, pauses on an interactive prompt, or maxWaitSeconds passes. ') +
         "When the client supports elicitation, a prompt is shown to the user as a form (answer, resume, or cancel the job) and the wait continues in the same call. " +
         'If the client cannot elicit, or the user declines the form, returns outcome prompt_pending: use answer_job_prompt, dismiss_job_prompt, or cancel_job. ' +
         'A still_running result with a non-null prompt can mean a concurrent wait_for_job call on the same job is already showing the user that prompt in its own dialog -- ' +
@@ -334,7 +352,20 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
   const applyControl = (id: number, action: 'cancel' | 'answer' | 'dismiss', requestText?: string) => {
     const job = deps.jobStore.get(id);
     if (!job) throw new Error(`Unknown job id: ${id}`);
-    const result = requestJobControl({ jobStore: deps.jobStore, jobRunner: deps.jobRunner }, { job, action, text: requestText });
+    // A server with an actor is an HTTP session inside the web service
+    // (or stdio, whose runner owner already says MCP): name the caller, and
+    // never let a web-hosted session be labelled as the web UI.
+    const requester =
+      options.actor !== undefined
+        ? {
+            requestedByUsername: actorName(),
+            ...(deps.jobRunner.owner === 'web' ? { requestedByOwner: 'mcp:http' } : {}),
+          }
+        : {};
+    const result = requestJobControl(
+      { jobStore: deps.jobStore, jobRunner: deps.jobRunner },
+      { job, action, text: requestText, ...requester }
+    );
     if (result.kind === 'done') {
       return action === 'cancel' ? { cancelled: true } : action === 'answer' ? { answered: true } : { dismissed: true };
     }

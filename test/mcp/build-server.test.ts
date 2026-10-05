@@ -705,3 +705,9 @@ test('apply without an actor still records mcp', async () => {
   await waitForFinished(jobStore, started.jobId);
   assert.equal(jobStore.get(started.jobId)?.triggeredByUsername, 'mcp');
 });
+
+test('over stdio the apply tools still warn that jobs end with the server', async () => {
+  const { client } = await setup();
+  const { tools } = await client.listTools();
+  assert.match(tools.find((tool) => tool.name === 'create_lxc')!.description!, /interrupted/);
+});

@@ -15,8 +15,10 @@ import type { McpHttpHost } from './http-host.ts';
 // then the host, which binds the session to the caller.
 
 export const MCP_NOT_ENABLED_MESSAGE =
-  'MCP over HTTP is not enabled: configure web sign-in (bellhop configure-web-login <entry> --apply) ' +
+  'MCP over HTTP is not enabled: configure web sign-in with an https:// redirect URI (bellhop configure-web-login <entry> --apply) ' +
   'or set an API key (Settings > MCP, or bellhop set-config mcpApiKey --stdin --apply)';
+
+const AUTH_SERVER_PATHS = ['/.well-known', '/authorize', '/token', '/register', '/revoke'];
 
 export interface McpRoutesOptions {
   host: McpHttpHost;
@@ -35,7 +37,12 @@ export function mcpRoutes(options: McpRoutesOptions): Router {
 
   if (options.authRouter) {
     const authRouter = options.authRouter;
+    // Only its own paths consult it (and so read the web-login settings);
+    // every other request -- page loads, /api -- passes straight through.
+    // Checked by hand rather than mounted on those paths: mounting would
+    // strip the prefix from req.url, and the SDK router matches full paths.
     router.use((req, res, next) => {
+      if (!AUTH_SERVER_PATHS.some((path) => req.path === path || req.path.startsWith(`${path}/`))) return next();
       const handler = authRouter();
       if (!handler) return next();
       handler(req, res, next);

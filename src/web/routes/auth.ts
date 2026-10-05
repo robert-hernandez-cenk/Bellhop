@@ -12,6 +12,10 @@ import type { LoginIdentity } from '../login/oidc-client.ts';
 // browser session. Provided by the MCP authorization server (src/web/mcp).
 export interface McpSignInFinisher {
   finishSignIn(pendingHash: string, identity: LoginIdentity, res: Response): void | Promise<void>;
+  // A sign-in that failed: the client gets an OAuth error on its redirect
+  // URI instead of a web-login page (whose links would start a browser
+  // sign-in and leave the client waiting).
+  failSignIn(pendingHash: string, error: 'access_denied' | 'server_error' | 'temporarily_unavailable', reason: string, res: Response): void;
 }
 
 // Bellhop's own sign-in (#69, contracts/http-auth.md): GET /auth/login starts
@@ -53,7 +57,12 @@ export function authRoutes(sessions: SessionService, mcp?: McpSignInFinisher): R
     const attempt = attemptId ? sessions.store.consumeAttempt(attemptId) : undefined;
     if (cookieName) res.clearCookie(cookieName, clearOptions(LOGIN_COOKIE_OPTIONS));
 
-    const fail = (reason: string): void => {
+    const fail = (reason: string, error: 'access_denied' | 'server_error' = 'server_error'): void => {
+      if (attempt?.mcpPendingHash !== undefined && mcp) {
+        logInfo(`MCP sign-in failed: ${reason}`);
+        mcp.failSignIn(attempt.mcpPendingHash, error, reason, res);
+        return;
+      }
       const returnTo = attempt?.returnTo ?? '/';
       logInfo(`Web sign-in failed: ${reason}`);
       sendPage(res, 400, 'Sign-in failed', [
@@ -69,7 +78,7 @@ export function authRoutes(sessions: SessionService, mcp?: McpSignInFinisher): R
     const providerError = queryString(req.query.error);
     if (providerError !== undefined) {
       // The OAuth error code only; error_description is provider free text.
-      fail(`The identity provider refused the sign-in: ${providerError}`);
+      fail(`The identity provider refused the sign-in: ${providerError}`, 'access_denied');
       return;
     }
     if (queryString(req.query.state) !== attempt.state) {
@@ -168,11 +177,18 @@ export function authRoutes(sessions: SessionService, mcp?: McpSignInFinisher): R
 export async function beginSignIn(
   sessions: SessionService,
   res: Response,
-  opts: { returnTo: string; mcpPendingHash?: string }
+  opts: { returnTo: string; mcpPendingHash?: string; onFailure?: (reason: string) => void }
 ): Promise<void> {
   const client = sessions.client;
   const returnTo = opts.returnTo;
   const retry = `/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
+  // An MCP sign-in (#65/#66) reports failure to its client instead of
+  // rendering these web-login pages, whose links start a browser sign-in.
+  // The page title is the reason the client sees (fixed text, no secrets).
+  const onFailure = opts.onFailure;
+  const sendPage = onFailure
+    ? (_res: Response, _status: number, title: string, _body: string[]) => onFailure(title)
+    : sendHtmlPage;
 
   let cfg: WebLoginConfig;
   try {
@@ -274,7 +290,9 @@ function fixesHtml(): string {
   ].join('');
 }
 
-export function sendPage(res: Response, status: number, title: string, body: string[]): void {
+export const sendPage = sendHtmlPage;
+
+function sendHtmlPage(res: Response, status: number, title: string, body: string[]): void {
   res
     .status(status)
     .type('html')

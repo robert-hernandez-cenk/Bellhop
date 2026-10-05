@@ -6,10 +6,10 @@ Examples use `https://bellhop.example.com` (the origin of `webUiOidcRedirectUri`
 
 Order of checks, each before any MCP handling:
 
-1. Neither sign-in (`webLoginConfig().configured`) nor `mcpApiKey` → `503 {"error":"MCP over HTTP is not enabled: configure web sign-in (bellhop configure-web-login <entry> --apply) or set an API key (Settings > MCP, or bellhop set-config mcpApiKey --stdin --apply)"}`.
+1. Neither usable sign-in (configured, with an https:// or localhost/127.0.0.1 redirect URI) nor a valid `mcpApiKey` → `503 {"error":"MCP over HTTP is not enabled: configure web sign-in with an https:// redirect URI (bellhop configure-web-login <entry> --apply) or set an API key (Settings > MCP, or bellhop set-config mcpApiKey --stdin --apply)"}`. An invalid `MCP_API_KEY` counts as no key (a warning names the variable) and never blocks sign-in tokens.
 2. Missing/unknown/expired/revoked bearer → `401`, `WWW-Authenticate: Bearer error="invalid_token", ..., resource_metadata="https://bellhop.example.com/.well-known/oauth-protected-resource/mcp"` (the `resource_metadata` parameter only when sign-in is configured). Cookies are ignored.
 3. Signed-in identity no longer an admin → `403` (`insufficient_scope`).
-4. `Mcp-Session-Id` present but unknown → `404`; known but opened by a different principal → `403`.
+4. `Mcp-Session-Id` present but unknown, or opened by a different principal → `404` (what makes a client re-initialize; after re-authorization the same person holds a new grant).
 5. No session id and the body is an `initialize` request → new session; otherwise without a session id → `400`.
 
 Then the SDK transport handles the request. Tool set, inputs and outputs are identical to stdio.
@@ -31,13 +31,13 @@ SDK-validated (`client_id`, `redirect_uri`, `response_type=code`, `code_challeng
 
 - "Allow **<client_name or client_id>** to use Bellhop as you?", "It will return to **<redirect origin>**."
 - Form `POST /auth/mcp/consent` with hidden `pending=<id>` and buttons `decision=approve|deny`.
-- Sets cookie `bellhop_mcp_<id-prefix>` = `<id>` (path `/auth`, HttpOnly, SameSite=Lax, Secure except loopback, 10 min).
+- Sets cookie `bellhop_mcp_<id-prefix>` = `<id>` (path `/auth`, HttpOnly, SameSite=Lax, Secure — like the login cookies, which browsers also accept on localhost — 10 min).
 
 ## `POST /auth/mcp/consent`
 
 - Pending missing/expired/cookie mismatch → `400` page "This authorization request has expired or was already used. Start again from your MCP client."
 - `deny` → `302` to `redirect_uri?error=access_denied&state=…`.
-- `approve` → web login not configured → `400` page naming `configure-web-login`; otherwise starts the Authentik sign-in exactly like `/auth/login` (login attempt cookie, `302` to the provider), the attempt carrying the pending id.
+- `approve` → restarts the pending request's 10 minutes and starts the Authentik sign-in exactly like `/auth/login` (login attempt cookie, `302` to the provider), the attempt carrying the pending id. If the sign-in cannot start (web login unconfigured, provider unreachable) → `302` to `redirect_uri?error=temporarily_unavailable&error_description=…&state=…`.
 
 ## `GET /auth/callback` (extended)
 
@@ -46,7 +46,7 @@ For an attempt with a pending MCP authorization, after the provider sign-in succ
 - Not an admin → `403` page "MCP access is limited to Bellhop admins (members of <adminGroup> or <builtinAdminGroup>)." No code; the dedicated session is deleted. Client receives nothing (the browser stays on Bellhop).
 - Admin → dedicated session created (no cookie set, existing browser cookie untouched); `302` to `redirect_uri?code=<code>&state=<state>`.
 
-Failures before that use the existing callback failure page.
+A failed MCP sign-in (provider error → `access_denied`, anything else → `server_error`) → `302` to `redirect_uri?error=…&error_description=…&state=…`, never the web-login failure page. A callback with no matching attempt still gets the web page (no client is known).
 
 ## `POST /token`
 

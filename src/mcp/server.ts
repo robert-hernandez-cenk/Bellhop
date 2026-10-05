@@ -1,4 +1,3 @@
-import os from 'node:os';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -13,6 +12,7 @@ import { JobStore } from '../web/jobs/job-store.ts';
 import { createJobLog } from '../web/jobs/job-log.ts';
 import { JobRunner } from '../web/jobs/job-runner.ts';
 import { buildMcpServer } from './build-server.ts';
+import { localUsername } from './local-user.ts';
 
 // MCP stdio entry point (#16). stdout is the protocol channel, so any
 // console.log outside a job's captured console (a command's dry-run notice,
@@ -60,7 +60,7 @@ const server = buildMcpServer(
     jobLog,
     jobRunner,
   },
-  { actor: { username: os.userInfo().username } }
+  { actor: { username: localUsername() } }
 );
 
 let shuttingDown = false;

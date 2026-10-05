@@ -27,10 +27,15 @@ export interface RequestJobControlInput {
   action: ControlAction;
   // Answer text for 'answer' only.
   text?: string;
-  // The real (never impersonated/overlaid) web username, when known -- null
-  // from an MCP requester, which has no user concept. Recorded on a written
-  // request row and echoed in its eventual attribution log line.
+  // The real (never impersonated/overlaid) username, when known: the web
+  // user, or an MCP server's actor (#65/#66: the signed-in admin or api-key
+  // over HTTP, the OS user over stdio). Recorded on a written request row
+  // and echoed in its eventual attribution log line.
   requestedByUsername?: string;
+  // Who to label the request as, when that is not this process's runner:
+  // an HTTP MCP session runs inside the web service but is not the web UI
+  // (#65/#66), so it passes 'mcp:http'.
+  requestedByOwner?: string;
 }
 
 // Today's exact wording (src/web/routes/jobs.ts's own 409 bodies, and
@@ -61,7 +66,7 @@ function actionApplies(status: JobRow['status'], action: ControlAction): boolean
 
 export function requestJobControl(deps: RequestJobControlDeps, req: RequestJobControlInput): ControlResult {
   const { jobStore, jobRunner, isPidAlive = defaultIsPidAlive } = deps;
-  const { job, action, text, requestedByUsername } = req;
+  const { job, action, text, requestedByUsername, requestedByOwner } = req;
   const owner = job.owner ?? 'web';
 
   if (owner === jobRunner.owner) {
@@ -95,7 +100,7 @@ export function requestJobControl(deps: RequestJobControlDeps, req: RequestJobCo
     jobId: job.id,
     action,
     text,
-    requestedByOwner: jobRunner.owner,
+    requestedByOwner: requestedByOwner ?? jobRunner.owner,
     requestedByUsername,
   });
   return { kind: 'requested', owner };

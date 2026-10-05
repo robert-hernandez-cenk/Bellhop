@@ -142,3 +142,35 @@ test('no raw token, code or consent id is ever written to the file', () => {
   db.close();
   for (const raw of [pending, code, g.accessToken, g.refreshToken]) assert.ok(!dump.includes(raw), 'raw value stored');
 });
+
+// Review finding: only registrations that never signed in are purged; a
+// client whose grant ended (revoked, refused, expired) keeps its client_id,
+// which MCP clients cache and reuse to sign in again.
+test('a client whose grant ended is not purged as unused', () => {
+  const { store, clock } = setup();
+  store.saveClient(CLIENT);
+  const g = store.createGrant({ clientId: 'client-1', sessionHash: 's'.repeat(64) });
+  store.deleteGrant(g.grantId);
+  clock.now += 25 * HOUR;
+  store.saveClient({ ...CLIENT, client_id: 'client-new' });
+  assert.ok(store.getClient('client-1'));
+});
+
+// Review finding: ending a grant must say which sign-in it held, so the
+// caller can delete that session row (and its Authentik tokens) with it.
+test('revoke and deleteGrant report the ended grant session hash', () => {
+  const { store } = setup();
+  const a = store.createGrant({ clientId: 'client-1', sessionHash: 'a'.repeat(64) });
+  const b = store.createGrant({ clientId: 'client-1', sessionHash: 'b'.repeat(64) });
+  assert.equal(store.revoke('client-1', a.refreshToken), 'a'.repeat(64));
+  assert.equal(store.revoke('client-1', b.accessToken), undefined, 'an access token ends no grant');
+  assert.equal(store.deleteGrant(b.grantId), 'b'.repeat(64));
+});
+
+test('grants older than the 30-day sign-in lifetime are purged on the next grant', () => {
+  const { store, clock } = setup();
+  const old = store.createGrant({ clientId: 'client-1', sessionHash: 'a'.repeat(64) });
+  clock.now += 30 * 24 * HOUR;
+  store.createGrant({ clientId: 'client-1', sessionHash: 'b'.repeat(64) });
+  assert.equal(store.rotateRefresh('client-1', old.refreshToken), undefined);
+});

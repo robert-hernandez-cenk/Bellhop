@@ -10,13 +10,15 @@ import { logWarn } from '../../lib/log.ts';
 // The attribution line processControlRequests appends to the job log once
 // a request is applied (research.md R4) -- source is "web UI" for the web
 // service's own owner string, "MCP (mcp:<pid>)" for an MCP server's, and
-// " by <user>" is omitted entirely when no username was recorded (an MCP
-// requester never has one).
+// " by <user>" is omitted entirely when no username was recorded (a stdio
+// MCP requester has none). 'mcp:http' is an HTTP MCP session inside the web
+// service (#65/#66), which names its caller.
 function controlSource(owner: string): string {
+  if (owner === 'mcp:http') return 'MCP';
   return owner === 'web' ? 'web UI' : `MCP (${owner})`;
 }
 
-function controlAttributionLine(action: ControlAction, requestedByOwner: string, requestedByUsername: string | null): string {
+export function controlAttributionLine(action: ControlAction, requestedByOwner: string, requestedByUsername: string | null): string {
   const source = controlSource(requestedByOwner);
   const suffix = requestedByUsername ? ` by ${requestedByUsername}` : '';
   switch (action) {

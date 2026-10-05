@@ -16,7 +16,8 @@ async function setup(opts: { now?: () => number } = {}) {
   app.use(express.json());
   app.all('/mcp', (req, res) => {
     const id = String(req.headers['x-test-principal'] ?? 'grant:1');
-    const principal: McpPrincipal = { id, username: id === 'api-key' ? 'api-key' : 'admin' };
+    const username = String(req.headers['x-test-username'] ?? (id === 'api-key' ? 'api-key' : 'admin'));
+    const principal: McpPrincipal = { id, username };
     void host.handle(req, res, principal);
   });
   const server = await listen(app);
@@ -57,7 +58,9 @@ test('a request without a session id that is not initialize is answered 400', as
   assert.equal(res.status, 400);
 });
 
-test("a session refuses another principal's request with 403", async (t) => {
+// 404, not 403 (review finding): after a re-authorization the same person
+// holds a new grant, and 404 is what makes a client open a new session.
+test("a session answers another principal's request with 404", async (t) => {
   const s = await setup();
   t.after(s.close);
   const { transport } = await connectHttpClient(s.url, { headers: { 'x-test-principal': 'grant:1' } });
@@ -67,7 +70,7 @@ test("a session refuses another principal's request with 403", async (t) => {
     { 'mcp-session-id': sessionId, 'x-test-principal': 'api-key', 'mcp-protocol-version': '2025-06-18' },
     { jsonrpc: '2.0', id: 2, method: 'tools/list' }
   );
-  assert.equal(other.status, 403);
+  assert.equal(other.status, 404);
 });
 
 test('a raw initialize creates a session and returns its id', async (t) => {
@@ -105,7 +108,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // An install-app-shaped job on the web runner that prints a prompt and
 // blocks on stdin; firePrompt() pauses it (the detector's timer is captured).
-async function promptingHost() {
+async function promptingHost(opts: { now?: () => number } = {}) {
   const hanging = new HangingSSHClient();
   let fireCheck: (() => void) | undefined;
   const { deps, jobStore, jobRunner } = mcpHttpDeps({
@@ -117,10 +120,12 @@ async function promptingHost() {
       },
     },
   });
-  const host = new McpHttpHost({ deps });
+  const host = new McpHttpHost({ deps, now: opts.now });
   const app = express();
   app.use(express.json());
-  app.all('/mcp', (req, res) => void host.handle(req, res, { id: 'grant:1', username: 'admin' }));
+  app.all('/mcp', (req, res) =>
+    void host.handle(req, res, { id: 'grant:1', username: String(req.headers['x-test-username'] ?? 'admin') })
+  );
   const server = await listen(app);
   const id = jobRunner.enqueue({
     command: 'install-app',
@@ -139,6 +144,7 @@ async function promptingHost() {
     host,
     hanging,
     jobStore,
+    jobRunner,
     id,
     firePrompt: () => fireCheck!(),
     close: async () => {
@@ -193,4 +199,94 @@ test('a job keeps running, owned by the web runner, after its MCP client disconn
   p.hanging.finish(DONE);
   await waitForFinished(p.jobStore, p.id);
   assert.equal(p.jobStore.get(p.id)?.status, 'success');
+});
+
+// Review finding: the idle sweep must not close a session while one of its
+// requests is still running (a long wait_for_job), and idleness counts from
+// when that request ended.
+test('the idle sweep spares a session with a request in flight, and counts from its end', async (t) => {
+  let now = 1_000_000;
+  const p = await promptingHost({ now: () => now });
+  t.after(p.close);
+  const client = await connectHttpClient(p.url);
+  const waiting = client.call('wait_for_job', { id: p.id, maxWaitSeconds: 3600 });
+  await sleep(100);
+  now += 45 * 60 * 1000;
+  p.host.sweep();
+  assert.equal(p.host.size, 1, 'kept while wait_for_job runs');
+  p.hanging.finish(DONE);
+  assert.equal(parse(await waiting).outcome, 'finished');
+  now += 29 * 60 * 1000;
+  p.host.sweep();
+  assert.equal(p.host.size, 1, 'idle only since the request ended');
+  now += 2 * 60 * 1000;
+  p.host.sweep();
+  assert.equal(p.host.size, 0);
+});
+
+// Review finding: a client that vanishes mid-dialog (killed, no DELETE) must
+// not keep the shared prompt claim -- its abandoned request is cancelled, so
+// the next session asks again at once.
+test('a client that drops its connection mid-dialog frees the prompt for the next session', async (t) => {
+  const p = await promptingHost();
+  t.after(p.close);
+  let firstAsked = false;
+  const gone = await connectHttpClient(p.url, {
+    elicit: async (_req, signal) => {
+      firstAsked = true;
+      await new Promise((_r, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+      throw new Error('unreachable');
+    },
+  });
+  p.firePrompt();
+  void gone.call('wait_for_job', { id: p.id }).catch(() => {});
+  await until(() => firstAsked, 'first dialog open');
+  await gone.transport.close(); // drops the connection without DELETE
+
+  let secondAsked = false;
+  const next = await connectHttpClient(p.url, {
+    elicit: async () => {
+      secondAsked = true;
+      return { action: 'accept', content: { action: 'answer', answer: 'y' } };
+    },
+  });
+  const waiting = next.call('wait_for_job', { id: p.id, maxWaitSeconds: 5 });
+  await until(() => secondAsked, 'second session asked');
+  await until(() => p.hanging.writes.length === 1, 'answer written');
+  p.hanging.finish(DONE);
+  assert.equal(parse(await waiting).outcome, 'finished');
+});
+
+// Review finding: jobs record the identity's current username (a rename in
+// Authentik lands on the next request), not the one seen at initialize.
+test('a session records the username each request carries', async (t) => {
+  const p = await setup();
+  t.after(p.close);
+  const client = await connectHttpClient(p.url, { headers: { 'x-test-username': 'old-name' } });
+  // Same session, renamed caller: rebuild the client's headers by sending raw.
+  const sessionId = client.transport.sessionId!;
+  const res = await rawPost(
+    p.url,
+    { 'mcp-session-id': sessionId, 'mcp-protocol-version': '2025-06-18', 'x-test-username': 'new-name' },
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'create_lxc', arguments: { host: 'pve1', mid: 5, hostname: 'new-lxc', template: 'debian-12', apply: true } } }
+  );
+  const text = await res.text();
+  const jobId = Number(/\\"jobId\\": (\d+)/.exec(text)?.[1]);
+  assert.ok(jobId, text);
+  await waitForFinished(p.jobStore, jobId);
+  assert.equal(p.jobStore.get(jobId)?.triggeredByUsername, 'new-name');
+});
+
+// Review finding: over HTTP, jobs belong to the web service and outlive the
+// client, so the tool descriptions must not say they are interrupted.
+test('tool descriptions over HTTP say jobs keep running, not that they are interrupted', async (t) => {
+  const s = await setup();
+  t.after(s.close);
+  const { client } = await connectHttpClient(s.url);
+  const { tools } = await client.listTools();
+  const createLxc = tools.find((tool) => tool.name === 'create_lxc')!;
+  const wait = tools.find((tool) => tool.name === 'wait_for_job')!;
+  assert.doesNotMatch(createLxc.description!, /interrupted/);
+  assert.match(createLxc.description!, /keep running/);
+  assert.doesNotMatch(wait.description!, /this server started/);
 });

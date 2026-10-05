@@ -87,7 +87,14 @@ export function consentRoutes(deps: { store: McpAuthStore; sessions: SessionServ
       res.redirect(302, clientRedirect(pending.redirectUri, { error: 'access_denied', state: pending.state }));
       return;
     }
-    await beginSignIn(deps.sessions, res, { returnTo: '/', mcpPendingHash: pendingHash });
+    // The pending request's 10 minutes now cover the Authentik sign-in.
+    deps.store.touchPending(pendingHash!);
+    const finisher = mcpSignInFinisher(deps);
+    await beginSignIn(deps.sessions, res, {
+      returnTo: '/',
+      mcpPendingHash: pendingHash,
+      onFailure: (reason) => finisher.failSignIn(pendingHash!, 'temporarily_unavailable', reason, res),
+    });
   });
 
   return router;
@@ -125,6 +132,16 @@ export function mcpSignInFinisher(deps: { store: McpAuthStore; sessions: Session
       const client = deps.store.getClient(pending.clientId);
       logInfo(`MCP client ${client?.client_name ?? pending.clientId} signed in as ${identity.username}`);
       res.redirect(302, clientRedirect(pending.redirectUri, { code, state: pending.state }));
+    },
+    failSignIn(pendingHash, error, reason, res) {
+      const pending = deps.store.consumePending(pendingHash);
+      if (!pending) {
+        sendPage(res, 400, 'Authorization request expired', [
+          '<p>This authorization request has expired or was already used. Start again from your MCP client.</p>',
+        ]);
+        return;
+      }
+      res.redirect(302, clientRedirect(pending.redirectUri, { error, error_description: reason, state: pending.state }));
     },
   };
 }

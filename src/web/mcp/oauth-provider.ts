@@ -130,8 +130,11 @@ export class BellhopOAuthProvider implements OAuthServerProvider {
     };
   }
 
+  // Revoking a grant ends its sign-in too, so the session row holding
+  // Authentik's refresh token does not outlive the access it backed.
   async revokeToken(client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
-    this.deps.store.revoke(client.client_id, request.token);
+    const sessionHash = this.deps.store.revoke(client.client_id, request.token);
+    if (sessionHash !== undefined) this.deps.sessions.store.deleteSessionByHash(sessionHash);
   }
 }
 

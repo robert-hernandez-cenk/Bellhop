@@ -29,12 +29,18 @@ interface HostedSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
   principal: string;
+  // The server's actor, updated on every request so jobs record the
+  // identity's current username (a rename lands on the next re-check).
+  actor: { username: string };
   lastSeen: number;
+  // Requests still being answered; the idle sweep never closes a session
+  // with one in flight (a long wait_for_job).
+  active: number;
 }
 
 export interface McpHttpHostOptions {
   deps: McpDeps;
-  serverOptions?: Omit<McpServerOptions, 'actor' | 'tracker'>;
+  serverOptions?: Omit<McpServerOptions, 'actor' | 'tracker' | 'transport'>;
   // Test-only clock for the idle sweep.
   now?: () => number;
 }
@@ -64,11 +70,13 @@ export class McpHttpHost {
       const session = this.sessions.get(sessionId);
       // 404 is what makes a client start a new session (the transport's own
       // convention for an unknown or expired id).
-      if (!session) return sendError(res, 404, -32001, 'Session not found');
-      if (session.principal !== principal.id) {
-        return sendError(res, 403, -32003, 'This MCP session belongs to a different caller');
-      }
-      session.lastSeen = this.now();
+      // 404 is what makes a client start a new session (the transport's own
+      // convention for an unknown or expired id). Another caller's session
+      // answers the same: after a re-authorization the same person holds a
+      // new grant, and 404 lets the client recover by re-initializing.
+      if (!session || session.principal !== principal.id) return sendError(res, 404, -32001, 'Session not found');
+      session.actor.username = principal.username;
+      this.track(session, req, res);
       await session.transport.handleRequest(req, res, req.body);
       return;
     }
@@ -76,15 +84,17 @@ export class McpHttpHost {
       return sendError(res, 400, -32000, 'No MCP session: send an initialize request first');
     }
 
+    const actor = { username: principal.username };
     const server = buildMcpServer(this.options.deps, {
       ...this.options.serverOptions,
-      actor: { username: principal.username },
+      actor,
       tracker: this.tracker,
+      transport: 'http',
     });
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
-        this.sessions.set(id, { transport, server, principal: principal.id, lastSeen: this.now() });
+        this.sessions.set(id, { transport, server, principal: principal.id, actor, lastSeen: this.now(), active: 0 });
       },
     });
     transport.onclose = () => {
@@ -94,12 +104,44 @@ export class McpHttpHost {
     await transport.handleRequest(req, res, req.body);
   }
 
-  // Closes every session idle for MCP_SESSION_IDLE_MS (FR-006). Cancelling
-  // nothing: the jobs belong to the web runner, not to the session.
+  // Counts a request in flight until its response closes, and idleness from
+  // then. A POST whose response closes before it finished means the client
+  // dropped the connection without a DELETE (killed, network gone): its
+  // requests are cancelled as if the client had sent notifications/cancelled,
+  // so a wait_for_job it left behind withdraws its dialog and releases the
+  // shared prompt claim instead of holding it until the dialog times out.
+  // Only POSTs carry requests: a GET is the client's long-lived listening
+  // stream and must not keep the session from ever going idle.
+  private track(session: HostedSession, req: Request, res: Response): void {
+    session.lastSeen = this.now();
+    if (req.method !== 'POST') return;
+    session.active++;
+    session.lastSeen = this.now();
+    res.on('close', () => {
+      session.active--;
+      session.lastSeen = this.now();
+      if (res.writableFinished) return;
+      const messages: unknown[] = Array.isArray(req.body) ? req.body : [req.body];
+      for (const message of messages) {
+        const m = message as { id?: unknown; method?: unknown };
+        if ((typeof m.id === 'string' || typeof m.id === 'number') && typeof m.method === 'string') {
+          session.transport.onmessage?.({
+            jsonrpc: '2.0',
+            method: 'notifications/cancelled',
+            params: { requestId: m.id, reason: 'The MCP client disconnected' },
+          });
+        }
+      }
+    });
+  }
+
+  // Closes every session idle for MCP_SESSION_IDLE_MS with nothing in flight
+  // (FR-006). Cancelling nothing: the jobs belong to the web runner, not to
+  // the session.
   sweep(): void {
     const cutoff = this.now() - MCP_SESSION_IDLE_MS;
     for (const [id, session] of this.sessions) {
-      if (session.lastSeen <= cutoff) {
+      if (session.active === 0 && session.lastSeen <= cutoff) {
         this.sessions.delete(id);
         void session.server.close();
       }

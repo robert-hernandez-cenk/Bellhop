@@ -6,7 +6,7 @@ import path from 'node:path';
 import { buildApp } from '../../../src/web/app.ts';
 import { JobStore } from '../../../src/web/jobs/job-store.ts';
 import { createJobLog } from '../../../src/web/jobs/job-log.ts';
-import { JobRunner } from '../../../src/web/jobs/job-runner.ts';
+import { JobRunner, controlAttributionLine } from '../../../src/web/jobs/job-runner.ts';
 import { loadInventory } from '../../../src/lib/inventory.ts';
 import { FakeSSHClient, defaultResponder } from '../../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
@@ -94,4 +94,21 @@ test('with neither sign-in nor a key configured /mcp answers 503 and the app sti
   t.after(s.close);
   assert.equal((await rawPost(`${s.base}/mcp`, { authorization: `Bearer ${KEY}` }, INITIALIZE)).status, 503);
   assert.equal((await fetch(`${s.base}/api/inventory`)).status, 401);
+});
+
+// Review finding: a control request sent over HTTP MCP (here, cancelling a
+// job a stdio MCP server owns) must say it came from MCP and who sent it,
+// not "web UI" with no name -- the web service is merely hosting it.
+test('job control over HTTP MCP is attributed to MCP and the caller', async (t) => {
+  const s = await setup({ mcpApiKey: KEY });
+  t.after(s.close);
+  const id = s.jobStore.createJob({ command: 'install-app', category: 'provisioning', argsJson: '{}', owner: `mcp:${process.pid}` });
+  s.jobStore.markRunning(id);
+  const { call } = await connectHttpClient(`${s.base}/mcp`, { headers: { authorization: `Bearer ${KEY}` } });
+  const result = await call('cancel_job', { id });
+  assert.equal(result.isError, undefined, result.content[0].text);
+  const [request] = s.jobStore.pendingControlRequests(`mcp:${process.pid}`);
+  assert.equal(request.requestedByOwner, 'mcp:http');
+  assert.equal(request.requestedByUsername, 'api-key');
+  assert.equal(controlAttributionLine('cancel', request.requestedByOwner, request.requestedByUsername), 'Stop requested from MCP by api-key');
 });

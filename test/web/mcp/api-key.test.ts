@@ -47,11 +47,17 @@ test('a cleared key stops verifying', () => {
   assert.equal(verifyApiKey(KEY, {}), undefined);
 });
 
-test('an invalid env key is refused with a message naming the variable, never the value', () => {
+// Review finding: an invalid env key must not take down the sign-in path
+// that is checked after it. It is treated as no key (so the bad value never
+// authenticates), and a warning names the variable, never the value.
+test('an invalid env key matches nothing, is not "configured", and warns naming only the variable', (t) => {
   tempConfigStore();
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (m: string) => warnings.push(String(m)));
+  t.mock.method(console, 'error', (m: string) => warnings.push(String(m)));
   const env = { MCP_API_KEY: 'short-leak-marker' };
-  assert.throws(
-    () => verifyApiKey('short-leak-marker', env),
-    (err: Error) => err instanceof InvalidTokenError === false && /MCP_API_KEY/.test(err.message) && !err.message.includes('leak-marker')
-  );
+  assert.equal(verifyApiKey('short-leak-marker', env), undefined);
+  assert.equal(apiKeyConfigured(env), false);
+  assert.ok(warnings.some((w) => /MCP_API_KEY/.test(w)), 'warned');
+  assert.ok(!warnings.some((w) => w.includes('leak-marker')), 'value never logged');
 });
