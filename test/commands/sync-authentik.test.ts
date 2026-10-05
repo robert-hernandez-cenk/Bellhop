@@ -700,7 +700,7 @@ test('--apply over the same pure tier change reports the same binding changes it
 // ---------------------------------------------------------------------------
 
 const OIDC_URIS = ['https://media.example.com/oauth/callback'];
-const SCOPE_IDS = ['scope-openid-1', 'scope-profile-1', 'scope-email-1'];
+const SCOPE_IDS = ['scope-openid-1', 'scope-profile-1', 'scope-email-1', 'scope-offline-access-1'];
 // Derived from FakeAuthentikClient's own DEFAULT_SCOPE_MAPPINGS (issue #16)
 // -- what resolveOidcInstanceSettings would build from them.
 const SCOPE_NAME_BY_ID: ReadonlyMap<string, string> = new Map(DEFAULT_SCOPE_MAPPINGS.map((m) => [m.id, m.scopeName]));
@@ -910,7 +910,41 @@ test('OIDC: grant-type drift ignores order; a missing scope appends the built-in
   await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
   const provider = (await authentik.listOAuth2Providers())[0];
   assert.deepEqual(provider.grantTypes, ['authorization_code', 'refresh_token']);
-  assert.deepEqual(provider.propertyMappingIds, ['scope-email-1', 'scope-openid-1', 'scope-profile-1']);
+  assert.deepEqual(provider.propertyMappingIds, ['scope-email-1', 'scope-openid-1', 'scope-profile-1', 'scope-offline-access-1']);
+
+  const clean = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(clean.oidcUpdates, [], 'drift is gone after apply');
+});
+
+// #69 US3: an existing Bellhop-owned provider created before offline_access
+// joined OIDC_SCOPE_MAPPINGS gets it appended as a drift fix on the next
+// --apply (so Bellhop's own web login can obtain a refresh token).
+test('OIDC: an existing provider without scope-offline_access gets a drift patch appending it (#69)', async () => {
+  const authentik = new FakeAuthentikClient({
+    applications: [
+      { id: 'media', pk: 'pk-media', name: 'media', slug: 'media', providerId: '50', metaPublisher: 'bellhop' },
+    ],
+    oauth2Providers: [
+      {
+        id: '50',
+        name: 'media',
+        assignedApplicationSlug: 'media',
+        clientType: 'confidential',
+        grantTypes: ['authorization_code', 'refresh_token'],
+        signingKeyId: 'key-1',
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'],
+        redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
+      },
+    ],
+  });
+  await seedLadderGroups(authentik);
+
+  const dry = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  assert.deepEqual(dry.oidcUpdates, [{ slug: 'media', changes: ['property_mappings'] }]);
+
+  await runSyncAuthentik({ apply: true }, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
+  const provider = (await authentik.listOAuth2Providers())[0];
+  assert.deepEqual(provider.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-1', 'scope-offline-access-1']);
 
   const clean = await runSyncAuthentik({}, { authentik, inventory: oidcInventory(), fetchImpl: okFetch() });
   assert.deepEqual(clean.oidcUpdates, [], 'drift is gone after apply');
@@ -933,7 +967,7 @@ test('OIDC: a custom mapping for a required scope is left alone by dry run and a
         grantTypes: ['authorization_code', 'refresh_token'],
         signingKeyId: 'key-1',
         // A custom email mapping in place of the built-in scope-email-1.
-        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1'],
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1'],
         redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
       },
     ],
@@ -952,7 +986,7 @@ test('OIDC: a custom mapping for a required scope is left alone by dry run and a
     'apply never PATCHes the client'
   );
   const provider = (await authentik.listOAuth2Providers())[0];
-  assert.deepEqual(provider.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1']);
+  assert.deepEqual(provider.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1']);
 });
 
 test('OIDC: an extra offline_access mapping with no email mapping gets property_mappings drift that appends scope-email-1 (issue #16)', async () => {
@@ -2095,7 +2129,7 @@ test('diffOAuth2Settings: scope-mapping coverage is by scope name, not id (issue
   // (a) a custom mapping for a required scope (in place of the built-in
   // one) covers that scope -- no property_mappings drift.
   const customCovers = diffOAuth2Settings(
-    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1'] },
+    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1'] },
     desired,
     scopeNameById
   );
@@ -2111,14 +2145,14 @@ test('diffOAuth2Settings: scope-mapping coverage is by scope name, not id (issue
     scopeNameById
   );
   assert.deepEqual(missingEmail.changes, ['property_mappings']);
-  assert.deepEqual(missingEmail.patch.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-1']);
+  assert.deepEqual(missingEmail.patch.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-1', 'scope-offline-access-1']);
 
-  // (c) an extra mapping for a scope Bellhop does not require (e.g.
-  // offline_access) is left alone and is never drift by itself.
+  // (c) an extra mapping for a scope Bellhop does not require (e.g. the API
+  // scope) is left alone and is never drift by itself.
   const extraUnrequired = diffOAuth2Settings(
-    { ...base, propertyMappingIds: [...SCOPE_IDS, 'scope-offline-access-1'] },
+    { ...base, propertyMappingIds: [...SCOPE_IDS, 'scope-api-1'] },
     desired,
-    new Map([...scopeNameById, ['scope-offline-access-1', 'offline_access']])
+    new Map([...scopeNameById, ['scope-api-1', 'goauthentik.io/api']])
   );
   assert.deepEqual(extraUnrequired.changes, []);
 
@@ -2139,7 +2173,7 @@ test('diffOAuth2Settings: scope-mapping coverage is by scope name, not id (issue
   // name is unknown, so only that id itself being attached covers it.
   const withoutBuiltInEmail = new Map([...scopeNameById].filter(([id]) => id !== 'scope-email-1'));
   const desiredUnlisted = diffOAuth2Settings(
-    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1'] },
+    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1'] },
     desired,
     withoutBuiltInEmail
   );
@@ -2148,7 +2182,23 @@ test('diffOAuth2Settings: scope-mapping coverage is by scope name, not id (issue
     'scope-openid-1',
     'scope-profile-1',
     'scope-email-custom-1',
+    'scope-offline-access-1',
     'scope-email-1',
+  ]);
+
+  // (f) #69: offline_access is a required scope too -- a provider with the
+  // other three but no offline_access mapping gets a drift patch appending it.
+  const missingOffline = diffOAuth2Settings(
+    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-1'] },
+    desired,
+    scopeNameById
+  );
+  assert.deepEqual(missingOffline.changes, ['property_mappings']);
+  assert.deepEqual(missingOffline.patch.propertyMappingIds, [
+    'scope-openid-1',
+    'scope-profile-1',
+    'scope-email-1',
+    'scope-offline-access-1',
   ]);
 });
 
@@ -2165,7 +2215,7 @@ test("diffOAuth2Settings: 'exact' compares scope mappings as an exact set and pa
   const base = { id: '1', name: 'media', clientType: 'confidential' as const, grantTypes: desired.grantTypes, signingKeyId: 'key-1', redirectUris: desired.redirectUris };
   assert.deepEqual(diffOAuth2Settings({ ...base, propertyMappingIds: [...SCOPE_IDS].reverse() }, desired, 'exact').changes, []);
   const custom = diffOAuth2Settings(
-    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1'] },
+    { ...base, propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1'] },
     desired,
     'exact'
   );

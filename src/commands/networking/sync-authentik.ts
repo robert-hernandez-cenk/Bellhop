@@ -250,6 +250,10 @@ export const OIDC_SCOPE_MAPPINGS = [
   'goauthentik.io/providers/oauth2/scope-openid',
   'goauthentik.io/providers/oauth2/scope-profile',
   'goauthentik.io/providers/oauth2/scope-email',
+  // #69: Bellhop's own web login requests offline_access and needs the
+  // refresh token Authentik only issues when this mapping is attached.
+  // Harmless for every other client: a scope applies only when requested.
+  'goauthentik.io/providers/oauth2/scope-offline_access',
 ];
 
 // Authentik's provider names are unique across every provider kind, and

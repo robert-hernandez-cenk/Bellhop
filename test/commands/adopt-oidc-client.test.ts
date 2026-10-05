@@ -108,7 +108,7 @@ test('apply sets meta_publisher, fixes drift, reconciles bindings, and getOAuth2
   assert.deepEqual(provider.grantTypes, ['authorization_code', 'refresh_token']);
   assert.deepEqual(
     [...provider.propertyMappingIds].sort(),
-    ['scope-email-1', 'scope-openid-1', 'scope-profile-1']
+    ['scope-email-1', 'scope-offline-access-1', 'scope-openid-1', 'scope-profile-1']
   );
   // Never touched: diffOAuth2Settings' patch structurally cannot carry a
   // credential field (FR-009/FR-011).
@@ -258,7 +258,7 @@ test('adopting a client whose only difference is a custom email mapping previews
         signingKeyId: 'key-1',
         // A custom email mapping in place of the built-in scope-email-1 --
         // otherwise identical to Bellhop's desired settings.
-        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1'],
+        propertyMappingIds: ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1'],
         redirectUris: [{ matchingMode: 'strict', url: OIDC_URIS[0] }],
       },
     ],
@@ -277,7 +277,7 @@ test('adopting a client whose only difference is a custom email mapping previews
   assert.deepEqual(applied.settingsChanges, []);
 
   const provider = (await authentik.listOAuth2Providers())[0];
-  assert.deepEqual(provider.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1']);
+  assert.deepEqual(provider.propertyMappingIds, ['scope-openid-1', 'scope-profile-1', 'scope-email-custom-1', 'scope-offline-access-1']);
   const app = (await authentik.listApplications())[0];
   assert.equal(app.metaPublisher, 'bellhop');
 });

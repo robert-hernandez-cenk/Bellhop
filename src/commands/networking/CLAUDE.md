@@ -108,6 +108,10 @@ The guest PATCH runs outside any job, where a `logWarn` reaches only stderr (job
 - MCP `get_oidc_client` (`src/mcp/build-server.ts`) calls only `runOidcClientInfo`, which drops the secret before MCP code holds it; `secretAvailableFrom` names the Dashboard or CLI.
 - `OidcCredentials.tsx` uses the web route; non-admins (even via impersonation: `isAdminUser` reads overlaid groups) get a "OIDC (credentials visible to admins)" note.
 
+### configure-web-login (#69)
+
+- CLI-only `configure-web-login <entry> [--apply]` (`configure-web-login.ts`): `runOidcCredentials` for issuer/client ID/secret, the entry's `oidcRedirectUris` URL whose pathname is exactly `/auth/callback`, then the settings write path (non-secrets) and `writeSecret` (secret); every check precedes the first write. Its result type has no secret field; an env-pinned key is stored with `warnIfEnvPinned` (shared with `set-config`). `OIDC_SCOPE_MAPPINGS` includes `scope-offline_access` so Bellhop's own client gets a refresh token.
+
 ### adopt-oidc-client
 
 - CLI `adopt-oidc-client <entry> [--apply]`, web `POST /api/oidc/:entry/adopt/preview`/`/apply` (`AdoptOidcClientButton`), and MCP `adopt_oidc_client` (`fleetWide: true`: `entry` may be a host or external site) all use `runAdoptOidcClient`.

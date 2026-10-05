@@ -27,6 +27,7 @@ import { runRenderStatusPage } from './commands/networking/render-status-page.ts
 import { runSyncAuthentik, formatSyncAuthentik, syncAuthentikFailed } from './commands/networking/sync-authentik.ts';
 import { runOidcCredentials, formatOidcCredentials } from './commands/networking/oidc-credentials.ts';
 import { runAdoptOidcClient, formatAdoptOidcClient } from './commands/networking/adopt-oidc-client.ts';
+import { runConfigureWebLogin, formatConfigureWebLogin } from './commands/networking/configure-web-login.ts';
 import { runPruneAcmeChallenges, formatPruneAcmeChallenges } from './commands/networking/prune-acme-challenges.ts';
 import { buildCloudflareClient } from './lib/cloudflare-client.ts';
 import { buildAuthentikClient } from './lib/authentik-client.ts';
@@ -410,6 +411,21 @@ program
       const authentik = buildAuthentikClient();
       const result = await runOidcCredentials(entry, { authentik, inventory });
       console.log(formatOidcCredentials(result));
+    })
+  );
+
+program
+  .command('configure-web-login <entry>')
+  .description(
+    "Store Bellhop's own sign-in client (issuer, client ID, redirect URI, secret) from its OIDC-gated entry's Authentik client"
+  )
+  .option('--apply', 'store the settings for real (default: dry run)')
+  .action(
+    action(async (entry: string, opts: { apply?: boolean }) => {
+      const inventory = loadInventory(inventoryPath());
+      const authentik = buildAuthentikClient();
+      const result = await runConfigureWebLogin(entry, { apply: opts.apply }, { authentik, inventory, inventoryPath: inventoryPath() });
+      console.log(formatConfigureWebLogin(result));
     })
   );
 

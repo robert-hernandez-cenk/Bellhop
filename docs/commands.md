@@ -282,6 +282,8 @@ bellhop render-status-page --apply  # writes it to the proxy host
 bellhop sync-authentik          # dry run: prints Applications/OpenID clients to create/update/remove
 bellhop sync-authentik --apply  # reconciles Authentik Proxy Providers, OpenID clients, and policy bindings
 bellhop oidc-credentials media           # print an OIDC-gated entry's issuer, client ID, and client secret
+bellhop configure-web-login bellhop       # dry run: preview storing Bellhop's own sign-in client settings
+bellhop configure-web-login bellhop --apply  # store them (issuer, client ID, callback URL, secret) from its Authentik client
 bellhop adopt-oidc-client media          # dry run: preview adopting a hand-made OpenID client
 bellhop adopt-oidc-client media --apply  # adopt it as Bellhop-managed, without rotating its credentials
 ```
@@ -307,4 +309,8 @@ clients, Applications, policy bindings, and embedded-outpost membership
 against every inventory entry that has an `authGroup` set — the same
 gated entries `sync-proxy` addresses `forward_auth` at. `oidc-credentials`
 and `adopt-oidc-client` are its companions for native OIDC gating; see
-[OIDC mode](authentik.md#oidc-mode).
+[OIDC mode](authentik.md#oidc-mode). `configure-web-login <entry>` stores
+Bellhop's own sign-in client (issuer, client ID, the entry's `/auth/callback`
+URL, and the secret) in the settings store in one step, after
+`sync-authentik --apply` has created the entry's client; it never prints the
+secret.

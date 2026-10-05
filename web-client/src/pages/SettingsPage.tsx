@@ -110,28 +110,28 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
   },
   webUiAuthMode: {
     label: 'Web UI sign-in',
-    help: "How the web UI decides who is signed in. auto: use Authentik's forward-auth headers when a request has them, otherwise serve it as the local administrator. authentik: require the forward-auth headers and reject every request without them -- saving this is refused from a session that did not come through Authentik, since every later request would be rejected. none: ignore the headers; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE in the service environment or run bellhop set-config webUiAuthMode auto --apply on the server. Unset: auto.",
+    help: "How the web UI decides who is signed in. oidc: require sign-in through Authentik using Bellhop's own client -- configure the client with bellhop configure-web-login <entry> --apply, sign in once at /auth/login, then switch to oidc here (saving is refused until the client is configured and you are signed in through it as an administrator). none: no authentication; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE=none in the service environment or run bellhop set-config webUiAuthMode none --apply on the server. Unset: none.",
   },
   // #69: the four settings behind Bellhop's own OIDC sign-in. Set by
-  // `bellhop configure-web-login`; the dedicated Settings UI for them is a
-  // later batch of #69.
+  // `bellhop configure-web-login` (the four values come from the entry's
+  // Authentik client).
   webUiOidcIssuer: {
     label: 'OIDC issuer URL',
     placeholder: 'https://authentik.example.com/application/o/bellhop/',
-    help: "The OIDC provider's issuer URL for Bellhop's own sign-in. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+    help: "The OIDC provider's issuer URL for Bellhop's own sign-in. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
   },
   webUiOidcClientId: {
     label: 'OIDC client ID',
-    help: "The client ID Bellhop signs in with. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+    help: "The client ID Bellhop signs in with. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
   },
   webUiOidcRedirectUri: {
     label: 'OIDC redirect URI',
     placeholder: 'https://bellhop.example.com/auth/callback',
-    help: "Where the provider sends the browser after sign-in; its path must be /auth/callback. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+    help: "Where the provider sends the browser after sign-in; its path must be /auth/callback. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
   },
   webUiOidcClientSecret: {
     label: 'OIDC client secret',
-    help: "The client secret Bellhop signs in with. Write-only. Set with bellhop configure-web-login. Unset: sign-in is not configured.",
+    help: "The client secret Bellhop signs in with. Write-only: never shown. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
   },
   authentikApiUrl: {
     label: 'Authentik API URL',
@@ -440,7 +440,7 @@ export function SettingsPage() {
     }
     if (key === 'webUiAuthMode') {
       // A fixed list, so it never waits on `data`; an unset value shows as
-      // its default, auto.
+      // its default, none.
       return (
         <select
           id={`setting-${key}`}

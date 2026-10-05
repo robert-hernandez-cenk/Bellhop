@@ -18,6 +18,18 @@ import {
   type SecretSettingKey,
 } from '../../lib/settings-defs.ts';
 
+// The warning for a key this shell's environment pins (see the comment at
+// the call site in runSetConfig). Shared with configure-web-login so both
+// commands say exactly the same thing.
+export function warnIfEnvPinned(key: string): void {
+  if (!Object.hasOwn(SETTING_DEFS, key)) return;
+  const configKey = key as ConfigKey; // safe: the hasOwn check proves key is a SETTING_DEFS key
+  if (effectiveValue(configKey, undefined, process.env).source === 'environment') {
+    const { envVar } = SETTING_DEFS[configKey];
+    logWarn(`${envVar} is set in this environment and overrides the stored ${key}`);
+  }
+}
+
 export interface SetConfigOptions {
   key: string;
   value?: string;
@@ -78,13 +90,7 @@ export function runSetConfig(opts: SetConfigOptions, deps: { inventoryPath: stri
   // variable pins, the CLI stores it anyway (issue #64, research R9): this
   // shell's environment is not necessarily the web service's. It warns,
   // though, since in this process the stored value won't take effect.
-  if (Object.hasOwn(SETTING_DEFS, key)) {
-    const configKey = key as ConfigKey; // safe: the hasOwn check proves key is a SETTING_DEFS key
-    if (effectiveValue(configKey, undefined, process.env).source === 'environment') {
-      const { envVar } = SETTING_DEFS[configKey];
-      logWarn(`${envVar} is set in this environment and overrides the stored ${key}`);
-    }
-  }
+  warnIfEnvPinned(key);
 
   const description =
     value === undefined ? `Would clear ${key}` : secret ? `Would set ${key} (value hidden)` : `Would set ${key} to ${value}`;

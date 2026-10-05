@@ -36,6 +36,7 @@ export const DEFAULT_SCOPE_MAPPINGS: readonly AuthentikScopeMapping[] = [
   { id: 'scope-openid-1', managed: 'goauthentik.io/providers/oauth2/scope-openid', scopeName: 'openid' },
   { id: 'scope-profile-1', managed: 'goauthentik.io/providers/oauth2/scope-profile', scopeName: 'profile' },
   { id: 'scope-email-1', managed: 'goauthentik.io/providers/oauth2/scope-email', scopeName: 'email' },
+  { id: 'scope-offline-access-1', managed: 'goauthentik.io/providers/oauth2/scope-offline_access', scopeName: 'offline_access' },
 ];
 
 // The built-ins plus one operator-made (unmanaged) email mapping -- the

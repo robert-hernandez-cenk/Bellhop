@@ -109,15 +109,15 @@ description: "Task list for web UI login through Bellhop's own OIDC client (#69)
 
 ### Tests first
 
-- [ ] T033 [P] [US3] Tests in test/commands/configure-web-login.test.ts (temp inventory, `FakeAuthentikClient`): dry run prints the three non-secret values and `webUiOidcClientSecret: (would be set)`, writes nothing; `--apply` stores all four (secret via `writeSecret`), output never contains the secret; errors for unknown entry, not OIDC, no client yet, Authentik unconfigured, no `/auth/callback` redirect URI (message per contracts/cli-and-settings.md), each writing nothing
-- [ ] T034 [P] [US3] Update test/commands/sync-authentik.test.ts (and fixtures-based tests) for `scope-offline_access` in `OIDC_SCOPE_MAPPINGS`: created providers carry four mappings; an existing provider missing it gets a drift patch appending it
-- [ ] T035 [P] [US3] Tests in test/web-client/settings-display.test.ts: General tab lists `webUiAuthMode`, `webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri`, `webUiOidcClientSecret`; effective mode defaults to `none`
+- [x] T033 [P] [US3] Tests in test/commands/configure-web-login.test.ts (temp inventory, `FakeAuthentikClient`): dry run prints the three non-secret values and `webUiOidcClientSecret: (would be set)`, writes nothing; `--apply` stores all four (secret via `writeSecret`), output never contains the secret; errors for unknown entry, not OIDC, no client yet, Authentik unconfigured, no `/auth/callback` redirect URI (message per contracts/cli-and-settings.md), each writing nothing
+- [x] T034 [P] [US3] Update test/commands/sync-authentik.test.ts (and fixtures-based tests) for `scope-offline_access` in `OIDC_SCOPE_MAPPINGS`: created providers carry four mappings; an existing provider missing it gets a drift patch appending it
+- [x] T035 [P] [US3] Tests in test/web-client/settings-display.test.ts: General tab lists `webUiAuthMode`, `webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri`, `webUiOidcClientSecret`; effective mode defaults to `none`
 
 ### Implementation
 
-- [ ] T036 [US3] Implement src/commands/networking/configure-web-login.ts (`runConfigureWebLogin(entry, { apply }, deps)` reusing `runOidcCredentials` and the writers `runSetConfig` uses) and register `configure-web-login <entry>` with `--apply` in src/cli.ts
-- [ ] T037 [US3] Add `goauthentik.io/providers/oauth2/scope-offline_access` to `OIDC_SCOPE_MAPPINGS` in src/commands/networking/sync-authentik.ts
-- [ ] T038 [US3] Settings UI: add the four fields to the General tab in web-client/src/lib/settings-display.ts (secret rendered like other secrets) and any labels/help in web-client/src/pages/SettingsPage.tsx and web-client/src/api/types.ts; mode options `oidc`/`none`
+- [x] T036 [US3] Implement src/commands/networking/configure-web-login.ts (`runConfigureWebLogin(entry, { apply }, deps)` reusing `runOidcCredentials` and the writers `runSetConfig` uses) and register `configure-web-login <entry>` with `--apply` in src/cli.ts
+- [x] T037 [US3] Add `goauthentik.io/providers/oauth2/scope-offline_access` to `OIDC_SCOPE_MAPPINGS` in src/commands/networking/sync-authentik.ts
+- [x] T038 [US3] Settings UI: add the four fields to the General tab in web-client/src/lib/settings-display.ts (secret rendered like other secrets) and any labels/help in web-client/src/pages/SettingsPage.tsx and web-client/src/api/types.ts; mode options `oidc`/`none`
 
 ---
 
