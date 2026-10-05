@@ -20,13 +20,14 @@ const DEFAULT_PORT = 3000;
 // and the store registered, all at module load, before anything else in this
 // script opens the inventory database -- the one-time requires_auth ->
 // auth_group migration (src/lib/inventory.ts) reads the group ladder at
-// DB-open time, and the import itself is that first open. If this script is the first thing
-// to open a legacy database, an unset ladder here would migrate every gated
-// entry onto the built-in default ladder's top rung instead of this
-// operator's configured one -- and since requires_auth is dropped in the
-// same call, there is no re-running this correctly afterward. Only
-// authentik.env is loaded: nothing else this script reads comes from the
-// other two files, and the import reads all three regardless.
+// DB-open time, and the import itself is that first open. If this script is
+// the first thing to open a legacy database, an unset ladder here would
+// migrate every gated entry onto the built-in default ladder's top rung
+// instead of this operator's configured one -- and since requires_auth is
+// dropped in the same call, there is no re-running this correctly
+// afterward. Only authentik.env is loaded: nothing else this script reads
+// comes from the other two files, and the import reads all three
+// regardless.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });
 importEnvFilesAndUseStore(inventoryPath(), dataDir());
 

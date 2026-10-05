@@ -28,7 +28,7 @@ The retired values `auto` and `authentik` no longer exist. A stored `authentik` 
 
 ### Setting it up
 
-Bellhop's own inventory entry is gated like any OIDC app. Each step is a real change, so do them in this order; Bellhop is unreachable only between steps 3 and 5 of a deployment that was behind forward-auth.
+Bellhop's own inventory entry is gated like any OIDC app. Each step is a real change, so do them in this order; after step 3 Bellhop's route is no longer forward-gated, so until sign-in works a deployment already on `oidc` (including a stored `authentik` migrated to `oidc`) refuses everyone, while one on `none` is open to anyone who can reach it. Do steps 3-5 together.
 
 1. On Bellhop's own entry set `authGroup` (the lowest group rung that should reach Bellhop), `authMode: oidc`, and add `https://bellhop.example.com/auth/callback` to its Callback URLs (see [OIDC mode](#oidc-mode)).
 2. `bellhop sync-authentik --apply` creates the OpenID client. It also attaches the `offline_access` scope mapping to every Bellhop-owned OIDC client, which is what lets Bellhop hold a refresh token to re-check a session.
