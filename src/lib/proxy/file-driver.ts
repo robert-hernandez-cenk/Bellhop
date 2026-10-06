@@ -4,6 +4,7 @@ import type { Inventory } from '../inventory.ts';
 import type { ProxyContext, ProxyRoute } from './routes.ts';
 import type { DriverCapabilities, DriverDeps, ProxyPlan, ReverseProxyDriver } from './driver.ts';
 import type { ProxyDriverId } from './ids.ts';
+import { settingFix } from '../settings-hint.ts';
 
 export interface FileSpec {
   path: string;
@@ -262,6 +263,32 @@ function buildSnapshotCommand(paths: string[]): string {
   return paths.map((p) => `echo ${singleQuote(`==> ${p} <==`)}; cat ${singleQuote(p)}`).join('; ');
 }
 
+// The part of a file driver's read-only check that differs per driver (issue
+// #87): whether the proxy's file or only its directory must already exist (a
+// driver that owns its file has none before the first sync), and the proxy's
+// own read-only validation of what is live. null = nothing to run.
+export interface FileDriverCheck {
+  target: 'file' | 'directory';
+  command(configPath: string, ctx: { inventory: Inventory }): string | null;
+}
+
+// Exit code of the check script's existence test, so the caller can name the
+// missing path and the setting that controls it.
+// Deliberately unusual: a validator's own exit code (nginx -t, haproxy -c) must never read as a missing path.
+const CHECK_MISSING_EXIT = 87;
+
+function checkedPath(configPath: string, check: FileDriverCheck): string {
+  return check.target === 'file' ? configPath : posixPath.dirname(configPath);
+}
+
+export function buildCheckScript(configPath: string, check: FileDriverCheck, inventory: Inventory): string {
+  const flag = check.target === 'file' ? '-f' : '-d';
+  const lines = [`[ ${flag} ${singleQuote(checkedPath(configPath, check))} ] || exit ${CHECK_MISSING_EXIT}`];
+  const command = check.command(configPath, { inventory });
+  if (command !== null) lines.push(command);
+  return lines.join('\n');
+}
+
 // A dry run's preview of the files an apply would write. One file is its
 // content alone, byte for byte; more than one gets the same `==> <path> <==`
 // label per file buildSnapshotCommand uses, with a blank line between files,
@@ -341,6 +368,8 @@ export function fileDriver(def: {
   // deriving paths from routes/ctx/render would make a read-only status
   // page fail right alongside a real sync-proxy error.
   configFiles?(configPath: string): string[];
+  // Optional (issue #87): the read-only check, see FileDriverCheck.
+  check?: FileDriverCheck;
 }): ReverseProxyDriver {
   return {
     id: def.id,
@@ -370,6 +399,28 @@ export function fileDriver(def: {
         throw new Error(`Failed to apply proxy configuration on '${deps.proxyHost}': ${result.stderr || result.stdout}`);
       }
     },
+
+    ...(def.check
+      ? {
+          async check(deps: DriverDeps): Promise<string> {
+            const spec = def.check!; // safe: this property exists only when def.check does
+            const configPath = requireConfigPath(deps, def.id);
+            const script = buildCheckScript(configPath, spec, deps.inventory);
+            const result = await runRemote(deps.ssh, deps.inventory, deps.proxyHost, script);
+            if (result.code === CHECK_MISSING_EXIT) {
+              throw new Error(
+                `${checkedPath(configPath, spec)} not found on '${deps.proxyHost}' -- is ${def.label} installed there? ` +
+                  `Otherwise ${settingFix('proxyConfigPath', '<path>')}`
+              );
+            }
+            if (result.code !== 0) {
+              const output = (result.stderr || result.stdout).trim() || `exit code ${result.code}`;
+              throw new Error(`${def.label} on '${deps.proxyHost}' did not pass its check: ${output}`);
+            }
+            return `${def.label} on '${deps.proxyHost}' is present and its configuration is valid`;
+          },
+        }
+      : {}),
 
     async snapshot(deps: DriverDeps): Promise<string> {
       const configPath = requireConfigPath(deps, def.id);

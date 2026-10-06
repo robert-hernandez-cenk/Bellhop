@@ -483,6 +483,14 @@ export function createNpmDriver(opts: { clientFor: (inventory: Inventory) => Npm
       await applyNpmPlan(opts.clientFor(deps.inventory), payloadOf(plan).plan);
     },
 
+    // Read-only (#87): the sign-in plus one list. The client's own errors
+    // already name the URL or the email/password settings, never the password.
+    async check(deps: DriverDeps): Promise<string> {
+      const client = opts.clientFor(deps.inventory);
+      const hosts = await client.listProxyHosts();
+      return `Nginx Proxy Manager at ${client.baseUrl} accepted the sign-in (${hosts.length} proxy host${hosts.length === 1 ? '' : 's'})`;
+    },
+
     async snapshot(deps: DriverDeps): Promise<string> {
       const client = opts.clientFor(deps.inventory);
       const [hosts, certificates] = await Promise.all([client.listProxyHosts(), client.listCertificates()]);

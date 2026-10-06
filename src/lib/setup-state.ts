@@ -128,3 +128,26 @@ export function finishSetup(dbPath: string): void {
     );
   });
 }
+
+// A step whose saved choice changed is no longer proven (#87): drops it from
+// the completed list so Finish refuses until it passes again. A step that is
+// not completed is left alone, row and timestamp included.
+export function uncompleteSetupStep(dbPath: string, step: string): SetupState {
+  return withDb(dbPath, (db) =>
+    db.transaction(() => {
+      const state = readRow(db);
+      if (state?.status !== 'pending') throw new Error('Setup is not in progress');
+      if (!state.completedSteps.includes(step)) return state;
+      const updated: SetupState = {
+        ...state,
+        completedSteps: state.completedSteps.filter((s) => s !== step),
+        updatedAt: new Date().toISOString(),
+      };
+      db.prepare('UPDATE setup_state SET completed_steps_json = ?, updated_at = ? WHERE id = 1').run(
+        JSON.stringify(updated.completedSteps),
+        updated.updatedAt
+      );
+      return updated;
+    }).immediate()
+  );
+}

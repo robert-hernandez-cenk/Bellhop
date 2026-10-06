@@ -152,4 +152,7 @@ export const caddyDriver = fileDriver({
   render,
   validateCommand: (configPath) => `caddy validate --adapter caddyfile --config ${singleQuote(configPath)}`,
   reloadCommand: 'systemctl reload caddy',
+  // Read-only (#87): the Caddyfile is the operator's, so it must exist, and
+  // `caddy validate` checks it without running or reloading anything.
+  check: { target: 'file', command: (configPath) => `caddy validate --adapter caddyfile --config ${singleQuote(configPath)}` },
 });

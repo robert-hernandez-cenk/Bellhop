@@ -538,6 +538,24 @@ export function buildApiCheck(apiUrl: string, configPath: string, content: strin
   return lines.join('\n');
 }
 
+// The read-only API check (#87): one request, no retry (unlike buildApiCheck,
+// which waits for a file it just wrote to load) -- a proxy that is already
+// running answers at once.
+export function buildApiPing(apiUrl: string): string {
+  const api = apiUrl.replace(/\/+$/, '');
+  return [
+    'if ! command -v curl >/dev/null 2>&1; then',
+    `  printf '%s\\n' ${singleQuote(CURL_MISSING_MESSAGE)} >&2`,
+    '  exit 1',
+    'fi',
+    `bellhop_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 ${singleQuote(`${api}/api/overview`)})" || true`,
+    'if [ "$bellhop_code" != "200" ]; then',
+    `  printf 'Traefik API at %s answered HTTP %s (000 means no answer)\\n' ${singleQuote(api)} "$bellhop_code" >&2`,
+    '  exit 1',
+    'fi',
+  ].join('\n');
+}
+
 export const traefikDriver = fileDriver({
   id: 'traefik',
   label: 'Traefik',
@@ -567,4 +585,11 @@ export const traefikDriver = fileDriver({
   // Traefik's file-provider watcher reloads on its own once the write
   // lands -- there is no reload command to run.
   reloadCommand: null,
+  // Read-only (#87): the watched directory must exist; with proxyApiUrl set,
+  // Traefik's own API must answer, which proves it is running and reachable
+  // from the proxy host.
+  check: {
+    target: 'directory',
+    command: (_configPath, { inventory }) => (inventory.proxyApiUrl ? buildApiPing(inventory.proxyApiUrl) : null),
+  },
 });

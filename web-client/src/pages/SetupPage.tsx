@@ -3,16 +3,21 @@ import {
   SetupApiError,
   setupApi,
   type HostEndpoint,
+  type ProxyChoice,
+  type ProxyCheckResult,
+  type ProxyStepState,
   type MidScheme,
   type SetupBasics,
   type SetupHost,
   type SetupPeer,
   type SetupState,
 } from '../api/setup';
+import { acmeDnsProviderOptions, proxyDriverOptions, tlsSourceOptions } from '../lib/settings-display';
 
 const STEP_LABELS: Record<string, string> = {
   proxmox: 'Proxmox',
   basics: 'Domain and basics',
+  proxy: 'Reverse proxy',
   finish: 'Finish',
 };
 
@@ -388,6 +393,294 @@ function BasicsStep({ state, reload, next }: StepProps) {
   );
 }
 
+// Step 3 (#87): the reverse proxy. The driver, the inventory entry it runs
+// on, and the settings that driver reads. A secret input is never prefilled:
+// the server only says whether one is stored, and a blank input keeps it.
+// pin keeps this step on screen after a passing check completes it: without it
+// the page would jump to the first incomplete step and the dry-run preview
+// the operator is meant to read would vanish.
+function ProxyStep({ reload, next, pin }: Omit<StepProps, 'state'> & { pin: () => void }) {
+  const [info, setInfo] = useState<ProxyStepState | null>(null);
+  const [values, setValues] = useState<ProxyChoice | null>(null);
+  const [password, setPassword] = useState('');
+  const [cloudflareToken, setCloudflareToken] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<ProxyCheckResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const loaded = await setupApi.proxy();
+      setInfo(loaded);
+      setValues(loaded.choice);
+    } catch (err) {
+      setError(message(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!info || !values) {
+    return (
+      <section className="setup-panel">
+        <h2>Reverse proxy</h2>
+        {error ? <div className="warning-banner">{error}</div> : <p className="settings-help">Loading…</p>}
+      </section>
+    );
+  }
+
+  const driver = info.drivers.find((d) => d.id === values.driver);
+  const manages = driver?.managesProxy ?? false;
+  const set = (key: keyof ProxyChoice) => (e: { target: { value: string } }) =>
+    setValues((v) => (v ? { ...v, [key]: e.target.value } : v));
+  // An unset source means the driver's own default, so the default is sent
+  // as unset rather than pinned (a later driver switch is not then refused).
+  const shownSource = values.tlsSource || driver?.defaultTlsSource || '';
+  const shownProvider = values.acmeDnsProvider || info.defaultAcmeDnsProvider;
+  const needsToken = shownSource === 'acme-dns' && shownProvider === 'cloudflare';
+
+  async function save() {
+    if (!values) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const secrets = {
+        ...(password ? { npmApiPassword: password } : {}),
+        ...(cloudflareToken ? { cloudflareDnsApiToken: cloudflareToken } : {}),
+      };
+      const { state: saved } = await setupApi.saveProxy({
+        ...values,
+        tlsSource: values.tlsSource === driver?.defaultTlsSource ? '' : values.tlsSource,
+        ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
+      });
+      setInfo(saved);
+      setValues(saved.choice);
+      setPassword('');
+      setCloudflareToken('');
+      setCheckResult(null);
+      await reload();
+      if (!saved.drivers.find((d) => d.id === saved.choice.driver)?.managesProxy) next();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The check runs against what is saved, so it waits for unsaved edits.
+  const dirty =
+    JSON.stringify(values) !== JSON.stringify(info.choice) || password !== '' || cloudflareToken !== '';
+
+  async function check() {
+    setChecking(true);
+    setError(null);
+    setCheckResult(null);
+    try {
+      const result = await setupApi.checkProxy();
+      setCheckResult(result);
+      pin();
+      await load();
+      await reload();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <section className="setup-panel">
+      <h2>Reverse proxy</h2>
+      <p className="page-description">
+        Point Bellhop at the reverse proxy you already run. Nothing is written to it in this step.
+      </p>
+      <label className="form-field">
+        Proxy
+        <select className="field-input" value={values.driver} onChange={set('driver')}>
+          {proxyDriverOptions(info.drivers, info.defaultDriver).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!manages && <p className="settings-help">Bellhop will manage no proxy. Routes stay hand-configured.</p>}
+      {manages && (
+        <>
+          <label className="form-field">
+            Runs on
+            <select className="field-input" value={values.entry ?? ''} onChange={set('entry')}>
+              <option value="">Choose a host or guest…</option>
+              {info.entries.map((e) => (
+                <option key={e.name} value={e.name}>
+                  {e.name} ({e.kind}
+                  {e.ip ? `, ${e.ip}` : ''})
+                </option>
+              ))}
+            </select>
+          </label>
+          {info.entries.length === 0 && (
+            <p className="settings-help">
+              The proxy must be a host or guest in your inventory. Add a Proxmox host in the first step.
+            </p>
+          )}
+          {driver?.defaultConfigPath !== null && driver?.defaultConfigPath !== undefined && (
+            <>
+              <label className="form-field">
+                Proxy config path <span className="settings-optional">(optional)</span>
+                <input
+                  className="field-input"
+                  placeholder={driver.defaultConfigPath}
+                  value={values.configPath}
+                  onChange={set('configPath')}
+                />
+              </label>
+              <p className="settings-help">
+                Default {driver.defaultConfigPath}. {driver.configPathNote ?? ''}
+              </p>
+            </>
+          )}
+          {driver?.usesCertResolver && (
+            <label className="form-field">
+              Proxy cert resolver <span className="settings-optional">(optional)</span>
+              <input className="field-input" placeholder="cloudflare" value={values.certResolver} onChange={set('certResolver')} />
+            </label>
+          )}
+          {driver?.usesApiUrl && (
+            <label className="form-field">
+              Proxy API URL <span className="settings-optional">(optional)</span>
+              <input className="field-input" placeholder="http://192.0.2.30:8080" value={values.apiUrl} onChange={set('apiUrl')} />
+            </label>
+          )}
+          {driver?.usesNpmApi && (
+            <>
+              <label className="form-field">
+                NPM API URL
+                <input className="field-input" placeholder="http://192.0.2.30:81" value={values.npmApiUrl} onChange={set('npmApiUrl')} />
+              </label>
+              <label className="form-field">
+                NPM email
+                <input className="field-input" placeholder="admin@example.com" value={values.npmApiEmail} onChange={set('npmApiEmail')} />
+              </label>
+              <label className="form-field">
+                NPM password{' '}
+                <span className="settings-optional">({info.secrets.npmApiPassword ? 'set' : 'not set'})</span>
+                <input
+                  className="field-input"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={info.secrets.npmApiPassword ? 'Leave blank to keep the saved password' : ''}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            </>
+          )}
+          <label className="form-field">
+            Certificates
+            <select className="field-input" value={shownSource} onChange={set('tlsSource')}>
+              {driver && tlsSourceOptions(driver, shownSource).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {shownSource === 'acme-dns' && (
+            <label className="form-field">
+              DNS provider
+              <select className="field-input" value={shownProvider} onChange={set('acmeDnsProvider')}>
+                {acmeDnsProviderOptions(info.acmeDnsProviders, info.defaultAcmeDnsProvider).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {needsToken && (
+            <label className="form-field">
+              Cloudflare API token{' '}
+              <span className="settings-optional">({info.secrets.cloudflareDnsApiToken ? 'set' : 'not set'})</span>
+              <input
+                className="field-input"
+                type="password"
+                autoComplete="new-password"
+                placeholder={info.secrets.cloudflareDnsApiToken ? 'Leave blank to keep the saved token' : ''}
+                value={cloudflareToken}
+                onChange={(e) => setCloudflareToken(e.target.value)}
+              />
+            </label>
+          )}
+          {shownSource === 'files' && (
+            <>
+              <label className="form-field">
+                Certificate path <span className="settings-optional">(optional)</span>
+                <input className="field-input" placeholder="/etc/letsencrypt/live/example.com/fullchain.pem" value={values.certificatePath} onChange={set('certificatePath')} />
+              </label>
+              <label className="form-field">
+                Key path <span className="settings-optional">(optional)</span>
+                <input className="field-input" placeholder="/etc/letsencrypt/live/example.com/privkey.pem" value={values.keyPath} onChange={set('keyPath')} />
+              </label>
+            </>
+          )}
+        </>
+      )}
+      {info.pinned.length > 0 && (
+        <p className="settings-help">
+          Set by the environment, so not editable here: {info.pinned.map((p) => p.variable).join(', ')}.
+        </p>
+      )}
+      {error && <div className="warning-banner">{error}</div>}
+      <div className="setup-actions">
+        <button type="button" className="button" disabled={busy || (manages && !values.entry)} onClick={save}>
+          {busy ? 'Saving…' : manages ? 'Save' : 'Save and continue'}
+        </button>
+        {manages && (
+          <button
+            type="button"
+            className="button"
+            disabled={checking || busy || dirty || !info.choice.entry}
+            onClick={check}
+          >
+            {checking ? 'Checking…' : 'Check proxy'}
+          </button>
+        )}
+      </div>
+      {manages && dirty && <p className="settings-help">Save your changes, then check the proxy.</p>}
+      {manages && info.complete && !checkResult && (
+        <p className="settings-help">This step is complete. Any change you save will need a new check.</p>
+      )}
+      {checkResult && (
+        <div className="setup-check">
+          <p>{checkResult.summary}</p>
+          {checkResult.preview !== undefined && (
+            <>
+              <p className="settings-help">
+                The first sync would write the following. Nothing has been written to the proxy.
+              </p>
+              <pre className="setup-preview">{checkResult.preview}</pre>
+              <div className="setup-actions">
+                <button type="button" className="button" onClick={next}>
+                  Continue
+                </button>
+              </div>
+            </>
+          )}
+          {checkResult.previewError !== undefined && (
+            <div className="warning-banner">
+              The proxy passed its check, but the first sync could not be previewed, so the step is not complete: {checkResult.previewError}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function FinishStep({ state }: { state: SetupState }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -499,6 +792,7 @@ export function SetupPage() {
           </ol>
           {current === 'proxmox' && <ProxmoxStep state={state} reload={reload} next={advance} />}
           {current === 'basics' && <BasicsStep state={state} reload={reload} next={advance} />}
+          {current === 'proxy' && <ProxyStep reload={reload} next={advance} pin={() => setChosen('proxy')} />}
           {current === 'finish' && <FinishStep state={state} />}
         </>
       )}

@@ -85,6 +85,13 @@ export interface ReverseProxyDriver {
   plan(routes: ProxyRoute[], ctx: ProxyContext, deps: DriverDeps): Promise<ProxyPlan>;
   apply(plan: ProxyPlan, deps: DriverDeps): Promise<void>; // throws on failure
   snapshot(deps: DriverDeps): Promise<string>; // throws on failure
+  // Read-only proof that the live proxy is there and healthy (issue #87, the
+  // first-run setup's proxy step): resolves with a one-line summary, throws an
+  // actionable Error otherwise. It must change nothing on the proxy -- no
+  // write, backup, restore, reload or API mutation -- which is what separates
+  // it from apply()'s own validate step. Absent = nothing to check (the
+  // 'none' driver).
+  check?(deps: DriverDeps): Promise<string>;
 }
 
 // The one signal for "Bellhop manages no reverse proxy" (issue #33): false

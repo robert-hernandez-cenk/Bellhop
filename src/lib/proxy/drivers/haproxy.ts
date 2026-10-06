@@ -194,6 +194,13 @@ export const haproxyDriver = fileDriver({
   render,
   validateCommand: (configPath) => `haproxy -c -f ${MAIN_CONFIG} -f ${singleQuote(configPath)}`,
   reloadCommand: 'systemctl reload haproxy',
+  // Read-only (#87): check the operator's main configuration, adding
+  // Bellhop's file only once a sync has written it.
+  check: {
+    target: 'directory',
+    command: (configPath) =>
+      `if [ -f ${singleQuote(configPath)} ]; then haproxy -c -f ${MAIN_CONFIG} -f ${singleQuote(configPath)}; else haproxy -c -f ${MAIN_CONFIG}; fi`,
+  },
   // Both files, so snapshot() reads back everything this driver deployed --
   // derived from configPath alone, never from render, so a read-only
   // snapshot still works when the inventory itself is invalid. (No status

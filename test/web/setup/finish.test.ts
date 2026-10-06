@@ -47,12 +47,23 @@ test('finishing is refused while a required step is incomplete, naming it', asyn
   const onlyProxmox = await request(app).post('/api/setup/finish').set('Cookie', cookie);
   assert.equal(onlyProxmox.status, 409);
   assert.match(onlyProxmox.body.error, /Finish step "Domain and basics" first/);
+  completeSetupStep(inventoryPath, 'basics');
+  const noProxy = await request(app).post('/api/setup/finish').set('Cookie', cookie);
+  assert.equal(noProxy.status, 409);
+  assert.match(noProxy.body.error, /Finish step "Reverse proxy" first/);
+});
+
+test('GET /api/setup/state lists proxy as the third required step', async () => {
+  const { app, cookie } = setupTestApp();
+  const res = await request(app).get('/api/setup/state').set('Cookie', cookie);
+  assert.deepEqual(res.body.requiredSteps, ['proxmox', 'basics', 'proxy']);
 });
 
 test('finishing ends setup for good: token dropped, cookie cleared, gate off, even with no hosts later', async () => {
   const first = setupTestApp();
   completeSetupStep(first.inventoryPath, 'proxmox');
   completeSetupStep(first.inventoryPath, 'basics');
+  completeSetupStep(first.inventoryPath, 'proxy');
   const res = await request(first.app).post('/api/setup/finish').set('Cookie', first.cookie);
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { redirect: '/' });

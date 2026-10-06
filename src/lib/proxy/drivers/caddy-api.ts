@@ -52,6 +52,14 @@ export const caddyApiDriver: ReverseProxyDriver = {
     }
   },
 
+  // Read-only (#87): the same read plan() starts with, Caddyfile-mode check
+  // included, so a pass means the admin API is reachable and is the
+  // configuration source this driver will write to.
+  async check(deps: DriverDeps): Promise<string> {
+    await readCaddyConfig(deps, { checkService: true });
+    return `Caddy's admin API on '${deps.proxyHost}' answered`;
+  },
+
   // Read-only: no Caddyfile-mode check, and never touches routes, so the
   // status page works even when the inventory itself is invalid (FR-013).
   async snapshot(deps: DriverDeps): Promise<string> {

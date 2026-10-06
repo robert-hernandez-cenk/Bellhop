@@ -10,6 +10,7 @@ import {
   finishSetup,
   loadSetupState,
   setupPhase,
+  uncompleteSetupStep,
 } from '../../src/lib/setup-state.ts';
 
 const HOST = { name: 'pve1', ssh_target: '192.0.2.10', ssh_user: 'root' };
@@ -80,4 +81,33 @@ test('saveInventory leaves the setup record untouched', () => {
   const state = loadSetupState(dbPath);
   assert.equal(state?.token, token);
   assert.deepEqual(state?.completedSteps, ['proxmox']);
+});
+
+test('uncompleteSetupStep removes a completed step and keeps the others in order', () => {
+  const dbPath = tempDb();
+  ensurePendingSetup(dbPath);
+  completeSetupStep(dbPath, 'proxmox');
+  completeSetupStep(dbPath, 'basics');
+  completeSetupStep(dbPath, 'proxy');
+  uncompleteSetupStep(dbPath, 'basics');
+  assert.deepEqual(loadSetupState(dbPath)?.completedSteps, ['proxmox', 'proxy']);
+});
+
+test('uncompleteSetupStep is a no-op for a step that is not completed', () => {
+  const dbPath = tempDb();
+  ensurePendingSetup(dbPath);
+  completeSetupStep(dbPath, 'proxmox');
+  const before = loadSetupState(dbPath);
+  const after = uncompleteSetupStep(dbPath, 'proxy');
+  assert.deepEqual(after.completedSteps, ['proxmox']);
+  assert.equal(after.updatedAt, before?.updatedAt);
+});
+
+test('uncompleteSetupStep throws when setup is finished or has no record', () => {
+  const none = tempDb();
+  assert.throws(() => uncompleteSetupStep(none, 'proxy'), /Setup is not in progress/);
+  const done = tempDb();
+  ensurePendingSetup(done);
+  finishSetup(done);
+  assert.throws(() => uncompleteSetupStep(done, 'proxy'), /Setup is not in progress/);
 });
