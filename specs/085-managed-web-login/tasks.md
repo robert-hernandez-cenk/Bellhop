@@ -82,7 +82,7 @@ All paths are relative to the worktree root.
 
 ## Phase 6: User Story 4 - The old command is gone (Priority: P3)
 
-- [ ] T024 [US4] Remove `src/commands/networking/configure-web-login.ts`, `test/commands/configure-web-login.test.ts`, and its registration/help in `src/cli.ts`; update the references found by `git grep -n "configure-web-login\|configureWebLogin"` in `src/commands/maintenance/set-config.ts`, `test/lib/inventory.test.ts`, `test/web/**`, `test/scripts/demo/*.test.ts`; add a CLI test (or extend an existing one) that `configure-web-login` is an unknown command; confirm `warnIfEnvPinned` stays exported for `set-config`
+- [x] T024 [US4] Remove `src/commands/networking/configure-web-login.ts`, `test/commands/configure-web-login.test.ts`, and its registration/help in `src/cli.ts`; update the references found by `git grep -n "configure-web-login\|configureWebLogin"` in `src/commands/maintenance/set-config.ts`, `test/lib/inventory.test.ts`, `test/web/**`, `test/scripts/demo/*.test.ts`; add a CLI test (or extend an existing one) that `configure-web-login` is an unknown command; confirm `warnIfEnvPinned` stays exported for `set-config`
 
 **Checkpoint**: `git grep configure-web-login` finds nothing outside `specs/` history notes.
 

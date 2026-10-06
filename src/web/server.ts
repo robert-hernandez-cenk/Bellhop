@@ -60,7 +60,7 @@ const mode = authMode();
 if (mode === 'none') {
   logWarn(
     "Web UI auth mode is 'none': requests without a signed-in session are served as a full-admin local operator. " +
-      'Configure sign-in (bellhop configure-web-login <entry> --apply), sign in at /auth/login, then set webUiAuthMode to oidc.'
+      "Configure sign-in (flag Bellhop's own guest as Bellhop, or fill in Settings > Web login), sign in at /auth/login, then set webUiAuthMode to oidc."
   );
 }
 
