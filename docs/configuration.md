@@ -223,17 +223,17 @@ variable names and the precedence rule. A saved value is used from the
 next request (web UI) or the next run (CLI, MCP server), with no restart.
 
 The Settings page groups everything by integration, one tab each:
-General, Proxy, Authentik, Cloudflare, GitHub and MCP — the Nginx Proxy
+General, Proxy, Authentik, Web login, Cloudflare, GitHub and MCP — the Nginx Proxy
 Manager fields below live on the Proxy tab, shown only while Nginx Proxy
 Manager is the selected driver.
 
 | Setting | Tab | When unset |
 |---|---|---|
 | `webUiAuthMode` | General | `none` — see [Sign-in mode](environment-variables.md#sign-in-mode) |
-| `webUiOidcIssuer` | General | web login is not configured — see [Web login](authentik.md#web-login) |
-| `webUiOidcClientId` | General | web login is not configured |
-| `webUiOidcRedirectUri` | General | web login is not configured |
-| `webUiOidcClientSecret` (secret) | General | web login is not configured |
+| `webUiOidcIssuer` | Web login | the guest flagged as Bellhop supplies the client, if there is one; otherwise web login is not configured — see [Web login](authentik.md#web-login) |
+| `webUiOidcClientId` | Web login | same |
+| `webUiOidcRedirectUri` | Web login | same |
+| `webUiOidcClientSecret` (secret) | Web login | same |
 | `authentikApiUrl` | Authentik | the Authentik integration is off (no Users/Permissions pages, no `sync-authentik`) |
 | `authentikApiToken` (secret) | Authentik | the Authentik integration is off |
 | `authentikAdminGroup` | Authentik | `bellhop-admins` |

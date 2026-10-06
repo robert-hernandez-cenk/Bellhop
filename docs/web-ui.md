@@ -164,14 +164,17 @@ the selected driver.
   for confirmation first, and is refused when, under the new names, you
   would no longer be an administrator yourself. The check uses your real
   groups even while impersonating, and never blocks the local operator.
-- **Web UI sign-in** (`webUiAuthMode`) and the four web login values
-  beside it (issuer, client ID, callback URL, client secret —
-  `bellhop configure-web-login` fills them in). Switching to `oidc` is
-  refused unless all four are set, you have signed in through
+- **Web UI sign-in** (`webUiAuthMode`, on the General tab) and the four
+  custom web login values on the Web login tab (issuer, client ID, callback
+  URL, client secret), which are for installs Bellhop does not manage in
+  Proxmox: a guest flagged as Bellhop supplies its own client instead, and
+  the tab says which source is in effect. Switching to `oidc` is
+  refused unless web login is configured one way or the other, you have signed in through
   `/auth/login`, and you would still be an administrator (under the admin
   groups as they will be after the save) — otherwise your next request
   would send you to a sign-in you cannot complete. While `oidc` is in
-  force, clearing any of the four is refused for the same reason. Switching away from
+  force, clearing one of the four custom values is refused for the same
+  reason, unless a flagged guest's client would then sign people in. Switching away from
   `oidc` asks for confirmation, since the web UI then becomes reachable
   without signing in, and the service log records who did it. If a wrong
   value locks you out anyway, see [Locked out](authentik.md#locked-out).

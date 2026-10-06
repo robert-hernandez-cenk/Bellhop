@@ -33,11 +33,20 @@ Bellhop's own inventory entry is gated like any OIDC app. Each step is a real ch
 1. On Bellhop's own entry set `authGroup` (the lowest group rung that should reach Bellhop), `authMode: oidc`, and add `https://bellhop.example.com/auth/callback` to its Callback URLs (see [OIDC mode](#oidc-mode)).
 2. `bellhop sync-authentik --apply` creates the OpenID client. It also attaches the `offline_access` scope mapping to every Bellhop-owned OIDC client, which is what lets Bellhop hold a refresh token to re-check a session.
 3. `bellhop sync-proxy --apply` — Bellhop's route stops being forward-gated.
-4. `bellhop configure-web-login bellhop --apply` stores the client's issuer, client ID, callback URL and secret as the four `webUiOidc*` settings (dry run without `--apply`; the secret is never printed).
+4. Flag the guest as Bellhop: its Advanced settings, Access tab, **This is Bellhop** (admin only; at most one guest). Bellhop then reads that guest's OpenID client from Authentik whenever someone signs in, so there is nothing to copy. A secret rotated in Authentik applies on the next sign-in, with no restart. See [Where the client comes from](#where-the-client-comes-from).
 5. Open `https://bellhop.example.com/auth/login` and sign in. This proves the client works and gives your browser a session.
-6. Switch `webUiAuthMode` to `oidc`, on the Settings page's General tab or with `bellhop set-config webUiAuthMode oidc --apply`. The page refuses the change unless all four settings are set, you have signed in through `/auth/login`, and you would still be an administrator afterwards.
+6. Switch `webUiAuthMode` to `oidc`, on the Settings page's General tab or with `bellhop set-config webUiAuthMode oidc --apply`. The page refuses the change unless web login is configured, you have signed in through `/auth/login`, and you would still be an administrator afterwards.
 
 The callback URL must be HTTPS (the session cookie is `Secure`), and Bellhop must be reached at that one origin.
+
+### Where the client comes from
+
+Bellhop signs in with one OpenID client, from one of two sources:
+
+- **A guest flagged as Bellhop** (the managed case, above). The guest must be OIDC-gated (an auth group and OIDC mode) with a callback URL whose path is exactly `/auth/callback`, and its client must exist in Authentik (`sync-authentik --apply`). Issuer, client ID and secret are read from Authentik and kept only in the running service's memory, never stored; they are read again at start, at every sign-in, and before each session re-check. If Authentik is unreachable, the last value read keeps working.
+- **Four custom settings**, on the Settings page's **Web login** tab (`webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri`, `webUiOidcClientSecret`), for installs Bellhop does not manage in Proxmox, such as Bellhop on a workstation or outside the inventory. Copy the values from the client in your identity provider.
+
+If all four custom settings are set they win, even when a guest is flagged; a partial set is ignored in favour of the flagged guest. The Web login tab says which source is in effect and, when a flagged guest cannot be used, why. If you set Bellhop up before the guest flag existed, your stored values are exactly the custom settings and keep working unchanged.
 
 **Upgrading from forward-auth.** A deployment that set `WEB_UI_AUTH_MODE=authentik` in `data/authentik.env` must change that line to `WEB_UI_AUTH_MODE=oidc` (or delete it and store the setting), then restart the service; with the old value the service refuses to start. A deployment that had stored `authentik` is converted to `oidc` the first time this version opens its database, so finish steps 1 to 4 first, or it will require a sign-in that is not set up yet (see [Locked out](#locked-out)). The Windows service's firewall rule is no longer limited to the proxy's address; reinstall the service to widen it.
 
@@ -50,7 +59,7 @@ The callback URL must be HTTPS (the session cookie is `Secure`), and Bellhop mus
 
 ## Locked out
 
-The Settings page guards the values that decide who can use the web UI: it refuses an admin-group change that would remove your own administrator access, refuses switching to `oidc` unless sign-in is configured and you have signed in and would stay an administrator, refuses clearing a sign-in setting while `oidc` is in force, and asks before you leave `oidc`. If you are locked out anyway — Authentik is down, the stored client was rotated, or sign-in is `oidc` with no working login — recover from the host the service runs on, with no web UI needed:
+The Settings page guards the values that decide who can use the web UI: it refuses an admin-group change that would remove your own administrator access, refuses switching to `oidc` unless sign-in is configured and you have signed in and would stay an administrator, refuses clearing a custom sign-in setting while `oidc` is in force (unless a flagged guest would take over), and asks before you leave `oidc`. If you are locked out anyway — Authentik is down, the stored client was rotated, or sign-in is `oidc` with no working login — recover from the host the service runs on, with no web UI needed:
 
 - Run `bellhop set-config webUiAuthMode none --apply` (or fix the admin group with `bellhop set-config authentikAdminGroup <group> --apply`) in the checkout the service runs from. The web service picks the change up on its next request.
 - Or set `WEB_UI_AUTH_MODE=none` (or `AUTHENTIK_ADMIN_GROUP=...`) in the service's environment and restart it; the environment overrides the stored setting until you remove it again.
@@ -246,8 +255,9 @@ no failure, since there is nothing to read or write yet.
 General (type, IP, host, VMID, subdomains, port, read-only proxy, insecure
 backend TLS, VPN, app) and Access (auth group, auth mode, and whichever
 fields apply to the selected auth mode — unauthenticated paths in forward
-mode; callback URLs, mobile app redirect URLs, and OIDC client
-issuer/client ID/secret in OIDC mode). A gated forward-mode guest with no
+mode; callback URLs, mobile app redirect URLs, OIDC client
+issuer/client ID/secret, and **This is Bellhop** in OIDC mode; a guest
+already flagged as Bellhop keeps that row in any mode so it can be cleared). A gated forward-mode guest with no
 callback URL yet also shows the callback URLs field, noted "Needed before
 switching auth mode to OIDC.", since that switch is refused until one is
 set. Switching Auth mode back and forth

@@ -26,6 +26,7 @@ On hosts, guests, and external sites (`ExternalSiteSchema`: a proxy target that 
 - `proxyManual` (hosts, guests): config hand-authored outside the managed markers; `buildRoutes` skips it (no route, no forward-auth), `subdomains[]` still drives the Dashboard link. Hosts: set by hand; guests: Dashboard "read-only proxy" checkbox. Does **not** silence `sync-authentik`, which still maintains its Provider/Application/bindings (the hand-authored block may use forward-auth).
 - `proxy: true` on at most one entry: where the reverse proxy runs.
 - `authentik: true`: the entry running Authentik; forward-auth addresses it.
+- `bellhop: true` (#85, guests only): Bellhop itself; its OpenID client is the web login when the custom settings are not all set (`src/web/login/managed.ts`). Column `guests.bellhop` (additive `ensureColumn`, no migration).
 
 ### Auth fields
 
@@ -50,6 +51,7 @@ On hosts, guests, and external sites (`ExternalSiteSchema`: a proxy target that 
 
 - at most one `proxy: true` entry (zero is valid, e.g. the `none` driver);
 - at most one `authentik: true` entry;
+- at most one guest with `bellhop: true`;
 - if any entry is forward-gated (`effectiveAuth() === 'forward'`, incl. external sites), an `authentik: true` entry exists and has an `ip` (OIDC-gated entries need neither);
 - every guest's `host` exists;
 - non-empty `subdomains` requires `ip` unless `proxyManual`;
@@ -92,7 +94,7 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `proxyCertResolver`/`proxyApiUrl` (#35): Traefik only; `proxyCertResolver` is read under `acme-dns`/`acme-http`, and no value is reserved (`none` was, until #72's `external` replaced it).
 - `pveUserRealm`/`pveCreatorRole` (#53): unset `pveUserRealm` = creator grant off.
 - #64's twelve integration settings (`authentikApiUrl` + eight other `authentik*`, `webUiAuthMode`, `npmApiUrl`, `npmApiEmail`): `settings-defs.ts`'s `MovedSettingsSchema`, spread into `SettingsSchema`. `webUiAuthMode` accepts only `oidc`/`none` (#69; `openInventoryDb` migrates a stored `authentik` to `oidc` and deletes a stored `auto`).
-- #69's web login: `webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri` (must end in `/auth/callback`, and be `https://` except on loopback, since the sign-in cookies are `Secure`) and the secret `webUiOidcClientSecret` (env `WEB_UI_OIDC_*`, file `authentik.env`); read together by `src/web/login/config.ts`, written by `configure-web-login`.
+- #69's web login: `webUiOidcIssuer`, `webUiOidcClientId`, `webUiOidcRedirectUri` (must end in `/auth/callback`, and be `https://` except on loopback, since the sign-in cookies are `Secure`) and the secret `webUiOidcClientSecret` (env `WEB_UI_OIDC_*`, file `authentik.env`); read together by `src/web/login/config.ts`. Group `weblogin` (#85: their own Settings tab, for installs Bellhop does not manage in Proxmox). When all four are set they win; otherwise a flagged `bellhop: true` guest supplies the client.
 
 Writers: `set-config <key> [value] [--unset] [--apply]` (`src/commands/maintenance/set-config.ts`) and the admin-only web Settings page, both validating against `SettingsSchema`.
 
