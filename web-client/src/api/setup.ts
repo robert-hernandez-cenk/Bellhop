@@ -2,6 +2,7 @@
 // own fetch wrapper rather than client.ts's: during setup a 401 means "this
 // browser has not opened the setup address", not "sign in", and there is
 // no sign-in page to send anyone to.
+import type { ProxyDriverInfo } from './types';
 
 export interface MidScheme {
   vmidBase: number;
@@ -85,5 +86,43 @@ export const setupApi = {
     call<{ host: SetupHost; completedSteps: string[] }>('PUT', `/hosts/${encodeURIComponent(name)}/mid-scheme`, midScheme),
   saveBasics: (basics: SetupBasics) =>
     call<{ settings: SetupBasics; completedSteps: string[] }>('PUT', '/basics', basics),
+  proxy: () => call<ProxyStepState>('GET', '/proxy'),
+  saveProxy: (body: ProxySaveBody) => call<{ state: ProxyStepState }>('PUT', '/proxy', body),
   finish: () => call<{ redirect: string }>('POST', '/finish'),
 };
+
+// Step 3, the reverse proxy (#87, contracts/http-setup-proxy.md).
+export interface ProxyChoice {
+  driver: string;
+  entry?: string;
+  configPath: string;
+  certResolver: string;
+  apiUrl: string;
+  npmApiUrl: string;
+  npmApiEmail: string;
+}
+
+export interface ProxyEntry {
+  name: string;
+  kind: 'host' | 'guest';
+  parent?: string;
+  ip?: string;
+}
+
+export interface ProxyStepState {
+  drivers: ProxyDriverInfo[];
+  defaultDriver: string;
+  acmeDnsProviders: string[];
+  defaultAcmeDnsProvider: string;
+  entries: ProxyEntry[];
+  choice: ProxyChoice;
+  // Set or not set: a secret's value never reaches the browser.
+  secrets: { npmApiPassword: boolean };
+  pinned: { key: string; variable: string }[];
+  complete: boolean;
+}
+
+export interface ProxySaveBody extends Omit<ProxyChoice, 'entry'> {
+  entry?: string;
+  secrets?: { npmApiPassword?: string };
+}

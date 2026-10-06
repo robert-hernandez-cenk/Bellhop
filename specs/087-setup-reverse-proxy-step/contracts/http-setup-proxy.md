@@ -17,7 +17,7 @@ Body `ProxyChoice`. Validates everything first, then writes in one pass: the inv
 | `200 { state: ProxyStepState }` | saved (also when nothing changed). `state.complete` is `true` right after saving `none`, and `false` after saving any other changed choice |
 | `400 { error }` | a field fails its `SettingsSchema`/secret rule, a required value is missing (`entry` for a managing driver; the Cloudflare token under DNS-01 with none stored. Certificate and key paths are never required: they default from `domain`), or the entry is not a host or guest in inventory |
 | `400 { error }` | the effective `tlsSource` is not supported by the driver: the `checkTlsSource` message, with the supported list |
-| `409 { error }` | a key in the body is pinned by an environment variable: names the variable and file, telling the operator to unset it and restart the service |
+| `400 { error }` | a key in the body is pinned by an environment variable: names the variable and file, telling the operator to unset it and restart the service |
 
 ## `POST /api/setup/proxy/check`
 

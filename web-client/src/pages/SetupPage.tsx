@@ -3,12 +3,15 @@ import {
   SetupApiError,
   setupApi,
   type HostEndpoint,
+  type ProxyChoice,
+  type ProxyStepState,
   type MidScheme,
   type SetupBasics,
   type SetupHost,
   type SetupPeer,
   type SetupState,
 } from '../api/setup';
+import { proxyDriverOptions } from '../lib/settings-display';
 
 const STEP_LABELS: Record<string, string> = {
   proxmox: 'Proxmox',
@@ -389,6 +392,170 @@ function BasicsStep({ state, reload, next }: StepProps) {
   );
 }
 
+// Step 3 (#87): the reverse proxy. The driver, the inventory entry it runs
+// on, and the settings that driver reads. A secret input is never prefilled:
+// the server only says whether one is stored, and a blank input keeps it.
+function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
+  const [info, setInfo] = useState<ProxyStepState | null>(null);
+  const [values, setValues] = useState<ProxyChoice | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const loaded = await setupApi.proxy();
+      setInfo(loaded);
+      setValues(loaded.choice);
+    } catch (err) {
+      setError(message(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!info || !values) {
+    return (
+      <section className="setup-panel">
+        <h2>Reverse proxy</h2>
+        {error ? <div className="warning-banner">{error}</div> : <p className="settings-help">Loading…</p>}
+      </section>
+    );
+  }
+
+  const driver = info.drivers.find((d) => d.id === values.driver);
+  const manages = driver?.managesProxy ?? false;
+  const set = (key: keyof ProxyChoice) => (e: { target: { value: string } }) =>
+    setValues((v) => (v ? { ...v, [key]: e.target.value } : v));
+
+  async function save() {
+    if (!values) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { state: saved } = await setupApi.saveProxy({
+        ...values,
+        ...(password ? { secrets: { npmApiPassword: password } } : {}),
+      });
+      setInfo(saved);
+      setValues(saved.choice);
+      setPassword('');
+      await reload();
+      if (!saved.drivers.find((d) => d.id === saved.choice.driver)?.managesProxy) next();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="setup-panel">
+      <h2>Reverse proxy</h2>
+      <p className="page-description">
+        Point Bellhop at the reverse proxy you already run. Nothing is written to it in this step.
+      </p>
+      <label className="form-field">
+        Proxy
+        <select className="field-input" value={values.driver} onChange={set('driver')}>
+          {proxyDriverOptions(info.drivers, info.defaultDriver).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!manages && <p className="settings-help">Bellhop will manage no proxy. Routes stay hand-configured.</p>}
+      {manages && (
+        <>
+          <label className="form-field">
+            Runs on
+            <select className="field-input" value={values.entry ?? ''} onChange={set('entry')}>
+              <option value="">Choose a host or guest…</option>
+              {info.entries.map((e) => (
+                <option key={e.name} value={e.name}>
+                  {e.name} ({e.kind}
+                  {e.ip ? `, ${e.ip}` : ''})
+                </option>
+              ))}
+            </select>
+          </label>
+          {info.entries.length === 0 && (
+            <p className="settings-help">
+              The proxy must be a host or guest in your inventory. Add a Proxmox host in the first step.
+            </p>
+          )}
+          {driver?.defaultConfigPath !== null && driver?.defaultConfigPath !== undefined && (
+            <>
+              <label className="form-field">
+                Proxy config path <span className="settings-optional">(optional)</span>
+                <input
+                  className="field-input"
+                  placeholder={driver.defaultConfigPath}
+                  value={values.configPath}
+                  onChange={set('configPath')}
+                />
+              </label>
+              <p className="settings-help">
+                Default {driver.defaultConfigPath}. {driver.configPathNote ?? ''}
+              </p>
+            </>
+          )}
+          {driver?.usesCertResolver && (
+            <label className="form-field">
+              Proxy cert resolver <span className="settings-optional">(optional)</span>
+              <input className="field-input" placeholder="cloudflare" value={values.certResolver} onChange={set('certResolver')} />
+            </label>
+          )}
+          {driver?.usesApiUrl && (
+            <label className="form-field">
+              Proxy API URL <span className="settings-optional">(optional)</span>
+              <input className="field-input" placeholder="http://192.0.2.30:8080" value={values.apiUrl} onChange={set('apiUrl')} />
+            </label>
+          )}
+          {driver?.usesNpmApi && (
+            <>
+              <label className="form-field">
+                NPM API URL
+                <input className="field-input" placeholder="http://192.0.2.30:81" value={values.npmApiUrl} onChange={set('npmApiUrl')} />
+              </label>
+              <label className="form-field">
+                NPM email
+                <input className="field-input" placeholder="admin@example.com" value={values.npmApiEmail} onChange={set('npmApiEmail')} />
+              </label>
+              <label className="form-field">
+                NPM password{' '}
+                <span className="settings-optional">({info.secrets.npmApiPassword ? 'set' : 'not set'})</span>
+                <input
+                  className="field-input"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={info.secrets.npmApiPassword ? 'Leave blank to keep the saved password' : ''}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            </>
+          )}
+        </>
+      )}
+      {info.pinned.length > 0 && (
+        <p className="settings-help">
+          Set by the environment, so not editable here: {info.pinned.map((p) => p.variable).join(', ')}.
+        </p>
+      )}
+      {error && <div className="warning-banner">{error}</div>}
+      <div className="setup-actions">
+        <button type="button" className="button" disabled={busy || (manages && !values.entry)} onClick={save}>
+          {busy ? 'Saving…' : manages ? 'Save' : 'Save and continue'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function FinishStep({ state }: { state: SetupState }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -500,6 +667,7 @@ export function SetupPage() {
           </ol>
           {current === 'proxmox' && <ProxmoxStep state={state} reload={reload} next={advance} />}
           {current === 'basics' && <BasicsStep state={state} reload={reload} next={advance} />}
+          {current === 'proxy' && <ProxyStep reload={reload} next={advance} />}
           {current === 'finish' && <FinishStep state={state} />}
         </>
       )}

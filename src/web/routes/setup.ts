@@ -22,6 +22,7 @@ import {
   type Inventory,
 } from '../../lib/inventory.ts';
 import type { MidScheme } from '../../lib/inventory.ts';
+import { ProxyChoiceSchema, proxyStepState, saveProxyChoice } from '../setup/proxy.ts';
 import { SETUP_COOKIE, SETUP_COOKIE_OPTIONS, requireSetupAuth } from '../setup/gate.ts';
 import { REQUIRED_SETUP_STEPS, SetupIncompleteError, type SetupService } from '../setup/service.ts';
 
@@ -274,6 +275,22 @@ export function setupRoutes(setup: SetupService, routeDeps?: SetupRouteDeps): ex
     const { completedSteps } = setup.completeStep('basics');
     res.json({ settings: basicsSettings(opts.inventory), completedSteps });
   });
+
+  // Step 3 (#87): the reverse proxy. Reading and saving never touch the
+  // proxy; the check (below, US3) is read-only too.
+  api.get(
+    '/proxy',
+    handle((_req, res) => {
+      res.json(proxyStepState(setup));
+    })
+  );
+
+  api.put(
+    '/proxy',
+    handle((req, res) => {
+      res.json({ state: saveProxyChoice(setup, parseBody(ProxyChoiceSchema, req)) });
+    })
+  );
 
   // Finish (FR-019/FR-007): refused while a required step is incomplete;
   // otherwise setup ends for good and the setup cookie is cleared.
