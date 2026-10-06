@@ -256,6 +256,8 @@ test("the scheduled job is check-app-updates, targetless, triggered by 'schedule
   assert.equal(def.argsJson, '{}');
   assert.equal(def.triggeredByUsername, 'scheduler');
   assert.equal(def.triggeredByImpersonating, undefined);
+  // No front end started it (#65/#66).
+  assert.equal(def.triggeredVia, undefined);
 });
 
 test('stop() clears the ticker, and a second start() after stop re-arms it', () => {

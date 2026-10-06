@@ -117,7 +117,7 @@ behaves.
 - [Permissions](docs/permissions.md) — per-group allow-lists/block-lists and
   a guest creator's automatic access to it.
 - [MCP server](docs/mcp-server.md) — Bellhop's operations as tools for an AI
-  assistant.
+  assistant, locally over stdio or remotely over HTTPS with sign-in.
 - [Authentik](docs/authentik.md) — running without it, and gating apps
   through OpenID Connect (OIDC mode).
 - [Proxmox access for VM creators](docs/proxmox-access.md) — granting a

@@ -1,6 +1,13 @@
 # MCP server
 
-The stdio MCP server (`src/mcp/server.ts`, `src/mcp/build-server.ts`, issue #16), started with `npm run mcp`. It runs as the local operator with CLI-level trust: no authentication and no permission filtering (so web-UI-only restrictions such as admin-gating of `authMode`/`oidcRedirectUris` edits do not apply here). It uses its own checkout's `inventoryPath()`/`dataDir()`, so whichever checkout runs it is the one it manages; nothing in this repo says where it should run.
+`buildMcpServer` (`src/mcp/build-server.ts`, issue #16) is the one tool registry, served two ways:
+
+- **stdio** (`src/mcp/server.ts`, `npm run mcp`): runs as the local operator with CLI-level trust, no authentication. It uses its own checkout's `inventoryPath()`/`dataDir()`, so whichever checkout runs it is the one it manages; nothing in this repo says where it should run.
+- **Streamable HTTP** at `/mcp` on the web service (#65/#66): authenticated by a bearer (a token from Bellhop's own authorization server, admins only, or the `mcpApiKey` secret), one `McpServer` per MCP session. The host, routes and authorization server live in `src/web/mcp/`; see `src/web/CLAUDE.md` ("MCP over HTTP").
+
+Neither applies permission filtering (so web-UI-only restrictions such as admin-gating of `authMode`/`oidcRedirectUris` edits do not apply here); over HTTP that is why only admins may sign in.
+
+`McpServerOptions.actor` is who the server acts for, recorded as `triggeredByUsername` with `triggeredVia: 'mcp'` on every job it starts: the OS user for stdio (`os.userInfo()`), the signed-in admin's username or `api-key` over HTTP; unset, `'mcp'` (what every MCP job recorded before #65). `McpServerOptions.tracker` lets the HTTP host share one `PromptTracker` across its sessions.
 
 ## Tools
 
@@ -20,17 +27,18 @@ The stdio MCP server (`src/mcp/server.ts`, `src/mcp/build-server.ts`, issue #16)
 - `maxWaitSeconds` is not enforced while a dialog is open; the elicitation request's own 10-minute timeout bounds it instead (issue #174). That is longer than the SDK's 60s default, which would drop real dialogs, and well under `JobRunner`'s 15-minute abandon timer, so a client that never shows the dialog (a remote Claude Code session did exactly that) hands the prompt back to the model with time left to ask in chat, instead of silently stalling until the job is cancelled. On timeout the SDK withdraws the dialog, and the prompt stays handed off the same as a decline.
 - The dialog's message leads with the prompt text and the answer field's title repeats it, because Claude Code's terminal folds all but the first few message lines.
 - Cancelling a `wait_for_job` call never cancels the job.
+- Over HTTP every session shares one `PromptTracker` (`McpHttpHost`), so two sessions waiting on the same paused job open one dialog between them.
 - `wait_for_job` is owner-only (`requireOwned` in `src/mcp/job-helpers.ts`, its only remaining caller): it blocks on the job's in-memory controller/events, which only the owning process holds. The other job tools can control a job owned by the web service through the cross-process mechanism; see `src/web/jobs/CLAUDE.md` (cross-process job watching and control).
 
 ## Shared job database
 
-The server shares `data/jobs.sqlite3` with the web service. `JobRunner` stamps an `owner` on every job (`'web'`, or `'mcp:<pid>'`), and orphan cleanup (`JobStore.interruptOrphaned`) touches only the caller's own rows plus rows of MCP processes whose pid is dead, so neither process's startup interrupts the other's in-flight jobs. See `src/web/jobs/CLAUDE.md` (ownership and orphan cleanup).
+The stdio server shares `data/jobs.sqlite3` with the web service. `JobRunner` stamps an `owner` on every job (`'web'`, or `'mcp:<pid>'`; HTTP MCP jobs run on the web service's runner, so they are `'web'` and survive the client disconnecting), and orphan cleanup (`JobStore.interruptOrphaned`) touches only the caller's own rows plus rows of MCP processes whose pid is dead, so neither process's startup interrupts the other's in-flight jobs. See `src/web/jobs/CLAUDE.md` (ownership and orphan cleanup).
 
 ## `ping()` workaround
 
 `buildMcpServer` sends one throwaway `ping()` in `server.server.oninitialized` to work around a bug in the *client's* `Protocol#_oncancel` (confirmed against @modelcontextprotocol/sdk 1.30.0, 2026-09), which silently drops a cancellation whose request id is 0. It can be removed only once the MCP clients this server is actually used with (Claude Code and others, each bundling their own SDK) ship a fixed `_oncancel`; upgrading this repo's own SDK dependency only fixes the in-repo test client.
 
-## stdout and stdin
+## stdout and stdin (stdio only)
 
 stdout is the protocol channel, so `src/mcp/server.ts` redirects `console.log` to stderr at startup. On stdin close the server cancels its jobs and exits; a job still running when the client session ends is therefore interrupted.
 

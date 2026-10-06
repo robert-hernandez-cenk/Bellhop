@@ -194,7 +194,7 @@ there is no LAN gateway to restore '<guest>' to`) if it doesn't.
 ## Integration settings and secrets
 
 How Bellhop reaches Authentik, Cloudflare, Nginx Proxy Manager and GitHub,
-and how the web UI signs people in, are settings too, stored in the same
+how the web UI signs people in, and the MCP endpoint's API key are settings too, stored in the same
 inventory database and set the same two ways: on the web UI's Settings
 page or with `set-config`. Each one can also be pinned by an environment
 variable — see [Environment variables](environment-variables.md) for the
@@ -202,7 +202,7 @@ variable names and the precedence rule. A saved value is used from the
 next request (web UI) or the next run (CLI, MCP server), with no restart.
 
 The Settings page groups everything by integration, one tab each:
-General, Proxy, Authentik, Cloudflare and GitHub — the Nginx Proxy
+General, Proxy, Authentik, Cloudflare, GitHub and MCP — the Nginx Proxy
 Manager fields below live on the Proxy tab, shown only while Nginx Proxy
 Manager is the selected driver.
 
@@ -228,6 +228,7 @@ Manager is the selected driver.
 | `npmApiEmail` | Proxy (Nginx Proxy Manager driver) | the Nginx Proxy Manager driver cannot sync |
 | `npmApiPassword` (secret) | Proxy (Nginx Proxy Manager driver) | the Nginx Proxy Manager driver cannot sync |
 | `githubApiToken` (secret) | GitHub | GitHub API requests are anonymous |
+| `mcpApiKey` (secret) | MCP | only signed-in admins can use `/mcp` — see [Remote access over HTTPS](mcp-server.md#remote-access-over-https) |
 
 Both the API URL and the token must be set for the Authentik integration
 to be on. `cloudflareDnsApiToken` is a Cloudflare token scoped to Zone:Read
@@ -243,13 +244,14 @@ UI](web-ui.md#settings-page) for those and the sign-in mode's guards.
 
 ### Secrets
 
-The five secrets — `authentikApiToken`, `cloudflareDnsApiToken`,
-`npmApiPassword`, `githubApiToken` and `webUiOidcClientSecret` — are write-only. Bellhop uses them,
+The six secrets — `authentikApiToken`, `cloudflareDnsApiToken`,
+`npmApiPassword`, `githubApiToken`, `webUiOidcClientSecret` and `mcpApiKey` — are write-only. Bellhop uses them,
 but never shows them again: the Settings page and its API report only
 whether each is set and where the value comes from, and no log line, job
 record, error message, status page or inventory snapshot ever carries one.
 On the Settings page each is a masked input with Replace and Clear, empty
-again after every save.
+again after every save. `mcpApiKey` also has Generate, which makes a key
+in your browser and shows it until you save, so you can copy it.
 
 On the CLI a secret is never an argument, so it can't end up in your shell
 history. Pipe it in with `--stdin`, or leave the value off at a terminal to

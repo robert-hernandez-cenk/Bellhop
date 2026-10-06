@@ -303,3 +303,29 @@ test('resolve: re-checks never extend a session past 30 days from sign-in (FR-01
   assert.equal(await sessions.resolve(id), undefined);
   assert.equal(sessions.store.getSession(id), undefined);
 });
+
+// #65/#66: an MCP grant keeps only its session's id hash (a leaked database
+// must not yield a usable cookie), so the service resolves by hash too,
+// with the very same re-check policy.
+test('createDetached returns only the hash, and resolveHash re-checks like resolve', async () => {
+  const { sessions, clock } = setup();
+  const hash = sessions.createDetached(IDENTITY);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  assert.equal((await sessions.resolveHash(hash))?.username, 'test-user');
+  assert.equal(sessions.client.calls.length, 0, 'not due yet');
+
+  clock.now += 5 * MIN;
+  sessions.client.recheckResults.push(OK);
+  assert.equal((await sessions.resolveHash(hash))?.username, 'renamed-user');
+  assert.equal(sessions.store.getSessionByHash(hash)?.refreshToken, 'rotated-refresh-token');
+
+  clock.now += 5 * MIN;
+  sessions.client.recheckResults.push({ kind: 'refused', reason: 'example refused' });
+  assert.equal(await sessions.resolveHash(hash), undefined);
+  assert.equal(sessions.store.getSessionByHash(hash), undefined);
+});
+
+test('resolveHash: an unknown hash is undefined', async () => {
+  const { sessions } = setup();
+  assert.equal(await sessions.resolveHash('0'.repeat(64)), undefined);
+});

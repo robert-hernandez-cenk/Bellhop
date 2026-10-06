@@ -16,7 +16,7 @@ const NAME_KEY: Record<string, 'hostname' | 'name'> = {
   'deploy-vpn-gateway': 'name',
 };
 
-// MCP jobs record this literal instead of a person (FR-014).
+// MCP jobs recorded this literal instead of a person until #65 (FR-014).
 const MCP_ACTOR = 'mcp';
 
 export type BackfillSkipReason =
@@ -138,6 +138,9 @@ export async function runBackfillGuestCreators(opts: BackfillOptions, deps: Back
     .filter(
       (job) =>
         job.triggeredByUsername !== null &&
+        // MCP never records a creator. Before #65 its jobs were all user
+        // 'mcp'; since then they carry the caller and triggeredVia 'mcp'.
+        job.triggeredVia !== 'mcp' &&
         job.triggeredByUsername !== MCP_ACTOR &&
         job.triggeredByUsername !== opts.localOperator
     );

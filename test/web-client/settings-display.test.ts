@@ -7,6 +7,8 @@ import {
   tlsSourceOptions,
   acmeDnsProviderOptions,
   SETTINGS_TABS,
+  generateApiKey,
+  isSecretField,
   fieldsForTab,
   fieldState,
   effectiveWebUiAuthMode,
@@ -401,10 +403,10 @@ test('proxyFieldView gives no warning for a supported or unset source, or for an
 
 // Issue #64: the Settings page groups every setting by integration. Issue
 // #73 drops the Nginx Proxy Manager tab -- its three fields move to Proxy.
-test('SETTINGS_TABS lists the five integration tabs in order, with no Nginx Proxy Manager tab', () => {
+test('SETTINGS_TABS lists the six tabs in order, with no Nginx Proxy Manager tab', () => {
   assert.deepEqual(
     SETTINGS_TABS.map((t) => t.label),
-    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'GitHub'],
+    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'GitHub', 'MCP'],
   );
 });
 
@@ -419,6 +421,18 @@ test('fieldsForTab puts each secret beside its own integration', () => {
   assert.ok(fieldsForTab('authentik').includes('authentikApiUrl'));
   assert.deepEqual([...fieldsForTab('cloudflare')], ['cloudflareDnsApiToken']);
   assert.deepEqual([...fieldsForTab('github')], ['githubApiToken']);
+  assert.deepEqual([...fieldsForTab('mcp')], ['mcpApiKey']);
+  assert.ok(isSecretField('mcpApiKey'));
+});
+
+// #66: Generate makes the key in the browser, so the server never has to
+// send one back: 32 random bytes, base64url (43 characters, no padding),
+// long enough for the server's 32-character minimum.
+test('generateApiKey returns a fresh 43-character base64url key each call', () => {
+  const a = generateApiKey();
+  const b = generateApiKey();
+  assert.match(a, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(a, b);
 });
 
 // Issue #73: the three Nginx Proxy Manager fields move onto the end of the
@@ -550,6 +564,7 @@ function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsRe
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: false, source: 'none' },
       webUiOidcClientSecret: { set: false, source: 'none' },
+      mcpApiKey: { set: false, source: 'none' },
     },
     ...overrides,
   };
@@ -582,6 +597,7 @@ test('mergeSettingsResponse takes only the saved secret status from the response
       npmApiPassword: { set: false, source: 'none' },
       githubApiToken: { set: false, source: 'none' },
       webUiOidcClientSecret: { set: false, source: 'none' },
+      mcpApiKey: { set: false, source: 'none' },
     },
   });
   const merged = mergeSettingsResponse(prev, res, 'authentikApiToken');

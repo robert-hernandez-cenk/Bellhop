@@ -182,6 +182,7 @@ test('POST /api/tasks/:id/run returns 200 with a jobId attributed to the caller'
   assert.ok(typeof res.body.jobId === 'number');
   const row = jobStore.get(res.body.jobId);
   assert.equal(row?.triggeredByUsername, 'admin');
+  assert.equal(row?.triggeredVia, 'web');
   pendingRun?.release();
 });
 

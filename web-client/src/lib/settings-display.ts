@@ -178,7 +178,7 @@ export function proxyFieldView(
 // Proxy Manager tab -- its three fields now sit at the end of the Proxy
 // tab instead, shown only while that driver is selected (proxyFieldView's
 // showNpmApiFields).
-export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github';
+export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github' | 'mcp';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
@@ -186,6 +186,8 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = 
   { id: 'authentik', label: 'Authentik' },
   { id: 'cloudflare', label: 'Cloudflare' },
   { id: 'github', label: 'GitHub' },
+  // #65/#66: the HTTP MCP endpoint's API key.
+  { id: 'mcp', label: 'MCP' },
 ];
 
 // Every field the page can show: each stored non-secret setting plus each
@@ -244,13 +246,22 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
   ],
   cloudflare: ['cloudflareDnsApiToken'],
   github: ['githubApiToken'],
+  mcp: ['mcpApiKey'],
 };
 
 export function fieldsForTab(tab: SettingsTab): readonly SettingsFieldKey[] {
   return TAB_FIELDS[tab];
 }
 
-const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken', 'webUiOidcClientSecret'];
+const SECRET_KEYS: readonly SecretSettingKey[] = ['authentikApiToken', 'cloudflareDnsApiToken', 'npmApiPassword', 'githubApiToken', 'webUiOidcClientSecret', 'mcpApiKey'];
+
+// #66: the MCP API key's Generate button. Made here in the browser, so the
+// server never has to send a secret back: 32 random bytes, base64url
+// without padding (43 characters, over the server's 32-character minimum).
+export function generateApiKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 export function isSecretField(key: SettingsFieldKey): key is SecretSettingKey {
   return (SECRET_KEYS as readonly string[]).includes(key);

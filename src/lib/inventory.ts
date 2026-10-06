@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
-import { openDb } from './sqlite.ts';
+import { ensureColumn, openDb } from './sqlite.ts';
 import { parseGroupLadder } from './authentik-config.ts';
 import { MovedSettingsSchema } from './settings-defs.ts';
 import { settingFix } from './settings-hint.ts';
@@ -562,18 +562,6 @@ const SCHEMA = `
   );
   ${SECRET_SETTINGS_TABLE_SQL}
 `;
-
-// Adds a column to an already-existing table when it's missing -- covers a
-// real, already-populated inventory/bellhop.db, where SCHEMA's `CREATE TABLE IF
-// NOT EXISTS` is a no-op and can't retroactively add a new column. Cheap and
-// idempotent: a PRAGMA read plus a skipped ALTER TABLE once the column
-// exists, run on every open.
-function ensureColumn(db: Database.Database, table: string, column: string, ddl: string): void {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  if (!cols.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-  }
-}
 
 // One-time #158 migration: the requiresAuth boolean became authGroup, a
 // group name. Every gated entry moves to the ladder's TOP rung -- the

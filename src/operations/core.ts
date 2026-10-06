@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { JobRunner } from '../web/jobs/job-runner.ts';
+import type { TriggeredVia } from '../web/jobs/job-store.ts';
 import type { Operation, OperationDeps } from './types.ts';
 import { checkAppUrl, promptsForSource } from './app-check.ts';
 import { resolveAppSource } from '../lib/app-source.ts';
@@ -8,6 +9,7 @@ import { refreshInventory } from '../lib/inventory.ts';
 export interface Attribution {
   triggeredByUsername?: string;
   triggeredByImpersonating?: string;
+  triggeredVia?: TriggeredVia;
 }
 
 // Throws one error listing every invalid field, so both front ends can show

@@ -134,7 +134,7 @@ local operator can't do — `web:dev` sets it automatically (to
 
 Admins reach the Settings page from the Admin group in the sidebar. It
 holds every setting described in [Configuration](configuration.md), one
-tab per integration: General, Proxy, Authentik, Cloudflare and GitHub.
+tab per integration: General, Proxy, Authentik, Cloudflare, GitHub and MCP.
 Each field saves on its own, and a saved value is in use from the very
 next request — nothing needs a restart. The Proxy tab's fields still
 appear and disappear with the selected proxy driver (see [Reverse proxy
@@ -143,10 +143,13 @@ email and password fields show there only while Nginx Proxy Manager is
 the selected driver.
 
 - **Secrets** (the Authentik API token, the Cloudflare DNS API token, the
-  Nginx Proxy Manager password and the GitHub API token) show only "Set" or
-  "Not set" and where the value comes from. Each is a masked input with
-  Replace (or Save, when unset) and Clear; it is never pre-filled, has no
-  reveal control, and is empty again after every save. See
+  Nginx Proxy Manager password, the GitHub API token, the OIDC client
+  secret and the MCP API key) show only "Set" or "Not set" and where the
+  value comes from. Each is a masked input with Replace (or Save, when
+  unset) and Clear; it is never pre-filled, has no reveal control, and is
+  empty again after every save. The MCP API key alone also has Generate,
+  which fills the input with a new random key, shown until you save it so
+  you can copy it — the server still never sends a key back. See
   [Secrets](configuration.md#secrets).
 - **Fields set by the environment** are read-only, labelled "set by
   environment" with the variable's name, and have no Save or Clear: the

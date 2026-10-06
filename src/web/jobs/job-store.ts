@@ -1,6 +1,10 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { ensureColumn } from '../../lib/sqlite.ts';
+
+// The front ends a job can be started from (#65/#66).
+export type TriggeredVia = 'web' | 'mcp';
 
 export type JobStatus = 'queued' | 'running' | 'awaiting_input' | 'success' | 'failed' | 'cancelled' | 'interrupted';
 
@@ -45,6 +49,10 @@ export interface JobRow {
   // The group name being impersonated at the time this job was created, or
   // null for a normal (non-impersonated) job.
   triggeredByImpersonating: string | null;
+  // The front end the job was started from (#65/#66): 'web' (the web UI)
+  // or 'mcp' (either MCP transport). Null for older rows and for the
+  // scheduler's own runs, which no front end started.
+  triggeredVia: TriggeredVia | null;
   // Which process created (and therefore controls) this job: 'web' for the
   // web service, 'mcp:<pid>' for an MCP server process (#16). Null for a
   // job that predates this column -- treated as 'web' everywhere.
@@ -95,6 +103,7 @@ interface CreateJobInput {
   expectedPromptsJson?: string;
   triggeredByUsername?: string;
   triggeredByImpersonating?: string;
+  triggeredVia?: TriggeredVia;
   owner?: string;
 }
 
@@ -114,17 +123,6 @@ function formatLogFileName(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}-${pad(date.getMilliseconds(), 3)}`;
 }
 
-// Adds a column to an already-existing jobs table when it's missing --
-// covers a real, already-populated data/jobs.sqlite3 where the CREATE TABLE
-// IF NOT EXISTS below is a no-op and can't retroactively add a new column.
-// Mirrors src/lib/inventory.ts's own ensureColumn helper (not shared/
-// exported from there -- this is a separate SQLite database/table).
-function ensureColumn(db: Database.Database, table: string, column: string, ddl: string): void {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  if (!cols.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-  }
-}
 
 // process.kill(pid, 0) sends no signal -- it only checks the pid exists.
 // EPERM means it exists but belongs to another user, so it's still alive.
@@ -197,6 +195,7 @@ export class JobStore {
         prompt_matched_index INTEGER,
         triggered_by_username TEXT,
         triggered_by_impersonating TEXT,
+        triggered_via TEXT,
         owner TEXT
       )
     `);
@@ -206,6 +205,7 @@ export class JobStore {
     ensureColumn(this.db, 'jobs', 'prompt_matched_index', 'prompt_matched_index INTEGER');
     ensureColumn(this.db, 'jobs', 'triggered_by_username', 'triggered_by_username TEXT');
     ensureColumn(this.db, 'jobs', 'triggered_by_impersonating', 'triggered_by_impersonating TEXT');
+    ensureColumn(this.db, 'jobs', 'triggered_via', 'triggered_via TEXT');
     ensureColumn(this.db, 'jobs', 'owner', 'owner TEXT');
     // Brand new table (#6) -- unlike `jobs`, it never predates any of its
     // own columns, so there's no ensureColumn migration to run here.
@@ -229,7 +229,7 @@ export class JobStore {
     this.lastLogFileMs = nowMs;
     const logFile = formatLogFileName(new Date(nowMs));
     const stmt = this.db.prepare(
-      `INSERT INTO jobs (command, category, target, args_json, status, log_file, expected_prompts_json, triggered_by_username, triggered_by_impersonating, owner) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`
+      `INSERT INTO jobs (command, category, target, args_json, status, log_file, expected_prompts_json, triggered_by_username, triggered_by_impersonating, triggered_via, owner) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`
     );
     const result = stmt.run(
       input.command,
@@ -240,6 +240,7 @@ export class JobStore {
       input.expectedPromptsJson ?? null,
       input.triggeredByUsername ?? null,
       input.triggeredByImpersonating ?? null,
+      input.triggeredVia ?? null,
       input.owner ?? null
     );
     return Number(result.lastInsertRowid);
@@ -444,6 +445,7 @@ export class JobStore {
       promptMatchedIndex: row.prompt_matched_index,
       triggeredByUsername: row.triggered_by_username,
       triggeredByImpersonating: row.triggered_by_impersonating,
+      triggeredVia: row.triggered_via as TriggeredVia | null,
       owner: row.owner,
     };
   }

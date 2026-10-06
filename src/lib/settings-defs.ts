@@ -75,6 +75,11 @@ const webUiOidcRedirectUri = z.string().refine((value) => {
 // copy-paste is caught here rather than surfacing later as an opaque 401.
 const token = z.string().min(1, 'must not be empty').regex(/^\S+$/, 'must not contain whitespace');
 
+// The HTTP MCP endpoint's API key (#66): the same no-whitespace rule, plus
+// a minimum length, since it guards a network listener with operator trust.
+// The Settings page's Generate makes 43 characters (32 random bytes).
+const apiKey = token.min(32, 'must be at least 32 characters');
+
 // A password may contain spaces, but a control character (a pasted
 // newline, most likely) would never survive the JSON login request intact.
 const password = z.string().min(1, 'must not be empty').regex(/^[^\x00-\x1f\x7f]+$/, 'must not contain control characters');
@@ -106,6 +111,7 @@ export const SecretSettingsSchema = z.object({
   npmApiPassword: password.optional(),
   githubApiToken: token.optional(),
   webUiOidcClientSecret: token.optional(),
+  mcpApiKey: apiKey.optional(),
 });
 
 export type MovedSettingKey = keyof z.infer<typeof MovedSettingsSchema>;
@@ -115,7 +121,7 @@ export type ConfigKey = MovedSettingKey | SecretSettingKey;
 export const MOVED_SETTINGS_KEYS = Object.keys(MovedSettingsSchema.shape) as MovedSettingKey[];
 export const SECRET_SETTINGS_KEYS = Object.keys(SecretSettingsSchema.shape) as SecretSettingKey[];
 
-export type SettingGroup = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github';
+export type SettingGroup = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github' | 'mcp';
 
 export interface SettingDef {
   // The environment variable that overrides the stored value when set and
@@ -157,6 +163,9 @@ export const SETTING_DEFS: Record<ConfigKey, SettingDef> = {
   webUiOidcClientId: { envVar: 'WEB_UI_OIDC_CLIENT_ID', group: 'general', secret: false, envFile: 'authentik.env' },
   webUiOidcRedirectUri: { envVar: 'WEB_UI_OIDC_REDIRECT_URI', group: 'general', secret: false, envFile: 'authentik.env' },
   webUiOidcClientSecret: { envVar: 'WEB_UI_OIDC_CLIENT_SECRET', group: 'general', secret: true, envFile: 'authentik.env' },
+  // #65/#66: the key /mcp accepts besides a signed-in token. New, so no
+  // data/ file ever held it.
+  mcpApiKey: { envVar: 'MCP_API_KEY', group: 'mcp', secret: true },
 };
 
 export function isSecretSettingKey(key: string): key is SecretSettingKey {

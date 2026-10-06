@@ -197,6 +197,9 @@ export interface JobRow {
   promptMatchedIndex: number | null;
   triggeredByUsername: string | null;
   triggeredByImpersonating: string | null;
+  // The front end the job came from (#65/#66); null for older rows and
+  // scheduled runs.
+  triggeredVia: 'web' | 'mcp' | null;
 }
 
 export interface GatewayStatus {
@@ -376,7 +379,7 @@ export interface EnvironmentPin {
   storedValue?: string;
 }
 
-export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken' | 'webUiOidcClientSecret';
+export type SecretSettingKey = 'authentikApiToken' | 'cloudflareDnsApiToken' | 'npmApiPassword' | 'githubApiToken' | 'webUiOidcClientSecret' | 'mcpApiKey';
 export interface SecretStatus {
   set: boolean;
   source: SettingSource;

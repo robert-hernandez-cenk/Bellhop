@@ -225,7 +225,7 @@ test('resolveTriggeredBy and resolveActor give the real session user, with uid, 
     .get('/who')
     .set('Cookie', sessionCookie(sessions, { username: 'alice', groups: ['bellhop-admins'], uid: 'uid-alice', email: 'alice@example.com' }));
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body.triggeredBy, { triggeredByUsername: 'alice', triggeredByImpersonating: 'bellhop-viewers' });
+  assert.deepEqual(res.body.triggeredBy, { triggeredByUsername: 'alice', triggeredByImpersonating: 'bellhop-viewers', triggeredVia: 'web' });
   assert.deepEqual(res.body.actor, { username: 'alice', email: 'alice@example.com', uid: 'uid-alice' });
 });
 
@@ -234,7 +234,7 @@ test('resolveTriggeredBy and resolveActor give the session user, with uid, when 
   const res = await request(app)
     .get('/who')
     .set('Cookie', sessionCookie(sessions, { username: 'bob', groups: ['homelab'], uid: 'uid-bob' }));
-  assert.deepEqual(res.body.triggeredBy, { triggeredByUsername: 'bob' });
+  assert.deepEqual(res.body.triggeredBy, { triggeredByUsername: 'bob', triggeredVia: 'web' });
   assert.deepEqual(res.body.actor, { username: 'bob', uid: 'uid-bob' });
 });
 

@@ -77,7 +77,7 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `subdomains`: one row each, `owner_type`/`owner_name` -> owner.
 - `proxy_owner`: single row (`CHECK (id = 1)`) naming the `proxy: true` entry; written by `saveInventory`, never read (`loadInventory` reads the owning row's `proxy` column).
 - `meta`: operator settings, `domain` among them (#86: optional, since a fresh install has none; `requireDomain()` in `hostname.ts` is the reader that needs it and names `settingFix('domain', ...)`).
-- `secret_settings` (`key`/`value`, `SECRET_SETTINGS_TABLE_SQL` in `config.ts`): the four secrets.
+- `secret_settings` (`key`/`value`, `SECRET_SETTINGS_TABLE_SQL` in `config.ts`): the six secrets.
 - `setup_state` (#86, `setup-state.ts`): single row (`CHECK (id = 1)`), `status` `pending`/`finished`, the setup `token` (NULL once finished), `completed_steps_json`. `setupPhase()` is `pending` with no row and no hosts, `not-applicable` with no row but hosts (an existing deployment upgrading), else the row's status; `finished` is permanent even if every host is later deleted. Opened through `openDb` with its own `CREATE TABLE IF NOT EXISTS`.
 - Never touched by `saveInventory`: `setup_state`, `secret_settings`, `permission_groups`/`permission_rules`, `script_catalog`/`script_catalog_meta`, `task_schedules`, `app_update_status`.
 
@@ -223,7 +223,7 @@ No single-operator assumption: `pveUserRealm`/`pveCreatorRole` are optional; rea
 
 ### Definitions (`settings-defs.ts`)
 
-Leaf module (importing `inventory.ts` would cycle through `authentik-config.ts`): `MovedSettingsSchema`, `SecretSettingsSchema`, `SETTING_DEFS` (per key: env var, Settings-page group, secret flag, source `data/*.env`). Secrets `authentikApiToken`, `cloudflareDnsApiToken`, `npmApiPassword`, `githubApiToken` live in `secret_settings`, never read by `loadInventory`, so none reaches `Inventory` or its serializations (status page, `/api/inventory`, snapshots). Written only by `writeSecret`/`clearSecret` and the import.
+Leaf module (importing `inventory.ts` would cycle through `authentik-config.ts`): `MovedSettingsSchema`, `SecretSettingsSchema`, `SETTING_DEFS` (per key: env var, Settings-page group, secret flag, source `data/*.env`). Secrets `authentikApiToken`, `cloudflareDnsApiToken`, `npmApiPassword`, `githubApiToken`, `webUiOidcClientSecret`, `mcpApiKey` (#66: group `mcp`, env `MCP_API_KEY`, ≥ 32 characters, no `envFile`) live in `secret_settings`, never read by `loadInventory`, so none reaches `Inventory` or its serializations (status page, `/api/inventory`, snapshots). Written only by `writeSecret`/`clearSecret` and the import.
 
 ### The accessor (`config.ts`)
 
