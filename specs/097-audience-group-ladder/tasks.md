@@ -60,12 +60,12 @@ None — the stories share only `src/lib/authentik-config.ts`, which US1 changes
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T011 [P] `web-client/src/pages/SettingsPage.tsx`: update the `authentikGroupLadder` placeholder and help "Unset:" value to the new default.
-- [ ] T012 [P] `docs/configuration.md`: update the `authentikGroupLadder` default in the settings table.
-- [ ] T013 [P] `docs/environment-variables.md` "Group ladder upgrades": state the new default; add a short tier-audience table; replace the upgrade paragraph with the #97 behavior (stored tiers on the previous `bellhop-*` defaults are renamed automatically on open unless the ladder is pinned; operator renames/creates the groups in Authentik; to keep old names, pin the old ladder); keep the older `homelab-*` note brief.
-- [ ] T014 [P] `docs/authentik.md`: add a short "Access tiers" note pointing to the tier-audience table, mentioning self-enrollment into `bellhop-public` is not set up by Bellhop.
-- [ ] T015 [P] `src/commands/networking/CLAUDE.md`: update the default ladder statement and mention the #97 rename-on-open migration in `src/lib/CLAUDE.md` where inventory migrations are described (if such a list exists).
-- [ ] T016 Run `npm run typecheck` and `npm test` (includes `test/docs/links.test.ts`); all pass. `grep -rn "bellhop-app-users\|bellhop-users" src web-client/src docs scripts test` returns only the migration's rename pairs, migration tests, and the upgrade notes.
+- [x] T011 [P] `web-client/src/pages/SettingsPage.tsx`: update the `authentikGroupLadder` placeholder and help "Unset:" value to the new default.
+- [x] T012 [P] `docs/configuration.md`: update the `authentikGroupLadder` default in the settings table.
+- [x] T013 [P] `docs/environment-variables.md` "Group ladder upgrades": state the new default; add a short tier-audience table; replace the upgrade paragraph with the #97 behavior (stored tiers on the previous `bellhop-*` defaults are renamed automatically on open unless the ladder is pinned; operator renames/creates the groups in Authentik; to keep old names, pin the old ladder); keep the older `homelab-*` note brief.
+- [x] T014 [P] `docs/authentik.md`: add a short "Access tiers" note pointing to the tier-audience table, mentioning self-enrollment into `bellhop-public` is not set up by Bellhop.
+- [x] T015 [P] `src/commands/networking/CLAUDE.md`: update the default ladder statement and mention the #97 rename-on-open migration in `src/lib/CLAUDE.md` where inventory migrations are described (if such a list exists).
+- [x] T016 Run `npm run typecheck` and `npm test` (includes `test/docs/links.test.ts`); all pass. `grep -rn "bellhop-app-users\|bellhop-users" src web-client/src docs scripts test` returns only the migration's rename pairs, migration tests, and the upgrade notes.
 - [ ] T017 Quickstart §2–§3 run by hand; §4 in the demo at desktop and ≤640px viewports (Settings Authentik tab, Advanced modal tier dropdown). Regenerate `docs/images/` only if a screenshotted screen shows the ladder names.
 
 ## Dependencies & Execution Order

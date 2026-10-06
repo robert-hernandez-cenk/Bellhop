@@ -124,27 +124,46 @@ ladder, low (broadest audience) to high (narrowest) — it replaced the old
 single `AUTHENTIK_APP_USERS_GROUP` variable, which no longer exists. An
 inventory entry's `authGroup` names one rung; `sync-authentik` binds its
 Application to that rung and every rung above it, so the top rung is
-effectively "admin only" with no separate admin OR-check needed. It
-defaults to `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik
-Admins`.
+effectively "admin only" with no separate admin OR-check needed. A member
+of a low rung reaches only the apps gated at their rung or below it. It
+defaults to `bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik
+Admins`, each rung named for who belongs in it:
 
-**Upgrading from a deployment that relied on the previous default**
+| Rung | Who it is for |
+|---|---|
+| `bellhop-public-readonly` | The most constrained tier: members reach only apps gated here. |
+| `bellhop-public` | Members of the public using an external, public-facing site. Self-created accounts are acceptable here (Bellhop does not set up an enrollment flow; that is configured in Authentik). |
+| `bellhop-friends-family` | Friends and family you share more with, such as external websites. |
+| `bellhop-admin-family` | Household members such as a spouse: more than friends, close to an administrator. |
+| `authentik Admins` | Authentik's built-in administrators. |
+
+Bellhop never creates or renames these groups; create them in Authentik.
+Until a rung exists there, `sync-authentik` reports it as missing and still
+binds the rungs that do exist.
+
+**Upgrading from the previous default**
+(`bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik
+Admins`): stored `authGroup` values on those names are renamed the first
+time the database is opened — `bellhop-users` to `bellhop-admin-family`,
+`bellhop-app-users` to `bellhop-friends-family`, `bellhop-app-users-open`
+to `bellhop-public` — so every app keeps its place on the ladder. Each
+rename applies only when the effective ladder no longer lists the old name
+and does list the new one, so a deployment that pinned the old ladder
+(`authentikGroupLadder`, or `AUTHENTIK_GROUP_LADDER` in `data/authentik.env`)
+is left exactly as it was. Then either:
+
+- rename the three groups in Authentik to the new names (and create
+  `bellhop-public-readonly` if you want it), remove any pin of the old
+  ladder, and run `sync-authentik --apply`; or
+- keep the old names by pinning `authentikGroupLadder` to the old value.
+
+**Upgrading from the pre-Bellhop default**
 (`homelab-app-users-open,homelab-app-users,homelab-users,authentik
-Admins`, before the project's rename to Bellhop): stored `authGroup`
-values are never rewritten by an upgrade, so set `authentikGroupLadder`
-explicitly to the old value **before** upgrading — `AUTHENTIK_GROUP_LADDER`
-in `data/authentik.env` works too, and is imported on the first start —
-keeping every gated app on its current groups unchanged. If you upgrade
-first without doing this, every entry still gated at an old-default rung
-is left untouched, not reconciled, until you either set the ladder to the
-old value as above, or rename those groups in Authentik to the new default
-names and re-tier each affected entry (clear and re-set its access tier)
-so its stored `authGroup` matches a rung on the new default ladder.
-
-Until one of these is done, `sync-authentik` reports every affected
-entry under "Entries with an unknown authGroup" and leaves its existing
-Authentik Application and bindings alone — it is never deleted or
-silently rebound.
+Admins`): these names are never rewritten. Pin `authentikGroupLadder` to
+the old value, or rename the groups in Authentik and re-tier each affected
+entry. Until then, `sync-authentik` reports every affected entry under
+"Entries with an unknown authGroup" and leaves its existing Authentik
+Application and bindings alone — it is never deleted or silently rebound.
 
 ## Environment-only variables
 

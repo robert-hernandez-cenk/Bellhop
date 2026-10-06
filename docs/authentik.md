@@ -15,6 +15,10 @@ A persistent banner in the UI and a warning line in the server's startup log bot
 
 Every one of these can also be pinned by an environment variable instead (see [Environment variables](environment-variables.md)). A deployment still configured through `data/authentik.env` has its values imported into these settings on first start — see [Moving off the data/*.env files](configuration.md#moving-off-the-dataenv-files).
 
+### Access tiers
+
+An app's access tier (`authGroup`) is one rung of the group ladder. The default rungs, from most constrained to closest to admin, are `bellhop-public-readonly`, `bellhop-public` (public users of an external site; self-created accounts are fine), `bellhop-friends-family`, `bellhop-admin-family` (household members such as a spouse) and `authentik Admins`. Create the groups you use in Authentik; Bellhop never creates them, and it does not set up a self-enrollment flow for `bellhop-public`. What each rung is for, and how stored tiers on the previous default names are carried over, is in [Group ladder upgrades](environment-variables.md#group-ladder-upgrades).
+
 ## Web login
 
 Bellhop signs users in itself, as an OpenID Connect client of Authentik: an unauthenticated browser is sent to `/auth/login`, signs in at Authentik, and comes back with a session cookie. The reverse proxy no longer sits in front of the web UI doing a forward-auth check, and Bellhop ignores `X-authentik-*` request headers entirely — a client can send any header it likes, so none is trusted.

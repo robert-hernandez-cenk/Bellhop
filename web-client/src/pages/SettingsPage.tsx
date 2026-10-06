@@ -164,8 +164,8 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
   },
   authentikGroupLadder: {
     label: 'Group ladder',
-    placeholder: 'bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins',
-    help: "Comma-separated Authentik groups, lowest tier first, that a gated entry's auth group picks from; sync-authentik binds each app to its tier and every tier above it. Unset: bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins.",
+    placeholder: 'bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins',
+    help: "Comma-separated Authentik groups, lowest tier first, that a gated entry's auth group picks from; sync-authentik binds each app to its tier and every tier above it. Unset: bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins.",
   },
   authentikOutpostName: {
     label: 'Outpost name',

@@ -14,7 +14,7 @@ Scope: `sync-authentik`, OIDC credentials and adoption, `prune-acme-challenges`,
 
 ### Group-ladder bindings
 
-- Every `--apply` (#158) binds each gated Application to the entry's rung and every rung above (`rungsAtOrAbove`, `src/lib/authentik-config.ts`). `AUTHENTIK_GROUP_LADDER`: comma-separated, low to high, default `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins`. Authentik ORs bindings (`policy_engine_mode: any`), so the top rung is effectively admin-only.
+- Every `--apply` (#158) binds each gated Application to the entry's rung and every rung above (`rungsAtOrAbove`, `src/lib/authentik-config.ts`). `AUTHENTIK_GROUP_LADDER`: comma-separated, low to high, default `bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins`. Authentik ORs bindings (`policy_engine_mode: any`), so the top rung is effectively admin-only.
 - Creates missing wanted bindings, deletes unwanted on-ladder group ones; off-ladder group (hand-added) and policy-/user-backed bindings are untouched.
 - A needed rung missing in Authentik goes in `missingRungs`, never auto-created (that would hide a ladder typo).
 - An off-ladder `authGroup` entry is skipped entirely and reported in `offLadder`, not a `loadInventory` error (`validateInventory` runs on every load; a ladder edit must never make a saved inventory unloadable).
