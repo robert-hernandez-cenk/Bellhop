@@ -152,8 +152,7 @@ These are not settings and can only be set in the environment.
 
 - `INVENTORY_FILE` — path to the SQLite inventory database to use. Defaults
   to `inventory/bellhop.db`. Override to point at a temp `.db` fixture (e.g.
-  one seeded via `import-yaml-inventory --yaml-path
-  inventory/hosts.yaml.example --db-path <temp-path> --apply`), for
+  one written by `npm run demo:seed -- <temp-path>`), for
   testing without touching real infrastructure. The settings store lives
   in this same database, so the override also selects which settings are
   read.

@@ -46,7 +46,7 @@ export function resolveIdentityPath(identityFile: string, home: string = homedir
 // named, surfacing much later as an opaque "All configured authentication
 // methods failed" from the remote sshd. Failing here names the actual
 // mistake. Returns undefined only in the no-override, no-default-key case,
-// which connectConfig() reads as "fall back to the agent".
+// which sshConnectConfig() reads as "fall back to the agent".
 export function resolvePrivateKey(target: SshTarget, home: string = homedir()): Buffer | undefined {
   if (!target.identityFile) return defaultPrivateKey(home);
   const path = resolveIdentityPath(target.identityFile, home);
@@ -76,6 +76,11 @@ export interface SshTarget {
   port?: number;
   // Omitted means the global ~/.ssh/id_ed25519 -> id_ecdsa -> id_rsa lookup.
   identityFile?: string;
+  // Log in with this password instead of a key (issue #86): only the setup
+  // walkthrough's one-time key install sets it, never hostSshTarget(), so no
+  // inventory entry can carry one. Used for that one connection, never
+  // stored or logged.
+  password?: string;
 }
 
 export interface SSHClient {
@@ -135,30 +140,52 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+// The single place a SshTarget becomes ssh2 connection options -- exec(),
+// execInteractive(), and putFile() all connect through it.
+export function sshConnectConfig(target: SshTarget): ConnectConfig {
+  const common = {
+    host: target.host,
+    username: target.user,
+    // Spread in only when set, rather than `target.port ?? 22`, so ssh2
+    // keeps owning its own default instead of this file holding a second
+    // copy of it.
+    ...(target.port ? { port: target.port } : {}),
+    readyTimeout: 5000,
+  };
+  // A password target (the setup walkthrough's key install, #86) logs in
+  // with the password alone: no key file or agent is offered alongside, so
+  // the connection proves the password and nothing else.
+  if (target.password !== undefined) {
+    return { ...common, password: target.password, tryKeyboard: true };
+  }
+  const privateKey = resolvePrivateKey(target);
+  return {
+    ...common,
+    // Prefer reading an identity file directly, the same way a plain
+    // ssh/git-bash client authenticates when no agent is running. Falls
+    // back to an agent (Pageant on Windows, SSH_AUTH_SOCK elsewhere) only
+    // when no key file is found -- note resolvePrivateKey() throws rather
+    // than reaching here when the host names an ssh_identity_file that
+    // cannot be read.
+    ...(privateKey
+      ? { privateKey }
+      : { agent: process.platform === 'win32' ? 'pageant' : process.env.SSH_AUTH_SOCK }),
+  };
+}
+
 export class Ssh2SSHClient implements SSHClient {
-  // The single place a SshTarget becomes ssh2 connection options -- exec(),
-  // execInteractive(), and putFile() previously each carried their own
-  // identical copy of this block.
-  private connectConfig(target: SshTarget): ConnectConfig {
-    const privateKey = resolvePrivateKey(target);
-    return {
-      host: target.host,
-      username: target.user,
-      // Spread in only when set, rather than `target.port ?? 22`, so ssh2
-      // keeps owning its own default instead of this file holding a second
-      // copy of it.
-      ...(target.port ? { port: target.port } : {}),
-      // Prefer reading an identity file directly, the same way a plain
-      // ssh/git-bash client authenticates when no agent is running. Falls
-      // back to an agent (Pageant on Windows, SSH_AUTH_SOCK elsewhere) only
-      // when no key file is found -- note resolvePrivateKey() throws rather
-      // than reaching here when the host names an ssh_identity_file that
-      // cannot be read.
-      ...(privateKey
-        ? { privateKey }
-        : { agent: process.platform === 'win32' ? 'pageant' : process.env.SSH_AUTH_SOCK }),
-      readyTimeout: 5000,
-    };
+  // A new connection for one target. With a password target it also answers
+  // keyboard-interactive prompts with that password: many sshd configs
+  // (PAM) offer only keyboard-interactive, not plain password auth.
+  private newClient(target: SshTarget): Client {
+    const conn = new Client();
+    const { password } = target;
+    if (password !== undefined) {
+      conn.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+        finish(prompts.map(() => password));
+      });
+    }
+    return conn;
   }
 
   exec(
@@ -173,7 +200,7 @@ export class Ssh2SSHClient implements SSHClient {
         reject(new Error('Job cancelled'));
         return;
       }
-      const conn = new Client();
+      const conn = this.newClient(target);
       // Set once the operator cancels the job (Job History's Stop button)
       // while this exec is in flight -- ends the connection early and, once
       // 'close' fires as a result, rejects instead of resolving so a
@@ -302,7 +329,7 @@ export class Ssh2SSHClient implements SSHClient {
           }
           reject(err);
         })
-        .connect(this.connectConfig(target));
+        .connect(sshConnectConfig(target));
     });
   }
 
@@ -314,7 +341,7 @@ export class Ssh2SSHClient implements SSHClient {
   // session and is verified live against real infrastructure.
   execInteractive(target: SshTarget, command: string): Promise<ExecResult> {
     return new Promise((resolve, reject) => {
-      const conn = new Client();
+      const conn = this.newClient(target);
       // Set when the operator hits Ctrl+C locally -- unlike exec()'s
       // AbortSignal-driven cancellation (the web job runner's Stop
       // button), this is detected directly on the piped stdin stream
@@ -448,18 +475,18 @@ export class Ssh2SSHClient implements SSHClient {
             reject(cancelled ? new InteractiveCancelledError() : new Error('SSH connection closed unexpectedly'))
           );
         })
-        .connect(this.connectConfig(target));
+        .connect(sshConnectConfig(target));
     });
   }
 
-  // Shares connectConfig() with exec()/execInteractive() so it authenticates
+  // Shares sshConnectConfig() with exec()/execInteractive() so it authenticates
   // identically -- the only difference is opening an SFTP subsystem instead
   // of an exec channel. Like exec(), this method has no automated test: it
   // is the only other place in the codebase that opens a real SSH
   // connection, and is verified live rather than mocked.
   putFile(target: SshTarget, remotePath: string, content: Buffer): Promise<void> {
     return new Promise((resolve, reject) => {
-      const conn = new Client();
+      const conn = this.newClient(target);
       conn
         .on('ready', () => {
           conn.sftp((err, sftp) => {
@@ -481,7 +508,7 @@ export class Ssh2SSHClient implements SSHClient {
           });
         })
         .on('error', (err) => reject(err))
-        .connect(this.connectConfig(target));
+        .connect(sshConnectConfig(target));
     });
   }
 }

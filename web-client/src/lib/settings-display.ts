@@ -199,6 +199,7 @@ export type SettingsFieldKey = keyof SettingsValues | SecretSettingKey;
 // apply inside it unchanged.
 const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
   general: [
+    'domain',
     'nfsServer',
     'backupStorage',
     'dnsServer',

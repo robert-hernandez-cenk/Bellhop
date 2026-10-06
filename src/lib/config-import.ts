@@ -48,8 +48,8 @@ const IMPORT_SCHEMA = `
 
 export function importEnvFiles(inventoryPath: string, dataDir: string): ImportResult {
   const result: ImportResult = { imported: [], skipped: [] };
-  // Before the database exists (a fresh clone, or import-yaml-inventory
-  // about to create it) there is nowhere to import to, and creating the
+  // Before the database exists (a fresh clone, before the web service's
+  // first start creates it) there is nowhere to import to, and creating the
   // file here would be a surprising side effect.
   if (!existsSync(inventoryPath)) return result;
 
@@ -113,9 +113,9 @@ export function importEnvFiles(inventoryPath: string, dataDir: string): ImportRe
 // What each entry point (CLI, web service, MCP server, Windows service
 // script) runs at startup: the import, then registering the store. A failed
 // import only warns -- the files were just loaded into the environment, so
-// every value they hold is still in effect as an override, and a command
-// like import-yaml-inventory (creating a fresh database) must still run. The
-// message comes from SQLite or the filesystem, never from a file's values.
+// every value they hold is still in effect as an override, and the command
+// must still run. The message comes from SQLite or the filesystem, never
+// from a file's values.
 export function importEnvFilesAndUseStore(inventoryPath: string, dataDir: string): void {
   try {
     importEnvFiles(inventoryPath, dataDir);

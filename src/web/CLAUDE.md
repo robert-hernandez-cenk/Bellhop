@@ -44,6 +44,12 @@ Bellhop's own route is not forward-gated, so the HAProxy driver serves it like a
 
 The session store and the re-check single-flighting assume one Bellhop service process: sessions live in one `data/sessions.sqlite3` and the `inflight` map and `ImpersonationStore` are in-process, so two instances would not share them (a rotated refresh token could sign a user out). Sign-in also assumes the service is reached over HTTPS under one origin (`Secure` cookie, one registered redirect URI).
 
+## First-run setup (#86)
+
+While `SetupService.phase()` is `pending` (a fresh install: no hosts, no `setup_state` row saying finished), `setupGate` (first middleware in `buildApp`) answers every `/api` and `/auth` request 503 `setupRequired`, redirects page loads to `/setup`, and refuses the job-log WebSocket; only `/api/setup/*` and static assets pass. `server.ts` creates the token (`ensurePendingSetup`) and logs the setup address on every start while pending. `GET /setup?token=` swaps a valid token for the `bellhop_setup` cookie (HttpOnly, SameSite=Strict, not Secure, since setup runs over plain HTTP before any TLS); `requireSetupAuth` compares it in constant time. `src/web/setup/proxmox.ts` holds step 1's actions (key install over a password `SshTarget`, test, host save + the `sync-inventory` apply, peers); its errors are fixed text so an ssh2 message can never echo the password. Finish sets `finished` and nulls the token; afterwards the gate is a no-op and `/api/setup/*` answers 404. The walkthrough has no CLI equivalent. See `docs/setup.md`.
+
+Single-operator assumptions: one service process (the phase is cached in memory), and setup runs over plain HTTP, so the token and the one-time host password cross the network unencrypted unless the operator reaches Bellhop over a trusted network.
+
 ## MCP over HTTP
 
 #65/#66. `src/web/mcp/` serves `buildMcpServer`'s tools over Streamable HTTP at `/mcp`, mounted by `buildApp` (via `buildMcpHttp`, `index.ts`) **ahead of `requireAuth`**: a session cookie never authenticates it, only `Authorization: Bearer`. Contract: `specs/065-mcp-https-transport/contracts/http-mcp.md`.

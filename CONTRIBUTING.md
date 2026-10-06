@@ -30,20 +30,18 @@ built-in example inventory, with no Proxmox host or Authentik instance
 required, and every change vanishes when you stop it. See
 [Web UI](docs/web-ui.md#demo).
 
-Skip the README's first-time inventory step. It writes to the default
-inventory path, which is meant for an operator's real hosts. Build a
-throwaway inventory from the tracked example file instead:
+Skip the README's first-run setup. It creates the inventory at the default
+path, which is meant for an operator's real hosts. Write the demo inventory
+(example-only data) to a throwaway database instead:
 
 ```bash
 INVENTORY_DIR="$(mktemp -d)"
-npm run bellhop -- import-yaml-inventory \
-  --yaml-path inventory/hosts.yaml.example \
-  --db-path "$INVENTORY_DIR/bellhop.db" --apply
+npm run demo:seed -- "$INVENTORY_DIR/bellhop.db"
 export INVENTORY_FILE="$INVENTORY_DIR/bellhop.db"
 ```
 
 Every command reads the inventory from `INVENTORY_FILE` when it is set, so
-the CLI now runs against the example file's hosts and guests. Commands that
+the CLI now runs against the demo inventory's hosts and guests. Commands that
 would change infrastructure still print a dry run by default (see below),
 so you can explore them safely.
 

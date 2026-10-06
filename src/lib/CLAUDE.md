@@ -6,7 +6,7 @@ Documented elsewhere: proxy drivers and `npm-client.ts` in `src/lib/proxy/CLAUDE
 
 ## Inventory schema (`inventory.ts`)
 
-`inventory/bellhop.db` (SQLite, real hostnames/IPs) is gitignored (#116): the repo is public, so no commit can ever pick up real operational data. One per checkout. `inventory/hosts.yaml.example` documents the shape only; the one-time `import-yaml-inventory` CLI command (`src/cli.ts`) `saveInventory`s a `hosts.yaml`-shaped file to a fresh `.db`.
+`inventory/bellhop.db` (SQLite, real hostnames/IPs) is gitignored (#116): the repo is public, so no commit can ever pick up real operational data. One per checkout. A fresh install creates it through the web UI's first-run setup walkthrough (#86, `src/web/CLAUDE.md`); `npm run demo:seed -- <path>` (`scripts/demo/seed-db.ts`) writes the demo inventory to a throwaway `.db` for CLI work.
 
 Zod `HostEntrySchema`/`GuestEntrySchema`/`InventorySchema`: `hosts[]` (Proxmox) and `guests[]` (LXC/VM, naming their `host`, with a `vmid`).
 
@@ -52,7 +52,7 @@ On hosts, guests, and external sites (`ExternalSiteSchema`: a proxy target that 
 - at most one `authentik: true` entry;
 - if any entry is forward-gated (`effectiveAuth() === 'forward'`, incl. external sites), an `authentik: true` entry exists and has an `ip` (OIDC-gated entries need neither);
 - every guest's `host` exists;
-- non-empty `subdomains` requires `ip` unless `proxyManual`;
+- non-empty `subdomains` requires `ip` unless `proxyManual`, and requires the `domain` setting (#86);
 - no subdomain claimed twice;
 - no two hosts share `midScheme.vmidBase` or `midScheme.ipPrefix` (`resolveMid` would hand out colliding VMIDs/IPs).
 
@@ -76,14 +76,16 @@ Never here: driver capability checks, `oidcConfigErrors` (a setting change must 
 - `hosts`, `guests`, `external_sites`.
 - `subdomains`: one row each, `owner_type`/`owner_name` -> owner.
 - `proxy_owner`: single row (`CHECK (id = 1)`) naming the `proxy: true` entry; written by `saveInventory`, never read (`loadInventory` reads the owning row's `proxy` column).
-- `meta`: `domain` plus operator settings.
+- `meta`: operator settings, `domain` among them (#86: optional, since a fresh install has none; `requireDomain()` in `hostname.ts` is the reader that needs it and names `settingFix('domain', ...)`).
 - `secret_settings` (`key`/`value`, `SECRET_SETTINGS_TABLE_SQL` in `config.ts`): the six secrets.
-- Never touched by `saveInventory`: `secret_settings`, `permission_groups`/`permission_rules`, `script_catalog`/`script_catalog_meta`, `task_schedules`, `app_update_status`.
+- `setup_state` (#86, `setup-state.ts`): single row (`CHECK (id = 1)`), `status` `pending`/`finished`, the setup `token` (NULL once finished), `completed_steps_json`. `setupPhase()` is `pending` with no row and no hosts, `not-applicable` with no row but hosts (an existing deployment upgrading), else the row's status; `finished` is permanent even if every host is later deleted. Opened through `openDb` with its own `CREATE TABLE IF NOT EXISTS`.
+- Never touched by `saveInventory`: `setup_state`, `secret_settings`, `permission_groups`/`permission_rules`, `script_catalog`/`script_catalog_meta`, `task_schedules`, `app_update_status`.
 
 ### `meta` settings
 
 `SettingsSchema`/`SETTINGS_KEYS` (`inventory.ts`), spread flat into `InventorySchema` like `domain`:
 
+- `domain` (#86): optional DNS name, one rule shared by `set-config`, the Settings page and the setup walkthrough. `validateInventory` refuses an entry with `subdomains` while it is unset, which also refuses clearing it.
 - `nfsServer`, `backupStorage`, `dnsServer`, `statusPagePath` (#124): readers fail with a named error, never a hardcoded fallback (a wrong IP is worse than none), ending with `settingFix(key, valueHint)` (`settings-hint.ts`, #20), which names both `set-config` and the Settings page.
 - `customScriptsRepo`/`customScriptsBranch` (#11): each validated (owner/repo; git branch name). Both-or-neither is not in the schema (`set-config` writes one key at a time); `customScriptSource()` (`app-source.ts`) enforces it on read.
 - `proxyDriver`/`proxyConfigPath`: `getDriver()`'s driver and its config file.
@@ -116,7 +118,7 @@ Runs in `loadInventory` before validation (SQL `ORDER BY` misses nested arrays/t
 
 The first subdomain is canonical, so `subdomains` is read `ORDER BY rowid`; `saveInventory` re-inserts each owner's list in array order. Any direct writer must too, or the order silently breaks.
 
-The `yaml` package is used by `import-yaml-inventory` (parse) and `render-status-page` (`stringify` of live inventory), not by `loadInventory`/`saveInventory`.
+The `yaml` package is used by `render-status-page` (`stringify` of live inventory), not by `loadInventory`/`saveInventory`.
 
 ### Migrations
 
@@ -124,7 +126,7 @@ All guarded, self-idempotent, log only on change, **forward-only** (older code c
 
 - **`requires_auth` -> `auth_group` (#158)**: on a `requires_auth` column in `hosts`/`guests`/`external_sites`, sets `auth_group` on every `requires_auth = 1` row to the ladder's *top* rung (`authentik Admins` by default; fail-closed), then drops the column. The ladder is the opened DB's own `authentikGroupLadder` `meta` row (same handle, pure `effectiveValue`, so `AUTHENTIK_GROUP_LADDER` overrides), not the snapshot, so a custom ladder applies from any entry point even before the `data/*.env` import (a ladder only in `data/authentik.env` arrives as the env override via dotenv).
 - **`migrateCaddyToProxy` (#10)**: renames `hosts`/`guests` columns `caddy`/`caddy_manual` (`ALTER TABLE … RENAME COLUMN`, SQLite 3.25+) to `proxy`/`proxy_manual` and drops any `caddy_owner` table (never read; next save fills `proxy_owner`). Must run before `ensureColumn(..., 'proxy_manual', ...)`, else the rename hits a duplicate column. Columns are checked independently (a DB without `caddy_manual` gets `proxy_manual` from `ensureColumn`).
-- **`migrateLegacyTlsSettings` (#72)**: runs from `openInventoryDb` right after `migrateCaddyToProxy` (load and save alike). A one-row guard query (`proxyCaddyTls`, or `proxyCertResolver` = `none`) returns early when there is nothing to convert, so later opens pay one SELECT and take no lock. Otherwise, in one IMMEDIATE transaction (it reads then writes; a deferred one could hit `SQLITE_BUSY_SNAPSHOT` when two processes open a legacy database at once), it reads the raw `meta` rows `proxyDriver`, `proxyCaddyTls`, `proxyCertResolver`, `tlsSource`, applies the pure `convertLegacyTlsSettings` (`src/lib/proxy/legacy-tls.ts`) and writes `tlsSource` / deletes the legacy rows, logging `Migrated TLS settings to tlsSource (#72, one-time, irreversible): <description>` only when something changed. Caddy/caddy-api/unset driver: `proxyCaddyTls` letsencrypt/internal/files -> acme-http/internal/files, while `cloudflare` (its old default) leaves `tlsSource` unset (Caddy's default `acme-dns`, same output) so a later switch to nginx/HAProxy/NPM isn't refused; Traefik `proxyCertResolver: none` -> `external`; under any other driver the legacy rows are just removed; a named `proxyCertResolver` is untouched; an existing `tlsSource` is never overwritten. The mapping is a `Map` (own keys only) because the values are unvalidated strings. `import-yaml-inventory` applies the same conversion to the parsed YAML before the schema (which would otherwise strip the keys), and additionally rejects a `proxyCaddyTls` outside `LEGACY_CADDY_TLS_VALUES` (a typo the old enum caught) naming the key, value and allowed values; the open path can't fail a load, so it just drops such a value. Self-idempotent because the legacy rows are gone after the first open; rendered output is unchanged (`test/lib/proxy/legacy-tls-render.test.ts`).
+- **`migrateLegacyTlsSettings` (#72)**: runs from `openInventoryDb` right after `migrateCaddyToProxy` (load and save alike). A one-row guard query (`proxyCaddyTls`, or `proxyCertResolver` = `none`) returns early when there is nothing to convert, so later opens pay one SELECT and take no lock. Otherwise, in one IMMEDIATE transaction (it reads then writes; a deferred one could hit `SQLITE_BUSY_SNAPSHOT` when two processes open a legacy database at once), it reads the raw `meta` rows `proxyDriver`, `proxyCaddyTls`, `proxyCertResolver`, `tlsSource`, applies the pure `convertLegacyTlsSettings` (`src/lib/proxy/legacy-tls.ts`) and writes `tlsSource` / deletes the legacy rows, logging `Migrated TLS settings to tlsSource (#72, one-time, irreversible): <description>` only when something changed. Caddy/caddy-api/unset driver: `proxyCaddyTls` letsencrypt/internal/files -> acme-http/internal/files, while `cloudflare` (its old default) leaves `tlsSource` unset (Caddy's default `acme-dns`, same output) so a later switch to nginx/HAProxy/NPM isn't refused; Traefik `proxyCertResolver: none` -> `external`; under any other driver the legacy rows are just removed; a named `proxyCertResolver` is untouched; an existing `tlsSource` is never overwritten. The mapping is a `Map` (own keys only) because the values are unvalidated strings. The open path can't fail a load, so a `proxyCaddyTls` outside the old enum is just dropped. Self-idempotent because the legacy rows are gone after the first open; rendered output is unchanged (`test/lib/proxy/legacy-tls-render.test.ts`).
 
 ## Target resolution (`targets.ts`, `ssh-client.ts`)
 
@@ -150,10 +152,15 @@ Guest commands are wrapped `sh -c ${shellQuote(cmd)}` (POSIX single-quote escapi
 
 - **Auth order**: first of `~/.ssh/id_ed25519`/`id_ecdsa`/`id_rsa` as `privateKey` (like plain `ssh` without an agent); only if none exist, an agent (`SSH_AUTH_SOCK`, `'pageant'` on Windows). `ssh_identity_file` overrides.
 - 5s connect timeout: a bad key fails fast.
-- **`SshTarget`** `{ host, user, port?, identityFile? }` is the one argument of all three `SSHClient` methods. Only `Ssh2SSHClient.connectConfig()` maps it to ssh2 options and only `hostSshTarget(host)` (`targets.ts`) builds it from an entry, so a new per-host setting is threaded only there.
+- **`SshTarget`** `{ host, user, port?, identityFile?, password? }` (`password` is only the setup walkthrough's one-time key install, #86: it replaces key/agent auth for that connection, `hostSshTarget` never sets it, and it is never stored or logged). is the one argument of all three `SSHClient` methods. Only `Ssh2SSHClient.connectConfig()` maps it to ssh2 options and only `hostSshTarget(host)` (`targets.ts`) builds it from an entry, so a new per-host setting is threaded only there.
 - **Null exit code**: `'close'` with `code === null` (signal-terminated; 2nd arg is the signal name) is a failure (`code: 1`, signal name in `stderr` if nothing else captured), never `0`.
 - **Stdin closed**: `stream.end()` right after open, so a command reading stdin fails on EOF, not hangs (e.g. `paperless-gpt`/`paperless-ngx` `read -p` prompts). `onStdinReady` instead keeps stdin open with a pty (web prompt relay; `src/web/jobs/CLAUDE.md`).
 - `execInteractive()`: real remote pty for the CLI's interactive `install-app` (`src/commands/provisioning/CLAUDE.md`).
+
+### Setup-walkthrough helpers (#86)
+
+- `bellhop-key.ts`: Bellhop's own ed25519 key under `<dataDir>/ssh/` (`ensureBellhopKey`, created once, never overwritten) or an unencrypted key file (`keyFromFile`); hosts added by the walkthrough record the path as `ssh_identity_file`.
+- `pve-discovery.ts`: zod parsers for `pvesh get /version`, `/cluster/status` and `/nodes/<node>/network`, tested against captured fixtures (`test/fixtures/proxmox/`). `mid-suggest.ts` derives a `midScheme` suggestion from the bridge address.
 
 ### phantom-success: why a null exit code is a failure
 

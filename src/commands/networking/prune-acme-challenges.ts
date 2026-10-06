@@ -1,5 +1,6 @@
 import type { CloudflareClient } from '../../lib/cloudflare-client.ts';
 import type { Inventory } from '../../lib/inventory.ts';
+import { requireDomain } from '../../lib/hostname.ts';
 
 // A DNS-01 challenge record only matters for the minutes a challenge is being
 // validated, so anything untouched for a day is not in use by Caddy or by any
@@ -50,7 +51,7 @@ export async function runPruneAcmeChallenges(
   deps: { cloudflare: CloudflareClient; inventory: Inventory }
 ): Promise<PruneAcmeChallengesResult> {
   const now = (opts.now ?? new Date()).getTime();
-  const domain = deps.inventory.domain;
+  const domain = requireDomain(deps.inventory);
   const zoneId = await deps.cloudflare.findZoneId(domain);
   if (!zoneId) {
     throw new Error(`Cloudflare zone '${domain}' not found -- the token needs Zone:Read and DNS:Edit on that zone`);

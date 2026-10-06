@@ -11,6 +11,7 @@ import { newTestSessions, sessionCookie } from '../support/web-session.ts';
 import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
 import { savePermissionGroup } from '../../src/lib/permissions.ts';
 import { saveInventory } from '../../src/lib/inventory.ts';
+import { SetupService } from '../../src/web/setup/service.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -191,4 +192,34 @@ test('WS upgrade still applies the impersonation overlay, keyed by the session u
       await close();
     }
   });
+});
+
+// --- #86: no job-log socket while first-run setup is pending -----------------
+
+test('the job-log socket is refused with 503 while setup is pending', async () => {
+  const jobStore = new JobStore(':memory:');
+  const jobLog = createJobLog(mkdtempSync(path.join(tmpdir(), 'joblog-')));
+  const jobRunner = new JobRunner(jobStore, jobLog, new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })));
+  const server = http.createServer();
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'inventory-')), 'bellhop.db');
+  saveInventory(inventoryPath, { hosts: [], guests: [] });
+  const inventory = { hosts: [], guests: [] };
+  const setup = new SetupService({ inventoryPath, inventory, dataDir: mkdtempSync(path.join(tmpdir(), 'data-')) });
+  setup.start();
+  const sessions = newTestSessions();
+  const wss = attachJobsWebSocket(server, jobRunner, jobStore, jobLog, inventoryPath, inventory, new Map(), sessions, { setup });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const port = (server.address() as any).port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/jobs/1`, {
+    headers: { Cookie: sessionCookie(sessions, { username: 'admin', groups: ['bellhop-admins'] }) },
+  });
+  const status = await new Promise<number | undefined>((resolve) => {
+    ws.on('unexpected-response', (_req, res) => resolve(res.statusCode));
+    ws.on('open', () => resolve(101));
+    ws.on('error', () => resolve(undefined));
+  });
+  assert.equal(status, 503);
+  ws.terminate();
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 });

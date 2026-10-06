@@ -8,6 +8,7 @@ import {
   InteractiveCancelledError,
   resolveIdentityPath,
   resolvePrivateKey,
+  sshConnectConfig,
 } from '../../src/lib/ssh-client.ts';
 import { FakeSSHClient } from '../support/fake-ssh-client.ts';
 
@@ -192,4 +193,25 @@ test('resolvePrivateKey returns undefined when no identityFile is set and no def
   // "use Pageant/SSH_AUTH_SOCK instead of a privateKey".
   const home = fakeHome();
   assert.equal(resolvePrivateKey({ host: 'pve1.local', user: 'root' }, home), undefined);
+});
+
+// Issue #86: the setup walkthrough's one-time key install logs in with the
+// host's password, and only then -- never with a key or an agent alongside.
+test('sshConnectConfig uses only the password (plus keyboard-interactive) when the target carries one', () => {
+  const config = sshConnectConfig({ host: '192.0.2.10', user: 'root', port: 2222, password: 'changeme' });
+  assert.equal(config.password, 'changeme');
+  assert.equal(config.tryKeyboard, true);
+  assert.equal(config.privateKey, undefined);
+  assert.equal(config.agent, undefined);
+  assert.equal(config.port, 2222);
+});
+
+test('sshConnectConfig never sets a password for an ordinary target', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ssh-home-'));
+  const keyPath = join(home, 'key');
+  writeFileSync(keyPath, 'KEY');
+  const config = sshConnectConfig({ host: '192.0.2.10', user: 'root', identityFile: keyPath });
+  assert.equal(config.password, undefined);
+  assert.equal(config.tryKeyboard, undefined);
+  assert.deepEqual(config.privateKey, Buffer.from('KEY'));
 });

@@ -805,12 +805,12 @@ test('POST /api/provisioning/install-app/apply records the app slug on the new g
   assert.equal(guest.app, 'plex');
 
   // GET /api/inventory serves in-memory state, not a re-parse of the written
-  // file -- also load the actual hosts.yaml this apply wrote to, to confirm
+  // file -- also load the actual inventory database this apply wrote to, to confirm
   // `app` survives the real YAML write+reparse round trip (not just the
   // in-memory upsertGuestEntry merge).
   const reloaded = loadInventory(inventoryPath);
   const reloadedGuest = reloaded.guests.find((g) => g.name === 'plex-app-test');
-  assert.ok(reloadedGuest, 'new guest should be present after reloading hosts.yaml from disk');
+  assert.ok(reloadedGuest, 'new guest should be present after reloading the inventory from disk');
   assert.equal(reloadedGuest?.app, 'plex');
 });
 

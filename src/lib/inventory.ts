@@ -5,6 +5,7 @@ import { logInfo, logWarn } from './log.ts';
 import { ensureColumn, openDb } from './sqlite.ts';
 import { parseGroupLadder } from './authentik-config.ts';
 import { MovedSettingsSchema } from './settings-defs.ts';
+import { settingFix } from './settings-hint.ts';
 import { SECRET_SETTINGS_TABLE_SQL, effectiveValue, invalidateConfigSnapshot } from './config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
 // module -- importing index.ts here would cycle back into this file.
@@ -341,6 +342,18 @@ export const ExternalSiteSchema = z.object({
 // enforced at the point of use, by customScriptSource() in
 // src/lib/app-source.ts.
 export const SettingsSchema = z.object({
+  // The base domain every entry's subdomains hang off (issue #86). A setting
+  // like any other, so a fresh install's database loads before the setup
+  // walkthrough's second step saves one; validateInventory requires it once
+  // any entry has subdomains. Dot-separated labels ending in a label that
+  // starts with a letter, no trailing dot.
+  domain: z
+    .string()
+    .regex(
+      /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,62}$/,
+      'must be a domain name such as example.com'
+    )
+    .optional(),
   nfsServer: z.string().min(1).optional(),
   backupStorage: z.string().min(1).optional(),
   dnsServer: z.string().min(1).optional(),
@@ -475,7 +488,6 @@ export function assignSetting(target: Partial<Settings>, key: keyof Settings, va
 }
 
 export const InventorySchema = z.object({
-  domain: z.string().min(1),
   ...SettingsSchema.shape,
   hosts: z.array(HostEntrySchema),
   guests: z.array(GuestEntrySchema),
@@ -835,6 +847,19 @@ export function validateInventory(inv: Inventory): string[] {
     ...inv.guests,
     ...(inv.externalSites ?? []),
   ];
+  // Issue #86: the domain is optional until something needs it. Every
+  // subdomain is rendered as <subdomain>.<domain>, so an entry with
+  // subdomains and no domain could only ever produce broken routes. This is
+  // also what refuses clearing the domain (set-config --unset, the Settings
+  // page) while subdomains exist, since both save through saveInventory.
+  if (!inv.domain) {
+    const withSubdomains = allEntries.filter((e) => (e.subdomains?.length ?? 0) > 0).map((e) => `'${e.name}'`);
+    if (withSubdomains.length > 0) {
+      errors.push(
+        `Inventory validation: ${withSubdomains.join(', ')} ${withSubdomains.length === 1 ? 'has' : 'have'} subdomains but no domain is set -- ${settingFix('domain', '<domain>')}`
+      );
+    }
+  }
   for (const entry of allEntries) {
     // A proxyManual entry never produces a reverse_proxy target
     // (buildRoutes skips it outright), so it doesn't need an ip the way
@@ -1231,7 +1256,6 @@ export function loadInventory(path: string): Inventory {
     }
 
     const assembled = sortInventoryForFile({
-      domain: meta.get('domain') ?? '',
       ...settings,
       hosts,
       guests,
@@ -1384,7 +1408,6 @@ export function saveInventory(path: string, inv: Inventory): void {
         'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
       );
       const deleteMeta = db.prepare('DELETE FROM meta WHERE key = ?');
-      upsertMeta.run('domain', data.domain);
       // An undefined field DELETEs its row rather than being skipped --
       // otherwise clearing a setting would silently leave the old value in
       // the DB and it would come straight back on the next load.

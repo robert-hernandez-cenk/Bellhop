@@ -8,7 +8,6 @@ import { Ssh2SSHClient } from './lib/ssh-client.ts';
 import { loadInventory, saveInventory, SETTINGS_KEYS, withFreshSettings } from './lib/inventory.ts';
 import { dataDir, inventoryPath } from './lib/paths.ts';
 import { runAuditNfsMounts, formatAuditNfsMounts } from './commands/maintenance/audit-nfs-mounts.ts';
-import { runImportYamlInventory } from './commands/maintenance/import-yaml-inventory.ts';
 import { runSyncInventory, formatSyncInventory } from './commands/maintenance/sync-inventory.ts';
 import { runUpdateAll, formatUpdateAll } from './commands/maintenance/update-all.ts';
 import { runUpdateApp } from './commands/maintenance/update-app.ts';
@@ -61,8 +60,7 @@ dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: tr
 
 // Before any command runs, --help included (an import is idempotent, and with
 // no database there is nothing to import into and nothing is created). A
-// failed import only warns, so it can never stop a command --
-// import-yaml-inventory creating a fresh database, say -- from running.
+// failed import only warns, so it can never stop a command from running.
 // Registering the store is what makes configValue() read stored settings at
 // all; without it the accessor sees the environment only.
 importEnvFilesAndUseStore(inventoryPath(), dataDir());
@@ -134,27 +132,6 @@ program
       // save in the meantime must not be reverted by this one.
       saveInventory(invPath, withFreshSettings(invPath, { ...inventory, guests: result.guests, hosts: result.hosts }));
       logInfo(`Wrote ${invPath}`);
-    })
-  );
-
-program
-  .command('import-yaml-inventory')
-  .description('One-time migration: import an existing hosts.yaml into a new SQLite inventory database')
-  .requiredOption('--yaml-path <path>', 'path to the existing hosts.yaml')
-  .requiredOption('--db-path <path>', 'path to the new SQLite database to create')
-  .option('--apply')
-  .action(
-    action(async (opts: { yamlPath: string; dbPath: string; apply?: boolean }) => {
-      const { inventory, applied } = await runImportYamlInventory(opts);
-      if (!applied) {
-        logInfo(
-          `[DRY RUN] Would import ${inventory.hosts.length} host(s), ${inventory.guests.length} guest(s) from ${opts.yamlPath} into ${opts.dbPath}`
-        );
-        return;
-      }
-      logInfo(
-        `Imported ${inventory.hosts.length} host(s), ${inventory.guests.length} guest(s) from ${opts.yamlPath} into ${opts.dbPath}`
-      );
     })
   );
 

@@ -216,10 +216,8 @@ code and restart the service, and the upgrade never repeats. Caddy is
 chosen as the driver by default, so the reverse-proxy configuration a
 `sync-proxy --apply` produces afterward is unchanged from before the
 upgrade. The renamed command was `sync-caddy` and the renamed inventory
-flags were `caddy`/`caddyManual`; none of the old names still work, and
-`import-yaml-inventory` refuses a `hosts.yaml` that still uses the old
-flags until they are renamed to `proxy`/`proxyManual`. Two cases do need
-a step by hand:
+flags were `caddy`/`caddyManual`; none of the old names still work. Two
+cases do need a step by hand:
 
 - **You set `CADDYFILE_PATH`.** That environment variable is gone and is
   no longer read. If you pointed it anywhere other than

@@ -5,6 +5,7 @@ import { runRemote } from '../../lib/targets.ts';
 import { parseNet0, setNet0Gateway, buildDnsmasqInstallScript, buildDnsmasqRemoveScript } from '../../lib/guest-vpn.ts';
 import { logInfo } from '../../lib/log.ts';
 import { settingFix } from '../../lib/settings-hint.ts';
+import { requireDomain } from '../../lib/hostname.ts';
 
 export interface SetGuestVpnOptions {
   guest: string;
@@ -100,7 +101,7 @@ export async function runSetGuestVpn(
   } else {
     const fetchImpl = deps.fetchImpl ?? fetch;
     const providerDns = await resolveProviderDns(gatewayIp, fetchImpl);
-    dnsScript = buildDnsmasqInstallScript(deps.inventory.domain, providerDns, dnsServer);
+    dnsScript = buildDnsmasqInstallScript(requireDomain(deps.inventory), providerDns, dnsServer);
   }
 
   if (!opts.apply) {

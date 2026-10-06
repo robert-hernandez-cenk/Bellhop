@@ -1,0 +1,48 @@
+[
+  {
+    "active": 1,
+    "address": "192.0.2.10",
+    "autostart": 1,
+    "bridge_fd": "0",
+    "bridge_ports": "enp0s31f6",
+    "bridge_stp": "off",
+    "cidr": "192.0.2.10/24",
+    "comments": "LAN\n",
+    "families": [
+      "inet"
+    ],
+    "gateway": "192.0.2.1",
+    "iface": "vmbr0",
+    "method": "static",
+    "method6": "manual",
+    "netmask": "24",
+    "priority": 5,
+    "type": "bridge"
+  },
+  {
+    "exists": 1,
+    "families": [
+      "inet"
+    ],
+    "iface": "wlx001122334455",
+    "method": "manual",
+    "method6": "manual",
+    "priority": 4,
+    "type": "eth"
+  },
+  {
+    "active": 1,
+    "altnames": [
+      "enx001122334456"
+    ],
+    "exists": 1,
+    "families": [
+      "inet"
+    ],
+    "iface": "enp0s31f6",
+    "method": "manual",
+    "method6": "manual",
+    "priority": 3,
+    "type": "eth"
+  }
+]

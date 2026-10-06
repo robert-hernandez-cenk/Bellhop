@@ -44,8 +44,8 @@ test('runSetConfig --unset clears an existing value', () => {
 test('runSetConfig rejects an unknown key', () => {
   const inventoryPath = tempInventoryPath();
   assert.throws(
-    () => runSetConfig({ key: 'domain', value: 'other.com', apply: true }, { inventoryPath }),
-    /Unknown setting 'domain'/
+    () => runSetConfig({ key: 'notASetting', value: 'other.com', apply: true }, { inventoryPath }),
+    /Unknown setting 'notASetting'/
   );
 });
 
@@ -538,4 +538,31 @@ test('runSetConfig sets webUiAuthMode oidc with no login settings configured', (
   const result = runSetConfig({ key: 'webUiAuthMode', value: 'oidc', apply: true }, { inventoryPath });
   assert.equal(result.applied, true);
   assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
+});
+
+// Issue #86: the domain is an ordinary setting, validated by SettingsSchema.
+test('runSetConfig sets the domain with --apply', () => {
+  const inventoryPath = tempInventoryPath();
+  runSetConfig({ key: 'domain', value: 'example.net', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).domain, 'example.net');
+});
+
+test('runSetConfig rejects a domain that is not a domain name', () => {
+  const inventoryPath = tempInventoryPath();
+  assert.throws(
+    () => runSetConfig({ key: 'domain', value: 'not_a_domain', apply: true }, { inventoryPath }),
+    /domain: must be a domain name such as example\.com/
+  );
+});
+
+test('runSetConfig refuses to clear the domain while an entry has subdomains', () => {
+  const inventoryPath = tempInventoryPath({
+    ...FIXTURE,
+    guests: [{ name: 'web', type: 'lxc', vmid: 101, host: 'pve1', ip: '192.0.2.21', subdomains: ['web'] }],
+  });
+  assert.throws(
+    () => runSetConfig({ key: 'domain', unset: true, apply: true }, { inventoryPath }),
+    /'web' has subdomains but no domain is set/
+  );
+  assert.equal(loadInventory(inventoryPath).domain, 'example.com');
 });

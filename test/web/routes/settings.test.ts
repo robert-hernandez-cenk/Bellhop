@@ -128,7 +128,7 @@ test('PATCH /api/settings clears a value sent as null', async () => {
 
 test('PATCH /api/settings rejects an unknown key', async () => {
   const { app } = testApp();
-  const res = await asAdmin(request(app).patch('/api/settings')).send({ domain: 'other.com' });
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ notASetting: 'other.com' });
   assert.equal(res.status, 400);
 });
 
@@ -1186,6 +1186,34 @@ test('PATCH /api/settings logs nothing about sign-in mode for a change that does
   const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'none' });
   assert.equal(res.status, 200);
   assert.ok(!errors.some((line) => line.includes('Sign-in mode changed')));
+});
+
+// Issue #86: the domain is shown and edited like any other setting.
+test('GET /api/settings includes the domain', async () => {
+  const { app } = testApp();
+  const res = await asAdmin(request(app).get('/api/settings'));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.settings.domain, 'example.com');
+});
+
+test('PATCH /api/settings saves a domain and rejects an invalid one', async () => {
+  const { app, inventoryPath } = testApp();
+  const bad = await asAdmin(request(app).patch('/api/settings')).send({ domain: 'not_a_domain' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /must be a domain name such as example\.com/);
+  const good = await asAdmin(request(app).patch('/api/settings')).send({ domain: 'example.net' });
+  assert.equal(good.status, 200);
+  assert.equal(loadInventory(inventoryPath).domain, 'example.net');
+});
+
+test('PATCH /api/settings refuses to clear the domain while an entry has subdomains', async () => {
+  const inv = baseInventory();
+  inv.guests.push({ name: 'web', type: 'lxc', vmid: 101, host: 'pve1', ip: '10.0.0.21', subdomains: ['web'] });
+  const { app, inventoryPath } = testApp(inv);
+  const res = await asAdmin(request(app).patch('/api/settings')).send({ domain: null });
+  assert.notEqual(res.status, 200);
+  assert.match(res.body.error, /subdomains but no domain is set/);
+  assert.equal(loadInventory(inventoryPath).domain, 'example.com');
 });
 
 // #66: the HTTP MCP endpoint's key follows every secret rule here: stored

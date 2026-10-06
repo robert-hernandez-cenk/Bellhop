@@ -12,6 +12,7 @@ import { ANONYMOUS_CALLER, guestCreators, isAdmin, type AccessCaller } from '../
 import { isGuestCreator, loadPermissionRules, type GroupPermission } from '../../lib/permissions.ts';
 import type { GuestCreator, Inventory } from '../../lib/inventory.ts';
 import type { ImpersonationStore } from '../impersonation.ts';
+import type { SetupService } from '../setup/service.ts';
 
 const TERMINAL_JOB_STATUSES: JobStatus[] = ['success', 'failed', 'cancelled', 'interrupted'];
 
@@ -214,7 +215,9 @@ export function attachJobsWebSocket(
   // test can deterministically exercise the dead-owner path without
   // depending on a real pid ever being dead. Left unset in production, so
   // createForeignJobTail's own defaultIsPidAlive is used.
-  options: { tailIntervalMs?: number; isPidAlive?: (pid: number) => boolean } = {}
+  // setup: the first-run setup service (#86); while setup is pending no
+  // job-log socket is served, matching setupGate on the HTTP side.
+  options: { tailIntervalMs?: number; isPidAlive?: (pid: number) => boolean; setup?: SetupService } = {}
 ): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   const tailIntervalMs = options.tailIntervalMs ?? 1000;
@@ -227,6 +230,10 @@ export function attachJobsWebSocket(
     // the process down (this listener sits outside Express's error handling).
     const destroy = () => socket.destroy();
     socket.on('error', destroy);
+    if (options.setup?.isPending()) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     try {
       // The same resolution requireAuth uses (session cookie, re-checked when
       // due; then WEB_UI_DEV_USER; then the local operator in none mode).
