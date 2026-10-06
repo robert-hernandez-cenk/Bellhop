@@ -16,6 +16,7 @@ import { listDrivers } from '../../lib/proxy/index.ts';
 import { managesProxy, type ReverseProxyDriver } from '../../lib/proxy/driver.ts';
 import { ACME_DNS_PROVIDERS, DEFAULT_ACME_DNS_PROVIDER } from '../../lib/proxy/ids.ts';
 import { envPinnedError, proxyDriversInfo } from '../routes/settings.ts';
+import { checkTlsSource, usesCloudflareDns01 } from '../../lib/proxy/tls.ts';
 import { SetupActionError } from './proxmox.ts';
 import type { SetupService } from './service.ts';
 
@@ -32,10 +33,14 @@ const SETTING_FIELDS = {
   apiUrl: 'proxyApiUrl',
   npmApiUrl: 'npmApiUrl',
   npmApiEmail: 'npmApiEmail',
+  tlsSource: 'tlsSource',
+  acmeDnsProvider: 'acmeDnsProvider',
+  certificatePath: 'proxyTlsCertificate',
+  keyPath: 'proxyTlsKey',
 } as const satisfies Record<string, keyof Settings>;
 type SettingField = keyof typeof SETTING_FIELDS;
 
-const SECRET_FIELDS = ['npmApiPassword'] as const satisfies readonly SecretSettingKey[];
+const SECRET_FIELDS = ['npmApiPassword', 'cloudflareDnsApiToken'] as const satisfies readonly SecretSettingKey[];
 
 export const ProxyChoiceSchema = z
   .object({
@@ -46,7 +51,14 @@ export const ProxyChoiceSchema = z
     apiUrl: z.string().optional(),
     npmApiUrl: z.string().optional(),
     npmApiEmail: z.string().optional(),
-    secrets: z.object({ npmApiPassword: z.string().optional() }).strict().optional(),
+    tlsSource: z.string().optional(),
+    acmeDnsProvider: z.string().optional(),
+    certificatePath: z.string().optional(),
+    keyPath: z.string().optional(),
+    secrets: z
+      .object({ npmApiPassword: z.string().optional(), cloudflareDnsApiToken: z.string().optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ProxyChoiceBody = z.infer<typeof ProxyChoiceSchema>;
@@ -59,6 +71,10 @@ export interface ProxyChoice {
   apiUrl: string;
   npmApiUrl: string;
   npmApiEmail: string;
+  tlsSource: string;
+  acmeDnsProvider: string;
+  certificatePath: string;
+  keyPath: string;
 }
 
 export interface ProxyEntry {
@@ -100,11 +116,13 @@ function usedFields(driver: ReverseProxyDriver): SettingField[] {
   if (driver.usesCertResolver) fields.push('certResolver');
   if (driver.usesApiUrl) fields.push('apiUrl');
   if (driver.usesNpmApi) fields.push('npmApiUrl', 'npmApiEmail');
+  fields.push('tlsSource', 'acmeDnsProvider', 'certificatePath', 'keyPath');
   return fields;
 }
 
 function usedSecrets(driver: ReverseProxyDriver): (typeof SECRET_FIELDS)[number][] {
-  return managesProxy(driver) && driver.usesNpmApi ? ['npmApiPassword'] : [];
+  if (!managesProxy(driver)) return [];
+  return driver.usesNpmApi ? ['npmApiPassword', 'cloudflareDnsApiToken'] : ['cloudflareDnsApiToken'];
 }
 
 function entriesOf(inventory: Inventory): ProxyEntry[] {
@@ -124,6 +142,10 @@ export function currentChoice(inventory: Inventory): ProxyChoice {
     apiUrl: inventory.proxyApiUrl ?? '',
     npmApiUrl: inventory.npmApiUrl ?? '',
     npmApiEmail: inventory.npmApiEmail ?? '',
+    tlsSource: inventory.tlsSource ?? '',
+    acmeDnsProvider: inventory.acmeDnsProvider ?? '',
+    certificatePath: inventory.proxyTlsCertificate ?? '',
+    keyPath: inventory.proxyTlsKey ?? '',
   };
 }
 
@@ -225,6 +247,18 @@ export function saveProxyChoice(setup: SetupService, body: ProxyChoiceBody): Pro
   if (!manages) {
     updated.hosts = onDisk.hosts;
     updated.guests = onDisk.guests;
+  }
+
+  if (manages) {
+    const tlsError = checkTlsSource(updated, driver);
+    if (tlsError) throw new SetupActionError(tlsError, 400);
+    const hasToken = secretValues.has('cloudflareDnsApiToken') || secretIsSet(inventoryPath, 'cloudflareDnsApiToken');
+    if (usesCloudflareDns01(updated, driver) && !hasToken) {
+      throw new SetupActionError(
+        'cloudflareDnsApiToken: is required for DNS-01 certificates through Cloudflare -- enter an API token with DNS edit access',
+        400
+      );
+    }
   }
 
   const before = JSON.stringify(currentChoice(onDisk));

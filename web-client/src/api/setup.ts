@@ -100,6 +100,10 @@ export interface ProxyChoice {
   apiUrl: string;
   npmApiUrl: string;
   npmApiEmail: string;
+  tlsSource: string;
+  acmeDnsProvider: string;
+  certificatePath: string;
+  keyPath: string;
 }
 
 export interface ProxyEntry {
@@ -117,12 +121,12 @@ export interface ProxyStepState {
   entries: ProxyEntry[];
   choice: ProxyChoice;
   // Set or not set: a secret's value never reaches the browser.
-  secrets: { npmApiPassword: boolean };
+  secrets: { npmApiPassword: boolean; cloudflareDnsApiToken: boolean };
   pinned: { key: string; variable: string }[];
   complete: boolean;
 }
 
 export interface ProxySaveBody extends Omit<ProxyChoice, 'entry'> {
   entry?: string;
-  secrets?: { npmApiPassword?: string };
+  secrets?: { npmApiPassword?: string; cloudflareDnsApiToken?: string };
 }

@@ -11,7 +11,7 @@ import {
   type SetupPeer,
   type SetupState,
 } from '../api/setup';
-import { proxyDriverOptions } from '../lib/settings-display';
+import { acmeDnsProviderOptions, proxyDriverOptions, tlsSourceOptions } from '../lib/settings-display';
 
 const STEP_LABELS: Record<string, string> = {
   proxmox: 'Proxmox',
@@ -399,6 +399,7 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
   const [info, setInfo] = useState<ProxyStepState | null>(null);
   const [values, setValues] = useState<ProxyChoice | null>(null);
   const [password, setPassword] = useState('');
+  const [cloudflareToken, setCloudflareToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -429,19 +430,30 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
   const manages = driver?.managesProxy ?? false;
   const set = (key: keyof ProxyChoice) => (e: { target: { value: string } }) =>
     setValues((v) => (v ? { ...v, [key]: e.target.value } : v));
+  // An unset source means the driver's own default, so the default is sent
+  // as unset rather than pinned (a later driver switch is not then refused).
+  const shownSource = values.tlsSource || driver?.defaultTlsSource || '';
+  const shownProvider = values.acmeDnsProvider || info.defaultAcmeDnsProvider;
+  const needsToken = shownSource === 'acme-dns' && shownProvider === 'cloudflare';
 
   async function save() {
     if (!values) return;
     setBusy(true);
     setError(null);
     try {
+      const secrets = {
+        ...(password ? { npmApiPassword: password } : {}),
+        ...(cloudflareToken ? { cloudflareDnsApiToken: cloudflareToken } : {}),
+      };
       const { state: saved } = await setupApi.saveProxy({
         ...values,
-        ...(password ? { secrets: { npmApiPassword: password } } : {}),
+        tlsSource: values.tlsSource === driver?.defaultTlsSource ? '' : values.tlsSource,
+        ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
       });
       setInfo(saved);
       setValues(saved.choice);
       setPassword('');
+      setCloudflareToken('');
       await reload();
       if (!saved.drivers.find((d) => d.id === saved.choice.driver)?.managesProxy) next();
     } catch (err) {
@@ -536,6 +548,54 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+              </label>
+            </>
+          )}
+          <label className="form-field">
+            Certificates
+            <select className="field-input" value={shownSource} onChange={set('tlsSource')}>
+              {driver && tlsSourceOptions(driver, shownSource).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {shownSource === 'acme-dns' && (
+            <label className="form-field">
+              DNS provider
+              <select className="field-input" value={shownProvider} onChange={set('acmeDnsProvider')}>
+                {acmeDnsProviderOptions(info.acmeDnsProviders, info.defaultAcmeDnsProvider).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {needsToken && (
+            <label className="form-field">
+              Cloudflare API token{' '}
+              <span className="settings-optional">({info.secrets.cloudflareDnsApiToken ? 'set' : 'not set'})</span>
+              <input
+                className="field-input"
+                type="password"
+                autoComplete="new-password"
+                placeholder={info.secrets.cloudflareDnsApiToken ? 'Leave blank to keep the saved token' : ''}
+                value={cloudflareToken}
+                onChange={(e) => setCloudflareToken(e.target.value)}
+              />
+            </label>
+          )}
+          {shownSource === 'files' && (
+            <>
+              <label className="form-field">
+                Certificate path <span className="settings-optional">(optional)</span>
+                <input className="field-input" placeholder="/etc/letsencrypt/live/example.com/fullchain.pem" value={values.certificatePath} onChange={set('certificatePath')} />
+              </label>
+              <label className="form-field">
+                Key path <span className="settings-optional">(optional)</span>
+                <input className="field-input" placeholder="/etc/letsencrypt/live/example.com/privkey.pem" value={values.keyPath} onChange={set('keyPath')} />
               </label>
             </>
           )}

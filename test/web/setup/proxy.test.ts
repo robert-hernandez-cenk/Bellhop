@@ -96,6 +96,7 @@ test('PUT saves the settings the chosen driver uses', async () => {
     driver: 'traefik',
     entry: 'proxy-lxc',
     configPath: '/etc/traefik/dynamic/bellhop.yml',
+    tlsSource: 'acme-http',
     certResolver: 'letsencrypt',
     apiUrl: 'http://192.0.2.30:8080',
   });
@@ -185,4 +186,103 @@ test('GET reports an inventory with no host or guest so the client can point bac
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.entries, []);
   assert.deepEqual(loadSetupState(t.inventoryPath)?.completedSteps, []);
+});
+
+// -- Certificates (US2) --------------------------------------------------
+
+const CF_TOKEN = 'cf-token-0123456789abcdef';
+
+test('a certificate source the driver supports saves; the driver default is what GET offers when unset', async () => {
+  const { put, get, inventoryPath } = proxyApp();
+  const res = await put({ driver: 'nginx', entry: 'proxy-lxc', tlsSource: 'files' });
+  assert.equal(res.status, 200);
+  assert.equal(loadInventory(inventoryPath).tlsSource, 'files');
+  const info = (await get()).body.drivers.find((d: { id: string }) => d.id === 'nginx');
+  assert.deepEqual(info.tlsSources, ['files']);
+  assert.equal(info.defaultTlsSource, 'files');
+});
+
+test('a certificate source the driver cannot serve is refused with the supported list, and nothing is saved', async () => {
+  const { put, inventoryPath } = proxyApp();
+  const res = await put({ driver: 'nginx', entry: 'proxy-lxc', tlsSource: 'acme-dns', secrets: { cloudflareDnsApiToken: CF_TOKEN } });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /tlsSource 'acme-dns' is not supported by the 'nginx' proxy driver \(it supports: files\)/);
+  assert.ok(!res.text.includes(CF_TOKEN));
+  assert.equal(loadInventory(inventoryPath).proxyDriver, undefined);
+  assert.ok(!storedSecretKeys(inventoryPath).has('cloudflareDnsApiToken'));
+});
+
+test('switching to a driver that cannot serve the stored source is refused until a supported one is chosen', async () => {
+  const { put } = proxyApp();
+  await put({ driver: 'caddy', entry: 'proxy-lxc', tlsSource: 'internal' });
+  const refused = await put({ driver: 'traefik', entry: 'proxy-lxc' });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /tlsSource 'internal' is not supported by the 'traefik' proxy driver/);
+  const fixed = await put({ driver: 'traefik', entry: 'proxy-lxc', tlsSource: 'external' });
+  assert.equal(fixed.status, 200);
+});
+
+test('DNS-01 with Cloudflare needs the token unless one is already stored', async () => {
+  const { put, get, inventoryPath } = proxyApp();
+  const missing = await put({ driver: 'caddy', entry: 'proxy-lxc', tlsSource: 'acme-dns', acmeDnsProvider: 'cloudflare' });
+  assert.equal(missing.status, 400);
+  assert.match(missing.body.error, /cloudflareDnsApiToken: is required/);
+  const saved = await put({
+    driver: 'caddy',
+    entry: 'proxy-lxc',
+    tlsSource: 'acme-dns',
+    acmeDnsProvider: 'cloudflare',
+    secrets: { cloudflareDnsApiToken: CF_TOKEN },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.state.secrets.cloudflareDnsApiToken, true);
+  assert.equal(configValueAt(inventoryPath, 'cloudflareDnsApiToken', {}).value, CF_TOKEN);
+  assert.ok(!saved.text.includes(CF_TOKEN));
+  assert.ok(!(await get()).text.includes(CF_TOKEN));
+  // A later save with the field blank keeps it and is not refused.
+  const again = await put({ driver: 'caddy', entry: 'proxy-lxc', tlsSource: 'acme-dns', acmeDnsProvider: 'cloudflare', secrets: { cloudflareDnsApiToken: '' } });
+  assert.equal(again.status, 200);
+  assert.equal(configValueAt(inventoryPath, 'cloudflareDnsApiToken', {}).value, CF_TOKEN);
+});
+
+test('a Cloudflare token that breaks its rule is refused without echoing it', async () => {
+  const { put } = proxyApp();
+  const res = await put({
+    driver: 'caddy',
+    entry: 'proxy-lxc',
+    tlsSource: 'acme-dns',
+    secrets: { cloudflareDnsApiToken: 'has a space' },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /cloudflareDnsApiToken/);
+  assert.ok(!res.text.includes('has a space'));
+});
+
+test('existing certificate files: paths are optional (they default from the domain) and must be absolute', async () => {
+  const { put, inventoryPath } = proxyApp();
+  const blank = await put({ driver: 'caddy', entry: 'proxy-lxc', tlsSource: 'files' });
+  assert.equal(blank.status, 200);
+  const relative = await put({ driver: 'caddy', entry: 'proxy-lxc', tlsSource: 'files', certificatePath: 'certs/fullchain.pem' });
+  assert.equal(relative.status, 400);
+  assert.match(relative.body.error, /certificatePath: must be an absolute path/);
+  const good = await put({
+    driver: 'caddy',
+    entry: 'proxy-lxc',
+    tlsSource: 'files',
+    certificatePath: '/etc/ssl/example.com/fullchain.pem',
+    keyPath: '/etc/ssl/example.com/privkey.pem',
+  });
+  assert.equal(good.status, 200);
+  const inv = loadInventory(inventoryPath);
+  assert.equal(inv.proxyTlsCertificate, '/etc/ssl/example.com/fullchain.pem');
+  assert.equal(inv.proxyTlsKey, '/etc/ssl/example.com/privkey.pem');
+});
+
+test('"No proxy" ignores certificate fields and completes the step', async () => {
+  const { put, inventoryPath } = proxyApp();
+  const res = await put({ driver: 'none', tlsSource: 'acme-dns', secrets: { cloudflareDnsApiToken: CF_TOKEN } });
+  assert.equal(res.status, 200);
+  assert.equal(loadInventory(inventoryPath).tlsSource, undefined);
+  assert.ok(!storedSecretKeys(inventoryPath).has('cloudflareDnsApiToken'));
+  assert.equal(res.body.state.complete, true);
 });
