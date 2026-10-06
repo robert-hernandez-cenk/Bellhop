@@ -131,3 +131,25 @@ test('snapshot pretty-prints the live configuration without the service check (F
   assert.match(text, /^\{\n  "apps": \{/);
   assert.ok(!ssh.history[0].command.includes('systemctl'));
 });
+
+// -- The read-only check (issue #87) ----------------------------------------
+
+test('check: passes when the admin API answers, with one read and no write', async () => {
+  const ssh = fakeCaddy({ stdout: fixture('get-config-routes.txt') });
+  const summary = await caddyApiDriver.check!(driverDeps(ssh));
+  assert.equal(ssh.history.length, 1);
+  assert.doesNotMatch(ssh.history[0].command, /-X PATCH|-X POST|-X PUT|-X DELETE/);
+  assert.match(summary, /admin API/);
+  assert.match(summary, /pve1/);
+});
+
+test('check: a Caddy running from a Caddyfile is refused with the convert instructions', async () => {
+  const ssh = fakeCaddy({ stdout: '', code: 3 });
+  await assert.rejects(() => caddyApiDriver.check!(driverDeps(ssh)), /running from a Caddyfile/);
+});
+
+test('check: a missing curl and an unreachable admin endpoint keep their own messages', async () => {
+  await assert.rejects(() => caddyApiDriver.check!(driverDeps(fakeCaddy({ stdout: '', code: 4 }))), /curl is not installed on 'pve1'/);
+  const down = new FakeSSHClient(() => ({ stdout: '', stderr: 'curl: (7) Failed to connect to localhost port 2019', code: 7 }));
+  await assert.rejects(() => caddyApiDriver.check!(driverDeps(down)), /Could not read Caddy's configuration from the admin API at localhost:2019 on 'pve1'/);
+});

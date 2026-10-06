@@ -88,6 +88,7 @@ export const setupApi = {
     call<{ settings: SetupBasics; completedSteps: string[] }>('PUT', '/basics', basics),
   proxy: () => call<ProxyStepState>('GET', '/proxy'),
   saveProxy: (body: ProxySaveBody) => call<{ state: ProxyStepState }>('PUT', '/proxy', body),
+  checkProxy: () => call<ProxyCheckResult>('POST', '/proxy/check'),
   finish: () => call<{ redirect: string }>('POST', '/finish'),
 };
 
@@ -124,6 +125,15 @@ export interface ProxyStepState {
   secrets: { npmApiPassword: boolean; cloudflareDnsApiToken: boolean };
   pinned: { key: string; variable: string }[];
   complete: boolean;
+}
+
+export interface ProxyCheckResult {
+  ok: true;
+  summary: string;
+  // sync-proxy's dry-run text; absent when it could not be built (previewError says why).
+  preview?: string;
+  previewError?: string;
+  completedSteps: string[];
 }
 
 export interface ProxySaveBody extends Omit<ProxyChoice, 'entry'> {

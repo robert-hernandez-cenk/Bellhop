@@ -1122,3 +1122,60 @@ test('F4: chooseCertificate never selects a certificate whose expires_on is null
   assert.deepEqual(chooseCertificate(names, [noExpiry], 1, NOW), { kind: 'request', domainNames: names });
   assert.equal(chosenId(chooseCertificate(names, [noExpiry, cert(2, names)], 1, NOW)), 2);
 });
+
+// -- The read-only check (issue #87) ----------------------------------------
+
+import { RealNpmClient } from '../../../../src/lib/npm-client.ts';
+
+const NPM_PASSWORD = 'correct-horse-battery';
+
+// A fetch standing in for NPM: records every request and answers by path.
+function fakeNpmFetch(answer: (method: string, path: string) => { status: number; body: unknown } | Error) {
+  const requests: string[] = [];
+  const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    const method = init?.method ?? 'GET';
+    requests.push(`${method} ${path}`);
+    const reply = answer(method, path);
+    if (reply instanceof Error) throw reply;
+    return new Response(JSON.stringify(reply.body), { status: reply.status, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  return { requests, impl };
+}
+
+function npmCheckDriver(fetchImpl: typeof fetch) {
+  return createNpmDriver({ clientFor: () => new RealNpmClient('http://192.0.2.30:81', 'admin@example.com', NPM_PASSWORD, fetchImpl) });
+}
+
+const deps = (): DriverDeps => ({ ssh: new FakeSSHClient(defaultResponder), inventory: inv([]), proxyHost: 'pve1', configPath: null });
+
+test('check: signs in and lists proxy hosts, nothing else', async () => {
+  const { requests, impl } = fakeNpmFetch((method, path) =>
+    path === '/api/tokens' ? { status: 200, body: { token: 't0ken', expires: '2099-01-01T00:00:00.000Z' } } : { status: 200, body: [] }
+  );
+  const summary = await npmCheckDriver(impl).check!(deps());
+  assert.deepEqual(requests, ['POST /api/tokens', 'GET /api/nginx/proxy-hosts']);
+  assert.match(summary, /http:\/\/192\.0\.2\.30:81/);
+});
+
+test('check: a refused sign-in names the email and password settings and never the password', async () => {
+  const { impl } = fakeNpmFetch(() => ({ status: 400, body: { error: { code: 400, message: 'Invalid email or password' } } }));
+  await assert.rejects(
+    () => npmCheckDriver(impl).check!(deps()),
+    (err: Error) => {
+      assert.match(err.message, /rejected the login for admin@example\.com/);
+      assert.match(err.message, /npmApiEmail and npmApiPassword/);
+      assert.ok(!err.message.includes(NPM_PASSWORD));
+      return true;
+    }
+  );
+});
+
+test('check: an unreachable URL names the URL', async () => {
+  const { impl } = fakeNpmFetch(() => new Error('connect ECONNREFUSED 192.0.2.30:81'));
+  await assert.rejects(() => npmCheckDriver(impl).check!(deps()), /Could not reach Nginx Proxy Manager at http:\/\/192\.0\.2\.30:81/);
+});
+
+test('check: the registered driver reports an unconfigured client the usual way', async () => {
+  await assert.rejects(() => nginxProxyManagerDriver.check!(deps()), /npmApiEmail|NPM_API/);
+});

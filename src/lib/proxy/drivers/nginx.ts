@@ -104,4 +104,7 @@ export const nginxDriver = fileDriver({
   render,
   validateCommand: () => 'nginx -t',
   reloadCommand: 'systemctl reload nginx',
+  // Read-only (#87): Bellhop's file does not exist before the first sync, so
+  // only its directory must; `nginx -t` tests the whole live configuration.
+  check: { target: 'directory', command: () => 'nginx -t' },
 });

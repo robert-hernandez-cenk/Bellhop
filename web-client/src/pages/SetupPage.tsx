@@ -4,6 +4,7 @@ import {
   setupApi,
   type HostEndpoint,
   type ProxyChoice,
+  type ProxyCheckResult,
   type ProxyStepState,
   type MidScheme,
   type SetupBasics,
@@ -400,6 +401,8 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
   const [values, setValues] = useState<ProxyChoice | null>(null);
   const [password, setPassword] = useState('');
   const [cloudflareToken, setCloudflareToken] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<ProxyCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -454,12 +457,33 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
       setValues(saved.choice);
       setPassword('');
       setCloudflareToken('');
+      setCheckResult(null);
       await reload();
       if (!saved.drivers.find((d) => d.id === saved.choice.driver)?.managesProxy) next();
     } catch (err) {
       setError(message(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // The check runs against what is saved, so it waits for unsaved edits.
+  const dirty =
+    JSON.stringify(values) !== JSON.stringify(info.choice) || password !== '' || cloudflareToken !== '';
+
+  async function check() {
+    setChecking(true);
+    setError(null);
+    setCheckResult(null);
+    try {
+      const result = await setupApi.checkProxy();
+      setCheckResult(result);
+      await load();
+      await reload();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -611,7 +635,44 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
         <button type="button" className="button" disabled={busy || (manages && !values.entry)} onClick={save}>
           {busy ? 'Saving…' : manages ? 'Save' : 'Save and continue'}
         </button>
+        {manages && (
+          <button
+            type="button"
+            className="button"
+            disabled={checking || busy || dirty || !info.choice.entry}
+            onClick={check}
+          >
+            {checking ? 'Checking…' : 'Check proxy'}
+          </button>
+        )}
       </div>
+      {manages && dirty && <p className="settings-help">Save your changes, then check the proxy.</p>}
+      {manages && info.complete && !checkResult && (
+        <p className="settings-help">This step is complete. Any change you save will need a new check.</p>
+      )}
+      {checkResult && (
+        <div className="setup-check">
+          <p>{checkResult.summary}</p>
+          {checkResult.preview !== undefined && (
+            <>
+              <p className="settings-help">
+                The first sync would write the following. Nothing has been written to the proxy.
+              </p>
+              <pre className="setup-preview">{checkResult.preview}</pre>
+              <div className="setup-actions">
+                <button type="button" className="button" onClick={next}>
+                  Continue
+                </button>
+              </div>
+            </>
+          )}
+          {checkResult.previewError !== undefined && (
+            <div className="warning-banner">
+              The proxy passed its check, but the first sync could not be previewed, so the step is not complete: {checkResult.previewError}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

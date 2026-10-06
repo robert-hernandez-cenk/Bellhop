@@ -12,7 +12,9 @@ import { configValueAt } from '../../lib/config.ts';
 import { writeSecret } from '../../lib/config.ts';
 import { SETTING_DEFS, settingSchema, type ConfigKey, type SecretSettingKey } from '../../lib/settings-defs.ts';
 import { DEFAULT_PROXY_DRIVER_ID, PROXY_DRIVER_IDS } from '../../lib/proxy/ids.ts';
-import { listDrivers } from '../../lib/proxy/index.ts';
+import { driverDeps, getDriver, listDrivers } from '../../lib/proxy/index.ts';
+import { runSyncProxy } from '../../commands/networking/sync-proxy.ts';
+import type { SSHClient } from '../../lib/ssh-client.ts';
 import { managesProxy, type ReverseProxyDriver } from '../../lib/proxy/driver.ts';
 import { ACME_DNS_PROVIDERS, DEFAULT_ACME_DNS_PROVIDER } from '../../lib/proxy/ids.ts';
 import { envPinnedError, proxyDriversInfo } from '../routes/settings.ts';
@@ -283,4 +285,64 @@ function withProxyFlag<T extends { name: string; proxy?: boolean }>(entry: T, ch
   if (!entry.proxy) return entry;
   const { proxy: _dropped, ...rest } = entry;
   return rest as T;
+}
+
+// -- Check (issue #87, US3) ---------------------------------------------------
+
+export interface ProxyCheckResult {
+  ok: true;
+  summary: string;
+  // What sync-proxy's dry run prints for the current inventory. Absent when
+  // it could not be built, with the reason in previewError.
+  preview?: string;
+  previewError?: string;
+  completedSteps: string[];
+}
+
+// Defence in depth: no check or dry-run message names a secret by
+// construction, but a stored one is blanked out of anything returned.
+function scrub(inventoryPath: string, text: string): string {
+  let out = text;
+  for (const key of SECRET_FIELDS) {
+    let value: string | undefined;
+    try {
+      value = configValueAt(inventoryPath, key).value;
+    } catch {
+      continue;
+    }
+    if (value) out = out.split(value).join('***');
+  }
+  return out;
+}
+
+// Proves the saved proxy without changing it: the driver's read-only check,
+// then the dry run `sync-proxy` would print. Only both together complete the
+// step -- a proxy that passes but whose first sync could not even be
+// previewed is not something the operator has seen the outcome of.
+export async function checkProxy(setup: SetupService, ssh: SSHClient): Promise<ProxyCheckResult> {
+  const { inventory, inventoryPath } = opts(setup);
+  const driver = getDriver(inventory);
+  if (!managesProxy(driver)) throw new SetupActionError('No proxy needs no check', 400);
+  if (!findProxyEntry(inventory)) {
+    throw new SetupActionError('entry: choose the host or guest the proxy runs on, and save, before checking', 400);
+  }
+  if (!driver.check) throw new SetupActionError(`the '${driver.id}' driver has no check`, 400);
+
+  let summary: string;
+  try {
+    summary = await driver.check(driverDeps(inventory, ssh, driver));
+  } catch (err) {
+    throw new SetupActionError(scrub(inventoryPath, (err as Error).message), 502);
+  }
+
+  let preview: string | undefined;
+  let previewError: string | undefined;
+  try {
+    preview = (await runSyncProxy({ apply: false }, { ssh, inventory })).preview;
+  } catch (err) {
+    previewError = scrub(inventoryPath, (err as Error).message);
+  }
+
+  const completedSteps = preview === undefined ? setup.state().completedSteps : setup.completeStep('proxy').completedSteps;
+  return { ok: true, summary: scrub(inventoryPath, summary), ...(preview === undefined ? { previewError } : { preview }), completedSteps };
 }

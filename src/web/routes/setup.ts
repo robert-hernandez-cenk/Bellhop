@@ -22,7 +22,7 @@ import {
   type Inventory,
 } from '../../lib/inventory.ts';
 import type { MidScheme } from '../../lib/inventory.ts';
-import { ProxyChoiceSchema, proxyStepState, saveProxyChoice } from '../setup/proxy.ts';
+import { ProxyChoiceSchema, checkProxy, proxyStepState, saveProxyChoice } from '../setup/proxy.ts';
 import { SETUP_COOKIE, SETUP_COOKIE_OPTIONS, requireSetupAuth } from '../setup/gate.ts';
 import { REQUIRED_SETUP_STEPS, SetupIncompleteError, type SetupService } from '../setup/service.ts';
 
@@ -289,6 +289,14 @@ export function setupRoutes(setup: SetupService, routeDeps?: SetupRouteDeps): ex
     '/proxy',
     handle((req, res) => {
       res.json({ state: saveProxyChoice(setup, parseBody(ProxyChoiceSchema, req)) });
+    })
+  );
+
+  // Read-only: the driver's own check, then the dry run (US3).
+  api.post(
+    '/proxy/check',
+    handle(async (_req, res) => {
+      res.json(await checkProxy(setup, opDeps().ssh));
     })
   );
 

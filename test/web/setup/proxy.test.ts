@@ -286,3 +286,138 @@ test('"No proxy" ignores certificate fields and completes the step', async () =>
   assert.ok(!storedSecretKeys(inventoryPath).has('cloudflareDnsApiToken'));
   assert.equal(res.body.state.complete, true);
 });
+
+// -- Checking the proxy (US3) --------------------------------------------
+
+import { FakeSSHClient } from '../../support/fake-ssh-client.ts';
+import { runSyncProxy } from '../../../src/commands/networking/sync-proxy.ts';
+import { useConfigStore } from '../../../src/lib/config.ts';
+
+const FORBIDDEN = /\b(cp|mv|rm|mktemp|tee)\s|trap |cat >|reload|restart|sed -i|-X (PATCH|POST|PUT|DELETE)/;
+
+// A proxy-checking app: the saved choice plus a responder for the proxy host.
+function checkApp(responder?: (command: string) => { stdout?: string; stderr?: string; code?: number }) {
+  const t = setupTestApp({
+    responder: (_h, _u, command) => {
+      const r = responder?.(command) ?? {};
+      return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', code: r.code ?? 0 };
+    },
+  });
+  saveInventory(t.inventoryPath, INVENTORY);
+  const put = (body: unknown) => request(t.app).put('/api/setup/proxy').set('Cookie', t.cookie).send(body as object);
+  const check = () => request(t.app).post('/api/setup/proxy/check').set('Cookie', t.cookie);
+  const completed = () => loadSetupState(t.inventoryPath)?.completedSteps ?? [];
+  return { ...t, put, check, completed };
+}
+
+const NGINX = { driver: 'nginx', entry: 'proxy-lxc' };
+
+test('a passing check returns the sync-proxy dry-run text and completes the step', async () => {
+  const t = checkApp();
+  assert.equal((await t.put(NGINX)).status, 200);
+  const res = await t.check();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, true);
+  assert.match(res.body.summary, /proxy-lxc/);
+  const expected = await runSyncProxy({ apply: false }, { ssh: new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 })), inventory: loadInventory(t.inventoryPath) });
+  assert.equal(res.body.preview, expected.preview);
+  assert.deepEqual(t.completed(), ['proxy']);
+  assert.deepEqual(res.body.completedSteps, ['proxy']);
+});
+
+test('a failing check answers 502 with the proxy output and leaves the step incomplete', async () => {
+  const t = checkApp((command) => (command.includes('nginx -t') ? { code: 1, stderr: 'nginx: [emerg] unexpected "}"' } : {}));
+  await t.put(NGINX);
+  const res = await t.check();
+  assert.equal(res.status, 502);
+  assert.match(res.body.error, /'proxy-lxc'/);
+  assert.match(res.body.error, /unexpected "\}"/);
+  assert.deepEqual(t.completed(), []);
+});
+
+test('a missing config path is named with the setting that controls it', async () => {
+  const t = checkApp(() => ({ code: 3 }));
+  await t.put(NGINX);
+  const res = await t.check();
+  assert.equal(res.status, 502);
+  assert.match(res.body.error, /\/etc\/nginx\/conf\.d not found on 'proxy-lxc'/);
+  assert.match(res.body.error, /proxyConfigPath/);
+});
+
+test('a pass whose dry run cannot be built reports why and does not complete the step', async () => {
+  const t = checkApp();
+  // A forward-gated guest under HAProxy, which can only enforce OIDC: the
+  // check passes but the dry run refuses.
+  saveInventory(t.inventoryPath, {
+    ...INVENTORY,
+    guests: [
+      ...INVENTORY.guests,
+      { name: 'gated-lxc', type: 'lxc', vmid: 103, host: 'pve1', ip: '192.0.2.32', subdomains: ['gated'], authGroup: 'bellhop-users' },
+      { name: 'auth-lxc', type: 'lxc', vmid: 104, host: 'pve1', ip: '192.0.2.33', authentik: true },
+    ],
+  });
+  await t.put({ driver: 'haproxy', entry: 'proxy-lxc' });
+  const res = await t.check();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.preview, undefined);
+  assert.match(res.body.previewError, /haproxy.*cannot enforce/);
+  assert.deepEqual(t.completed(), []);
+});
+
+test('check refuses "No proxy" and a choice with no proxy entry', async () => {
+  const t = checkApp();
+  await t.put({ driver: 'none' });
+  const none = await t.check();
+  assert.equal(none.status, 400);
+  assert.match(none.body.error, /No proxy needs no check/);
+  const fresh = checkApp();
+  const unsaved = await fresh.check();
+  assert.equal(unsaved.status, 400);
+  assert.match(unsaved.body.error, /entry/);
+});
+
+test('every file driver\'s check from the route issues only read commands', async () => {
+  const choices: [string, Record<string, string>][] = [
+    ['caddy', { tlsSource: 'internal' }],
+    ['nginx', {}],
+    ['haproxy', {}],
+    ['traefik', { tlsSource: 'external', apiUrl: 'http://192.0.2.30:8080' }],
+  ];
+  for (const [driver, extra] of choices) {
+    const t = checkApp((command) => (command.includes('curl') ? { stdout: '200' } : {}));
+    assert.equal((await t.put({ driver, entry: 'proxy-lxc', ...extra })).status, 200, driver);
+    const res = await t.check();
+    assert.equal(res.status, 200, `${driver}: ${res.text}`);
+    for (const call of t.ssh.history) assert.doesNotMatch(call.command.replace(/'\''/g, "'"), FORBIDDEN, driver);
+  }
+});
+
+test('the NPM check signs in with the saved credentials and its failure never carries the password', async () => {
+  const t = checkApp();
+  useConfigStore(t.inventoryPath);
+  const realFetch = globalThis.fetch;
+  const seen: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    seen.push(`${init?.method ?? 'GET'} ${new URL(String(url)).pathname}`);
+    return new Response(JSON.stringify({ error: { code: 400, message: 'Invalid email or password' } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    await t.put({
+      driver: 'nginx-proxy-manager',
+      entry: 'proxy-lxc',
+      npmApiUrl: 'http://192.0.2.30:81',
+      npmApiEmail: 'admin@example.com',
+      secrets: { npmApiPassword: PASSWORD },
+    });
+    const res = await t.check();
+    assert.equal(res.status, 502);
+    assert.match(res.body.error, /rejected the login for admin@example\.com/);
+    assert.ok(!res.text.includes(PASSWORD));
+    assert.deepEqual(seen, ['POST /api/tokens']);
+    assert.deepEqual(t.completed(), []);
+  } finally {
+    globalThis.fetch = realFetch;
+    useConfigStore(null);
+  }
+});
