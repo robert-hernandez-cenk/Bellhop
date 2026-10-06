@@ -640,8 +640,9 @@ test('saveInventory/loadInventory round-trips authGroup and authentik on a host 
 
 // Upgrade path (issue #8): a guest stored under a pre-rename default rung
 // name ('homelab-users') must still round-trip unchanged with no
-// AUTHENTIK_GROUP_LADDER override -- the rename never rewrites, migrates,
-// or otherwise touches an already-stored authGroup value (FR-004), and the
+// AUTHENTIK_GROUP_LADDER override -- the #8 rename never rewrites, migrates,
+// or otherwise touches an already-stored homelab-* value (FR-004; only the
+// #97 bellhop-* pairs are migrated, see below), and the
 // inventory must still load successfully even though that name is no
 // longer on the active default ladder (FR-005).
 test('saveInventory/loadInventory round-trips a pre-rename authGroup unchanged with no ladder override', () => {
@@ -1795,6 +1796,144 @@ test('the requires_auth migration falls back to the default ladder when neither 
   const migrated = withLadderEnv(undefined, () => loadInventory(dbPath));
   const defaultLadder = authentikConfig({}).groupLadder;
   assert.equal(migrated.guests[0].authGroup, defaultLadder[defaultLadder.length - 1]);
+});
+
+// Issue #97: stored auth_group values on the previous default rung names
+// are renamed to their successors on open, pair by pair, only where the
+// effective ladder no longer lists the old name and does list the new one.
+const PREVIOUS_DEFAULT_LADDER = 'bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins';
+const RENAME_LOG = (n: number, table: string, from: string, to: string) =>
+  `Renamed ${n} row(s) in '${table}' from auth_group='${from}' to '${to}' (#97, previous default ladder name).`;
+
+// Builds a database whose rows carry the given auth_group values. They are
+// written with raw SQL after saveInventory, because saveInventory itself
+// opens the database and would run the migration being tested.
+function previousDefaultTierDb(groups: {
+  host?: string | null;
+  guests: Record<string, string | null>;
+  site?: string | null;
+  storedLadder?: string;
+}): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'inventory-ladder-rename-'));
+  const dbPath = path.join(dir, 'bellhop.db');
+  saveInventory(dbPath, {
+    domain: 'example.com',
+    authentikGroupLadder: groups.storedLadder,
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' }],
+    guests: Object.keys(groups.guests).map((name, i) => ({
+      name,
+      type: 'lxc' as const,
+      vmid: 120 + i,
+      host: 'pve1',
+      ip: `192.168.1.${20 + i}`,
+      subdomains: [name],
+    })),
+    externalSites: [{ name: 'nas', ip: '192.168.1.30', subdomains: ['nas'] }],
+  });
+  const raw = new Database(dbPath);
+  raw.prepare("UPDATE hosts SET auth_group = ? WHERE name = 'pve1'").run(groups.host ?? null);
+  for (const [name, group] of Object.entries(groups.guests)) {
+    raw.prepare('UPDATE guests SET auth_group = ? WHERE name = ?').run(group, name);
+  }
+  raw.prepare("UPDATE external_sites SET auth_group = ? WHERE name = 'nas'").run(groups.site ?? null);
+  raw.close();
+  return dbPath;
+}
+
+const guestTier = (inv: Inventory, name: string) => inv.guests.find((g) => g.name === name)!.authGroup;
+
+test('opening renames previous default tiers to their successors under the default ladder (#97)', () => {
+  const dbPath = previousDefaultTierDb({
+    host: 'bellhop-users',
+    guests: { sonarr: 'bellhop-app-users', radarr: 'bellhop-users' },
+    site: 'bellhop-app-users-open',
+  });
+  const lines: string[] = [];
+  const inv = withLadderEnv(undefined, () => {
+    let loaded!: Inventory;
+    lines.push(...captureLog(() => (loaded = loadInventory(dbPath))));
+    return loaded;
+  });
+  assert.equal(inv.hosts[0].authGroup, 'bellhop-admin-family');
+  assert.equal(guestTier(inv, 'sonarr'), 'bellhop-friends-family');
+  assert.equal(guestTier(inv, 'radarr'), 'bellhop-admin-family');
+  assert.equal(inv.externalSites?.[0].authGroup, 'bellhop-public');
+  const renames = lines.filter((l) => l.includes('#97'));
+  assert.equal(renames.length, 4, renames.join('\n'));
+  assert.ok(renames.some((l) => l.endsWith(RENAME_LOG(1, 'guests', 'bellhop-app-users', 'bellhop-friends-family'))));
+  assert.ok(renames.some((l) => l.endsWith(RENAME_LOG(1, 'guests', 'bellhop-users', 'bellhop-admin-family'))));
+  assert.ok(renames.some((l) => l.endsWith(RENAME_LOG(1, 'hosts', 'bellhop-users', 'bellhop-admin-family'))));
+  assert.ok(renames.some((l) => l.endsWith(RENAME_LOG(1, 'external_sites', 'bellhop-app-users-open', 'bellhop-public'))));
+});
+
+test('the #97 rename is silent and changes nothing on a second open', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: 'bellhop-users' } });
+  withLadderEnv(undefined, () => loadInventory(dbPath));
+  const lines = withLadderEnv(undefined, () => captureLog(() => loadInventory(dbPath)));
+  assert.deepEqual(lines.filter((l) => l.includes('#97')), []);
+  assert.equal(guestTier(withLadderEnv(undefined, () => loadInventory(dbPath)), 'sonarr'), 'bellhop-admin-family');
+});
+
+test('the #97 rename leaves authentik Admins, ungated and custom tiers alone', () => {
+  const dbPath = previousDefaultTierDb({
+    guests: { sonarr: 'authentik Admins', radarr: null, plex: 'media-viewers' },
+  });
+  const lines: string[] = [];
+  const inv = withLadderEnv(undefined, () => {
+    let loaded!: Inventory;
+    lines.push(...captureLog(() => (loaded = loadInventory(dbPath))));
+    return loaded;
+  });
+  assert.equal(guestTier(inv, 'sonarr'), 'authentik Admins');
+  assert.equal(guestTier(inv, 'radarr'), undefined);
+  assert.equal(guestTier(inv, 'plex'), 'media-viewers');
+  assert.deepEqual(lines.filter((l) => l.includes('#97')), []);
+});
+
+test('the #97 rename leaves every tier alone when AUTHENTIK_GROUP_LADDER pins the previous default', () => {
+  const dbPath = previousDefaultTierDb({
+    guests: { sonarr: 'bellhop-app-users-open', radarr: 'bellhop-app-users', plex: 'bellhop-users' },
+  });
+  const inv = withLadderEnv(PREVIOUS_DEFAULT_LADDER, () => loadInventory(dbPath));
+  assert.equal(guestTier(inv, 'sonarr'), 'bellhop-app-users-open');
+  assert.equal(guestTier(inv, 'radarr'), 'bellhop-app-users');
+  assert.equal(guestTier(inv, 'plex'), 'bellhop-users');
+});
+
+test('the #97 rename leaves every tier alone when the stored setting pins the previous default', () => {
+  const dbPath = previousDefaultTierDb({
+    guests: { sonarr: 'bellhop-app-users', radarr: 'bellhop-users' },
+    storedLadder: PREVIOUS_DEFAULT_LADDER,
+  });
+  const inv = withLadderEnv(undefined, () => loadInventory(dbPath));
+  assert.equal(guestTier(inv, 'sonarr'), 'bellhop-app-users');
+  assert.equal(guestTier(inv, 'radarr'), 'bellhop-users');
+});
+
+test('the #97 rename applies under a ladder pinned to the new names', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: 'bellhop-app-users' } });
+  const inv = withLadderEnv('bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins', () =>
+    loadInventory(dbPath)
+  );
+  assert.equal(guestTier(inv, 'sonarr'), 'bellhop-friends-family');
+});
+
+test('the #97 rename applies pair by pair under a mixed ladder', () => {
+  const dbPath = previousDefaultTierDb({
+    guests: { sonarr: 'bellhop-app-users-open', radarr: 'bellhop-app-users', plex: 'bellhop-users' },
+  });
+  const inv = withLadderEnv('bellhop-app-users-open,bellhop-friends-family,bellhop-admin-family,authentik Admins', () =>
+    loadInventory(dbPath)
+  );
+  assert.equal(guestTier(inv, 'sonarr'), 'bellhop-app-users-open', 'still on the ladder, so kept');
+  assert.equal(guestTier(inv, 'radarr'), 'bellhop-friends-family');
+  assert.equal(guestTier(inv, 'plex'), 'bellhop-admin-family');
+});
+
+test('the #97 rename does nothing under a fully custom ladder', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: 'bellhop-users' } });
+  const inv = withLadderEnv('example-open,example-users,authentik Admins', () => loadInventory(dbPath));
+  assert.equal(guestTier(inv, 'sonarr'), 'bellhop-users');
 });
 
 test('saveInventory round-trips authGroup', () => {

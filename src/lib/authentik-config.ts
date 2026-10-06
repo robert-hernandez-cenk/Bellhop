@@ -60,6 +60,16 @@ const DEFAULT_OIDC_SIGNING_KEY_NAME = 'authentik Self-signed Certificate';
 const DEFAULT_GROUP_LADDER =
   'bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins';
 
+// The previous default rungs and their successors, [old, new]. The #97
+// migration in inventory.ts renames stored auth_group values pair by pair
+// when the effective ladder no longer lists the old name but does list
+// the new one.
+export const PREVIOUS_DEFAULT_RUNG_RENAMES: ReadonlyArray<readonly [string, string]> = [
+  ['bellhop-users', 'bellhop-admin-family'],
+  ['bellhop-app-users', 'bellhop-friends-family'],
+  ['bellhop-app-users-open', 'bellhop-public'],
+];
+
 // An empty environment variable counts as unset (the accessor's rule) -- a
 // KEY= line in data/authentik.env is a far likelier way to express "I did
 // not set this" than an intentional empty group name.

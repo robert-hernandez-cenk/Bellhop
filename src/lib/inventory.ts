@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
 import { ensureColumn, openDb } from './sqlite.ts';
-import { parseGroupLadder } from './authentik-config.ts';
+import { PREVIOUS_DEFAULT_RUNG_RENAMES, parseGroupLadder } from './authentik-config.ts';
 import { MovedSettingsSchema } from './settings-defs.ts';
 import { SECRET_SETTINGS_TABLE_SQL, effectiveValue, invalidateConfigSnapshot } from './config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
@@ -710,6 +710,46 @@ function migrateLegacyTlsSettings(db: Database.Database): void {
   tx.immediate();
 }
 
+// #97 migration: the default ladder's rungs were renamed for their audience
+// (bellhop-users -> bellhop-admin-family, and so on; the pairs live in
+// authentik-config.ts). Each pair renames stored auth_group values only when
+// the effective ladder -- resolved off this handle as #158 does -- no longer
+// lists the old name but does list the new one. That leaves a deployment
+// that pinned the old ladder alone (its stored names are still valid rungs),
+// and skips a fully custom ladder where the new name would be off-ladder
+// too. There is no marker row: once renamed, no row holds the old name, and
+// a deployment that unpins the old ladder later is migrated on its next open.
+// The guard query keeps every open after the first to one cheap read; the
+// IMMEDIATE transaction serializes two processes opening the same database,
+// as #72 does.
+function migratePreviousDefaultRungNames(db: Database.Database): void {
+  const tables = ['hosts', 'guests', 'external_sites'];
+  const oldNames = PREVIOUS_DEFAULT_RUNG_RENAMES.map(([oldName]) => oldName);
+  const placeholders = oldNames.map(() => '?').join(',');
+  const anyOld = tables.some((table) =>
+    db.prepare(`SELECT 1 FROM ${table} WHERE auth_group IN (${placeholders}) LIMIT 1`).get(...oldNames)
+  );
+  if (!anyOld) return;
+  const storedRow = db.prepare("SELECT value FROM meta WHERE key = 'authentikGroupLadder'").get() as
+    | { value: string }
+    | undefined;
+  const ladder = parseGroupLadder(effectiveValue('authentikGroupLadder', storedRow?.value, process.env).value);
+  const tx = db.transaction(() => {
+    for (const [oldName, newName] of PREVIOUS_DEFAULT_RUNG_RENAMES) {
+      if (ladder.includes(oldName) || !ladder.includes(newName)) continue;
+      for (const table of tables) {
+        const result = db.prepare(`UPDATE ${table} SET auth_group = ? WHERE auth_group = ?`).run(newName, oldName);
+        if (result.changes > 0) {
+          logInfo(
+            `Renamed ${result.changes} row(s) in '${table}' from auth_group='${oldName}' to '${newName}' (#97, previous default ladder name).`
+          );
+        }
+      }
+    }
+  });
+  tx.immediate();
+}
+
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
   migrateCaddyToProxy(db);
@@ -749,6 +789,9 @@ function openInventoryDb(path: string): Database.Database {
   for (const table of ['hosts', 'guests', 'external_sites']) {
     migrateRequiresAuthToAuthGroup(db, table);
   }
+  // After #158: both write auth_group, and #158 only ever writes the top
+  // rung, which no #97 pair touches.
+  migratePreviousDefaultRungNames(db);
   return db;
 }
 

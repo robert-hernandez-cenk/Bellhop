@@ -22,7 +22,7 @@ Explicit values are used unchanged.
 ## Inventory open (every CLI command, web service, MCP server)
 
 - Renames stored `auth_group` per the pairs in [data-model.md](../data-model.md), only where the effective ladder lacks the old name and contains the new one.
-- Log line (stderr via `logInfo`), one per table and pair changed:
+- Log line (stdout via `logInfo`), one per table and pair changed:
   `Renamed <n> row(s) in '<table>' from auth_group='<old>' to '<new>' (#97, previous default ladder name).`
 - No output when nothing changes.
 
