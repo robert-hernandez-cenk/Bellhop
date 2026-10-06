@@ -12,7 +12,7 @@ All paths are relative to the worktree root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm a green baseline in the worktree: `npm --prefix <wt> run typecheck` and `npm --prefix <wt> test` (record any pre-existing failures so later failures can be told apart)
+- [x] T001 Confirm a green baseline in the worktree: `npm --prefix <wt> run typecheck` and `npm --prefix <wt> test` (record any pre-existing failures so later failures can be told apart)
 
 ---
 
@@ -20,12 +20,12 @@ All paths are relative to the worktree root.
 
 **Purpose**: the guest flag exists, persists, validates, and is editable.
 
-- [ ] T002 [P] Write failing tests in `test/lib/inventory.test.ts`: `GuestEntrySchema` accepts `bellhop: true`; `validateInventory` rejects two flagged guests with `Inventory validation: multiple entries flagged 'bellhop: true' (only one is allowed): a b`; `saveInventory`/`loadInventory` round-trip the flag; an older database without the column loads (additive migration) and the flag is absent
-- [ ] T003 Implement the flag in `src/lib/inventory.ts`: `bellhop: z.boolean().optional()` on `GuestEntrySchema` only (hosts have none); `ensureColumn(db, 'guests', 'bellhop', 'bellhop INTEGER')`; load as `row.bellhop ? true : undefined`; save as `guest.bellhop ? 1 : null` in the guest insert (add the column to the INSERT statement and the `SELECT`/row type); add the at-most-one rule to `validateInventory()` beside the `authentik` rule
-- [ ] T004 [P] Write failing tests in `test/operations/edit-guest.test.ts`: `runEditGuest({ name, bellhop: true })` flags the guest and returns `bellhop: true`; `bellhop: false` clears it; omitted leaves it unchanged; flagging a second guest rejects with a `GuestEditValidationError` naming the other guest and saves nothing
-- [ ] T005 Add `bellhop` to the edit operation in `src/operations/edit-guest.ts`: `EDIT_GUEST_SHAPE.bellhop` (`z.boolean().optional()`, described as admin-only, "this guest is Bellhop itself"), and `applyGuestEdits` (`if ('bellhop' in body) updated.bellhop = body.bellhop === true ? true : undefined`); mention the field in the `edit_guest` description in `src/mcp/build-server.ts`
-- [ ] T006 [P] Write failing tests in `test/web/routes/dashboard.test.ts`: a non-admin PATCH changing `bellhop` is 403 `Only an admin may change which guest is Bellhop itself`; resending the current value is allowed; an admin may change it
-- [ ] T007 Extend the admin-only check in `src/web/routes/dashboard.ts` (the block near line 217 that tests `authMode`/`oidcRedirectUris`/`oidcMobileRedirectUris`) to cover `bellhop` per [contracts/guest-edit.md](contracts/guest-edit.md); add `bellhop?: boolean` to the guest type in `web-client/src/api/types.ts`
+- [x] T002 [P] Write failing tests in `test/lib/inventory.test.ts`: `GuestEntrySchema` accepts `bellhop: true`; `validateInventory` rejects two flagged guests with `Inventory validation: multiple entries flagged 'bellhop: true' (only one is allowed): a b`; `saveInventory`/`loadInventory` round-trip the flag; an older database without the column loads (additive migration) and the flag is absent
+- [x] T003 Implement the flag in `src/lib/inventory.ts`: `bellhop: z.boolean().optional()` on `GuestEntrySchema` only (hosts have none); `ensureColumn(db, 'guests', 'bellhop', 'bellhop INTEGER')`; load as `row.bellhop ? true : undefined`; save as `guest.bellhop ? 1 : null` in the guest insert (add the column to the INSERT statement and the `SELECT`/row type); add the at-most-one rule to `validateInventory()` beside the `authentik` rule
+- [x] T004 [P] Write failing tests in `test/operations/edit-guest.test.ts`: `runEditGuest({ name, bellhop: true })` flags the guest and returns `bellhop: true`; `bellhop: false` clears it; omitted leaves it unchanged; flagging a second guest rejects with a `GuestEditValidationError` naming the other guest and saves nothing
+- [x] T005 Add `bellhop` to the edit operation in `src/operations/edit-guest.ts`: `EDIT_GUEST_SHAPE.bellhop` (`z.boolean().optional()`, described as admin-only, "this guest is Bellhop itself"), and `applyGuestEdits` (`if ('bellhop' in body) updated.bellhop = body.bellhop === true ? true : undefined`); mention the field in the `edit_guest` description in `src/mcp/build-server.ts`
+- [x] T006 [P] Write failing tests in `test/web/routes/dashboard.test.ts`: a non-admin PATCH changing `bellhop` is 403 `Only an admin may change which guest is Bellhop itself`; resending the current value is allowed; an admin may change it
+- [x] T007 Extend the admin-only check in `src/web/routes/dashboard.ts` (the block near line 217 that tests `authMode`/`oidcRedirectUris`/`oidcMobileRedirectUris`) to cover `bellhop` per [contracts/guest-edit.md](contracts/guest-edit.md); add `bellhop?: boolean` to the guest type in `web-client/src/api/types.ts`
 
 **Checkpoint**: `npm run typecheck` and the three touched test files pass.
 

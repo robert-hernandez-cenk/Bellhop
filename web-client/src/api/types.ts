@@ -142,6 +142,9 @@ export interface GuestEntry {
   oidcMobileRedirectUris?: string[];
   unauthenticatedPaths?: string[];
   proxy?: boolean;
+  // This guest is Bellhop itself (#85): the web login uses its OpenID
+  // client when the custom web login settings are not all set.
+  bellhop?: boolean;
   app?: string;
   // 'custom' when this guest's `app` slug was actually installed from the
   // operator-configured custom script repository (see CustomScripts below),

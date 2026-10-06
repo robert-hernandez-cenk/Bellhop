@@ -681,3 +681,30 @@ test('commitGuestEdit saves an edit under an unsupported TLS source and reports 
     assert.match(result.proxyError, /^tlsSource 'internal' is not supported by the 'nginx' proxy driver \(it supports: files\) -- to use its default \(files\), run: bellhop set-config tlsSource --unset --apply/);
   }
 });
+
+// issue #85: the `bellhop` flag naming Bellhop's own guest.
+test('applyGuestEdits flags, clears and leaves the bellhop flag alone', () => {
+  const current = inventory.guests.find((g) => g.name === 'app-lxc')!;
+  assert.equal(applyGuestEdits(current, { bellhop: true }).bellhop, true);
+  assert.equal(applyGuestEdits({ ...current, bellhop: true }, { bellhop: false }).bellhop, undefined);
+  assert.equal(applyGuestEdits({ ...current, bellhop: true }, { subdomains: ['x'] }).bellhop, true, 'an edit that does not pass bellhop leaves it unchanged');
+});
+
+test('runEditGuest saves the bellhop flag and returns it', async () => {
+  const d = deps();
+  const result = await runEditGuest({ name: 'app-lxc', bellhop: true }, d);
+  assert.equal(result.guest.bellhop, true);
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'app-lxc')?.bellhop, true);
+});
+
+test('runEditGuest rejects flagging a second guest as Bellhop, naming both, and saves nothing', async () => {
+  const d = deps();
+  await runEditGuest({ name: 'app-lxc', bellhop: true }, d);
+  await assert.rejects(
+    runEditGuest({ name: 'other-lxc', bellhop: true }, d),
+    (err: unknown) => err instanceof GuestEditValidationError && /only one is allowed\): app-lxc other-lxc/.test((err as Error).message)
+  );
+  const saved = loadInventory(d.inventoryPath).guests;
+  assert.equal(saved.find((g) => g.name === 'other-lxc')?.bellhop, undefined);
+  assert.equal(saved.find((g) => g.name === 'app-lxc')?.bellhop, true);
+});

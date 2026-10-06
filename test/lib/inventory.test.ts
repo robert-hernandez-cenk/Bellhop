@@ -2624,3 +2624,68 @@ test('an inventory with nginx and tlsSource internal loads and validates clean',
   assert.equal(loaded.tlsSource, 'internal');
   assert.deepEqual(validateInventory(loaded), []);
 });
+
+// issue #85: the guest flag naming Bellhop's own entry.
+test('GuestEntrySchema accepts bellhop: true', () => {
+  const parsed = GuestEntrySchema.safeParse({ name: 'bellhop-lxc', type: 'lxc', vmid: 120, host: 'pve1', bellhop: true });
+  assert.ok(parsed.success && parsed.data.bellhop === true, 'the flag must survive parsing, not be stripped');
+});
+
+test('validateInventory flags more than one bellhop:true guest, naming them', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      { name: 'a', type: 'lxc', vmid: 120, host: 'pve1', bellhop: true },
+      { name: 'b', type: 'lxc', vmid: 121, host: 'pve1', bellhop: true },
+      { name: 'c', type: 'lxc', vmid: 122, host: 'pve1' },
+    ],
+  };
+  const errors = validateInventory(inv);
+  assert.ok(
+    errors.includes("Inventory validation: multiple entries flagged 'bellhop: true' (only one is allowed): a b"),
+    errors.join('\n')
+  );
+});
+
+test('validateInventory accepts exactly one bellhop:true guest', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [{ name: 'a', type: 'lxc', vmid: 120, host: 'pve1', bellhop: true }],
+  };
+  assert.deepEqual(validateInventory(inv), []);
+});
+
+test('saveInventory/loadInventory round-trips the bellhop flag', () => {
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [
+      { name: 'bellhop-lxc', type: 'lxc', vmid: 120, host: 'pve1', bellhop: true },
+      { name: 'media', type: 'lxc', vmid: 121, host: 'pve1' },
+    ],
+  };
+  const dest = path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-test-')), 'bellhop.db');
+  saveInventory(dest, inv);
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.guests.find((g) => g.name === 'bellhop-lxc')?.bellhop, true);
+  assert.equal(loaded.guests.find((g) => g.name === 'media')?.bellhop, undefined, 'absent must round-trip as undefined, not false or null');
+});
+
+test('a database created before the bellhop column gains it on open, and the flag then saves', () => {
+  const dest = path.join(mkdtempSync(path.join(tmpdir(), 'bellhop-test-')), 'bellhop.db');
+  const inv: Inventory = {
+    domain: 'example.com',
+    hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
+    guests: [{ name: 'bellhop-lxc', type: 'lxc', vmid: 120, host: 'pve1' }],
+  };
+  saveInventory(dest, inv);
+  const old = new Database(dest);
+  old.exec('ALTER TABLE guests DROP COLUMN bellhop');
+  old.close();
+  const loaded = loadInventory(dest);
+  assert.equal(loaded.guests[0].bellhop, undefined);
+  saveInventory(dest, { ...loaded, guests: [{ ...loaded.guests[0], bellhop: true }] });
+  assert.equal(loadInventory(dest).guests[0].bellhop, true);
+});

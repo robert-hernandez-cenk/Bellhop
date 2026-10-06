@@ -248,6 +248,10 @@ export const GuestEntrySchema = z.object({
   oidcMobileRedirectUris: z.array(OidcMobileRedirectUriSchema).optional(),
   unauthenticatedPaths: z.array(UnauthenticatedPathSchema).optional(),
   authentik: z.boolean().optional(),
+  // Marks this guest as Bellhop itself (#85) -- at most one, like proxy/
+  // authentik. When the four custom web login settings are not all set,
+  // the web login uses this guest's OpenID client (src/web/login/managed.ts).
+  bellhop: z.boolean().optional(),
   proxy: z.boolean().optional(),
   unprivileged: z.boolean().optional(),
   // The community-scripts slug this guest was installed from (e.g. "plex"),
@@ -724,6 +728,7 @@ function openInventoryDb(path: string): Database.Database {
   ensureColumn(db, 'hosts', 'authentik', 'authentik INTEGER');
   ensureColumn(db, 'guests', 'auth_group', 'auth_group TEXT');
   ensureColumn(db, 'guests', 'authentik', 'authentik INTEGER');
+  ensureColumn(db, 'guests', 'bellhop', 'bellhop INTEGER');
   ensureColumn(db, 'external_sites', 'auth_group', 'auth_group TEXT');
   ensureColumn(db, 'hosts', 'mid_scheme_json', 'mid_scheme_json TEXT');
   ensureColumn(db, 'hosts', 'unauthenticated_paths_json', 'unauthenticated_paths_json TEXT');
@@ -763,6 +768,13 @@ export function validateInventory(inv: Inventory): string[] {
   if (proxyNames.length > 1) {
     errors.push(
       `Inventory validation: multiple entries flagged 'proxy: true' (only one is allowed): ${proxyNames.join(' ')}`
+    );
+  }
+
+  const bellhopNames = inv.guests.filter((g) => g.bellhop).map((g) => g.name);
+  if (bellhopNames.length > 1) {
+    errors.push(
+      `Inventory validation: multiple entries flagged 'bellhop: true' (only one is allowed): ${bellhopNames.join(' ')}`
     );
   }
 
@@ -1095,6 +1107,7 @@ interface GuestRow {
   oidc_redirect_uris_json: string | null;
   oidc_mobile_redirect_uris_json: string | null;
   authentik: number | null;
+  bellhop: number | null;
   proxy: number;
   proxy_manual: number | null;
   unprivileged: number | null;
@@ -1187,6 +1200,7 @@ export function loadInventory(path: string): Inventory {
       oidcRedirectUris: row.oidc_redirect_uris_json ? JSON.parse(row.oidc_redirect_uris_json) : undefined,
       oidcMobileRedirectUris: row.oidc_mobile_redirect_uris_json ? JSON.parse(row.oidc_mobile_redirect_uris_json) : undefined,
       authentik: row.authentik ? true : undefined,
+      bellhop: row.bellhop ? true : undefined,
       proxy: row.proxy ? true : undefined,
       proxyManual: row.proxy_manual ? true : undefined,
       unprivileged: row.unprivileged === null ? undefined : !!row.unprivileged,
@@ -1433,8 +1447,8 @@ export function saveInventory(path: string, inv: Inventory): void {
       }
 
       const insertGuest = db.prepare(`
-        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, created_by_uid, created_by_username, created_by_since, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, authentik, unauthenticated_paths_json)
-        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @created_by_uid, @created_by_username, @created_by_since, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @authentik, @unauthenticated_paths_json)
+        INSERT INTO guests (name, type, vmid, host, ip, port, insecure_backend_tls, proxy, proxy_manual, unprivileged, app, app_source, vpn_gateway, vpn, created_by_uid, created_by_username, created_by_since, auth_group, auth_mode, oidc_redirect_uris_json, oidc_mobile_redirect_uris_json, authentik, bellhop, unauthenticated_paths_json)
+        VALUES (@name, @type, @vmid, @host, @ip, @port, @insecure_backend_tls, @proxy, @proxy_manual, @unprivileged, @app, @app_source, @vpn_gateway, @vpn, @created_by_uid, @created_by_username, @created_by_since, @auth_group, @auth_mode, @oidc_redirect_uris_json, @oidc_mobile_redirect_uris_json, @authentik, @bellhop, @unauthenticated_paths_json)
       `);
       for (const guest of data.guests) {
         insertGuest.run({
@@ -1460,6 +1474,7 @@ export function saveInventory(path: string, inv: Inventory): void {
           oidc_redirect_uris_json: guest.oidcRedirectUris ? JSON.stringify(guest.oidcRedirectUris) : null,
           oidc_mobile_redirect_uris_json: guest.oidcMobileRedirectUris ? JSON.stringify(guest.oidcMobileRedirectUris) : null,
           authentik: guest.authentik ? 1 : null,
+          bellhop: guest.bellhop ? 1 : null,
           unauthenticated_paths_json: guest.unauthenticatedPaths ? JSON.stringify(guest.unauthenticatedPaths) : null,
         });
         if (guest.proxy) insertProxyOwner.run('guest', guest.name);
