@@ -41,10 +41,14 @@ export type AccessField =
   | 'unauthenticatedPaths'
   | 'callbackUrls'
   | 'mobileRedirectUrls'
-  | 'oidcClient';
+  | 'oidcClient'
+  // The "this is Bellhop" row (#85): offered to an OIDC guest, and to any
+  // flagged guest so the flag can still be cleared.
+  | 'bellhop';
 
 export interface AccessFieldsInput extends OidcEntryLike {
   oidcRedirectUris?: string[];
+  bellhop?: boolean;
 }
 
 // The server refuses to switch a gated guest with subdomains to OIDC until
@@ -57,9 +61,10 @@ export function needsCallbackUrlsBeforeOidc(guest: AccessFieldsInput): boolean {
 
 export function accessFieldsFor(guest: AccessFieldsInput): AccessField[] {
   if (guest.authMode === 'oidc') {
-    return ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient'];
+    return ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient', 'bellhop'];
   }
   const fields: AccessField[] = ['authGroup', 'authMode', 'unauthenticatedPaths'];
   if (needsCallbackUrlsBeforeOidc(guest)) fields.push('callbackUrls');
+  if (guest.bellhop) fields.push('bellhop');
   return fields;
 }

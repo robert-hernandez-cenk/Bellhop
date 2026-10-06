@@ -102,15 +102,18 @@ who is making a request:
 database is opened (`authentik` becomes `oidc`, `auto` becomes unset);
 as the environment variable they stop the service at start-up.
 
-The Settings page refuses to switch it to `oidc` unless the four web login
-settings below are set, you have signed in through `/auth/login`, and you
+The Settings page refuses to switch it to `oidc` unless web login is
+configured (a flagged Bellhop guest, or the four custom values below), you have signed in through `/auth/login`, and you
 would still be an administrator, and asks for confirmation before
 switching away from `oidc` — a switch is also logged as a warning naming
 who made it — see [Locked out](authentik.md#locked-out) for recovering
 from a wrong value anyway.
 
-The web login client is four more settings, written by `bellhop
-configure-web-login` (see [Web login](authentik.md#web-login)):
+When Bellhop runs as a guest it manages, its own guest supplies the web login
+client and none of these are needed (see [Web login](authentik.md#web-login)).
+For an install Bellhop does not manage in Proxmox, the client is four more
+settings, on the Settings page's Web login tab. Setting all four overrides a
+flagged guest:
 `webUiOidcIssuer` (`WEB_UI_OIDC_ISSUER`), `webUiOidcClientId`
 (`WEB_UI_OIDC_CLIENT_ID`), `webUiOidcRedirectUri`
 (`WEB_UI_OIDC_REDIRECT_URI`, an `https://` URL ending in `/auth/callback`;

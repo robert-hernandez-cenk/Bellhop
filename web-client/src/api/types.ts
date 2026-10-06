@@ -142,6 +142,9 @@ export interface GuestEntry {
   oidcMobileRedirectUris?: string[];
   unauthenticatedPaths?: string[];
   proxy?: boolean;
+  // This guest is Bellhop itself (#85): the web login uses its OpenID
+  // client when the custom web login settings are not all set.
+  bellhop?: boolean;
   app?: string;
   // 'custom' when this guest's `app` slug was actually installed from the
   // operator-configured custom script repository (see CustomScripts below),
@@ -369,7 +372,14 @@ export interface SettingsResponse {
   environment: Record<string, EnvironmentPin>;
   // Each secret's status only -- the API never returns a secret's value.
   secrets: Record<SecretSettingKey, SecretStatus>;
+  // Which source signs people in to the web UI (#85). No secret of any kind.
+  webLogin: WebLoginStatus;
 }
+
+export type WebLoginStatus =
+  | { source: 'custom' }
+  | { source: 'managed'; entry: string; redirectUri: string }
+  | { source: 'none'; missing: string[]; managedProblem?: string; invalid?: string };
 
 export interface EnvironmentPin {
   variable: string;

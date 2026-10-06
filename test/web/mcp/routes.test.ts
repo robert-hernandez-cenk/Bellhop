@@ -57,7 +57,8 @@ test('with neither sign-in nor a key configured, /mcp answers 503 naming both fi
   assert.equal(res.status, 503);
   const body = await res.json();
   assert.equal(body.error, MCP_NOT_ENABLED_MESSAGE);
-  assert.match(MCP_NOT_ENABLED_MESSAGE, /configure-web-login/);
+  assert.doesNotMatch(MCP_NOT_ENABLED_MESSAGE, /configure-web-login/, 'the removed command is not offered');
+  assert.match(MCP_NOT_ENABLED_MESSAGE, /flag Bellhop/);
   assert.match(MCP_NOT_ENABLED_MESSAGE, /mcpApiKey/);
 });
 

@@ -1,9 +1,14 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { webLoginConfig } from '../../../src/web/login/config.ts';
+import { webLoginConfig, webLoginStatus, refreshManagedWebLoginIfUsed } from '../../../src/web/login/config.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
+import { configureManagedWebLogin, managedWebLogin, resetManagedWebLogin } from '../../../src/web/login/managed.ts';
+import { ownedAuthentik, resolveManagedLogin, bellhopInventory, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI, MANAGED_SECRET } from '../../support/managed-login.ts';
 
-afterEach(resetConfigStore);
+afterEach(() => {
+  resetConfigStore();
+  resetManagedWebLogin();
+});
 
 const ENV = {
   WEB_UI_OIDC_ISSUER: 'https://authentik.example.com/application/o/bellhop/',
@@ -82,4 +87,123 @@ test('webLoginConfig accepts a valid environment value even when another key com
     WEB_UI_OIDC_REDIRECT_URI: ENV.WEB_UI_OIDC_REDIRECT_URI,
   });
   assert.equal(result.configured, true);
+});
+
+// issue #85: the flagged guest's client is the fallback when the custom set is not complete.
+const MANAGED_CONFIG = {
+  configured: true,
+  issuer: MANAGED_ISSUER,
+  clientId: MANAGED_CLIENT_ID,
+  clientSecret: MANAGED_SECRET,
+  redirectUri: MANAGED_REDIRECT_URI,
+} as const;
+
+test('webLoginConfig falls back to the managed guest when no custom setting is set', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.deepEqual(webLoginConfig({}), MANAGED_CONFIG);
+});
+
+test('a complete custom set wins over a resolved managed guest', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.deepEqual(webLoginConfig(ENV), {
+    configured: true,
+    issuer: ENV.WEB_UI_OIDC_ISSUER,
+    clientId: 'example-client-id',
+    clientSecret: 'example-token',
+    redirectUri: ENV.WEB_UI_OIDC_REDIRECT_URI,
+  });
+});
+
+test('a partial custom set is not mixed with the managed guest: the managed client is used whole', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  const result = webLoginConfig({ WEB_UI_OIDC_ISSUER: ENV.WEB_UI_OIDC_ISSUER, WEB_UI_OIDC_CLIENT_ID: 'example-client-id' });
+  assert.deepEqual(result, MANAGED_CONFIG);
+});
+
+test('with neither source usable, webLoginConfig names the missing custom keys', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ bellhop: undefined }));
+  assert.deepEqual(webLoginConfig({}), {
+    configured: false,
+    missing: ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'],
+  });
+});
+
+test('an invalid environment value still throws when a managed guest could take over', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.throws(() => webLoginConfig({ ...ENV, WEB_UI_OIDC_REDIRECT_URI: 'not a url' }), /WEB_UI_OIDC_REDIRECT_URI/);
+});
+
+// issue #85: which source is in effect, for the Settings page. Carries no secret.
+test('webLoginStatus is custom when all four custom values are set, even with a managed guest resolved', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.deepEqual(webLoginStatus(ENV), { source: 'custom' });
+});
+
+test('webLoginStatus is managed, naming the guest and callback, when the custom set is incomplete', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  const status = webLoginStatus({});
+  assert.deepEqual(status, { source: 'managed', entry: 'bellhop-lxc', redirectUri: MANAGED_REDIRECT_URI });
+  assert.ok(!JSON.stringify(status).includes(MANAGED_SECRET), 'no secret in the status');
+});
+
+test('webLoginStatus is none with the missing custom keys and the flagged guest\'s fixed-text problem', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ authMode: 'forward' }));
+  assert.deepEqual(webLoginStatus({}), {
+    source: 'none',
+    missing: ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'],
+    managedProblem: 'bellhop-lxc is not OIDC-gated (set an auth group and OIDC mode)',
+  });
+});
+
+test('webLoginStatus is none without a managedProblem when no guest is flagged', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ bellhop: undefined }));
+  const status = webLoginStatus({});
+  assert.equal(status.source, 'none');
+  assert.ok(!('managedProblem' in status), 'an unmanaged install is not told about the managed option as a problem');
+});
+
+test('webLoginStatus reports an invalid environment value by key and variable, never the value', () => {
+  resetConfigStore();
+  const status = webLoginStatus({ ...ENV, WEB_UI_OIDC_ISSUER: 'not-a-url-example-value' });
+  assert.equal(status.source, 'none');
+  const invalid = (status as { invalid?: string }).invalid ?? '';
+  assert.ok(invalid.includes('webUiOidcIssuer') && invalid.includes('WEB_UI_OIDC_ISSUER'), invalid);
+  assert.ok(!invalid.includes('not-a-url-example-value'));
+});
+
+// Review follow-up (#85): a complete custom set makes the managed lookup
+// irrelevant, so web login must not depend on Authentik being reachable.
+test('refreshManagedWebLoginIfUsed makes no lookup while all four custom values are set', async () => {
+  resetConfigStore();
+  const authentik = ownedAuthentik();
+  let lookups = 0;
+  const original = authentik.listApplications.bind(authentik);
+  authentik.listApplications = async (...args) => {
+    lookups++;
+    return original(...args);
+  };
+  configureManagedWebLogin({ inventory: () => bellhopInventory(), authentik });
+  await refreshManagedWebLoginIfUsed(ENV);
+  assert.equal(lookups, 0);
+  assert.equal(managedWebLogin(), undefined);
+  await refreshManagedWebLoginIfUsed({});
+  assert.equal(lookups, 1);
+  assert.ok(managedWebLogin());
+});
+
+test('refreshManagedWebLoginIfUsed still refreshes when an environment value is invalid, so the failure is not hidden', async () => {
+  resetConfigStore();
+  const authentik = ownedAuthentik();
+  configureManagedWebLogin({ inventory: () => bellhopInventory(), authentik });
+  await refreshManagedWebLoginIfUsed({ ...ENV, WEB_UI_OIDC_ISSUER: 'not-a-url-example-value' });
+  assert.ok(managedWebLogin());
 });

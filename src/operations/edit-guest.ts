@@ -19,6 +19,7 @@ import { buildRouteForEntry } from '../lib/proxy/routes.ts';
 import { getDriver } from '../lib/proxy/index.ts';
 import { checkCapabilities } from '../lib/proxy/driver.ts';
 import { syncProxyLive } from '../web/proxy-sync.ts';
+import { managedLoginLockoutError, refreshManagedWebLoginIfUsed } from '../web/login/config.ts';
 import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
 
@@ -94,6 +95,8 @@ export function applyGuestEdits(current: GuestEntry, body: Record<string, unknow
   if ('port' in body) updated.port = parsePort(typeof body.port === 'number' ? String(body.port) : body.port);
   if ('proxyManual' in body) updated.proxyManual = !!body.proxyManual;
   if ('insecureBackendTls' in body) updated.insecureBackendTls = !!body.insecureBackendTls;
+  // Stored as true or absent, like the other flag fields (#85).
+  if ('bellhop' in body) updated.bellhop = body.bellhop === true ? true : undefined;
   if ('authGroup' in body) updated.authGroup = parseAuthGroup(body.authGroup);
   if ('unauthenticatedPaths' in body) updated.unauthenticatedPaths = parseUnauthenticatedPaths(asDelimited(body.unauthenticatedPaths));
   if ('authMode' in body) updated.authMode = parseAuthMode(body.authMode);
@@ -130,6 +133,11 @@ export async function commitGuestEdit(
 
   const errors = validateInventory({ ...inventory, guests });
   if (errors.length > 0) throw new GuestEditValidationError(errors.join('\n'));
+
+  // Bellhop's own sign-in can depend on this guest (#85): refuse an edit that
+  // would leave nobody able to sign in.
+  const lockout = managedLoginLockoutError(inventory, { ...inventory, guests });
+  if (lockout) throw new GuestEditValidationError(lockout);
 
   // Write-level OIDC rule (research R7): an OIDC-effective entry (authMode
   // 'oidc' plus an authGroup) with subdomains must carry at least one
@@ -186,6 +194,9 @@ export async function commitGuestEdit(
   // settings save in the meantime must not be reverted by this one.
   saveInventory(deps.inventoryPath, withFreshSettings(deps.inventoryPath, { ...inventory, guests }));
   inventory.guests = guests;
+  // The managed web login follows this guest (#85); re-read it now so MCP and
+  // the Settings status see the edit without waiting for the next sign-in.
+  await refreshManagedWebLoginIfUsed();
 
   try {
     const {
@@ -256,6 +267,12 @@ export const EDIT_GUEST_SHAPE = {
   port: z.union([z.number().int(), z.string()]).optional().describe('Backend port; empty string clears'),
   proxyManual: z.boolean().optional().describe('Proxy config for this entry is hand-authored outside the managed section'),
   insecureBackendTls: z.boolean().optional().describe('Backend serves untrusted/self-signed TLS'),
+  bellhop: z
+    .boolean()
+    .optional()
+    .describe(
+      "This guest is Bellhop itself: when the custom web login settings are not all set, the web UI signs people in through this guest's OpenID client (it must be OIDC-gated with a callback URL ending in /auth/callback). At most one guest. Admin only."
+    ),
   authGroup: z.string().nullable().optional().describe('Authentik group ladder rung; null or empty clears the gate'),
   unauthenticatedPaths: z
     .union([z.string(), z.array(z.string())])

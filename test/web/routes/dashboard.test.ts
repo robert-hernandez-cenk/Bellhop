@@ -1463,3 +1463,35 @@ test(
     assert.equal(differentUidPatch.status, 403);
   }
 );
+
+// issue #85: which guest is Bellhop itself is admin-only, like the OIDC fields.
+const BELLHOP_ADMIN_ONLY_ERROR = 'Only an admin may change which guest is Bellhop itself';
+
+test('PATCH guest bellhop rejects a non-admin changing it, and leaves it unwritten', async () => {
+  const app = testApp(oidcInventory());
+  const res = await asUser(request(app).patch('/api/inventory/guests/sonarr').send({ bellhop: true }));
+  assert.equal(res.status, 403);
+  assert.equal(res.body.error, BELLHOP_ADMIN_ONLY_ERROR);
+  const invRes = await request(app).get('/api/inventory');
+  assert.equal(invRes.body.guests.find((g: any) => g.name === 'sonarr').bellhop, undefined, 'rejected PATCH must not have been persisted');
+});
+
+test('PATCH guest bellhop lets an admin set it', async () => {
+  const res = await asAdmin(request(testApp(oidcInventory())).patch('/api/inventory/guests/sonarr')).send({ bellhop: true });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.guest.bellhop, true);
+});
+
+test('PATCH guest bellhop is a no-op-safe re-submit of the current value for a non-admin', async () => {
+  const res = await asUser(
+    request(testApp(oidcInventory({ bellhop: true }))).patch('/api/inventory/guests/sonarr').send({ bellhop: true, port: 8989 })
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.guest.port, 8989);
+});
+
+test('PATCH guest bellhop rejects a non-admin clearing it', async () => {
+  const res = await asUser(request(testApp(oidcInventory({ bellhop: true }))).patch('/api/inventory/guests/sonarr').send({ bellhop: false }));
+  assert.equal(res.status, 403);
+  assert.equal(res.body.error, BELLHOP_ADMIN_ONLY_ERROR);
+});

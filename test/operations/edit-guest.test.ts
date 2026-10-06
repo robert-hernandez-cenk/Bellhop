@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +15,9 @@ import { registerDriverForTests } from '../../src/lib/proxy/index.ts';
 import type { ProxyPlan, ReverseProxyDriver } from '../../src/lib/proxy/driver.ts';
 import type { ProxyDriverId } from '../../src/lib/proxy/ids.ts';
 import { MOBILE_CONSENT_STAGE_NAME } from '../../src/commands/networking/sync-authentik.ts';
+import { resetConfigStore, tempConfigStore } from '../support/config-store.ts';
+import { bellhopInventory, ownedAuthentik } from '../support/managed-login.ts';
+import { configureManagedWebLogin, managedWebLogin, resetManagedWebLogin } from '../../src/web/login/managed.ts';
 
 const inventory: Inventory = {
   domain: 'example.com',
@@ -680,4 +683,117 @@ test('commitGuestEdit saves an edit under an unsupported TLS source and reports 
   if (!result.proxySynced) {
     assert.match(result.proxyError, /^tlsSource 'internal' is not supported by the 'nginx' proxy driver \(it supports: files\) -- to use its default \(files\), run: bellhop set-config tlsSource --unset --apply/);
   }
+});
+
+// issue #85: the `bellhop` flag naming Bellhop's own guest.
+test('applyGuestEdits flags, clears and leaves the bellhop flag alone', () => {
+  const current = inventory.guests.find((g) => g.name === 'app-lxc')!;
+  assert.equal(applyGuestEdits(current, { bellhop: true }).bellhop, true);
+  assert.equal(applyGuestEdits({ ...current, bellhop: true }, { bellhop: false }).bellhop, undefined);
+  assert.equal(applyGuestEdits({ ...current, bellhop: true }, { subdomains: ['x'] }).bellhop, true, 'an edit that does not pass bellhop leaves it unchanged');
+});
+
+test('runEditGuest saves the bellhop flag and returns it', async () => {
+  const d = deps();
+  const result = await runEditGuest({ name: 'app-lxc', bellhop: true }, d);
+  assert.equal(result.guest.bellhop, true);
+  assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'app-lxc')?.bellhop, true);
+});
+
+test('runEditGuest rejects flagging a second guest as Bellhop, naming both, and saves nothing', async () => {
+  const d = deps();
+  await runEditGuest({ name: 'app-lxc', bellhop: true }, d);
+  await assert.rejects(
+    runEditGuest({ name: 'other-lxc', bellhop: true }, d),
+    (err: unknown) => err instanceof GuestEditValidationError && /only one is allowed\): app-lxc other-lxc/.test((err as Error).message)
+  );
+  const saved = loadInventory(d.inventoryPath).guests;
+  assert.equal(saved.find((g) => g.name === 'other-lxc')?.bellhop, undefined);
+  assert.equal(saved.find((g) => g.name === 'app-lxc')?.bellhop, true);
+});
+
+// --- the managed web login (#85) --------------------------------------------
+// Bellhop's own guest can be the only way to sign in; an edit that stops it
+// qualifying must not silently lock everyone out.
+
+afterEach(() => {
+  resetConfigStore();
+  resetManagedWebLogin();
+});
+
+function bellhopDeps(overrides: Parameters<typeof bellhopInventory>[0] = {}): OperationDeps {
+  const inv = bellhopInventory(overrides);
+  const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-')), 'bellhop.db');
+  saveInventory(inventoryPath, inv);
+  return {
+    ssh: new FakeSSHClient(defaultResponder),
+    inventory: loadInventory(inventoryPath),
+    inventoryPath,
+    authentik: new UnconfiguredAuthentikClient(),
+    cloudflare: new UnconfiguredCloudflareClient(),
+  };
+}
+
+const ALL_CUSTOM = {
+  webUiAuthMode: 'oidc' as const,
+  webUiOidcIssuer: 'https://authentik.example.com/application/o/bellhop/',
+  webUiOidcClientId: 'example-client-id',
+  webUiOidcRedirectUri: 'https://bellhop.example.com/auth/callback',
+};
+
+function lockoutMessage(err: unknown): boolean {
+  return err instanceof GuestEditValidationError && /Refusing this edit: webUiAuthMode is oidc/.test((err as Error).message);
+}
+
+test('an edit that unflags the only web login guest is refused while webUiAuthMode is oidc with no custom values', async () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  const d = bellhopDeps();
+  await assert.rejects(runEditGuest({ name: 'bellhop-lxc', bellhop: false }, d), lockoutMessage);
+  assert.equal(loadInventory(d.inventoryPath).guests[0].bellhop, true, 'nothing was saved');
+});
+
+test('an edit that takes away the callback URL or un-gates the flagged guest is refused', async () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  const d = bellhopDeps();
+  await assert.rejects(runEditGuest({ name: 'bellhop-lxc', oidcRedirectUris: ['https://bellhop.example.com/other'] }, d), lockoutMessage);
+  await assert.rejects(runEditGuest({ name: 'bellhop-lxc', authGroup: null, confirmOidcClientDeletion: true }, d), lockoutMessage);
+});
+
+test('the lockout guard names the reason and both ways out', async () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  const d = bellhopDeps();
+  await assert.rejects(runEditGuest({ name: 'bellhop-lxc', bellhop: false }, d), (err: unknown) => {
+    const message = (err as Error).message;
+    return message.includes('No guest is flagged as Bellhop') && message.includes('Set webUiAuthMode to none first') && message.includes('Web login settings');
+  });
+});
+
+test('the same edits are allowed when the custom web login values are all set, or the mode is not oidc', async () => {
+  tempConfigStore(ALL_CUSTOM, { webUiOidcClientSecret: 'example-client-secret' });
+  await runEditGuest({ name: 'bellhop-lxc', bellhop: false }, bellhopDeps());
+  resetConfigStore();
+  tempConfigStore({ webUiAuthMode: 'none' });
+  await runEditGuest({ name: 'bellhop-lxc', bellhop: false }, bellhopDeps());
+});
+
+test('an unrelated edit to the web login guest is allowed while webUiAuthMode is oidc', async () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  const result = await runEditGuest({ name: 'bellhop-lxc', port: 8080 }, bellhopDeps());
+  assert.equal(result.guest.port, 8080);
+});
+
+test('an edit to a guest that was already not usable as the web login is not blocked by the guard', async () => {
+  tempConfigStore({ webUiAuthMode: 'oidc' });
+  const d = bellhopDeps({ oidcRedirectUris: ['https://bellhop.example.com/auth/callback'], bellhop: undefined });
+  const result = await runEditGuest({ name: 'bellhop-lxc', port: 8080 }, d);
+  assert.equal(result.guest.port, 8080);
+});
+
+test('a saved guest edit refreshes the managed web login, so MCP and the Settings status see it at once', async () => {
+  tempConfigStore({});
+  const d = bellhopDeps({ bellhop: undefined });
+  configureManagedWebLogin({ inventory: () => d.inventory, authentik: ownedAuthentik() });
+  assert.equal(managedWebLogin(), undefined);
+  await runEditGuest({ name: 'bellhop-lxc', bellhop: true }, d);
+  assert.equal(managedWebLogin()?.entry, 'bellhop-lxc');
 });
