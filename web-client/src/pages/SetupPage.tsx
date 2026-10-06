@@ -13,6 +13,7 @@ import {
 const STEP_LABELS: Record<string, string> = {
   proxmox: 'Proxmox',
   basics: 'Domain and basics',
+  proxy: 'Reverse proxy',
   finish: 'Finish',
 };
 

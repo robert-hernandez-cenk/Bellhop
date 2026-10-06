@@ -15,11 +15,11 @@ description: "Task list for the first-run setup reverse-proxy step (#87)"
 
 ## Phase 1: Foundational (blocks every story)
 
-- [ ] T001 [P] Write failing tests in `test/lib/setup-state.test.ts` for `uncompleteSetupStep(dbPath, step)`: removes a completed id, is a no-op for an id that is not completed, throws "Setup is not in progress" when finished or absent, leaves other completed ids in order
-- [ ] T002 Add `uncompleteSetupStep` to `src/lib/setup-state.ts` (one immediate transaction like `completeSetupStep`)
-- [ ] T003 [P] Write failing tests in `test/web/setup/finish.test.ts`: `requiredSteps` is `['proxmox', 'basics', 'proxy']`; Finish answers 409 `Finish step "Reverse proxy" first` when only proxmox and basics are complete; Finish succeeds with all three; update the existing finish tests that assume two required steps
-- [ ] T004 In `src/web/setup/service.ts` add `'proxy'` to `REQUIRED_SETUP_STEPS` (after `basics`), `SETUP_STEP_LABELS.proxy = 'Reverse proxy'`, and `SetupService.uncompleteStep(step)`; add the label to the client's `STEP_LABELS` in `web-client/src/pages/SetupPage.tsx`
-- [ ] T005 Export `proxyDriversInfo` from `src/web/routes/settings.ts` for reuse by the setup step (no behavior change); `npm run typecheck` and `npm test` green
+- [x] T001 [P] Write failing tests in `test/lib/setup-state.test.ts` for `uncompleteSetupStep(dbPath, step)`: removes a completed id, is a no-op for an id that is not completed, throws "Setup is not in progress" when finished or absent, leaves other completed ids in order
+- [x] T002 Add `uncompleteSetupStep` to `src/lib/setup-state.ts` (one immediate transaction like `completeSetupStep`)
+- [x] T003 [P] Write failing tests in `test/web/setup/finish.test.ts`: `requiredSteps` is `['proxmox', 'basics', 'proxy']`; Finish answers 409 `Finish step "Reverse proxy" first` when only proxmox and basics are complete; Finish succeeds with all three; update the existing finish tests that assume two required steps
+- [x] T004 In `src/web/setup/service.ts` add `'proxy'` to `REQUIRED_SETUP_STEPS` (after `basics`), `SETUP_STEP_LABELS.proxy = 'Reverse proxy'`, and `SetupService.uncompleteStep(step)`; add the label to the client's `STEP_LABELS` in `web-client/src/pages/SetupPage.tsx`
+- [x] T005 Export `proxyDriversInfo` from `src/web/routes/settings.ts` for reuse by the setup step (no behavior change); `npm run typecheck` and `npm test` green
 
 ## Phase 2: User Story 1: Point Bellhop at an existing proxy (P1) 🎯 MVP
 

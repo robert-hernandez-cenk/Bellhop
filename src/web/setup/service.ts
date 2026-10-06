@@ -4,6 +4,7 @@ import { ensureBellhopKey, generatedKeyPath, type BellhopKey } from '../../lib/b
 import type { Inventory } from '../../lib/inventory.ts';
 import {
   completeSetupStep,
+  uncompleteSetupStep,
   ensurePendingSetup,
   finishSetup,
   loadSetupState,
@@ -14,12 +15,13 @@ import {
 
 // The steps Finish requires (issue #86). Later parts of #70 append their
 // own step ids here as they add steps before Finish.
-export const REQUIRED_SETUP_STEPS = ['proxmox', 'basics'] as const;
+export const REQUIRED_SETUP_STEPS = ['proxmox', 'basics', 'proxy'] as const;
 export type SetupStepId = (typeof REQUIRED_SETUP_STEPS)[number];
 
 export const SETUP_STEP_LABELS: Record<SetupStepId, string> = {
   proxmox: 'Proxmox',
   basics: 'Domain and basics',
+  proxy: 'Reverse proxy',
 };
 
 export class SetupIncompleteError extends Error {}
@@ -108,6 +110,10 @@ export class SetupService {
 
   completeStep(step: SetupStepId): SetupState {
     return completeSetupStep(this.options().inventoryPath, step);
+  }
+
+  uncompleteStep(step: SetupStepId): SetupState {
+    return uncompleteSetupStep(this.options().inventoryPath, step);
   }
 
   // Refuses while a required step is incomplete, naming the first one.

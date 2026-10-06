@@ -133,7 +133,7 @@ function derivedValues(inv: Inventory) {
 // page's dropdown is populated from this rather than a hardcoded option
 // list, so a future driver needs no client change. Independent of inventory: every driver is always listed, whether
 // or not it's the one currently active.
-function proxyDriversInfo() {
+export function proxyDriversInfo() {
   return listDrivers().map((driver) => ({
     id: driver.id,
     label: driver.label,

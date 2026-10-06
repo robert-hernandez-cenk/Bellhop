@@ -66,7 +66,7 @@ test('setup state needs the setup cookie', async () => {
   const right = await request(app).get('/api/setup/state').set('Cookie', cookie);
   assert.equal(right.status, 200);
   assert.deepEqual(right.body.completedSteps, []);
-  assert.deepEqual(right.body.requiredSteps, ['proxmox', 'basics']);
+  assert.deepEqual(right.body.requiredSteps, ['proxmox', 'basics', 'proxy']);
 });
 
 test('setup status needs no cookie and reports the phase', async () => {
