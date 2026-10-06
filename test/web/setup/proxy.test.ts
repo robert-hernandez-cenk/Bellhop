@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import { setupTestApp } from '../../support/setup-app.ts';
 import { loadInventory, saveInventory, type Inventory } from '../../../src/lib/inventory.ts';
-import { loadSetupState } from '../../../src/lib/setup-state.ts';
+import { completeSetupStep, loadSetupState } from '../../../src/lib/setup-state.ts';
 import { configValueAt, storedSecretKeys } from '../../../src/lib/config.ts';
 
 const PASSWORD = 'correct-horse-battery';
@@ -421,3 +421,89 @@ test('the NPM check signs in with the saved credentials and its failure never ca
     useConfigStore(null);
   }
 });
+
+// -- Re-running and resuming (US4) ---------------------------------------
+
+import { SetupService } from '../../../src/web/setup/service.ts';
+
+async function completedNginx() {
+  const t = checkApp();
+  await t.put(NGINX);
+  assert.equal((await t.check()).status, 200);
+  assert.deepEqual(t.completed(), ['proxy']);
+  return t;
+}
+
+test('changing the driver, entry, a setting, the TLS source or a secret reopens the step', async () => {
+  const changes: Record<string, unknown>[] = [
+    { driver: 'haproxy', entry: 'proxy-lxc' },
+    { ...NGINX, entry: 'pve1' },
+    { ...NGINX, configPath: '/etc/nginx/conf.d/other.conf' },
+    { ...NGINX, tlsSource: 'files' },
+    { ...NGINX, secrets: { cloudflareDnsApiToken: CF_TOKEN } },
+  ];
+  for (const change of changes) {
+    const t = await completedNginx();
+    const res = await t.put(change);
+    assert.equal(res.status, 200, JSON.stringify(change));
+    assert.deepEqual(t.completed(), [], JSON.stringify(change));
+    assert.equal(res.body.state.complete, false);
+  }
+});
+
+test('a repeated save with the same values changes nothing and keeps the step complete', async () => {
+  const t = await completedNginx();
+  const before = JSON.stringify(loadInventory(t.inventoryPath));
+  const res = await t.put({ ...NGINX, configPath: '', secrets: {} });
+  assert.equal(res.status, 200);
+  assert.equal(JSON.stringify(loadInventory(t.inventoryPath)), before);
+  assert.deepEqual(t.completed(), ['proxy']);
+  assert.equal(res.body.state.complete, true);
+});
+
+test('after a restart the saved choice and set/not-set secrets come back', async () => {
+  const t = checkApp();
+  await t.put({
+    driver: 'nginx-proxy-manager',
+    entry: 'proxy-lxc',
+    npmApiUrl: 'http://192.0.2.30:81',
+    npmApiEmail: 'admin@example.com',
+    secrets: { npmApiPassword: PASSWORD },
+  });
+  const restarted = setupTestApp({ inventoryPath: t.inventoryPath });
+  const res = await request(restarted.app).get('/api/setup/proxy').set('Cookie', restarted.cookie);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.choice.driver, 'nginx-proxy-manager');
+  assert.equal(res.body.choice.entry, 'proxy-lxc');
+  assert.equal(res.body.choice.npmApiEmail, 'admin@example.com');
+  assert.equal(res.body.secrets.npmApiPassword, true);
+  assert.equal(res.body.secrets.cloudflareDnsApiToken, false);
+  assert.ok(!res.text.includes(PASSWORD));
+  assert.ok(restarted.setup instanceof SetupService);
+});
+
+test('Finish waits for the proxy step and then succeeds', async () => {
+  const t = checkApp();
+  completeSetupStepsExceptProxy(t.inventoryPath);
+  const early = await request(t.app).post('/api/setup/finish').set('Cookie', t.cookie);
+  assert.equal(early.status, 409);
+  assert.match(early.body.error, /Finish step "Reverse proxy" first/);
+  await t.put(NGINX);
+  await t.check();
+  const done = await request(t.app).post('/api/setup/finish').set('Cookie', t.cookie);
+  assert.equal(done.status, 200);
+});
+
+test('repeated saves leave at most one entry flagged as the proxy', async () => {
+  const t = checkApp();
+  for (const entry of ['proxy-lxc', 'pve1', 'web-lxc', 'proxy-lxc', 'proxy-lxc']) {
+    await t.put({ driver: 'nginx', entry });
+    assert.equal(proxyFlags(t.inventoryPath).length, 1);
+  }
+  assert.deepEqual(proxyFlags(t.inventoryPath), ['proxy-lxc']);
+});
+
+function completeSetupStepsExceptProxy(inventoryPath: string) {
+  completeSetupStep(inventoryPath, 'proxmox');
+  completeSetupStep(inventoryPath, 'basics');
+}

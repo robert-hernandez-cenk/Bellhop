@@ -68,9 +68,9 @@ description: "Task list for the first-run setup reverse-proxy step (#87)"
 
 **Independent Test**: Complete the step, change one value, and see `proxy` drop out of `completedSteps` and Finish refuse; repeat the same save and see nothing change.
 
-- [ ] T020 [US4] Write failing tests in `test/web/setup/proxy.test.ts`: after a passing check, a `PUT` that changes the driver, the entry, a setting, a secret (non-empty) or the TLS source removes `proxy` from `completedSteps`; a `PUT` with identical values and blank secrets leaves it complete and the inventory byte-identical; `GET` after a service restart (new `SetupService` over the same DB) returns the saved choice with secrets as set/not set; Finish answers 409 naming "Reverse proxy" while incomplete; two `PUT`s in a row leave at most one entry with `proxy: true`
-- [ ] T021 [US4] In `saveProxyChoice` compare the stored `ProxyChoice` and secrets with the request (a non-empty secret counts as a change) and call `SetupService.uncompleteStep('proxy')` only on a difference; `none` re-completes after saving
-- [ ] T022 [US4] Client: `ProxyStep` loads the saved choice and secret statuses on open, shows the step as incomplete after a changed save, and `FinishStep` lists "Reverse proxy" among the steps to complete; `STEP_LABELS`/step list order is Proxmox, Domain and basics, Reverse proxy, Finish
+- [x] T020 [US4] Write failing tests in `test/web/setup/proxy.test.ts`: after a passing check, a `PUT` that changes the driver, the entry, a setting, a secret (non-empty) or the TLS source removes `proxy` from `completedSteps`; a `PUT` with identical values and blank secrets leaves it complete and the inventory byte-identical; `GET` after a service restart (new `SetupService` over the same DB) returns the saved choice with secrets as set/not set; Finish answers 409 naming "Reverse proxy" while incomplete; two `PUT`s in a row leave at most one entry with `proxy: true`
+- [x] T021 [US4] In `saveProxyChoice` compare the stored `ProxyChoice` and secrets with the request (a non-empty secret counts as a change) and call `SetupService.uncompleteStep('proxy')` only on a difference; `none` re-completes after saving
+- [x] T022 [US4] Client: `ProxyStep` loads the saved choice and secret statuses on open, shows the step as incomplete after a changed save, and `FinishStep` lists "Reverse proxy" among the steps to complete; `STEP_LABELS`/step list order is Proxmox, Domain and basics, Reverse proxy, Finish
 
 **Checkpoint**: the step is safe to repeat and resume.
 
