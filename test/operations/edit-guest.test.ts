@@ -74,7 +74,7 @@ const capabilityInventory: Inventory = {
       host: 'pve1',
       ip: '192.168.1.21',
       subdomains: ['radarr'],
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
     },
     { name: 'ungated-app', type: 'lxc', vmid: 122, host: 'pve1', ip: '192.168.1.22' },
   ],
@@ -111,7 +111,7 @@ test('loadInventory still loads an inventory containing a forward-gated entry, r
   const inventoryPath = path.join(mkdtempSync(path.join(tmpdir(), 'editguest-capability-load-')), 'bellhop.db');
   saveInventory(inventoryPath, capabilityInventory);
   const loaded = loadInventory(inventoryPath);
-  assert.equal(loaded.guests.find((g) => g.name === 'gated-other')?.authGroup, 'bellhop-users');
+  assert.equal(loaded.guests.find((g) => g.name === 'gated-other')?.authGroup, 'bellhop-admin-family');
   // Pointing the in-memory object at a driver that cannot enforce that
   // gate does not retroactively invalidate the load that already happened.
   loaded.proxyDriver = oidcOnlyDriver().id;
@@ -124,7 +124,7 @@ test('commitGuestEdit rejects an edit that leaves the edited guest forward-gated
   try {
     const d = capabilityDeps(driver);
     const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
-    const updated = applyGuestEdits(current, { authGroup: 'bellhop-users' });
+    const updated = applyGuestEdits(current, { authGroup: 'bellhop-admin-family' });
     await assert.rejects(
       () => commitGuestEdit(d, 'sonarr', updated, false),
       (err: unknown) => {
@@ -230,7 +230,7 @@ const HAPROXY_FORWARD_REFUSAL =
 test('commitGuestEdit rejects an edit that leaves the guest forward-gated with subdomains under the haproxy driver (US2), leaving the inventory unchanged', async () => {
   const d = haproxyCapabilityDeps();
   const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
-  const updated = applyGuestEdits(current, { authGroup: 'bellhop-users' });
+  const updated = applyGuestEdits(current, { authGroup: 'bellhop-admin-family' });
   await assert.rejects(
     () => commitGuestEdit(d, 'sonarr', updated, false),
     (err: unknown) => {
@@ -246,7 +246,7 @@ test('commitGuestEdit accepts switching the same guest to authMode: oidc under t
   const d = haproxyCapabilityDeps(new FakeAuthentikClient());
   const current = d.inventory.guests.find((g) => g.name === 'sonarr')!;
   const updated = applyGuestEdits(current, {
-    authGroup: 'bellhop-users',
+    authGroup: 'bellhop-admin-family',
     authMode: 'oidc',
     oidcRedirectUris: ['https://web.example.com/callback'],
   });
@@ -258,7 +258,7 @@ test('commitGuestEdit accepts switching the same guest to authMode: oidc under t
 test('commitGuestEdit accepts clearing authGroup on an already forward-gated guest under the haproxy driver', async () => {
   const d = haproxyCapabilityDeps();
   const current = d.inventory.guests.find((g) => g.name === 'gated-other')!;
-  assert.equal(current.authGroup, 'bellhop-users');
+  assert.equal(current.authGroup, 'bellhop-admin-family');
   const updated = applyGuestEdits(current, { authGroup: null });
   const result = await commitGuestEdit(d, 'gated-other', updated, false);
   assert.equal(result.guest.authGroup, undefined);
@@ -329,7 +329,7 @@ test('runEditGuest ignores a creator key in the input, leaving the stored creato
 });
 
 test('applyGuestEdits leaves untouched fields alone and clears authGroup on null', () => {
-  const updated = applyGuestEdits({ ...inventory.guests[1], authGroup: 'bellhop-users', port: 80 }, { authGroup: null });
+  const updated = applyGuestEdits({ ...inventory.guests[1], authGroup: 'bellhop-admin-family', port: 80 }, { authGroup: null });
   assert.equal(updated.authGroup, undefined);
   assert.equal(updated.port, 80);
 });
@@ -412,7 +412,7 @@ test('applyGuestEdits clears authMode to forward on null/empty', () => {
 test('runEditGuest rejects an OIDC-effective edit with subdomains and no redirect URIs, naming the field', async () => {
   const d = deps();
   await assert.rejects(
-    runEditGuest({ name: 'other-lxc', authGroup: 'bellhop-users', authMode: 'oidc' }, d),
+    runEditGuest({ name: 'other-lxc', authGroup: 'bellhop-admin-family', authMode: 'oidc' }, d),
     (err: unknown) => err instanceof GuestEditValidationError && /oidcRedirectUris/.test((err as Error).message)
   );
   assert.equal(loadInventory(d.inventoryPath).guests.find((g) => g.name === 'other-lxc')?.authMode, undefined);
@@ -421,7 +421,7 @@ test('runEditGuest rejects an OIDC-effective edit with subdomains and no redirec
 test('runEditGuest accepts an OIDC-effective edit once a redirect URI is set', async () => {
   const d = { ...deps(), authentik: new FakeAuthentikClient() };
   const result = await runEditGuest(
-    { name: 'other-lxc', authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://taken.example.com/cb'] },
+    { name: 'other-lxc', authGroup: 'bellhop-admin-family', authMode: 'oidc', oidcRedirectUris: ['https://taken.example.com/cb'] },
     d
   );
   assert.equal(result.guest.authMode, 'oidc');
@@ -435,7 +435,7 @@ test('runEditGuest carries oidcDiscoveryFailures scoped to the edited guest, omi
   const failFetch = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
   const d = { ...deps(), authentik: new FakeAuthentikClient(), fetchImpl: failFetch };
   const result = await runEditGuest(
-    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
+    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-admin-family', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
     d
   );
   assert.equal(result.proxySynced, true);
@@ -447,7 +447,7 @@ test('runEditGuest omits oidcDiscoveryFailures when the discovery check passes',
   const okFetch = (async () => new Response('{}', { status: 200 })) as typeof fetch;
   const d = { ...deps(), authentik: new FakeAuthentikClient(), fetchImpl: okFetch };
   const result = await runEditGuest(
-    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
+    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-admin-family', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
     d
   );
   assert.equal(result.proxySynced, true);
@@ -465,7 +465,7 @@ const OIDC_GUEST = {
   host: 'pve1',
   ip: '192.168.1.5',
   subdomains: ['media'],
-  authGroup: 'bellhop-users',
+  authGroup: 'bellhop-admin-family',
   authMode: 'oidc' as const,
   oidcRedirectUris: ['https://media.example.com/cb'],
 };
@@ -503,7 +503,7 @@ for (const [label, edit] of [
       );
       const saved = loadInventory(d.inventoryPath).guests.find((g) => g.name === 'media-lxc')!;
       assert.equal(saved.authMode, 'oidc', 'nothing is saved without confirmation');
-      assert.equal(saved.authGroup, 'bellhop-users');
+      assert.equal(saved.authGroup, 'bellhop-admin-family');
     }
 
     const d = oidcDeps();
@@ -518,14 +518,14 @@ for (const [label, edit] of [
 test('runEditGuest: edits that keep or enter OIDC gating never need confirmOidcClientDeletion', async () => {
   // A port change and a tier change on an OIDC entry stay OIDC.
   await runEditGuest({ name: 'media-lxc', port: 8080 }, oidcDeps());
-  await runEditGuest({ name: 'media-lxc', authGroup: 'bellhop-app-users' }, oidcDeps());
+  await runEditGuest({ name: 'media-lxc', authGroup: 'bellhop-friends-family' }, oidcDeps());
   await runEditGuest({ name: 'media-lxc', oidcRedirectUris: ['https://media.example.com/cb2'] }, oidcDeps());
   // Entering OIDC, and forward/ungated edits, never delete an OpenID client.
   await runEditGuest(
-    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
+    { name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-admin-family', authMode: 'oidc', oidcRedirectUris: ['https://app.example.com/cb'] },
     oidcDeps()
   );
-  await runEditGuest({ name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-users' }, oidcDeps());
+  await runEditGuest({ name: 'app-lxc', subdomains: ['app'], authGroup: 'bellhop-admin-family' }, oidcDeps());
   // Mode 'oidc' without a tier was never OIDC-effective, so clearing it needs nothing.
   const d = oidcDeps();
   await runEditGuest({ name: 'media-lxc', authGroup: null, confirmOidcClientDeletion: true }, d);
@@ -567,7 +567,7 @@ test('runEditGuest rejects a mobile redirect URI that duplicates a web callback 
     runEditGuest(
       {
         name: 'other-lxc',
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://taken.example.com/cb'],
         oidcMobileRedirectUris: ['https://taken.example.com/cb'],
@@ -584,7 +584,7 @@ test('runEditGuest accepts a distinct oidcMobileRedirectUris list alongside oidc
   const result = await runEditGuest(
     {
       name: 'other-lxc',
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       authMode: 'oidc',
       oidcRedirectUris: ['https://taken.example.com/cb'],
       oidcMobileRedirectUris: ['com.example.app://callback'],

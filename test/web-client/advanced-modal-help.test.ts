@@ -13,7 +13,7 @@ import {
 // blocks hover on every visible field (#34's FR-006).
 
 const FORWARD_GUEST = { authMode: 'forward' as const };
-const OIDC_GUEST = { authGroup: 'bellhop-users', authMode: 'oidc' as const, creator: { username: 'test-user' } };
+const OIDC_GUEST = { authGroup: 'bellhop-admin-family', authMode: 'oidc' as const, creator: { username: 'test-user' } };
 
 test('the General tab renders exactly the general fields for a guest with a recorded creator', () => {
   assert.deepEqual(renderedAdvancedFields('general', OIDC_GUEST), new Set(GENERAL_TAB_FIELDS));

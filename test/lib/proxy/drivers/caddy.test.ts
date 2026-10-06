@@ -75,7 +75,7 @@ const inventory: Inventory = {
       host: 'pve1',
       ip: '192.0.2.20',
       subdomains: ['app'],
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
     },
     {
       name: 'api-lxc',
@@ -84,7 +84,7 @@ const inventory: Inventory = {
       host: 'pve1',
       ip: '192.0.2.21',
       subdomains: ['api'],
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       unauthenticatedPaths: ['/health', '/api/*'],
     },
     {
@@ -94,7 +94,7 @@ const inventory: Inventory = {
       host: 'pve1',
       ip: '192.0.2.22',
       subdomains: ['dash'],
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       authMode: 'oidc',
       oidcRedirectUris: ['https://dash.example.com/oauth/callback'],
     },
@@ -223,7 +223,7 @@ test('buildCaddyBlock throws the missing-authentik error text when a forward-gat
         host: 'pve1',
         ip: '192.0.2.20',
         subdomains: ['app'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
       },
     ],
   };

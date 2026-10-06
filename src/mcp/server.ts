@@ -25,7 +25,7 @@ console.log = console.error;
 // Same ordering and roles as src/web/server.ts (issue #64): the data/*.env
 // files are loaded into the environment as overrides, then imported once
 // into the settings store, which is registered before loadInventory --
-// the requires_auth -> auth_group migration reads the group ladder at
+// the #158 and #97 auth_group migrations read the group ladder at
 // DB-open time. The import's log lines go to stderr via the redirect above,
 // never onto the protocol channel. A missing file is a silent no-op.
 dotenv.config({ path: path.join(dataDir(), 'authentik.env'), quiet: true });

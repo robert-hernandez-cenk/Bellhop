@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { logInfo, logWarn } from './log.ts';
 import { ensureColumn, openDb } from './sqlite.ts';
-import { parseGroupLadder } from './authentik-config.ts';
+import { PREVIOUS_DEFAULT_RUNG_RENAMES, parseGroupLadder } from './authentik-config.ts';
 import { MovedSettingsSchema } from './settings-defs.ts';
 import { SECRET_SETTINGS_TABLE_SQL, effectiveValue, invalidateConfigSnapshot } from './config.ts';
 // From the dependency-free ids.ts, not proxy/index.ts's own registry
@@ -551,6 +551,19 @@ const SCHEMA = `
   ${SECRET_SETTINGS_TABLE_SQL}
 `;
 
+// The group ladder as the database being opened sees it: its stored
+// authentikGroupLadder setting (issue #64 FR-020), with the env var still
+// overriding it -- read off this handle through the shared precedence rule
+// rather than the config accessor, which would open a second connection to
+// a database that is mid-migration. Shared by the #158 and #97 migrations,
+// which both write auth_group in the same open and must agree on the ladder.
+function effectiveLadderOnHandle(db: Database.Database): string[] {
+  const storedRow = db.prepare("SELECT value FROM meta WHERE key = 'authentikGroupLadder'").get() as
+    | { value: string }
+    | undefined;
+  return parseGroupLadder(effectiveValue('authentikGroupLadder', storedRow?.value, process.env).value);
+}
+
 // One-time #158 migration: the requiresAuth boolean became authGroup, a
 // group name. Every gated entry moves to the ladder's TOP rung -- the
 // narrowest audience -- which fails closed: it's the deliberate, general
@@ -569,15 +582,7 @@ const SCHEMA = `
 function migrateRequiresAuthToAuthGroup(db: Database.Database, table: string): void {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!cols.some((c) => c.name === 'requires_auth')) return;
-  // The ladder comes from the database being opened (its stored
-  // authentikGroupLadder setting, issue #64 FR-020), with the env var still
-  // overriding it -- read off this handle through the shared precedence
-  // rule rather than the config accessor, which would open a second
-  // connection to a database that is mid-migration.
-  const storedRow = db.prepare("SELECT value FROM meta WHERE key = 'authentikGroupLadder'").get() as
-    | { value: string }
-    | undefined;
-  const ladder = parseGroupLadder(effectiveValue('authentikGroupLadder', storedRow?.value, process.env).value);
+  const ladder = effectiveLadderOnHandle(db);
   const topRung = ladder[ladder.length - 1];
   // An empty ladder can only come from a deliberately all-separator
   // AUTHENTIK_GROUP_LADDER. Nothing could be gated under it anyway, so drop
@@ -710,6 +715,68 @@ function migrateLegacyTlsSettings(db: Database.Database): void {
   tx.immediate();
 }
 
+// #97 migration: the default ladder's rungs were renamed for their audience
+// (bellhop-users -> bellhop-admin-family, and so on; the pairs live in
+// authentik-config.ts). A pair applies only when the effective ladder no
+// longer lists the old name but does list the new one. That leaves a
+// deployment that pinned the old ladder alone (its stored names are still
+// valid rungs), and skips a fully custom ladder where the new name would be
+// off-ladder too. An applied pair renames stored auth_group values, and
+// copies -- never moves -- the old group's web permission rule to the new
+// name: rules are keyed by Authentik group name and a group with no rule is
+// unrestricted (permissions.ts isAllowed), so keeping both names restricted
+// holds whether or not the operator has renamed the group in Authentik yet.
+// A rule already set on the new name is never overwritten.
+//
+// There is no marker row: the condition is re-checked on every open, so a
+// deployment that unpins the old ladder later is migrated on its next open.
+// Every open pays one guard read for any old name; one holding old names
+// also resolves the ladder, and only one with an applicable pair takes the
+// IMMEDIATE write lock (serializing two processes, as #72 does) -- so a
+// pinned deployment never waits on another connection's write lock.
+function migratePreviousDefaultRungNames(db: Database.Database): void {
+  const tables = ['hosts', 'guests', 'external_sites'];
+  const hasPermissions =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'permission_groups'").get() !== undefined;
+  const holdsName = (name: string): boolean =>
+    tables.some((table) => db.prepare(`SELECT 1 FROM ${table} WHERE auth_group = ? LIMIT 1`).get(name)) ||
+    (hasPermissions && db.prepare('SELECT 1 FROM permission_groups WHERE group_name = ?').get(name) !== undefined);
+  const present = PREVIOUS_DEFAULT_RUNG_RENAMES.filter(([oldName]) => holdsName(oldName));
+  if (present.length === 0) return;
+  const ladder = effectiveLadderOnHandle(db);
+  const applicable = present.filter(([oldName, newName]) => !ladder.includes(oldName) && ladder.includes(newName));
+  if (applicable.length === 0) return;
+  const tx = db.transaction(() => {
+    for (const [oldName, newName] of applicable) {
+      for (const table of tables) {
+        const result = db.prepare(`UPDATE ${table} SET auth_group = ? WHERE auth_group = ?`).run(newName, oldName);
+        if (result.changes > 0) {
+          logInfo(
+            `Renamed ${result.changes} row(s) in '${table}' from auth_group='${oldName}' to '${newName}' (#97, previous default ladder name).`
+          );
+        }
+      }
+      if (!hasPermissions) continue;
+      const copied = db
+        .prepare(
+          `INSERT INTO permission_groups (group_name, mode)
+           SELECT ?, mode FROM permission_groups WHERE group_name = ?
+           AND NOT EXISTS (SELECT 1 FROM permission_groups WHERE group_name = ?)`
+        )
+        .run(newName, oldName, newName);
+      if (copied.changes === 0) continue;
+      db.prepare(
+        `INSERT INTO permission_rules (group_name, resource_type, resource_name)
+         SELECT ?, resource_type, resource_name FROM permission_rules WHERE group_name = ?`
+      ).run(newName, oldName);
+      logInfo(
+        `Copied the web permission rule for group '${oldName}' to '${newName}' (#97, previous default ladder name).`
+      );
+    }
+  });
+  tx.immediate();
+}
+
 function openInventoryDb(path: string): Database.Database {
   const db = openDb(path, SCHEMA);
   migrateCaddyToProxy(db);
@@ -749,6 +816,10 @@ function openInventoryDb(path: string): Database.Database {
   for (const table of ['hosts', 'guests', 'external_sites']) {
     migrateRequiresAuthToAuthGroup(db, table);
   }
+  // Last, after the auth_group ensureColumn calls and #158: both migrations
+  // write auth_group, and #158 only ever writes the top
+  // rung, which no #97 pair touches.
+  migratePreviousDefaultRungNames(db);
   return db;
 }
 

@@ -60,7 +60,7 @@ const inventory: Inventory = {
   guests: [
     { name: 'media', type: 'lxc', vmid: 105, host: 'pve1', ip: '192.0.2.50', port: 8096, subdomains: ['media'] },
     { name: 'web-lxc', type: 'lxc', vmid: 106, host: 'pve1', ip: '192.0.2.51', subdomains: ['web'] },
-    { name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-users' },
+    { name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-admin-family' },
     {
       name: 'api-lxc',
       type: 'lxc',
@@ -68,7 +68,7 @@ const inventory: Inventory = {
       host: 'pve1',
       ip: '192.0.2.21',
       subdomains: ['api'],
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       unauthenticatedPaths: ['/health', '/api/*'],
     },
     {
@@ -78,7 +78,7 @@ const inventory: Inventory = {
       host: 'pve1',
       ip: '192.0.2.22',
       subdomains: ['dash'],
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       authMode: 'oidc',
       oidcRedirectUris: ['https://dash.example.com/oauth/callback'],
     },

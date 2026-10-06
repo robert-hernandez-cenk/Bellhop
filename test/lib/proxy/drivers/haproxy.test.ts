@@ -48,7 +48,7 @@ function exampleInventory(): Inventory {
         ip: '192.0.2.20',
         port: 443,
         subdomains: ['nas'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://nas.example.com/callback'],
       },

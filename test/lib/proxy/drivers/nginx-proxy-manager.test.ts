@@ -630,7 +630,7 @@ function gatedInv(appOverrides: Record<string, unknown> = {}): Inventory {
         ip: '192.0.2.30',
         port: 8080,
         subdomains: ['app'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         ...appOverrides,
       },
     ],

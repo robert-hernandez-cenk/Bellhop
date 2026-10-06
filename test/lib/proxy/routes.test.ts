@@ -87,7 +87,7 @@ function fixtureInventory(): Inventory {
         host: 'pve1',
         ip: '192.0.2.52',
         subdomains: ['gated'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
       },
       {
         name: 'api-app',
@@ -96,7 +96,7 @@ function fixtureInventory(): Inventory {
         host: 'pve1',
         ip: '192.0.2.53',
         subdomains: ['api'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         unauthenticatedPaths: ['/health', '/api/*'],
       },
       {
@@ -106,7 +106,7 @@ function fixtureInventory(): Inventory {
         host: 'pve1',
         ip: '192.0.2.54',
         subdomains: ['oidc'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
       },
       {
@@ -215,7 +215,7 @@ test('buildRoutes: throws the exact missing-authentik message for a forward-gate
         host: 'pve1',
         ip: '192.0.2.20',
         subdomains: ['app'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
       },
     ],
   };
@@ -232,7 +232,7 @@ test('buildRoutes: requireOutpost: false derives the forward-gated route with no
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root' }],
     guests: [
-      { name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-users' },
+      { name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-admin-family' },
     ],
   };
   const routes = buildRoutes(inv, { requireOutpost: false });
@@ -254,7 +254,7 @@ test('buildRoutes: throws naming the entry and both accepted forms for an invali
         host: 'pve1',
         ip: '192.0.2.53',
         subdomains: ['bad'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         unauthenticatedPaths: ['/api*'],
       },
     ],
@@ -436,7 +436,7 @@ test('buildRouteForEntry: derives only the named entry, so another entry\'s miss
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: '192.0.2.1', ssh_user: 'root', proxy: true }],
     guests: [
-      { name: 'gated', type: 'lxc', vmid: 101, host: 'pve1', ip: '192.0.2.11', subdomains: ['gated'], authGroup: 'bellhop-users', unauthenticatedPaths: ['/api*'] },
+      { name: 'gated', type: 'lxc', vmid: 101, host: 'pve1', ip: '192.0.2.11', subdomains: ['gated'], authGroup: 'bellhop-admin-family', unauthenticatedPaths: ['/api*'] },
       { name: 'web-lxc', type: 'lxc', vmid: 102, host: 'pve1', ip: '192.0.2.12', port: 8080, subdomains: ['web'] },
     ],
   };

@@ -89,7 +89,7 @@ guests:
     port: 80
     subdomains:
       - bookstack           # -> bookstack.example.com
-    authGroup: bellhop-app-users  # gates this subdomain behind Authentik at this group-ladder rung
+    authGroup: bellhop-friends-family  # gates this subdomain behind Authentik at this group-ladder rung
     # authMode (optional; defaults to forward) picks how that gate is
     # enforced: "forward" puts the proxy's forward-auth in front of the app
     # (the default -- omit authMode entirely for this); "oidc" instead gives
