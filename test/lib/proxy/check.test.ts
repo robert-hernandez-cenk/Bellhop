@@ -89,7 +89,7 @@ test('traefik with proxyApiUrl: the API must answer HTTP 200', async () => {
 
 test('a missing path is named with the setting that controls it', async () => {
   await assert.rejects(
-    () => runCheck(caddyDriver, inv(), fail(3)),
+    () => runCheck(caddyDriver, inv(), fail(87)),
     (err: Error) => {
       assert.match(err.message, /\/etc\/caddy\/Caddyfile/);
       assert.match(err.message, /not found on 'proxy-lxc'/);
@@ -98,7 +98,7 @@ test('a missing path is named with the setting that controls it', async () => {
     }
   );
   await assert.rejects(
-    () => runCheck(nginxDriver, inv(), fail(3)),
+    () => runCheck(nginxDriver, inv(), fail(87)),
     /\/etc\/nginx\/conf\.d.*not found on 'proxy-lxc'/s
   );
 });
@@ -171,4 +171,15 @@ test('buildApiPing: a missing curl is a named error before any request is made',
   const script = buildApiPing('http://192.0.2.30:8080');
   assert.ok(script.indexOf('command -v curl') < script.indexOf('/api/overview'));
   assert.match(script, /curl is not installed on the proxy host/);
+});
+
+test("a validator's own exit code 3 is a failed check, not a missing path", async () => {
+  await assert.rejects(
+    () => runCheck(nginxDriver, inv(), fail(3, 'nginx: validation failed')),
+    (err: Error) => {
+      assert.match(err.message, /did not pass its check: nginx: validation failed/);
+      assert.doesNotMatch(err.message, /not found/);
+      return true;
+    }
+  );
 });

@@ -28,6 +28,9 @@ No body. Runs against the stored choice (save first). Requires a managing driver
 | `200 ProxyCheckResult` with `ok: true` | the driver check passed. The step is marked complete only when `previewError` is absent; with `previewError` the response is still `200` and the step stays incomplete |
 | `502 { error }` | the check failed (entry unreachable, config missing, validation failed, API unreachable, sign-in refused). The text names the entry or the setting to change and never contains a secret |
 | `400 { error }` | no proxy entry is chosen yet |
+| `409 { error }` | the saved choice changed while the check ran; nothing is completed, run the check again |
+
+A failed check (502) or a pass whose dry run could not be built also removes `proxy` from the completed steps, so a proxy that no longer passes is not treated as proven.
 
 The check and the dry run issue no write, backup, restore or reload to the proxy; they read through `runRemote`, the admin API read path, or the NPM client's reads.
 

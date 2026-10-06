@@ -274,7 +274,8 @@ export interface FileDriverCheck {
 
 // Exit code of the check script's existence test, so the caller can name the
 // missing path and the setting that controls it.
-const CHECK_MISSING_EXIT = 3;
+// Deliberately unusual: a validator's own exit code (nginx -t, haproxy -c) must never read as a missing path.
+const CHECK_MISSING_EXIT = 87;
 
 function checkedPath(configPath: string, check: FileDriverCheck): string {
   return check.target === 'file' ? configPath : posixPath.dirname(configPath);

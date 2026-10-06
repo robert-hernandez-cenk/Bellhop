@@ -271,6 +271,10 @@ export function saveProxyChoice(setup: SetupService, body: ProxyChoiceBody): Pro
     if (before !== after) saveInventory(inventoryPath, updated);
     for (const [key, value] of secretValues) writeSecret(inventoryPath, key, value);
   } catch (err) {
+    // Whatever was written already changed the choice: keep the in-memory
+    // inventory and the step's completion in step with the database.
+    refreshInventory(inventory, inventoryPath);
+    if (changed && manages) setup.uncompleteStep('proxy');
     throw new SetupActionError((err as Error).message, 400);
   }
   refreshInventory(inventory, inventoryPath);
@@ -328,6 +332,9 @@ export async function checkProxy(setup: SetupService, ssh: SSHClient): Promise<P
   }
   if (!driver.check) throw new SetupActionError(`the '${driver.id}' driver has no check`, 400);
 
+  // The choice being checked; if it is saved differently while the check
+  // runs, that check proved something else and must not complete the step.
+  const checked = JSON.stringify(currentChoice(inventory));
   let summary: string;
   try {
     summary = await driver.check(driverDeps(inventory, ssh, driver));
@@ -345,6 +352,10 @@ export async function checkProxy(setup: SetupService, ssh: SSHClient): Promise<P
     previewError = scrub(inventoryPath, (err as Error).message);
   }
 
+  const stillSame = JSON.stringify(currentChoice(loadInventory(inventoryPath))) === checked;
+  if (!stillSame) {
+    throw new SetupActionError('the proxy settings changed while checking -- run the check again', 409);
+  }
   const completedSteps =
     preview === undefined ? setup.uncompleteStep('proxy').completedSteps : setup.completeStep('proxy').completedSteps;
   return { ok: true, summary: scrub(inventoryPath, summary), ...(preview === undefined ? { previewError } : { preview }), completedSteps };

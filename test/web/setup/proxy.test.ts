@@ -336,7 +336,7 @@ test('a failing check answers 502 with the proxy output and leaves the step inco
 });
 
 test('a missing config path is named with the setting that controls it', async () => {
-  const t = checkApp(() => ({ code: 3 }));
+  const t = checkApp(() => ({ code: 87 }));
   await t.put(NGINX);
   const res = await t.check();
   assert.equal(res.status, 502);
@@ -520,4 +520,26 @@ test('a failed re-check reopens a step that had passed, so Finish waits for a pa
   broken = false;
   assert.equal((await t.check()).status, 200);
   assert.deepEqual(t.completed(), ['proxy']);
+});
+
+test('a check whose choice is saved differently while it runs does not complete the step', async () => {
+  let t!: ReturnType<typeof checkApp>;
+  let edited = false;
+  t = checkApp((command) => {
+    if (command.includes('nginx -t') && !edited) {
+      edited = true;
+      // The operator saves another entry while the check is in flight.
+      const inv = loadInventory(t.inventoryPath);
+      saveInventory(t.inventoryPath, {
+        ...inv,
+        guests: inv.guests.map((g) => ({ ...g, proxy: g.name === 'web-lxc' ? true : undefined })),
+      });
+    }
+    return {};
+  });
+  await t.put(NGINX);
+  const res = await t.check();
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /changed while checking/);
+  assert.deepEqual(t.completed(), []);
 });
