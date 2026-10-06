@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { accessFieldsFor, needsCallbackUrlsBeforeOidc } from '../../web-client/src/lib/oidc.ts';
 
 const FORWARD = ['authGroup', 'authMode', 'unauthenticatedPaths'];
-const OIDC = ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient'];
+const OIDC = ['authGroup', 'authMode', 'callbackUrls', 'mobileRedirectUrls', 'oidcClient', 'bellhop'];
 
 test('accessFieldsFor on an ungated guest with no authMode returns the forward-auth field set', () => {
   assert.deepEqual(accessFieldsFor({}), FORWARD);
@@ -43,4 +43,15 @@ test('needsCallbackUrlsBeforeOidc is true only for a gated, non-OIDC guest with 
     needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', oidcRedirectUris: ['https://app.example.com/cb'] }),
     false
   );
+});
+
+// issue #85: the "this is Bellhop" row. Only an OIDC guest can usefully be
+// Bellhop, but a guest already flagged keeps the row in any mode so the flag
+// can still be cleared.
+test('accessFieldsFor offers the bellhop row to an OIDC guest, and to a flagged forward guest so it can be cleared', () => {
+  assert.ok(accessFieldsFor({ authMode: 'oidc', authGroup: 'bellhop-users' }).includes('bellhop'));
+  assert.ok(!accessFieldsFor({ authMode: 'forward' }).includes('bellhop'));
+  assert.ok(!accessFieldsFor({}).includes('bellhop'));
+  assert.deepEqual(accessFieldsFor({ authMode: 'forward', bellhop: true }), [...FORWARD, 'bellhop']);
+  assert.deepEqual(accessFieldsFor({ bellhop: true, authGroup: 'bellhop-users', oidcRedirectUris: ['https://bellhop.example.com/auth/callback'] }), [...FORWARD, 'bellhop']);
 });

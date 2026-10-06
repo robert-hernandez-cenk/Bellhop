@@ -1,7 +1,8 @@
 import { configValue } from '../../lib/config.ts';
 import { SETTING_DEFS, settingSchema, type ConfigKey } from '../../lib/settings-defs.ts';
+import { managedWebLogin } from './managed.ts';
 
-// The four settings that together make Bellhop's own OIDC web login usable
+// The four custom settings that together make Bellhop's own OIDC web login usable
 // (#69 data-model.md). Read through configValue so the environment override
 // and the stored value follow the same precedence as every other setting;
 // read per call, never cached, so a Settings-page change applies without a
@@ -35,7 +36,23 @@ export function webLoginConfig(env: NodeJS.ProcessEnv = process.env): WebLoginCo
     if (value === undefined) missing.push(key);
     else values.set(key, value);
   }
-  if (missing.length > 0) return { configured: false, missing };
+  if (missing.length > 0) {
+    // The custom set is incomplete: fall back to the flagged guest's client
+    // as a whole (#85) -- never a mix of the two. Custom wins only when all
+    // four are set. The managed value is whatever the last refresh resolved
+    // (managed.ts), so this stays synchronous.
+    const managed = managedWebLogin();
+    if (managed) {
+      return {
+        configured: true,
+        issuer: managed.issuer,
+        clientId: managed.clientId,
+        clientSecret: managed.clientSecret,
+        redirectUri: managed.redirectUri,
+      };
+    }
+    return { configured: false, missing };
+  }
   return {
     configured: true,
     issuer: values.get('webUiOidcIssuer')!,

@@ -13,6 +13,7 @@ import { logWarn } from '../lib/log.ts';
 import type { ImpersonationStore } from './impersonation.ts';
 import { SessionStore } from './login/session-store.ts';
 import { SessionService } from './login/sessions.ts';
+import { configureManagedWebLogin, refreshManagedWebLogin } from './login/managed.ts';
 import { RealWebLoginClient } from './login/oidc-client.ts';
 import { McpAuthStore } from './mcp/auth-store.ts';
 import { JobStore } from './jobs/job-store.ts';
@@ -121,6 +122,13 @@ taskScheduler.start();
 process.on('exit', () => taskScheduler.stop());
 
 const authentik = buildAuthentikClient();
+// Bellhop's own guest, when flagged, supplies the web login client (#85).
+// The inventory object is mutated in place on every reload, so this closure
+// always sees the current flag and gate. Resolved now so the first sign-in
+// and the MCP authorization server need no wait; sign-ins and re-checks
+// refresh it again. Never throws.
+configureManagedWebLogin({ inventory: () => inventory, authentik });
+void refreshManagedWebLogin();
 const impersonationStore: ImpersonationStore = new Map();
 const app = buildApp({
   inventory,

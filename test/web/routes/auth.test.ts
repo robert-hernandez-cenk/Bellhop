@@ -13,13 +13,18 @@ import { FakeSSHClient } from '../../support/fake-ssh-client.ts';
 import { FakeAuthentikClient } from '../../support/fake-authentik-client.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
 import { newTestSessions, sessionCookie, TEST_WEB_LOGIN_CONFIG, type TestSessions } from '../../support/web-session.ts';
+import { configureManagedWebLogin, resetManagedWebLogin } from '../../../src/web/login/managed.ts';
+import { bellhopInventory, resolveManagedLogin, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI, MANAGED_SECRET } from '../../support/managed-login.ts';
 
 // GET /auth/login and GET /auth/callback (#69 US1, contracts/http-auth.md).
 // The provider is a FakeWebLoginClient (the SessionService's client); the
 // OIDC settings come from a temp settings store, read exactly as production
 // reads them.
 
-afterEach(resetConfigStore);
+afterEach(() => {
+  resetConfigStore();
+  resetManagedWebLogin();
+});
 
 const ISSUER = TEST_WEB_LOGIN_CONFIG.issuer;
 const AUTHORIZATION_URL = 'https://authentik.example.com/application/o/authorize/?client_id=example-client-id';
@@ -118,7 +123,8 @@ test('GET /auth/login with web login not configured shows a page listing the mis
   for (const key of ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret']) {
     assert.ok(res.text.includes(key), `expected the page to name ${key}`);
   }
-  assert.ok(res.text.includes('bellhop configure-web-login &lt;entry&gt; --apply'), res.text);
+  assert.ok(res.text.includes('flag Bellhop'), res.text);
+  assert.ok(!res.text.includes('configure-web-login'), 'the removed command is not offered');
   assert.ok(res.text.includes('bellhop set-config webUiAuthMode none --apply'), res.text);
   assert.equal(sessions.client.calls.length, 0);
 });
@@ -572,4 +578,82 @@ test('GET /auth/signed-out is a public page with a Sign in again link', async ()
     assert.ok(res.text.includes('href="/auth/login"'), res.text);
     assert.match(res.text, /Sign in again/);
   });
+});
+
+// --- managed web login (#85) -------------------------------------------------
+// Bellhop's own guest, flagged and OIDC-gated, supplies the client when the
+// custom settings are not all set. Its secret is read from Authentik and must
+// never reach a response.
+
+const MANAGED_SETTINGS = {
+  issuer: MANAGED_ISSUER,
+  clientId: MANAGED_CLIENT_ID,
+  clientSecret: MANAGED_SECRET,
+  redirectUri: MANAGED_REDIRECT_URI,
+};
+
+test('GET /auth/login signs in through the flagged guest\'s client when no custom setting is set', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  const { app, sessions } = testApp();
+  sessions.client.startLoginResults.push(started());
+  const res = await request(app).get('/auth/login');
+  assert.equal(res.status, 302, res.text);
+  assert.deepEqual(sessions.client.callsTo('startLogin')[0]!.cfg, { configured: true, ...MANAGED_SETTINGS });
+  assert.ok(!`${res.text} ${JSON.stringify(res.headers)}`.includes(MANAGED_SECRET), 'the managed secret never reaches a response');
+});
+
+test('GET /auth/login uses a secret rotated in Authentik since the last refresh, with no restart', async () => {
+  resetConfigStore();
+  const authentik = await resolveManagedLogin();
+  authentik.secret = 'rotated-example-secret';
+  const { app, sessions } = testApp();
+  sessions.client.startLoginResults.push(started());
+  const res = await request(app).get('/auth/login');
+  assert.equal(res.status, 302, res.text);
+  assert.equal((sessions.client.callsTo('startLogin')[0]!.cfg as { clientSecret: string }).clientSecret, 'rotated-example-secret');
+});
+
+test('GET /auth/login with a complete custom set ignores the flagged guest', async () => {
+  configureWebLogin();
+  await resolveManagedLogin();
+  const { app, sessions } = testApp();
+  sessions.client.startLoginResults.push(started());
+  await request(app).get('/auth/login');
+  assert.deepEqual(sessions.client.callsTo('startLogin')[0]!.cfg, TEST_WEB_LOGIN_CONFIG);
+});
+
+test('GET /auth/login explains why the flagged guest cannot be used, naming the guest and the fix', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ oidcRedirectUris: ['https://bellhop.example.com/elsewhere'] }));
+  const { app, sessions } = testApp();
+  const res = await request(app).get('/auth/login');
+  assert.equal(res.status, 200);
+  assert.match(res.text, /Web login is not configured/);
+  assert.ok(res.text.includes('bellhop-lxc has no callback URL ending in /auth/callback'), res.text);
+  assert.ok(res.text.includes('webUiOidcIssuer'), 'the custom keys are still listed');
+  assert.equal(sessions.client.calls.length, 0);
+});
+
+test('GET /auth/login with no flagged guest does not mention one', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ bellhop: undefined }));
+  const { app } = testApp();
+  const res = await request(app).get('/auth/login');
+  assert.ok(!res.text.includes('No guest is flagged'), 'an unmanaged install is not told about the managed option as a problem');
+});
+
+test('GET /auth/callback still completes after a restart emptied the managed value, by refreshing it', async () => {
+  resetConfigStore();
+  const authentik = await resolveManagedLogin();
+  const { app, sessions } = testApp();
+  const loginCookie = await startLogin(app, sessions, '/jobs');
+  // A restart between the redirect and the callback: nothing resolved yet.
+  resetManagedWebLogin();
+  configureManagedWebLogin({ inventory: () => bellhopInventory(), authentik });
+  sessions.client.completeLoginResults.push(identity);
+  const res = await request(app).get('/auth/callback?code=example-code&state=example-state').set('Cookie', loginCookie);
+  assert.equal(res.status, 302, res.text);
+  assert.ok(cookieNamed(res, 'bellhop_session'));
+  assert.deepEqual(sessions.client.callsTo('completeLogin')[0]!.cfg, { configured: true, ...MANAGED_SETTINGS });
 });

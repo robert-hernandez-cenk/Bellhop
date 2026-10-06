@@ -2,8 +2,13 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { webLoginConfig } from '../../../src/web/login/config.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
+import { resetManagedWebLogin } from '../../../src/web/login/managed.ts';
+import { resolveManagedLogin, bellhopInventory, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI, MANAGED_SECRET } from '../../support/managed-login.ts';
 
-afterEach(resetConfigStore);
+afterEach(() => {
+  resetConfigStore();
+  resetManagedWebLogin();
+});
 
 const ENV = {
   WEB_UI_OIDC_ISSUER: 'https://authentik.example.com/application/o/bellhop/',
@@ -82,4 +87,53 @@ test('webLoginConfig accepts a valid environment value even when another key com
     WEB_UI_OIDC_REDIRECT_URI: ENV.WEB_UI_OIDC_REDIRECT_URI,
   });
   assert.equal(result.configured, true);
+});
+
+// issue #85: the flagged guest's client is the fallback when the custom set is not complete.
+const MANAGED_CONFIG = {
+  configured: true,
+  issuer: MANAGED_ISSUER,
+  clientId: MANAGED_CLIENT_ID,
+  clientSecret: MANAGED_SECRET,
+  redirectUri: MANAGED_REDIRECT_URI,
+} as const;
+
+test('webLoginConfig falls back to the managed guest when no custom setting is set', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.deepEqual(webLoginConfig({}), MANAGED_CONFIG);
+});
+
+test('a complete custom set wins over a resolved managed guest', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.deepEqual(webLoginConfig(ENV), {
+    configured: true,
+    issuer: ENV.WEB_UI_OIDC_ISSUER,
+    clientId: 'example-client-id',
+    clientSecret: 'example-token',
+    redirectUri: ENV.WEB_UI_OIDC_REDIRECT_URI,
+  });
+});
+
+test('a partial custom set is not mixed with the managed guest: the managed client is used whole', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  const result = webLoginConfig({ WEB_UI_OIDC_ISSUER: ENV.WEB_UI_OIDC_ISSUER, WEB_UI_OIDC_CLIENT_ID: 'example-client-id' });
+  assert.deepEqual(result, MANAGED_CONFIG);
+});
+
+test('with neither source usable, webLoginConfig names the missing custom keys', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ bellhop: undefined }));
+  assert.deepEqual(webLoginConfig({}), {
+    configured: false,
+    missing: ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'],
+  });
+});
+
+test('an invalid environment value still throws when a managed guest could take over', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.throws(() => webLoginConfig({ ...ENV, WEB_UI_OIDC_REDIRECT_URI: 'not a url' }), /WEB_UI_OIDC_REDIRECT_URI/);
 });

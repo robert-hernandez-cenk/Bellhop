@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import { logInfo, logWarn } from '../../lib/log.ts';
 import { webLoginConfig, type WebLoginConfig } from '../login/config.ts';
+import { managedWebLoginProblem, NO_BELLHOP_GUEST, refreshManagedWebLogin } from '../login/managed.ts';
 import { escapeHtml } from '../../lib/html.ts';
 import { LOGIN_COOKIE_OPTIONS, loginCookieName, parseCookies, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from '../login/cookies.ts';
 import { WebLoginError, type WebLoginSettings } from '../login/oidc-client.ts';
@@ -86,6 +87,9 @@ export function authRoutes(sessions: SessionService, mcp?: McpSignInFinisher): R
       return;
     }
 
+    // A restart since /auth/login emptied the resolved managed client; read it
+    // again rather than failing a sign-in the browser already started.
+    await refreshManagedWebLogin();
     let cfg: WebLoginSettings;
     try {
       const config = webLoginConfig();
@@ -190,6 +194,9 @@ export async function beginSignIn(
     ? (_res: Response, _status: number, title: string, _body: string[]) => onFailure(title)
     : sendHtmlPage;
 
+  // The flagged guest's client (#85) is re-read first, so a secret rotated in
+  // Authentik since the last refresh signs in without a restart. Never throws.
+  await refreshManagedWebLogin();
   let cfg: WebLoginConfig;
   try {
     cfg = webLoginConfig();
@@ -206,6 +213,7 @@ export async function beginSignIn(
     sendPage(res, 200, 'Web login is not configured', [
       '<p>Bellhop cannot send you to sign in until these settings are set:</p>',
       `<ul>${cfg.missing.map((key) => `<li><code>${escapeHtml(key)}</code></li>`).join('')}</ul>`,
+      ...managedProblemHtml(),
       fixesHtml(),
     ]);
     return;
@@ -280,11 +288,21 @@ function clearOptions(options: typeof LOGIN_COOKIE_OPTIONS): typeof LOGIN_COOKIE
   return rest;
 }
 
+// Why the flagged guest could not be used (#85), when one is flagged: fixed
+// text naming the guest and the fix. An install with no flagged guest is not
+// told about the managed option as if it were a problem.
+function managedProblemHtml(): string[] {
+  const problem = managedWebLoginProblem();
+  if (problem === undefined || problem === NO_BELLHOP_GUEST) return [];
+  return [`<p>Bellhop's own guest could not be used: ${escapeHtml(problem)}.</p>`];
+}
+
 function fixesHtml(): string {
   return [
     '<p>Either:</p>',
     '<ul>',
-    `<li>configure sign-in through Authentik: <code>${escapeHtml('bellhop configure-web-login <entry> --apply')}</code>, or</li>`,
+    "<li>flag Bellhop's own guest as Bellhop in its Advanced settings (it must be OIDC-gated with a callback URL ending in <code>/auth/callback</code>), or</li>",
+    '<li>set the custom values on the Settings page, Web login tab (<code>bellhop set-config</code>), or</li>',
     '<li>turn sign-in off: <code>bellhop set-config webUiAuthMode none --apply</code></li>',
     '</ul>',
   ].join('');

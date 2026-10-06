@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { EditableAuthGroup } from './EditableAuthGroup';
 import { EditableAuthMode, EditableOidcRedirectUris, EditableOidcMobileRedirectUris } from './EditableAuthMode';
+import { EditableBellhop } from './EditableBellhop';
 import { EditableProxyManual } from './EditableProxyManual';
 import { EditableInsecureBackendTls } from './EditableInsecureBackendTls';
 import { EditablePort } from './EditablePort';
@@ -224,6 +225,14 @@ export function AdvancedGuestModal({ guest, hosts, guests, customScripts, onClos
                 <div className="form-row-label">{fieldHelp('oidc client')}</div>
                 <div className="form-row-value">
                   <OidcCredentials guest={guest} />
+                </div>
+              </div>
+            )}
+            {accessFields.has('bellhop') && (
+              <div className="form-row">
+                <div className="form-row-label">{fieldHelp('this is bellhop')}</div>
+                <div className="form-row-value">
+                  <EditableBellhop guest={guest} onSaved={onSaved} />
                 </div>
               </div>
             )}

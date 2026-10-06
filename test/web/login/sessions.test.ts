@@ -1,10 +1,13 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { captureWarnings } from '../../support/capture-warnings.ts';
 import { gate } from '../../support/gate.ts';
 import { newTestSessions, sessionCookie, TEST_WEB_LOGIN_CONFIG } from '../../support/web-session.ts';
 import { SESSION_COOKIE } from '../../../src/web/login/cookies.ts';
-import type { WebLoginConfig } from '../../../src/web/login/config.ts';
+import { webLoginConfig, type WebLoginConfig } from '../../../src/web/login/config.ts';
+import { configureManagedWebLogin, resetManagedWebLogin } from '../../../src/web/login/managed.ts';
+import { resetConfigStore } from '../../support/config-store.ts';
+import { bellhopInventory, resolveManagedLogin, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI } from '../../support/managed-login.ts';
 import type { LoginIdentity, RecheckResult } from '../../../src/web/login/oidc-client.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -328,4 +331,47 @@ test('createDetached returns only the hash, and resolveHash re-checks like resol
 test('resolveHash: an unknown hash is undefined', async () => {
   const { sessions } = setup();
   assert.equal(await sessions.resolveHash('0'.repeat(64)), undefined);
+});
+
+// --- managed web login (#85) -------------------------------------------------
+// The service's own config reader (no injected config), so the re-check goes
+// through webLoginConfig() and its managed fallback.
+
+afterEach(() => {
+  resetConfigStore();
+  resetManagedWebLogin();
+});
+
+test('resolve: a due re-check uses the flagged guest\'s client, refreshed first so a rotated secret applies', async () => {
+  resetConfigStore();
+  const authentik = await resolveManagedLogin();
+  const { sessions, clock, id } = setup(() => webLoginConfig({}));
+  authentik.secret = 'rotated-example-secret';
+  clock.now += 5 * MIN;
+  sessions.client.recheckResults.push(OK);
+  await sessions.resolve(id);
+  const call = sessions.client.callsTo('recheck')[0]!;
+  assert.deepEqual(call.cfg, {
+    configured: true,
+    issuer: MANAGED_ISSUER,
+    clientId: MANAGED_CLIENT_ID,
+    clientSecret: 'rotated-example-secret',
+    redirectUri: MANAGED_REDIRECT_URI,
+  });
+});
+
+test('resolve: a due re-check signs the session out when the flagged guest stopped qualifying', async () => {
+  resetConfigStore();
+  const state = { inventory: bellhopInventory() };
+  const authentik = await resolveManagedLogin(state.inventory);
+  const { sessions, clock, id } = setup(() => webLoginConfig({}));
+  state.inventory = bellhopInventory({ bellhop: undefined });
+  configureManagedWebLogin({ inventory: () => state.inventory, authentik });
+  clock.now += 5 * MIN;
+  const { warnings } = await captureWarnings(async () => {
+    assert.equal(await sessions.resolve(id), undefined);
+  });
+  assert.equal(sessions.store.getSession(id), undefined);
+  assert.equal(sessions.client.callsTo('recheck').length, 0);
+  assert.ok(warnings.length === 0 || warnings.every((w) => !w.includes('secret-50')));
 });
