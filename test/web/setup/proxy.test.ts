@@ -507,3 +507,17 @@ function completeSetupStepsExceptProxy(inventoryPath: string) {
   completeSetupStep(inventoryPath, 'proxmox');
   completeSetupStep(inventoryPath, 'basics');
 }
+
+test('a failed re-check reopens a step that had passed, so Finish waits for a passing one', async () => {
+  let broken = false;
+  const t = checkApp((command) => (broken && command.includes('nginx -t') ? { code: 1, stderr: 'nginx: [emerg] bad' } : {}));
+  await t.put(NGINX);
+  assert.equal((await t.check()).status, 200);
+  assert.deepEqual(t.completed(), ['proxy']);
+  broken = true;
+  assert.equal((await t.check()).status, 502);
+  assert.deepEqual(t.completed(), []);
+  broken = false;
+  assert.equal((await t.check()).status, 200);
+  assert.deepEqual(t.completed(), ['proxy']);
+});

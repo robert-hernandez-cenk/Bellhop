@@ -78,8 +78,8 @@ description: "Task list for the first-run setup reverse-proxy step (#87)"
 
 - [x] T023 [P] Update `docs/setup.md` (the new step, the check and preview, certificate choices, how to re-run), `src/web/CLAUDE.md` ("First-run setup" section: routes, `proxy` required step, secrets, the single-operator note that the check trusts the operator's chosen entry), `src/lib/proxy/CLAUDE.md` (the optional `check()` method in the interface section) and `src/lib/proxy/drivers/CLAUDE.md` (each driver's check), `web-client/CLAUDE.md` (the Proxy step); keep the root CLAUDE.md within its 250-line budget and `README.md` within 200 lines; run `test/docs/links.test.ts`
 - [x] T024 [P] Update `specs/087-setup-reverse-proxy-step/contracts/http-setup-proxy.md` and `research.md` if implementation changed any shape or message
-- [ ] T025 Browser verification on a throwaway install (quickstart.md "Manual"): the full step at a desktop viewport and at ≤640px (no overflow, preview box scrolls, password never shown), saving and checking for NPM and one file driver against simulated hosts; record what was and was not verified for the PR body (a real proxy is not available here)
-- [ ] T026 Run `npm run typecheck` and `npm test` from the worktree and paste the real output; mark the verification tasks complete
+- [x] T025 Browser verification on a throwaway install (quickstart.md "Manual"): the full step at a desktop viewport and at ≤640px (no overflow, preview box scrolls, password never shown), saving and checking for NPM and one file driver against simulated hosts; record what was and was not verified for the PR body (a real proxy is not available here)
+- [x] T026 Run `npm run typecheck` and `npm test` from the worktree and paste the real output; mark the verification tasks complete
 
 ## Dependencies and order
 

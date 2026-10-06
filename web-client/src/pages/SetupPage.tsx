@@ -396,7 +396,10 @@ function BasicsStep({ state, reload, next }: StepProps) {
 // Step 3 (#87): the reverse proxy. The driver, the inventory entry it runs
 // on, and the settings that driver reads. A secret input is never prefilled:
 // the server only says whether one is stored, and a blank input keeps it.
-function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
+// pin keeps this step on screen after a passing check completes it: without it
+// the page would jump to the first incomplete step and the dry-run preview
+// the operator is meant to read would vanish.
+function ProxyStep({ reload, next, pin }: Omit<StepProps, 'state'> & { pin: () => void }) {
   const [info, setInfo] = useState<ProxyStepState | null>(null);
   const [values, setValues] = useState<ProxyChoice | null>(null);
   const [password, setPassword] = useState('');
@@ -478,6 +481,7 @@ function ProxyStep({ reload, next }: Omit<StepProps, 'state'>) {
     try {
       const result = await setupApi.checkProxy();
       setCheckResult(result);
+      pin();
       await load();
       await reload();
     } catch (err) {
@@ -788,7 +792,7 @@ export function SetupPage() {
           </ol>
           {current === 'proxmox' && <ProxmoxStep state={state} reload={reload} next={advance} />}
           {current === 'basics' && <BasicsStep state={state} reload={reload} next={advance} />}
-          {current === 'proxy' && <ProxyStep reload={reload} next={advance} />}
+          {current === 'proxy' && <ProxyStep reload={reload} next={advance} pin={() => setChosen('proxy')} />}
           {current === 'finish' && <FinishStep state={state} />}
         </>
       )}

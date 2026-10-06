@@ -332,6 +332,8 @@ export async function checkProxy(setup: SetupService, ssh: SSHClient): Promise<P
   try {
     summary = await driver.check(driverDeps(inventory, ssh, driver));
   } catch (err) {
+    // A proxy that no longer passes is no longer proven.
+    setup.uncompleteStep('proxy');
     throw new SetupActionError(scrub(inventoryPath, (err as Error).message), 502);
   }
 
@@ -343,6 +345,7 @@ export async function checkProxy(setup: SetupService, ssh: SSHClient): Promise<P
     previewError = scrub(inventoryPath, (err as Error).message);
   }
 
-  const completedSteps = preview === undefined ? setup.state().completedSteps : setup.completeStep('proxy').completedSteps;
+  const completedSteps =
+    preview === undefined ? setup.uncompleteStep('proxy').completedSteps : setup.completeStep('proxy').completedSteps;
   return { ok: true, summary: scrub(inventoryPath, summary), ...(preview === undefined ? { previewError } : { preview }), completedSteps };
 }
