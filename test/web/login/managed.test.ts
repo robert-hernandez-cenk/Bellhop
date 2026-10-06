@@ -6,6 +6,8 @@ import {
   refreshManagedWebLogin,
   managedWebLogin,
   managedWebLoginProblem,
+  managedGuestProblem,
+  NO_BELLHOP_GUEST,
   resetManagedWebLogin,
 } from '../../../src/web/login/managed.ts';
 import {
@@ -161,4 +163,43 @@ test('the secret never appears in a problem text or a log line', async () => {
   configureManagedWebLogin({ inventory: () => inventoryWith(state), authentik });
   await collect(); // no callback
   for (const text of seen) assert.ok(!text.includes(SECRET), `leaked the secret: ${text}`);
+});
+
+// Review follow-ups (#85).
+test('an outage after the flag moved to another guest does not keep the old guest\'s client', async () => {
+  const state = { inventory: inventoryWith() };
+  const { authentik } = setup(state.inventory);
+  await refreshManagedWebLogin();
+  assert.equal(managedWebLogin()?.entry, 'bellhop-lxc');
+  // The flag moves to a second guest while Authentik is unreachable.
+  const moved = inventoryWith({ bellhop: undefined });
+  moved.guests.push({ ...inventoryWith().guests[0], name: 'other-lxc', vmid: 131 });
+  state.inventory = moved;
+  configureManagedWebLogin({ inventory: () => state.inventory, authentik });
+  authentik.unreachable = true;
+  await captureWarnings(() => refreshManagedWebLogin());
+  assert.equal(managedWebLogin(), undefined, 'the old guest\'s client must not keep signing people in');
+  assert.equal(managedWebLoginProblem(), 'Authentik could not be reached');
+});
+
+test('an outage after the flagged guest\'s callback changed does not keep the old redirect URI', async () => {
+  const { authentik, state } = setup(inventoryWith());
+  await refreshManagedWebLogin();
+  state.inventory = inventoryWith({ oidcRedirectUris: ['https://bellhop.example.net/auth/callback'] });
+  authentik.unreachable = true;
+  await captureWarnings(() => refreshManagedWebLogin());
+  assert.equal(managedWebLogin(), undefined);
+});
+
+test('managedGuestProblem judges an inventory without any lookup', () => {
+  assert.equal(managedGuestProblem(inventoryWith()), undefined);
+  assert.equal(managedGuestProblem(inventoryWith({ bellhop: undefined })), NO_BELLHOP_GUEST);
+  assert.equal(managedGuestProblem(inventoryWith({ authMode: undefined, authGroup: undefined })), 'bellhop-lxc is not OIDC-gated (set an auth group and OIDC mode)');
+  assert.equal(managedGuestProblem(inventoryWith({ oidcRedirectUris: [] })), 'bellhop-lxc has no callback URL ending in /auth/callback');
+});
+
+test('when several callbacks end in /auth/callback, the first listed is used', async () => {
+  setup(inventoryWith({ oidcRedirectUris: ['https://bellhop.example.com/auth/callback', 'https://bellhop.example.net/auth/callback'] }));
+  await refreshManagedWebLogin();
+  assert.equal(managedWebLogin()?.redirectUri, 'https://bellhop.example.com/auth/callback');
 });

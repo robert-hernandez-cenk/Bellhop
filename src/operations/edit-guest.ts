@@ -19,6 +19,7 @@ import { buildRouteForEntry } from '../lib/proxy/routes.ts';
 import { getDriver } from '../lib/proxy/index.ts';
 import { checkCapabilities } from '../lib/proxy/driver.ts';
 import { syncProxyLive } from '../web/proxy-sync.ts';
+import { managedLoginLockoutError, refreshManagedWebLoginIfUsed } from '../web/login/config.ts';
 import type { OffLadderEntry, OidcSkip } from '../commands/networking/sync-authentik.ts';
 import type { OperationDeps } from './types.ts';
 
@@ -133,6 +134,11 @@ export async function commitGuestEdit(
   const errors = validateInventory({ ...inventory, guests });
   if (errors.length > 0) throw new GuestEditValidationError(errors.join('\n'));
 
+  // Bellhop's own sign-in can depend on this guest (#85): refuse an edit that
+  // would leave nobody able to sign in.
+  const lockout = managedLoginLockoutError(inventory, { ...inventory, guests });
+  if (lockout) throw new GuestEditValidationError(lockout);
+
   // Write-level OIDC rule (research R7): an OIDC-effective entry (authMode
   // 'oidc' plus an authGroup) with subdomains must carry at least one
   // callback URL, or Authentik has nowhere to send a sign-in token back to.
@@ -188,6 +194,9 @@ export async function commitGuestEdit(
   // settings save in the meantime must not be reverted by this one.
   saveInventory(deps.inventoryPath, withFreshSettings(deps.inventoryPath, { ...inventory, guests }));
   inventory.guests = guests;
+  // The managed web login follows this guest (#85); re-read it now so MCP and
+  // the Settings status see the edit without waiting for the next sign-in.
+  await refreshManagedWebLoginIfUsed();
 
   try {
     const {

@@ -1338,14 +1338,36 @@ test('PATCH webUiAuthMode: oidc is refused when the flagged guest cannot be used
   }
 });
 
-test('PATCH while oidc is in force: with a usable flagged guest taking over, a custom value may be cleared', async () => {
+test('PATCH while oidc is in force: with the flagged guest in effect (custom incomplete), a stray custom value may be cleared', async () => {
+  const { app, inventoryPath } = managedApp();
+  // Only two of the four custom values are stored, so the managed guest is what signs people in.
+  saveInventory(inventoryPath, {
+    ...loadInventory(inventoryPath),
+    webUiOidcIssuer: LOGIN_SETTINGS.webUiOidcIssuer,
+    webUiOidcClientId: LOGIN_SETTINGS.webUiOidcClientId,
+    webUiAuthMode: 'oidc',
+  });
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: null });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.webLogin.source, 'managed');
+  } finally {
+    cleanup();
+  }
+});
+
+// Sessions made through the custom client would be re-checked against a
+// different client once a value is cleared, so the complete custom set in
+// effect is protected even when a flagged guest could take over for new sign-ins.
+test('PATCH while oidc is in force: clearing a value of the complete custom set is refused even with a usable flagged guest', async () => {
   const { app, inventoryPath } = managedApp();
   saveInventory(inventoryPath, { ...loadInventory(inventoryPath), ...LOGIN_SETTINGS, webUiAuthMode: 'oidc' });
   writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
   try {
     const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: null });
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.webLogin.source, 'managed', 'the flagged guest is now what signs people in');
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /Refusing to clear webUiOidcClientId while webUiAuthMode is oidc/);
+    assert.equal(loadInventory(inventoryPath).webUiOidcClientId, LOGIN_SETTINGS.webUiOidcClientId);
   } finally {
     cleanup();
   }

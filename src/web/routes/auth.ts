@@ -1,7 +1,7 @@
 import { Router, type Response } from 'express';
 import { logInfo, logWarn } from '../../lib/log.ts';
-import { webLoginConfig, type WebLoginConfig } from '../login/config.ts';
-import { managedWebLoginProblem, NO_BELLHOP_GUEST, refreshManagedWebLogin } from '../login/managed.ts';
+import { refreshManagedWebLoginIfUsed, webLoginConfig, type WebLoginConfig } from '../login/config.ts';
+import { managedWebLoginProblem, NO_BELLHOP_GUEST } from '../login/managed.ts';
 import { escapeHtml } from '../../lib/html.ts';
 import { LOGIN_COOKIE_OPTIONS, loginCookieName, parseCookies, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from '../login/cookies.ts';
 import { WebLoginError, type WebLoginSettings } from '../login/oidc-client.ts';
@@ -89,7 +89,7 @@ export function authRoutes(sessions: SessionService, mcp?: McpSignInFinisher): R
 
     // A restart since /auth/login emptied the resolved managed client; read it
     // again rather than failing a sign-in the browser already started.
-    await refreshManagedWebLogin();
+    await refreshManagedWebLoginIfUsed();
     let cfg: WebLoginSettings;
     try {
       const config = webLoginConfig();
@@ -196,7 +196,7 @@ export async function beginSignIn(
 
   // The flagged guest's client (#85) is re-read first, so a secret rotated in
   // Authentik since the last refresh signs in without a restart. Never throws.
-  await refreshManagedWebLogin();
+  await refreshManagedWebLoginIfUsed();
   let cfg: WebLoginConfig;
   try {
     cfg = webLoginConfig();

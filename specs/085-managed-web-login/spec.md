@@ -161,6 +161,8 @@ references.
 - A client secret never appears in any response, page, log line, error
   message, job record, or inventory snapshot, including the resolved managed
   value.
+- The flagged guest lists several callback URLs ending in `/auth/callback`:
+  the first listed is used.
 - A non-admin web user cannot set or clear the flag; the flag is changed only
   through the admin-only guest edit paths.
 
@@ -207,13 +209,26 @@ references.
   and MUST keep its other checks unchanged. Its refusal message MUST name the
   two ways to configure web login and MUST NOT mention `configure-web-login`.
 - **FR-012**: The rule that refuses clearing login settings while the mode is
-  oidc MUST apply only when the custom settings are what is in effect.
+  oidc MUST apply only when the custom settings are what is in effect, and
+  MUST then hold even if a flagged guest could take over (existing sessions
+  belong to the custom client). When the custom set was already incomplete
+  and a flagged guest signs people in, clearing a stray custom value is
+  allowed.
 - **FR-013**: The `configure-web-login` command, its tests and its
   documentation MUST be removed.
 - **FR-014**: Existing deployments with stored custom settings MUST sign in
   exactly as before.
 - **FR-015**: The MCP authorization server MUST continue to derive its
   issuer origin from the resolved web login, whichever source supplies it.
+- **FR-017**: While the auth mode is oidc and the complete custom set is not
+  in effect, a guest edit that would stop the flagged guest qualifying
+  (unflagging it, removing its auth group or its `/auth/callback` URL, moving
+  the flag to a guest that cannot serve) MUST be refused with a message
+  naming the reason and both ways out, on every front end that edits guests.
+- **FR-018**: A saved guest edit MUST refresh the managed web login, and a
+  lookup failure MUST NOT keep a client that no longer belongs to the
+  currently flagged guest and callback. While all four custom values are set,
+  web login MUST NOT wait on Authentik for the managed client.
 - **FR-016**: Documentation (README links, `docs/`, nested guidance files)
   MUST describe the flag, the precedence, the new tab and the removed
   command, using example values only.

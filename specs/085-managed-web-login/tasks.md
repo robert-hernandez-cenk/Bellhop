@@ -123,6 +123,6 @@ Within each story: the failing test task precedes its implementation task.
 
 ## Verification notes (#85)
 
-- `npm run typecheck`, `npm test` (3185 pass, 0 fail, 2 skipped as at baseline) and `npm run web:build` pass.
+- `npm run typecheck`, `npm test` (3199 pass, 0 fail, 2 skipped as at baseline, after the code-review fixes) and `npm run web:build` pass.
 - Browser (demo instance, example data): the Settings "Web login" tab and the guest Advanced modal's Access tab "this is Bellhop" row render at desktop width and at a 396px-wide viewport (a same-origin iframe, since the browser window could not be narrowed) with no horizontal overflow; toggling the flag saves; the Settings response carries no secret value.
 - Not verified (needs real infrastructure): a live Authentik secret rotation and a real sign-in through a production identity provider.

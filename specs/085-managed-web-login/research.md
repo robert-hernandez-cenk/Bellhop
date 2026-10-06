@@ -91,9 +91,28 @@ from the settings response, the not-configured page, and logged lines.
   session and admin checks are unchanged. Message when neither: names both
   ways (flag Bellhop's own guest in the guest editor, or fill in the Web
   login tab).
-- already oidc: the "refusing to clear" check applies only if the custom set
-  was complete before the request (it is what is in effect); with a managed
-  source in effect clearing a stray custom value is allowed.
+- already oidc: the "refusing to clear" check applies when the complete
+  custom set is what is in effect, even if a flagged guest could take over
+  (sessions made through the custom client would be re-checked against a
+  different client and signed out; found in code review). With the custom
+  set already incomplete and a managed source in effect, clearing a stray
+  custom value is allowed.
+
+## R10 - Review follow-ups
+
+- A guest edit that stops the flagged guest qualifying, while oidc is required
+  and the custom set is not in effect, is refused in `commitGuestEdit`
+  (`managedLoginLockoutError`): otherwise the next re-check signs everyone
+  out with the web UI unreachable.
+- A saved guest edit refreshes the managed login (MCP reads it
+  synchronously).
+- On an Authentik error the last good value is kept only while it is still the
+  flagged guest's client at the same callback.
+- `refreshManagedWebLoginIfUsed` skips the lookup while all four custom values
+  are set, so custom-only installs never depend on Authentik for web login.
+- When several `/auth/callback` URLs are listed the first is used
+  (documented). The single-flight window that lets a caller join a lookup
+  begun just before an edit is accepted: seconds long, one operator.
 
 ## R8 - Removing `configure-web-login`
 

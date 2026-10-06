@@ -77,23 +77,45 @@ function fail(message: string): void {
   problem = message;
 }
 
-async function resolve(): Promise<void> {
-  if (!deps) return;
-  const inventory = deps.inventory();
+type Qualified = { entry: GuestEntry; redirectUri: string } | { problem: string };
+
+// Whether the inventory's flagged guest could supply the web login, judged
+// from the inventory alone (no Authentik lookup): the flagged guest exists,
+// is OIDC-gated, and has a usable /auth/callback URL. When several URLs end in
+// /auth/callback the first listed is used. The problem is fixed text naming
+// the guest and the fix.
+function qualify(inventory: Inventory): Qualified {
   const entry: GuestEntry | undefined = inventory.guests.find((g) => g.bellhop);
-  if (!entry) return fail(NO_BELLHOP_GUEST);
+  if (!entry) return { problem: NO_BELLHOP_GUEST };
   if (effectiveAuth(entry) !== 'oidc') {
-    return fail(`${entry.name} is not OIDC-gated (set an auth group and OIDC mode)`);
+    return { problem: `${entry.name} is not OIDC-gated (set an auth group and OIDC mode)` };
   }
   const redirectUri = callbackUri(entry.oidcRedirectUris);
-  if (!redirectUri) return fail(`${entry.name} has no callback URL ending in /auth/callback`);
+  if (!redirectUri) return { problem: `${entry.name} has no callback URL ending in /auth/callback` };
   // The same rule the custom setting has (https, except on loopback, since
   // the sign-in cookies are Secure). The schema's messages are fixed text.
   const redirectCheck = settingSchema('webUiOidcRedirectUri').safeParse(redirectUri);
   if (!redirectCheck.success) {
     const reason = redirectCheck.error.issues.map((issue) => issue.message).join('; ');
-    return fail(`${entry.name}'s callback URL is not usable: ${reason}`);
+    return { problem: `${entry.name}'s callback URL is not usable: ${reason}` };
   }
+  return { entry, redirectUri };
+}
+
+// The problem that would stop the flagged guest supplying the web login, or
+// undefined when it qualifies. Used to refuse an edit that would take away
+// the only sign-in (src/operations/edit-guest.ts).
+export function managedGuestProblem(inventory: Inventory): string | undefined {
+  const result = qualify(inventory);
+  return 'problem' in result ? result.problem : undefined;
+}
+
+async function resolve(): Promise<void> {
+  if (!deps) return;
+  const inventory = deps.inventory();
+  const qualified = qualify(inventory);
+  if ('problem' in qualified) return fail(qualified.problem);
+  const { entry, redirectUri } = qualified;
 
   try {
     const { issuer, clientId, clientSecret } = await runOidcCredentials(entry.name, {
@@ -109,8 +131,11 @@ async function resolve(): Promise<void> {
       return fail(err.message);
     }
     // Authentik could not answer: keep the last good value (an outage must
-    // not sign everyone out) and say so. The message is the transport's or
-    // Authentik's, never the secret.
+    // not sign everyone out) and say so -- but only while it is still this
+    // guest's client at this callback; after the flag moved or the callback
+    // changed it is stale, and must not keep signing people in. The message
+    // is the transport's or Authentik's, never the secret.
+    if (current && (current.entry !== entry.name || current.redirectUri !== redirectUri)) current = undefined;
     problem = 'Authentik could not be reached';
     logWarn(`Managed web login for ${entry.name} could not be refreshed: ${err instanceof Error ? err.message : 'unexpected error'}${current ? '; keeping the last resolved client' : ''}`);
   }

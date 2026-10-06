@@ -1,6 +1,7 @@
 import { configValue } from '../../lib/config.ts';
 import { SETTING_DEFS, settingSchema, type ConfigKey } from '../../lib/settings-defs.ts';
-import { managedWebLogin, managedWebLoginProblem, NO_BELLHOP_GUEST } from './managed.ts';
+import type { Inventory } from '../../lib/inventory.ts';
+import { managedGuestProblem, managedWebLogin, managedWebLoginProblem, NO_BELLHOP_GUEST, refreshManagedWebLogin } from './managed.ts';
 
 // The four custom settings that together make Bellhop's own OIDC web login usable
 // (#69 data-model.md). Read through configValue so the environment override
@@ -62,32 +63,44 @@ function readCustom(env: NodeJS.ProcessEnv): CustomLogin {
   };
 }
 
+type ClientFields = { issuer: string; clientId: string; clientSecret: string; redirectUri: string };
+
+// Both sources carry the same four fields; this is the one place that turns
+// either into the configured shape.
+function configured(source: ClientFields): Extract<WebLoginConfig, { configured: true }> {
+  return {
+    configured: true,
+    issuer: source.issuer,
+    clientId: source.clientId,
+    clientSecret: source.clientSecret,
+    redirectUri: source.redirectUri,
+  };
+}
+
 export function webLoginConfig(env: NodeJS.ProcessEnv = process.env): WebLoginConfig {
   const custom = readCustom(env);
-  if (custom.complete) {
-    return {
-      configured: true,
-      issuer: custom.issuer,
-      clientId: custom.clientId,
-      clientSecret: custom.clientSecret,
-      redirectUri: custom.redirectUri,
-    };
-  }
+  if (custom.complete) return configured(custom);
   // The custom set is incomplete: fall back to the flagged guest's client as
   // a whole (#85) -- never a mix of the two. Custom wins only when all four
   // are set. The managed value is whatever the last refresh resolved
   // (managed.ts), so this stays synchronous.
   const managed = managedWebLogin();
-  if (managed) {
-    return {
-      configured: true,
-      issuer: managed.issuer,
-      clientId: managed.clientId,
-      clientSecret: managed.clientSecret,
-      redirectUri: managed.redirectUri,
-    };
-  }
+  if (managed) return configured(managed);
   return { configured: false, missing: custom.missing };
+}
+
+// Re-reads the flagged guest's client, unless all four custom values are set:
+// then the managed client is never used, and web login must not wait on (or
+// depend on) Authentik for it. An invalid environment value counts as not
+// complete, so the refresh still runs and the failure shows where it always
+// did. Never throws.
+export async function refreshManagedWebLoginIfUsed(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  try {
+    if (readCustom(env).complete) return;
+  } catch {
+    // Invalid environment value: fall through to the refresh.
+  }
+  await refreshManagedWebLogin();
 }
 
 export function webLoginStatus(env: NodeJS.ProcessEnv = process.env): WebLoginStatus {
@@ -108,4 +121,28 @@ export function webLoginStatus(env: NodeJS.ProcessEnv = process.env): WebLoginSt
     missing: custom.missing,
     ...(problem !== undefined && problem !== NO_BELLHOP_GUEST ? { managedProblem: problem } : {}),
   };
+}
+
+// Refuses a guest edit that would leave nobody able to sign in (#85): while
+// webUiAuthMode is oidc and the complete custom set is not what signs people
+// in, the flagged guest is the only web login, so an edit that stops it
+// qualifying (unflag, un-gate, lose its callback URL, move the flag to a
+// guest that cannot serve) would sign everyone out at the next re-check, with
+// the web UI no longer reachable to undo it. Judged on the inventories before
+// and after the edit; an already-unusable flagged guest is not blocked
+// further. Returns the refusal text, or undefined to allow.
+export function managedLoginLockoutError(before: Inventory, after: Inventory, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (configValue('webUiAuthMode', env).value !== 'oidc') return undefined;
+  try {
+    if (readCustom(env).complete) return undefined;
+  } catch {
+    // An invalid environment value is not a working custom set.
+  }
+  if (managedGuestProblem(before) !== undefined) return undefined;
+  const problem = managedGuestProblem(after);
+  if (problem === undefined) return undefined;
+  return (
+    `Refusing this edit: webUiAuthMode is oidc and Bellhop's own guest is the only configured web login, so nobody could sign in afterwards (${problem}). ` +
+    'Set webUiAuthMode to none first, or fill in the Web login settings'
+  );
 }

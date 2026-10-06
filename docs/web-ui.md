@@ -174,7 +174,7 @@ the selected driver.
   groups as they will be after the save) — otherwise your next request
   would send you to a sign-in you cannot complete. While `oidc` is in
   force, clearing one of the four custom values is refused for the same
-  reason, unless a flagged guest's client would then sign people in. Switching away from
+  reason. (If the custom set was already incomplete and a flagged guest signs people in, clearing a stray value is allowed.) Switching away from
   `oidc` asks for confirmation, since the web UI then becomes reachable
   without signing in, and the service log records who did it. If a wrong
   value locks you out anyway, see [Locked out](authentik.md#locked-out).

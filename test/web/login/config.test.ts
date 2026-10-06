@@ -1,9 +1,9 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { webLoginConfig, webLoginStatus } from '../../../src/web/login/config.ts';
+import { webLoginConfig, webLoginStatus, refreshManagedWebLoginIfUsed } from '../../../src/web/login/config.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
-import { resetManagedWebLogin } from '../../../src/web/login/managed.ts';
-import { resolveManagedLogin, bellhopInventory, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI, MANAGED_SECRET } from '../../support/managed-login.ts';
+import { configureManagedWebLogin, managedWebLogin, resetManagedWebLogin } from '../../../src/web/login/managed.ts';
+import { ownedAuthentik, resolveManagedLogin, bellhopInventory, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI, MANAGED_SECRET } from '../../support/managed-login.ts';
 
 afterEach(() => {
   resetConfigStore();
@@ -178,4 +178,32 @@ test('webLoginStatus reports an invalid environment value by key and variable, n
   const invalid = (status as { invalid?: string }).invalid ?? '';
   assert.ok(invalid.includes('webUiOidcIssuer') && invalid.includes('WEB_UI_OIDC_ISSUER'), invalid);
   assert.ok(!invalid.includes('not-a-url-example-value'));
+});
+
+// Review follow-up (#85): a complete custom set makes the managed lookup
+// irrelevant, so web login must not depend on Authentik being reachable.
+test('refreshManagedWebLoginIfUsed makes no lookup while all four custom values are set', async () => {
+  resetConfigStore();
+  const authentik = ownedAuthentik();
+  let lookups = 0;
+  const original = authentik.listApplications.bind(authentik);
+  authentik.listApplications = async (...args) => {
+    lookups++;
+    return original(...args);
+  };
+  configureManagedWebLogin({ inventory: () => bellhopInventory(), authentik });
+  await refreshManagedWebLoginIfUsed(ENV);
+  assert.equal(lookups, 0);
+  assert.equal(managedWebLogin(), undefined);
+  await refreshManagedWebLoginIfUsed({});
+  assert.equal(lookups, 1);
+  assert.ok(managedWebLogin());
+});
+
+test('refreshManagedWebLoginIfUsed still refreshes when an environment value is invalid, so the failure is not hidden', async () => {
+  resetConfigStore();
+  const authentik = ownedAuthentik();
+  configureManagedWebLogin({ inventory: () => bellhopInventory(), authentik });
+  await refreshManagedWebLoginIfUsed({ ...ENV, WEB_UI_OIDC_ISSUER: 'not-a-url-example-value' });
+  assert.ok(managedWebLogin());
 });

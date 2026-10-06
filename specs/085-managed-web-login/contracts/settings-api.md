@@ -34,10 +34,12 @@ remain ordinary settings in `settings`/`secrets`; only their `group` moves.
   guest in its Advanced settings, or set <missing keys> on the Web login tab
   first`.
 - Staying in oidc: 409 `Refusing to clear <keys> while webUiAuthMode is oidc:
-  nobody could sign in. Set webUiAuthMode to none first` only when the custom
-  set was complete (in effect) before the request and this request would make
-  it incomplete **and** no managed login would then take over. An unrelated
-  save is never refused.
+  nobody could sign in. Set webUiAuthMode to none first` when this request
+  clears a value of the complete custom set that is in effect (even if a
+  flagged guest could take over), or clears one with no usable managed login.
+  Clearing a stray value while the custom set was already incomplete and a
+  managed login signs people in is allowed. An unrelated save is never
+  refused.
 - All other PATCH behavior (env-pin refusal, validation, secrets write-only)
   is unchanged.
 

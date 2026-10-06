@@ -15,7 +15,7 @@ import { listDrivers, DEFAULT_PROXY_DRIVER_ID } from '../../lib/proxy/index.ts';
 import { managesProxy } from '../../lib/proxy/driver.ts';
 import { ACME_DNS_PROVIDERS, DEFAULT_ACME_DNS_PROVIDER } from '../../lib/proxy/ids.ts';
 import { clearSecret, configValueAt, storedSecretKeys, writeSecret, type ConfigSource } from '../../lib/config.ts';
-import { WEB_LOGIN_KEYS, webLoginStatus } from '../login/config.ts';
+import { refreshManagedWebLoginIfUsed, WEB_LOGIN_KEYS, webLoginStatus } from '../login/config.ts';
 import { managedWebLogin, refreshManagedWebLogin } from '../login/managed.ts';
 import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
@@ -193,7 +193,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
   router.get('/', async (_req, res) => {
     // The flagged guest and its client are read again on every settings read
     // (admin only, so cheap), so the status shows an edit or a rotation now.
-    await refreshManagedWebLogin();
+    await refreshManagedWebLoginIfUsed();
     res.json(settingsResponse(inventory, inventoryPath));
   });
 
@@ -332,9 +332,14 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
       // A usable flagged guest (#85) signs people in whenever the custom set
       // is not complete, so it counts as configured: nobody is locked out by
       // a gap in the custom values. Read fresh, so this judges Authentik's
-      // current state, and only when there is a gap to excuse.
+      // current state, and only when there is a gap to excuse. It does not
+      // excuse clearing a value while oidc stays in force and the complete
+      // custom set is what signs people in now: existing sessions belong to
+      // that client, and a re-check against the flagged guest's different
+      // client would sign everyone out.
       if (missing.length > 0) await refreshManagedWebLogin();
-      if (missing.length > 0 && managedWebLogin() === undefined) {
+      const customInEffect = !switchingToOidc && webLoginStatus().source === 'custom';
+      if (missing.length > 0 && (customInEffect || managedWebLogin() === undefined)) {
         res.status(409).json({
           error: switchingToOidc
             ? `Web login is not configured: flag Bellhop's own guest in its Advanced settings, or set ${missing.join(', ')} on the Web login tab first`
@@ -402,7 +407,7 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
     // Reflect the write in the shared in-memory object immediately rather
     // than waiting for the next request's reload middleware.
     refreshInventory(inventory, inventoryPath);
-    await refreshManagedWebLogin();
+    await refreshManagedWebLoginIfUsed();
     res.json(settingsResponse(inventory, inventoryPath));
   });
 
