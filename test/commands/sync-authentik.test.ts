@@ -16,7 +16,9 @@ import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { DEFAULT_SCOPE_MAPPINGS, FakeAuthentikClient, SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL } from '../support/fake-authentik-client.ts';
 
 const LADDER = authentikConfig().groupLadder; // low -> high
-const [OPEN_RUNG, APP_RUNG, USERS_RUNG, ADMIN_RUNG] = LADDER;
+// OPEN_RUNG is the bottom rung (it binds every rung); the second rung
+// (bellhop-public under the #97 default) is not needed by these tests.
+const [OPEN_RUNG, , APP_RUNG, USERS_RUNG, ADMIN_RUNG] = LADDER;
 
 const gatedInventory: Inventory = {
   domain: 'example.com',
@@ -647,22 +649,23 @@ function sortChanges(changes: { slug: string; group: string; action: 'add' | 're
   return [...changes].sort((a, b) => (a.slug + a.group + a.action).localeCompare(b.slug + b.group + b.action));
 }
 
+// Every rung below USERS_RUNG moves: sonarr gains each one, radarr loses
+// each one.
+const RUNGS_BELOW_USERS = LADDER.slice(0, LADDER.indexOf(USERS_RUNG));
 const expectedTierChangeBindingChanges = sortChanges([
-  { slug: 'sonarr', group: OPEN_RUNG, action: 'add' },
-  { slug: 'sonarr', group: APP_RUNG, action: 'add' },
-  { slug: 'radarr', group: OPEN_RUNG, action: 'remove' },
-  { slug: 'radarr', group: APP_RUNG, action: 'remove' },
+  ...RUNGS_BELOW_USERS.map((group) => ({ slug: 'sonarr', group, action: 'add' as const })),
+  ...RUNGS_BELOW_USERS.map((group) => ({ slug: 'radarr', group, action: 'remove' as const })),
 ]);
 
 test('a dry run over a pure tier change reports the pending binding adds and deletes and writes nothing', async () => {
   const authentik = new FakeAuthentikClient();
   await seedLadderGroups(authentik);
   // sonarr starts at USERS_RUNG (bound to USERS+ADMIN), radarr starts at
-  // OPEN_RUNG (bound to all four rungs).
+  // OPEN_RUNG (bound to every rung).
   await runSyncAuthentik({ apply: true }, { authentik, inventory: tierChangeInventory(USERS_RUNG, OPEN_RUNG) });
 
-  // sonarr widens to OPEN_RUNG (gains OPEN/APP); radarr narrows to
-  // USERS_RUNG (loses OPEN/APP). Neither Application is created or removed.
+  // sonarr widens to OPEN_RUNG (gains every rung below USERS); radarr
+  // narrows to USERS_RUNG (loses them). Neither Application is created or removed.
   const retiered = tierChangeInventory(OPEN_RUNG, USERS_RUNG);
   const before = authentik.listPolicyBindingsForTest();
 

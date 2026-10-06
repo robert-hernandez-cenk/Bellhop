@@ -123,7 +123,7 @@ test('validateInventory flags an authGroup entry when no entry has authentik: tr
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   const errors = validateInventory(inv);
@@ -136,7 +136,7 @@ test('validateInventory flags an authGroup entry when the authentik:true entry h
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 111, host: 'pve1', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   const errors = validateInventory(inv);
@@ -151,7 +151,7 @@ test('validateInventory allows authGroup when an authentik:true entry exists', (
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [
       { name: 'auth-lxc', type: 'lxc', vmid: 111, host: 'pve1', ip: '192.168.1.11', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   assert.deepEqual(validateInventory(inv), []);
@@ -624,7 +624,7 @@ test('saveInventory/loadInventory round-trips authGroup and authentik on a host 
   const updated: Inventory = {
     ...inv,
     hosts: inv.hosts.map((h) => (h.name === 'pve1' ? { ...h, authentik: true, ip: '192.168.1.5' } : h)),
-    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, authGroup: 'bellhop-users' } : g)),
+    guests: inv.guests.map((g) => (g.name === 'proxy' ? { ...g, authGroup: 'bellhop-admin-family' } : g)),
   };
   saveInventory(dest, updated);
 
@@ -635,7 +635,7 @@ test('saveInventory/loadInventory round-trips authGroup and authentik on a host 
     undefined,
     'a host with no authentik given must stay undefined, not false'
   );
-  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.authGroup, 'bellhop-users');
+  assert.equal(reloaded.guests.find((g) => g.name === 'proxy')?.authGroup, 'bellhop-admin-family');
 });
 
 // Upgrade path (issue #8): a guest stored under a pre-rename default rung
@@ -1804,12 +1804,12 @@ test('saveInventory round-trips authGroup', () => {
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', authentik: true, ip: '192.168.1.5' }],
     guests: [
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
       { name: 'plex', type: 'lxc', vmid: 121, host: 'pve1', ip: '192.168.1.21', subdomains: ['plex'] },
     ],
   });
   const loaded = loadInventory(dbPath);
-  assert.equal(loaded.guests.find((g) => g.name === 'sonarr')!.authGroup, 'bellhop-users');
+  assert.equal(loaded.guests.find((g) => g.name === 'sonarr')!.authGroup, 'bellhop-admin-family');
   assert.equal(loaded.guests.find((g) => g.name === 'plex')!.authGroup, undefined);
 });
 
@@ -1817,7 +1817,7 @@ test('parseAuthGroup treats null and empty string as ungated and trims a name', 
   assert.equal(parseAuthGroup(null), undefined);
   assert.equal(parseAuthGroup(''), undefined);
   assert.equal(parseAuthGroup('   '), undefined);
-  assert.equal(parseAuthGroup('  bellhop-users  '), 'bellhop-users');
+  assert.equal(parseAuthGroup('  bellhop-admin-family  '), 'bellhop-admin-family');
   assert.throws(() => parseAuthGroup(42), /authGroup/);
 });
 
@@ -1825,7 +1825,7 @@ test('validateInventory rejects a gated entry when no entry is flagged authentik
   const errors = validateInventory({
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
-    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' }],
+    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' }],
   });
   assert.equal(errors.length, 1);
   assert.match(errors[0], /'sonarr' has an 'authGroup' set but no entry has 'authentik: true'/);
@@ -1875,14 +1875,14 @@ test('saveInventory/loadInventory round-trip authMode and oidcRedirectUris on a 
     ...inv,
     hosts: inv.hosts.map((h) =>
       h.name === 'pve1'
-        ? { ...h, authGroup: 'bellhop-users', authMode: 'oidc' as const, oidcRedirectUris: ['https://pve1.example.com/callback'] }
+        ? { ...h, authGroup: 'bellhop-admin-family', authMode: 'oidc' as const, oidcRedirectUris: ['https://pve1.example.com/callback'] }
         : h
     ),
     guests: inv.guests.map((g) =>
       g.name === 'proxy'
         ? {
             ...g,
-            authGroup: 'bellhop-users',
+            authGroup: 'bellhop-admin-family',
             authMode: 'oidc' as const,
             oidcRedirectUris: ['https://proxy.example.com/callback', 'https://proxy.example.com/callback2'],
           }
@@ -1893,7 +1893,7 @@ test('saveInventory/loadInventory round-trip authMode and oidcRedirectUris on a 
         name: 'nas',
         ip: '192.168.1.250',
         subdomains: ['nas'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc' as const,
         oidcRedirectUris: ['https://nas.example.com/callback'],
       },
@@ -1956,7 +1956,7 @@ test('opening a pre-existing database without the auth_mode/oidc_redirect_uris_j
       ...h,
       authentik: true,
       ip: '192.168.1.5',
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       authMode: 'oidc' as const,
       oidcRedirectUris: ['https://pve1.example.com/callback'],
     })),
@@ -1977,12 +1977,12 @@ test('effectiveAuth returns ungated with no authGroup', () => {
 });
 
 test('effectiveAuth returns forward with authGroup and authMode unset or forward', () => {
-  assert.equal(effectiveAuth({ authGroup: 'bellhop-users' }), 'forward');
-  assert.equal(effectiveAuth({ authGroup: 'bellhop-users', authMode: 'forward' }), 'forward');
+  assert.equal(effectiveAuth({ authGroup: 'bellhop-admin-family' }), 'forward');
+  assert.equal(effectiveAuth({ authGroup: 'bellhop-admin-family', authMode: 'forward' }), 'forward');
 });
 
 test('effectiveAuth returns oidc with authGroup and authMode: oidc', () => {
-  assert.equal(effectiveAuth({ authGroup: 'bellhop-users', authMode: 'oidc' }), 'oidc');
+  assert.equal(effectiveAuth({ authGroup: 'bellhop-admin-family', authMode: 'oidc' }), 'oidc');
 });
 
 test('parseAuthMode treats null, undefined, and empty string as unset', () => {
@@ -2027,7 +2027,7 @@ test('parseOidcRedirectUris throws on a non-http(s) URL, naming the URL', () => 
 });
 
 test('oidcConfigErrors requires at least one redirect URI when effectiveAuth is oidc and the entry has subdomains', () => {
-  const errors = oidcConfigErrors({ authGroup: 'bellhop-users', authMode: 'oidc', subdomains: ['sonarr'] });
+  const errors = oidcConfigErrors({ authGroup: 'bellhop-admin-family', authMode: 'oidc', subdomains: ['sonarr'] });
   assert.equal(errors.length, 1);
   assert.match(errors[0], /oidcRedirectUris/);
 });
@@ -2035,7 +2035,7 @@ test('oidcConfigErrors requires at least one redirect URI when effectiveAuth is 
 test('oidcConfigErrors is fine when redirect URIs are present', () => {
   assert.deepEqual(
     oidcConfigErrors({
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       authMode: 'oidc',
       subdomains: ['sonarr'],
       oidcRedirectUris: ['https://sonarr.example.com/cb'],
@@ -2045,11 +2045,11 @@ test('oidcConfigErrors is fine when redirect URIs are present', () => {
 });
 
 test('oidcConfigErrors is fine for a forward-effective entry with no redirect URIs', () => {
-  assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-users', subdomains: ['sonarr'] }), []);
+  assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-admin-family', subdomains: ['sonarr'] }), []);
 });
 
 test('oidcConfigErrors is fine for an oidc-effective entry with no subdomains', () => {
-  assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-users', authMode: 'oidc' }), []);
+  assert.deepEqual(oidcConfigErrors({ authGroup: 'bellhop-admin-family', authMode: 'oidc' }), []);
 });
 
 // --- OIDC mobile-app redirect URIs (issue #22, T002) ---
@@ -2104,7 +2104,7 @@ test('saveInventory/loadInventory round-trip oidcMobileRedirectUris on a host, a
       h.name === 'pve1'
         ? {
             ...h,
-            authGroup: 'bellhop-users',
+            authGroup: 'bellhop-admin-family',
             authMode: 'oidc' as const,
             oidcRedirectUris: ['https://pve1.example.com/callback'],
             oidcMobileRedirectUris: ['app.example:///oauth-callback'],
@@ -2115,7 +2115,7 @@ test('saveInventory/loadInventory round-trip oidcMobileRedirectUris on a host, a
       g.name === 'proxy'
         ? {
             ...g,
-            authGroup: 'bellhop-users',
+            authGroup: 'bellhop-admin-family',
             authMode: 'oidc' as const,
             oidcMobileRedirectUris: ['app.example:///oauth-callback', 'com.example.app:/callback'],
           }
@@ -2126,7 +2126,7 @@ test('saveInventory/loadInventory round-trip oidcMobileRedirectUris on a host, a
         name: 'nas',
         ip: '192.168.1.250',
         subdomains: ['nas'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc' as const,
         oidcMobileRedirectUris: ['https://books.example.com/auth/openid/mobile-redirect'],
       },
@@ -2220,7 +2220,7 @@ test('parseOidcMobileRedirectUris throws on a disallowed scheme, naming the URI 
 
 test('oidcConfigErrors reports a URI present in both oidcRedirectUris and oidcMobileRedirectUris, naming it', () => {
   const errors = oidcConfigErrors({
-    authGroup: 'bellhop-users',
+    authGroup: 'bellhop-admin-family',
     authMode: 'oidc',
     subdomains: ['sonarr'],
     oidcRedirectUris: ['https://sonarr.example.com/cb'],
@@ -2234,7 +2234,7 @@ test('oidcConfigErrors reports a URI present in both oidcRedirectUris and oidcMo
 test('oidcConfigErrors is fine when oidcMobileRedirectUris does not overlap oidcRedirectUris', () => {
   assert.deepEqual(
     oidcConfigErrors({
-      authGroup: 'bellhop-users',
+      authGroup: 'bellhop-admin-family',
       authMode: 'oidc',
       subdomains: ['sonarr'],
       oidcRedirectUris: ['https://sonarr.example.com/cb'],
@@ -2256,7 +2256,7 @@ test('validateInventory allows an OIDC-gated entry with no authentik:true entry 
         host: 'pve1',
         ip: '192.168.1.20',
         subdomains: ['sonarr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
       },
     ],
@@ -2276,7 +2276,7 @@ test('validateInventory still requires an authentik:true entry when a forward-ga
         host: 'pve1',
         ip: '192.168.1.20',
         subdomains: ['sonarr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
       },
       {
@@ -2286,7 +2286,7 @@ test('validateInventory still requires an authentik:true entry when a forward-ga
         host: 'pve1',
         ip: '192.168.1.21',
         subdomains: ['radarr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
       },
     ],
   };

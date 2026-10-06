@@ -48,8 +48,17 @@ const DEFAULT_OIDC_SIGNING_KEY_NAME = 'authentik Self-signed Certificate';
 // old "admins always get in" special case is just a rung like any other.
 // The default rungs are product-named groups an operator creates in
 // Authentik; the top rung is Authentik's own built-in admin group.
-// AUTHENTIK_GROUP_LADDER overrides the whole list.
-const DEFAULT_GROUP_LADDER = 'bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins';
+// AUTHENTIK_GROUP_LADDER overrides the whole list. Each rung is named for
+// who belongs in it (#97):
+//   bellhop-public-readonly  the most constrained tier
+//   bellhop-public           public users of an external, public-facing
+//                            site; self-created accounts are acceptable
+//   bellhop-friends-family   friends and family to share more with, such
+//                            as external websites
+//   bellhop-admin-family     household members such as a spouse: more
+//                            than friends, close to an administrator
+const DEFAULT_GROUP_LADDER =
+  'bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins';
 
 // An empty environment variable counts as unset (the accessor's rule) -- a
 // KEY= line in data/authentik.env is a far likelier way to express "I did

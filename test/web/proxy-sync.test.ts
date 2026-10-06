@@ -80,7 +80,7 @@ test('syncProxyLive also reconciles Authentik as a third step', async () => {
     ],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   const ssh = new FakeSSHClient((_t, _u, c) => {
@@ -122,7 +122,7 @@ test('syncProxyLive runs sync-authentik when the Authentik API is configured', a
 test('syncProxyLive returns the slug conflicts sync-authentik reported', async () => {
   const gated: Inventory = {
     ...inventory,
-    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
+    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-admin-family' }],
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
   };
   // An Application already holds slug 'plex' backed by a provider that is
@@ -145,7 +145,7 @@ test('syncProxyLive returns no conflicts when Authentik is not configured', asyn
 test('syncProxyLive logWarns each conflict, since a Dashboard-triggered call runs outside any job log', async () => {
   const gated: Inventory = {
     ...inventory,
-    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
+    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-admin-family' }],
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
   };
   const authentik = new FakeAuthentikClient({
@@ -574,7 +574,7 @@ function oidcGated(overrides: Partial<Inventory['guests'][number]> = {}): Invent
     guests: [
       {
         ...inventory.guests[0],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://plex.example.com/oauth/callback'],
         ...overrides,
@@ -629,7 +629,7 @@ test('syncProxyLive warns and returns each forward-auth skip', async () => {
   const ssh = new FakeSSHClient(() => ({ stdout: 'live-caddyfile-content', stderr: '', code: 0 }));
   const gated: Inventory = {
     ...inventory,
-    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-users' }],
+    guests: [{ ...inventory.guests[0], authGroup: 'bellhop-admin-family' }],
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true, authentik: true, ip: '192.168.1.5' }],
   };
   // An unused OAuth2 provider already holds the name 'plex' -- the new
@@ -770,7 +770,7 @@ test('syncProxyLive: a failing sync-proxy still runs sync-authentik, skips the s
       hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
       guests: [
         { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));

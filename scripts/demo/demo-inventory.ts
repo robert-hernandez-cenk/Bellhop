@@ -119,7 +119,7 @@ export function buildDemoInventory(): Inventory {
         ip: '198.51.100.3',
         subdomains: ['jellyfin.example.com', 'media.example.com'],
         port: 8096,
-        authGroup: 'bellhop-app-users-open',
+        authGroup: 'bellhop-public',
         app: 'jellyfin',
       },
       {
@@ -130,7 +130,7 @@ export function buildDemoInventory(): Inventory {
         ip: '198.51.100.4',
         subdomains: ['home.example.com'],
         port: 8123,
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         app: 'homeassistant',
       },
       {
@@ -141,7 +141,7 @@ export function buildDemoInventory(): Inventory {
         ip: '198.51.100.5',
         subdomains: ['docs.example.com'],
         port: 8000,
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         unauthenticatedPaths: ['/api/*'],
         app: 'paperless-ngx',
       },
@@ -166,7 +166,7 @@ export function buildDemoInventory(): Inventory {
         ip: '198.51.100.7',
         subdomains: ['vault.example.com'],
         port: 8080,
-        authGroup: 'bellhop-app-users',
+        authGroup: 'bellhop-friends-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://vault.example.com/oidc/callback'],
         app: 'vaultwarden',
@@ -181,7 +181,7 @@ export function buildDemoInventory(): Inventory {
         ip: '203.0.113.10',
         subdomains: ['grafana.example.com'],
         port: 3000,
-        authGroup: 'bellhop-app-users-open',
+        authGroup: 'bellhop-public',
         app: 'grafana',
         // The one demo guest with a recorded creator (issue #58), showing the
         // Advanced modal's read-only "Created by" row.

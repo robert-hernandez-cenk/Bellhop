@@ -43,7 +43,7 @@ function asAdmin(req: request.Test): request.Test {
 }
 
 function asUser(req: request.Test): request.Test {
-  return req.set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['bellhop-app-users'] }));
+  return req.set('Cookie', sessionCookie(sessions, { username: 'someone', groups: ['bellhop-friends-family'] }));
 }
 
 test('GET /api/auth-groups returns every ladder rung in order, marking which exist in Authentik', async () => {
