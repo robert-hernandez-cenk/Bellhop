@@ -164,3 +164,16 @@ Single-operator assumptions: entry point fixed at `websecure`; unset `proxyCertR
 **Limit.** A guest proxy host gets the config as one `sh -c` argument via `pct exec`, so Linux's 128 KiB single-argument limit applies (documented in `docs/reverse-proxy/caddy-api.md`, not engineered around).
 
 Single-operator assumptions: admin address `localhost:2019` on the `proxy: true` entry; systemd packaged unit names (`caddy.service` checked, `caddy-api.service` documented); `curl` on the proxy host; fixed `ACME_DNS_RESOLVERS` and Cloudflare as the only DNS-01 provider, only under `tlsSource: acme-dns` with `acmeDnsProvider: cloudflare`.
+
+## Read-only check (#87)
+
+`ReverseProxyDriver.check?(deps)` proves the live proxy for the first-run setup's proxy step without changing it: one remote command or API read, no write/backup/restore/reload. It resolves with a one-line summary and throws an actionable `Error`. A file driver supplies `check: { target, command }` to `fileDriver` (`FileDriverCheck`); the shared builder adds the existence test (exit `3` names the path and `proxyConfigPath`) and runs it through `runRemote`.
+
+- Caddy: the Caddyfile must exist (`target: 'file'`), then `caddy validate --adapter caddyfile --config <path>`.
+- nginx: only the config directory must exist (Bellhop's own file isn't there before the first sync), then `nginx -t`.
+- HAProxy: the directory, then `haproxy -c -f /etc/haproxy/haproxy.cfg`, adding `-f <bellhop.cfg>` only if that file exists.
+- Traefik: the directory; with `proxyApiUrl` set, one `curl` of `<api>/api/overview` that must answer 200 (`buildApiPing`, no retry unlike the apply-time `buildApiCheck`).
+- Caddy admin API: `readCaddyConfig(deps, { checkService: true })`, so Caddyfile mode, a missing `curl` and an unreachable endpoint keep their usual messages.
+- Nginx Proxy Manager: `listProxyHosts()` (the sign-in plus one read); the client's own errors name the URL or the email/password settings and never the password.
+
+Single-operator assumptions are unchanged (the check reuses each driver's fixed paths and commands).

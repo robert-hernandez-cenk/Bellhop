@@ -39,7 +39,7 @@ Each driver's assumptions are recorded in full in `src/lib/proxy/drivers/CLAUDE.
 - `defaultConfigPath: string | null` (`null` = driver uses no configuration file).
 - `statusPage: { suggestedPath: string } | null` (`null` = serves no status page).
 - Four optional Settings-page hints: `usesCertResolver`/`usesApiUrl` (page shows Proxy cert resolver/Proxy API URL; Traefik only, #35); `usesNpmApi` (page shows `npmApiUrl`/`npmApiEmail`/`npmApiPassword` on the Proxy tab; Nginx Proxy Manager only, #73); `configPathNote` (a sentence appended to the Proxy config path help). The TLS fields are driven by `capabilities.tlsSources`/`defaultTlsSource` instead; the old `usesSharedCertificate`/`usesCaddyTls` hints were removed (#72).
-- `plan()`/`apply()`/`snapshot()`.
+- `plan()`/`apply()`/`snapshot()`, and an optional read-only `check(deps)` (#87) that proves the live proxy without changing it: it resolves with a one-line summary or throws an actionable error, and must issue no write, backup, restore, reload or API mutation. Only the first-run setup's proxy step calls it today; `none` has none. Per-driver checks: `src/lib/proxy/drivers/CLAUDE.md` > "Read-only check (#87)".
 
 `fileDriver` is the shared builder for file-configured drivers (Caddy, nginx, HAProxy, Traefik); three of the five analysed mechanisms have no file at all (e.g. Caddy's admin API), so the top-level contract is "reconcile these routes", not "render this file".
 

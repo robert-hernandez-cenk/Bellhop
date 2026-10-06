@@ -37,9 +37,21 @@ Every action in this step is safe to repeat. Saving a host again updates it rath
 - **Domain** (required): the base domain your subdomains are served under, e.g. `example.com`.
 - **LAN DNS server**, **backup storage** and **NFS server** (optional): see [Inventory-wide settings](configuration.md#inventory-wide-settings) for what each one does and what happens while it is unset.
 
+## Step 3: Reverse proxy
+
+Point Bellhop at the reverse proxy you already run. Installing a new one is not part of this step, and nothing is written to the proxy here.
+
+1. **Choose the proxy.** Caddy, Caddy (admin API), nginx, Nginx Proxy Manager, HAProxy, Traefik, or **No proxy** if you configure routes yourself (see [Reverse proxy](reverse-proxy/README.md)).
+2. **Choose where it runs.** Pick the host or guest from your inventory. That entry is marked as the proxy; choosing another entry later moves the mark.
+3. **Fill in its settings.** Only the fields that proxy uses are shown: the config path, Traefik's certificate resolver and API URL, or Nginx Proxy Manager's URL, email and password. They are checked by the same rules as the Settings page.
+4. **Choose how certificates are obtained.** Only the sources your proxy supports are offered, with its default marked: DNS-01 through Cloudflare (needs a Cloudflare API token), HTTP-01, self-signed, existing certificate and key files, or managed outside Bellhop. Passwords and tokens are stored write-only: the page shows only whether one is set, and leaving the field blank keeps the saved value.
+5. **Save, then check.** The check looks at the live proxy without changing it: the config file or directory exists and the proxy's own validation passes (`caddy validate`, `nginx -t`, `haproxy -c`), or its API answers (Traefik with an API URL, Caddy admin API), or it accepts the sign-in (Nginx Proxy Manager). A failure says what to fix. A pass shows what the first `sync-proxy` would write, exactly as its dry run prints it, and completes the step.
+
+Choosing **No proxy** completes the step with no check. Changing anything afterwards reopens the step until it passes again, and saving the same values twice changes nothing. Reviewing routes the proxy already has is a separate step.
+
 ## Finish
 
-Finish is available once both steps are complete. It turns the walkthrough off, deletes the setup token and opens the Dashboard.
+Finish is available once all three steps are complete. It turns the walkthrough off, deletes the setup token and opens the Dashboard.
 
 The web UI's sign-in mode is not changed by finishing. On a fresh install that is `none`: anyone who can reach the port is a full admin, as before setup existed. Configure sign-in afterwards as described in [Authentik](authentik.md).
 
