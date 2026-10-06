@@ -92,8 +92,8 @@ All paths are relative to the worktree root.
 
 - [x] T025 [P] Update docs for the behavior change: `docs/authentik.md`, `docs/commands.md`, `docs/configuration.md`, `docs/environment-variables.md`, `docs/mcp-server.md`, `docs/web-ui.md`, `README.md`, and `CONTRIBUTING.md` if it lists the command: describe the flag, precedence, the Web login tab, and removal of the command; example values only; keep `README.md` within its 200-line budget and fix any anchor/links the docs link test (`test/docs/links.test.ts`) checks
 - [x] T026 [P] Update nested guidance: `src/lib/CLAUDE.md` (group `weblogin`, `bellhop` column and at-most-one rule), `src/web/CLAUDE.md` (managed login resolution/refresh points, precedence, status, PATCH guard changes, sync-only `webLoginConfig`), `src/commands/networking/CLAUDE.md` (remove the `configure-web-login` section), `src/operations/CLAUDE.md` (edit-guest `bellhop` field and the refresh after save), `web-client/CLAUDE.md` (Web login tab); record the single-operator assumptions under the relevant "Single-operator assumptions" notes: one Bellhop guest, one web origin, guest-only; keep root `CLAUDE.md` under its 250-line budget (root needs no change unless it lists the command)
-- [ ] T027 Browser verification at desktop width and at 640px or narrower using `npm run demo`: the guest Advanced modal toggle and the Settings "Web login" tab (active-source line, fields, intro text, no horizontal overflow, dark theme); capture example-only screenshots only if a documented screenshot changes (then `npm run docs:screenshots` and verify by eye)
-- [ ] T028 Run `npm run typecheck`, `npm test`, `npm run web:build` and walk [quickstart.md](quickstart.md); mark these verification tasks complete and list anything needing real infrastructure (a live Authentik rotation, a real sign-in with the production Authentik) as unverified
+- [x] T027 Browser verification at desktop width and at 640px or narrower using `npm run demo`: the guest Advanced modal toggle and the Settings "Web login" tab (active-source line, fields, intro text, no horizontal overflow, dark theme); capture example-only screenshots only if a documented screenshot changes (then `npm run docs:screenshots` and verify by eye)
+- [x] T028 Run `npm run typecheck`, `npm test`, `npm run web:build` and walk [quickstart.md](quickstart.md); mark these verification tasks complete and list anything needing real infrastructure (a live Authentik rotation, a real sign-in with the production Authentik) as unverified
 
 ---
 
@@ -120,3 +120,9 @@ Within each story: the failing test task precedes its implementation task.
 2. Phase 4 and 5 add the tab and the guard changes.
 3. Phase 6 removes the old command; Phase 7 documents and verifies.
 4. Commit per phase, `(#85, USn)`, with `tasks.md` checkboxes in the same commit.
+
+## Verification notes (#85)
+
+- `npm run typecheck`, `npm test` (3185 pass, 0 fail, 2 skipped as at baseline) and `npm run web:build` pass.
+- Browser (demo instance, example data): the Settings "Web login" tab and the guest Advanced modal's Access tab "this is Bellhop" row render at desktop width and at a 396px-wide viewport (a same-origin iframe, since the browser window could not be narrowed) with no horizontal overflow; toggling the flag saves; the Settings response carries no secret value.
+- Not verified (needs real infrastructure): a live Authentik secret rotation and a real sign-in through a production identity provider.
