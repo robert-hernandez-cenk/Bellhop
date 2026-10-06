@@ -86,7 +86,7 @@ function groupLadder(env: NodeJS.ProcessEnv): string[] {
 }
 
 // The ladder parsing rules on a raw comma-separated string, with unset or
-// empty meaning the default ladder. Exported for the #158 migration in
+// empty meaning the default ladder. Exported for the #158 and #97 migrations in
 // inventory.ts, which resolves the raw value itself (stored setting or env
 // var, issue #64) from the database it is opening, so the parsing and
 // dedup rules stay defined only here.

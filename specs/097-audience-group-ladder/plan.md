@@ -77,4 +77,6 @@ test/**                            # old-name substitutions
 
 ## Complexity Tracking
 
-None.
+| Deviation | Why | Rejected alternative |
+|---|---|---|
+| The rename runs on every inventory open, including CLI dry runs (root CLAUDE.md "Dry-run convention"). | The user chose rename-on-open on #97, matching the other open-time migrations; it is gated on the effective ladder, so a pinned deployment opts out. | A separate dry-run-by-default command (like `backfill-guest-creators`): one more step every operator must remember, and unpinned deployments would sit off-ladder until they ran it. |

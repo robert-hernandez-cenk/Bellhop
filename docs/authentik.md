@@ -17,7 +17,7 @@ Every one of these can also be pinned by an environment variable instead (see [E
 
 ### Access tiers
 
-An app's access tier (`authGroup`) is one rung of the group ladder. The default rungs, from most constrained to closest to admin, are `bellhop-public-readonly`, `bellhop-public` (public users of an external site; self-created accounts are fine), `bellhop-friends-family`, `bellhop-admin-family` (household members such as a spouse) and `authentik Admins`. Create the groups you use in Authentik; Bellhop never creates them, and it does not set up a self-enrollment flow for `bellhop-public`. What each rung is for, and how stored tiers on the previous default names are carried over, is in [Group ladder upgrades](environment-variables.md#group-ladder-upgrades).
+An app's access tier (`authGroup`) is one rung of the group ladder. The default rungs, from most constrained to closest to admin, are `bellhop-public-readonly`, `bellhop-public` (public users of an external site; self-created accounts are fine), `bellhop-friends-family`, `bellhop-admin-family` (household members such as a spouse) and `authentik Admins`. Create the groups you use in Authentik, renaming an existing group rather than creating a new one; Bellhop never creates them, and it does not set up a self-enrollment flow for `bellhop-public`. What each rung is for, and how stored tiers on the previous default names are carried over, is in [Group ladder upgrades](environment-variables.md#group-ladder-upgrades).
 
 ## Web login
 

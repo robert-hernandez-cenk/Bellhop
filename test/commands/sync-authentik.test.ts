@@ -16,9 +16,10 @@ import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { DEFAULT_SCOPE_MAPPINGS, FakeAuthentikClient, SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL } from '../support/fake-authentik-client.ts';
 
 const LADDER = authentikConfig().groupLadder; // low -> high
-// OPEN_RUNG is the bottom rung (it binds every rung); the second rung
-// (bellhop-public under the #97 default) is not needed by these tests.
-const [OPEN_RUNG, , APP_RUNG, USERS_RUNG, ADMIN_RUNG] = LADDER;
+// OPEN_RUNG is the bottom rung (it binds every rung); USERS_RUNG and
+// ADMIN_RUNG are the top two, whatever the ladder length.
+const OPEN_RUNG = LADDER[0];
+const [USERS_RUNG, ADMIN_RUNG] = LADDER.slice(-2);
 
 const gatedInventory: Inventory = {
   domain: 'example.com',

@@ -139,31 +139,57 @@ Admins`, each rung named for who belongs in it:
 
 Bellhop never creates or renames these groups; create them in Authentik.
 Until a rung exists there, `sync-authentik` reports it as missing and still
-binds the rungs that do exist.
+binds the rungs that do exist. When moving an existing group onto a new
+name, **rename** it in Authentik rather than creating a new one: a renamed
+group keeps its members and its Application bindings, while a new group
+starts with neither, and bindings left on an old group that is no longer on
+the ladder are never removed by `sync-authentik`.
 
 **Upgrading from the previous default**
 (`bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik
-Admins`): stored `authGroup` values on those names are renamed the first
-time the database is opened — `bellhop-users` to `bellhop-admin-family`,
-`bellhop-app-users` to `bellhop-friends-family`, `bellhop-app-users-open`
-to `bellhop-public` — so every app keeps its place on the ladder. Each
-rename applies only when the effective ladder no longer lists the old name
-and does list the new one, so a deployment that pinned the old ladder
-(`authentikGroupLadder`, or `AUTHENTIK_GROUP_LADDER` in `data/authentik.env`)
-is left exactly as it was. Then either:
+Admins`): whenever the database is opened and the effective ladder no
+longer lists an old name but does list its successor, Bellhop
 
-- rename the three groups in Authentik to the new names (and create
-  `bellhop-public-readonly` if you want it), remove any pin of the old
-  ladder, and run `sync-authentik --apply`; or
-- keep the old names by pinning `authentikGroupLadder` to the old value.
+- renames stored `authGroup` values — `bellhop-users` to
+  `bellhop-admin-family`, `bellhop-app-users` to `bellhop-friends-family`,
+  `bellhop-app-users-open` to `bellhop-public` — so every app keeps its
+  place on the ladder; and
+- copies each old group's web permission rule (Permissions page) to the
+  new name, keeping the old one, unless the new name already has a rule.
+  Rules are keyed by group name and a group with no rule is unrestricted,
+  so this keeps a restricted user restricted on either side of the
+  Authentik rename.
+
+Each step logs a line naming the table or group. What to do depends on
+whether the old ladder is pinned:
+
+- **Not pinned** (no stored `authentikGroupLadder`, no
+  `AUTHENTIK_GROUP_LADDER`): the renames happen on the first open after
+  upgrading. Rename the three groups in Authentik to the new names
+  promptly, before re-tiering any app, then run `sync-authentik --apply`.
+  Until then the new names are reported as missing rungs and existing
+  bindings stay on the old groups.
+- **Pinned** to the old value — including a `AUTHENTIK_GROUP_LADDER` line
+  in `data/authentik.env`, which is imported into the stored setting on
+  first start (see [Moving off the data/*.env files](configuration.md#moving-off-the-dataenv-files)):
+  nothing changes. To move to the new names, rename the groups in
+  Authentik, then remove the pin — `bellhop set-config authentikGroupLadder
+  --unset --apply`, and delete the `AUTHENTIK_GROUP_LADDER` line from
+  `data/authentik.env` if it is still there — and run `sync-authentik
+  --apply`. The next open performs the renames and copies.
+- **To keep the old names**, pin `authentikGroupLadder` to the old value
+  **before** upgrading. Pinning afterwards does not reverse a rename that
+  has already happened.
 
 **Upgrading from the pre-Bellhop default**
 (`homelab-app-users-open,homelab-app-users,homelab-users,authentik
 Admins`): these names are never rewritten. Pin `authentikGroupLadder` to
 the old value, or rename the groups in Authentik and re-tier each affected
-entry. Until then, `sync-authentik` reports every affected entry under
-"Entries with an unknown authGroup" and leaves its existing Authentik
-Application and bindings alone — it is never deleted or silently rebound.
+entry: `homelab-users` to `bellhop-admin-family`, `homelab-app-users` to
+`bellhop-friends-family`, `homelab-app-users-open` to `bellhop-public`.
+Until then, `sync-authentik` reports every affected entry under "Entries
+with an unknown authGroup" and leaves its existing Authentik Application
+and bindings alone — it is never deleted or silently rebound.
 
 ## Environment-only variables
 

@@ -16,11 +16,11 @@
 
 - **Decision**: Per pair, rename `old → new` iff `!ladder.includes(old) && ladder.includes(new)`, with the ladder resolved off the opening handle (stored `meta.authentikGroupLadder`, overridden by `AUTHENTIK_GROUP_LADDER`, else the default).
 - **Rationale**: If the ladder still lists the old name (pinned old ladder), the stored value is valid and renaming it would knock the app off the ladder. If the ladder lacks the successor (a fully custom ladder), the rename would produce another off-ladder value — no gain. Deriving the condition from the effective ladder rather than "is the ladder the default" also covers an operator who pinned the new names explicitly.
-- **Note**: The live deployment pins its ladder via `data/authentik.env`; it is untouched until the operator updates or removes that pin, which is the intended behavior.
+- **Note**: The live deployment pins the old ladder in its stored setting (imported from `data/authentik.env`); it is untouched until the operator clears that pin, which is the intended behavior.
 
 ## R4 — Idempotency and logging
 
-- **Decision**: No marker row. The migration is naturally idempotent (after a rename, no row holds the old name; under a pinned-old ladder the condition is false). It runs every open after a cheap guard (`SELECT 1 ... WHERE auth_group IN (old names) LIMIT 1` across the three tables) and logs one `logInfo` line per table and pair that changed rows, citing `#97`.
+- **Decision**: No marker row. The migration is naturally idempotent (after a rename, no row holds the old name; under a pinned-old ladder the condition is false). Every open runs a guard read per old name (inventory tables and `permission_groups`); only if one is present is the ladder resolved, and only if a pair applies is the write lock taken (code review: an earlier version took the lock whenever old names were stored, which made a pinned deployment wait on any writer). One `logInfo` line per table and pair changed, and per permission rule copied.
 - **Rationale**: Matches the #10/#69/#72 migrations' "self-idempotent, log only when something changed" pattern. A one-shot marker would wrongly skip an operator who unpins the old ladder later.
 - **Transaction**: one `IMMEDIATE` transaction for all updates, as #72 does, so two processes opening a legacy DB at once don't race.
 
@@ -36,6 +36,6 @@
 
 ## R7 — Out of scope surfaces
 
-- Web permissions/users/groups tables and the `bellhop-admins` admin group are operator-defined Authentik references, not ladder defaults — not touched.
+- Web permission rules: copied, not moved, per applied pair (code review). Rules are keyed by group name and a group with no rule is unrestricted, so leaving them on the old names would lift every restriction the moment the operator renamed the group in Authentik, and moving them would lift them until the rename. Copying keeps both names restricted. User records and `bellhop-admins` are not touched.
 - Historical `specs/0xx-*` documents are records of past defaults and are not rewritten.
 - Self-enrollment into `bellhop-public` — follow-up issue.

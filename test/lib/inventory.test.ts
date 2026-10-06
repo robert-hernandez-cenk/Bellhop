@@ -30,6 +30,7 @@ import {
   findProxyEntry,
   type Inventory,
 } from '../../src/lib/inventory.ts';
+import { loadPermissionRules, savePermissionGroup } from '../../src/lib/permissions.ts';
 import { parsePathPattern } from '../../src/lib/proxy/routes.ts';
 
 const FIXTURE_INVENTORY: Inventory = {
@@ -1874,9 +1875,11 @@ test('the #97 rename is silent and changes nothing on a second open', () => {
   assert.equal(guestTier(withLadderEnv(undefined, () => loadInventory(dbPath)), 'sonarr'), 'bellhop-admin-family');
 });
 
-test('the #97 rename leaves authentik Admins, ungated and custom tiers alone', () => {
+test('the #97 rename leaves authentik Admins, ungated and custom tiers alone while it renames an old one', () => {
   const dbPath = previousDefaultTierDb({
-    guests: { sonarr: 'authentik Admins', radarr: null, plex: 'media-viewers' },
+    host: null,
+    guests: { sonarr: 'authentik Admins', radarr: null, plex: 'media-viewers', lidarr: 'bellhop-users' },
+    site: null,
   });
   const lines: string[] = [];
   const inv = withLadderEnv(undefined, () => {
@@ -1887,7 +1890,55 @@ test('the #97 rename leaves authentik Admins, ungated and custom tiers alone', (
   assert.equal(guestTier(inv, 'sonarr'), 'authentik Admins');
   assert.equal(guestTier(inv, 'radarr'), undefined);
   assert.equal(guestTier(inv, 'plex'), 'media-viewers');
-  assert.deepEqual(lines.filter((l) => l.includes('#97')), []);
+  assert.equal(guestTier(inv, 'lidarr'), 'bellhop-admin-family');
+  assert.equal(inv.hosts[0].authGroup, undefined);
+  assert.equal(inv.externalSites?.[0].authGroup, undefined);
+  assert.equal(lines.filter((l) => l.includes('#97')).length, 1);
+});
+
+test('the #97 rename takes no write lock when no pair applies, even with old names stored', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: 'bellhop-users' }, storedLadder: PREVIOUS_DEFAULT_LADDER });
+  const writer = new Database(dbPath, { timeout: 0 });
+  writer.exec('BEGIN IMMEDIATE');
+  try {
+    assert.equal(guestTier(withLadderEnv(undefined, () => loadInventory(dbPath)), 'sonarr'), 'bellhop-users');
+  } finally {
+    writer.exec('ROLLBACK');
+    writer.close();
+  }
+});
+
+// Web permission rules are keyed by Authentik group name, and a group with
+// no rule is unrestricted. The #97 migration therefore copies (never moves)
+// a rule from each old name to its successor, so a restricted user stays
+// restricted both before and after the operator renames the group in
+// Authentik.
+test('the #97 migration copies a web permission rule to the new group name and keeps the old one', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: null } });
+  savePermissionGroup(dbPath, 'bellhop-users', { mode: 'allow-list', resources: [{ type: 'guest', name: 'sonarr' }] });
+  savePermissionGroup(dbPath, 'bellhop-app-users-open', { mode: 'allow-list', resources: [] });
+  const lines = withLadderEnv(undefined, () => captureLog(() => loadInventory(dbPath)));
+  const rules = loadPermissionRules(dbPath);
+  assert.deepEqual(rules.get('bellhop-admin-family'), { mode: 'allow-list', resources: [{ type: 'guest', name: 'sonarr' }] });
+  assert.deepEqual(rules.get('bellhop-users'), { mode: 'allow-list', resources: [{ type: 'guest', name: 'sonarr' }] });
+  assert.deepEqual(rules.get('bellhop-public'), { mode: 'allow-list', resources: [] }, 'an empty allow-list still means "sees nothing"');
+  assert.equal(rules.has('bellhop-friends-family'), false, 'no rule on the old name, so none is invented');
+  assert.ok(lines.some((l) => l.endsWith("Copied the web permission rule for group 'bellhop-users' to 'bellhop-admin-family' (#97, previous default ladder name).")));
+});
+
+test('the #97 migration never overwrites a rule already set on the new group name', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: null } });
+  savePermissionGroup(dbPath, 'bellhop-users', { mode: 'allow-list', resources: [{ type: 'guest', name: 'sonarr' }] });
+  savePermissionGroup(dbPath, 'bellhop-admin-family', { mode: 'block-list', resources: [] });
+  withLadderEnv(undefined, () => captureLog(() => loadInventory(dbPath)));
+  assert.deepEqual(loadPermissionRules(dbPath).get('bellhop-admin-family'), { mode: 'block-list', resources: [] });
+});
+
+test('the #97 migration copies no permission rule under a pinned previous-default ladder', () => {
+  const dbPath = previousDefaultTierDb({ guests: { sonarr: null } });
+  savePermissionGroup(dbPath, 'bellhop-users', { mode: 'allow-list', resources: [] });
+  withLadderEnv(PREVIOUS_DEFAULT_LADDER, () => loadInventory(dbPath));
+  assert.equal(loadPermissionRules(dbPath).has('bellhop-admin-family'), false);
 });
 
 test('the #97 rename leaves every tier alone when AUTHENTIK_GROUP_LADDER pins the previous default', () => {

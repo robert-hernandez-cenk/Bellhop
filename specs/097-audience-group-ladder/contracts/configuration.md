@@ -24,7 +24,9 @@ Explicit values are used unchanged.
 - Renames stored `auth_group` per the pairs in [data-model.md](../data-model.md), only where the effective ladder lacks the old name and contains the new one.
 - Log line (stdout via `logInfo`), one per table and pair changed:
   `Renamed <n> row(s) in '<table>' from auth_group='<old>' to '<new>' (#97, previous default ladder name).`
-- No output when nothing changes.
+- Copies a web permission rule from each applied pair's old group name to its new name when the new name has none, keeping the old rule; logs
+  `Copied the web permission rule for group '<old>' to '<new>' (#97, previous default ladder name).`
+- No output, and no write lock, when nothing applies.
 
 ## `sync-authentik`
 

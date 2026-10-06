@@ -71,7 +71,8 @@ An operator who configured the ladder explicitly (a stored setting or the `AUTHE
 - A stored tier of `authentik Admins` is on both ladders and never changes.
 - The one-time legacy upgrade from the old "requires auth" flag assigns the ladder's top rung, which is `authentik Admins` in both the old and new defaults, so its outcome is unchanged.
 - A ladder that contains neither the old name nor its successor (a fully custom ladder): no rename; any old-named entries remain off-ladder and are reported by the sync as today.
-- Web UI permissions, user/group records, and the administrator group (`bellhop-admins`) refer to Authentik groups too, but are operator-defined, not ladder defaults; they are not touched.
+- Web UI permission rules are keyed by Authentik group name, and a group with no rule is unrestricted. A rule on an old default name is copied (not moved) to its successor when that pair applies, so a restricted user stays restricted before and after the operator renames the group in Authentik; an existing rule on the new name is never overwritten. User records and the administrator group (`bellhop-admins`) are not touched.
+- An operator who creates new groups instead of renaming the old ones leaves bindings on the old groups, which are off-ladder and never removed by the sync; the documentation tells operators to rename.
 - A deployment whose real Authentik groups still carry the old names after the rename sees those names reported as missing by the sync until it renames them; existing Applications are not deleted in the meantime.
 
 ## Requirements *(mandatory)*
@@ -83,9 +84,11 @@ An operator who configured the ladder explicitly (a stored setting or the `AUTHE
 - **FR-003**: On opening the inventory, the system MUST rename stored access tiers on hosts, guests, and external sites according to the pairs `bellhop-users` → `bellhop-admin-family`, `bellhop-app-users` → `bellhop-friends-family`, `bellhop-app-users-open` → `bellhop-public`.
 - **FR-004**: Each rename pair MUST apply only when the effective ladder (stored setting, overridden by the environment variable, else the default) does not contain the old name and does contain its successor.
 - **FR-005**: The rename MUST be idempotent: a second open changes nothing. It MUST log a line naming the table, count, and pair only when it changes rows, and MUST NOT log otherwise.
-- **FR-006**: The rename MUST NOT touch any stored value other than an exact old default name, and MUST NOT touch any table other than the inventory's hosts, guests, and external sites.
+- **FR-006**: The rename MUST NOT touch any stored value other than an exact old default name. Besides the inventory's hosts, guests, and external sites, it MUST touch only the web permission tables, and only per FR-011.
+- **FR-011**: When a pair applies and the old group name has a web permission rule while the new name has none, the system MUST copy that rule (mode and resources) to the new name, keep the old rule, and log the copy.
+- **FR-012**: An open on which no pair applies MUST NOT take a write lock, so a deployment that pinned the old ladder never waits on another connection's write transaction.
 - **FR-007**: The Authentik sync MUST NOT create or rename any group; a needed group that does not exist MUST be reported as missing, as today.
-- **FR-008**: The documentation that states the default ladder (configuration reference, environment-variable reference, Settings page help and placeholder, networking guidance) MUST state the new default, describe each tier's intended audience, and give the upgrade path: rename the groups in Authentik (stored tiers are renamed automatically when the ladder is not pinned), or keep the old names by pinning the old ladder.
+- **FR-008**: The documentation that states the default ladder (configuration reference, environment-variable reference, Settings page help and placeholder, networking guidance) MUST state the new default, describe each tier's intended audience, and give the upgrade path: rename (not recreate) the groups in Authentik; unpinned deployments are migrated on open, pinned ones after clearing the stored pin (`set-config authentikGroupLadder --unset`); keeping the old names requires pinning **before** upgrading.
 - **FR-009**: The administrator group default (`bellhop-admins`) MUST NOT change.
 - **FR-010**: Example data (demo inventory, tests) MUST use the new tier names.
 
