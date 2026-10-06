@@ -19,6 +19,8 @@ import { envPinnedError } from '../../../src/web/routes/settings.ts';
 import Database from 'better-sqlite3';
 import { configValueAt, useConfigStore, writeSecret } from '../../../src/lib/config.ts';
 import { newTestSessions, sessionCookie } from '../../support/web-session.ts';
+import { configureManagedWebLogin, resetManagedWebLogin } from '../../../src/web/login/managed.ts';
+import { bellhopInventory, ownedAuthentik, MANAGED_REDIRECT_URI, MANAGED_SECRET, MANAGED_CLIENT_ID } from '../../support/managed-login.ts';
 
 // #69: one web-login session service for the file, passed to every
 // buildApp; sessionCookie() mints a signed-in Cookie header on it.
@@ -1206,4 +1208,86 @@ test('PATCH /api/settings stores, validates and clears mcpApiKey without ever re
 
   const cleared = await asAdmin(request(app).patch('/api/settings')).send({ mcpApiKey: null });
   assert.deepEqual(cleared.body.secrets.mcpApiKey, { set: false, source: 'none' });
+});
+
+// --- web login source (#85) --------------------------------------------------
+
+const NO_LOGIN_KEYS = ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'];
+
+// A settings app plus a managed web login module pointed at a flagged guest.
+// The guest is in the web app's own inventory too, as it is in production
+// (the module reads the same live object).
+function managedApp(guestOverrides: Parameters<typeof bellhopInventory>[0] = {}) {
+  const inv: Inventory = { ...baseInventory(), guests: [...baseInventory().guests, ...bellhopInventory(guestOverrides).guests] };
+  const made = testApp(inv);
+  useConfigStore(made.inventoryPath);
+  configureManagedWebLogin({ inventory: () => inv, authentik: ownedAuthentik() });
+  return made;
+}
+
+function cleanup(): void {
+  useConfigStore(null);
+  resetManagedWebLogin();
+}
+
+test('GET /api/settings reports web login as not configured, naming the missing custom keys', async () => {
+  const { app, inventoryPath } = testApp();
+  useConfigStore(inventoryPath);
+  try {
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.webLogin, { source: 'none', missing: NO_LOGIN_KEYS });
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /api/settings reads the flagged guest fresh and reports it as the managed source, with no secret', async () => {
+  const { app } = managedApp();
+  try {
+    // Never refreshed before this request: the GET itself must resolve it.
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.webLogin, { source: 'managed', entry: 'bellhop-lxc', redirectUri: MANAGED_REDIRECT_URI });
+    assert.ok(!res.text.includes(MANAGED_SECRET) && !res.text.includes(MANAGED_CLIENT_ID), 'the managed credentials never reach the response');
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /api/settings reports custom when all four custom values are set, even with a flagged guest', async () => {
+  const { app, inventoryPath } = managedApp();
+  writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  saveInventory(inventoryPath, { ...loadInventory(inventoryPath), ...LOGIN_SETTINGS });
+  try {
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.deepEqual(res.body.webLogin, { source: 'custom' });
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /api/settings explains why a flagged guest cannot be used', async () => {
+  const { app } = managedApp({ oidcRedirectUris: ['https://bellhop.example.com/elsewhere'] });
+  try {
+    const res = await asAdmin(request(app).get('/api/settings'));
+    assert.deepEqual(res.body.webLogin, {
+      source: 'none',
+      missing: NO_LOGIN_KEYS,
+      managedProblem: 'bellhop-lxc has no callback URL ending in /auth/callback',
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH /api/settings returns the web login source too', async () => {
+  const { app } = managedApp();
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '192.0.2.5' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.webLogin.source, 'managed');
+  } finally {
+    cleanup();
+  }
 });

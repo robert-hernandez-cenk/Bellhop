@@ -372,7 +372,14 @@ export interface SettingsResponse {
   environment: Record<string, EnvironmentPin>;
   // Each secret's status only -- the API never returns a secret's value.
   secrets: Record<SecretSettingKey, SecretStatus>;
+  // Which source signs people in to the web UI (#85). No secret of any kind.
+  webLogin: WebLoginStatus;
 }
+
+export type WebLoginStatus =
+  | { source: 'custom' }
+  | { source: 'managed'; entry: string; redirectUri: string }
+  | { source: 'none'; missing: string[]; managedProblem?: string; invalid?: string };
 
 export interface EnvironmentPin {
   variable: string;

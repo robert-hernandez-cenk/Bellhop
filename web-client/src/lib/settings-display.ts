@@ -11,6 +11,7 @@ import type {
   ProxyDriverInfo,
   SecretSettingKey,
   SecretStatus,
+  WebLoginStatus,
 } from '../api/types.ts';
 
 export const LAN_GATEWAYS_EMPTY_TEXT = 'LAN gateways: none yet — no host has a midScheme';
@@ -178,12 +179,14 @@ export function proxyFieldView(
 // Proxy Manager tab -- its three fields now sit at the end of the Proxy
 // tab instead, shown only while that driver is selected (proxyFieldView's
 // showNpmApiFields).
-export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github' | 'mcp';
+export type SettingsTab = 'general' | 'proxy' | 'authentik' | 'weblogin' | 'cloudflare' | 'github' | 'mcp';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'proxy', label: 'Proxy' },
   { id: 'authentik', label: 'Authentik' },
+  // #85: the custom OIDC web login values, for installs Bellhop does not manage in Proxmox.
+  { id: 'weblogin', label: 'Web login' },
   { id: 'cloudflare', label: 'Cloudflare' },
   { id: 'github', label: 'GitHub' },
   // #65/#66: the HTTP MCP endpoint's API key.
@@ -207,11 +210,6 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'pveUserRealm',
     'pveCreatorRole',
     'webUiAuthMode',
-    // #69: Bellhop's own OIDC web login, beside the mode it feeds.
-    'webUiOidcIssuer',
-    'webUiOidcClientId',
-    'webUiOidcRedirectUri',
-    'webUiOidcClientSecret',
   ],
   proxy: [
     'proxyDriver',
@@ -231,6 +229,8 @@ const TAB_FIELDS: Record<SettingsTab, readonly SettingsFieldKey[]> = {
     'npmApiEmail',
     'npmApiPassword',
   ],
+  // #69/#85: custom values for installs not managed by Bellhop in Proxmox.
+  weblogin: ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'],
   authentik: [
     'authentikApiUrl',
     'authentikApiToken',
@@ -344,14 +344,15 @@ export function secretStatusText(status: SecretStatus, variable?: string): strin
 // that save targeted. Each field's Save/Clear only disables itself, so two
 // saves can resolve out of request order; taking the whole response would
 // visually revert a field that was in fact saved. `derived` does not depend
-// on which key changed, so it is taken from every response.
+// on which key changed, so it is taken from every response, as is `webLogin` (#85), which
+// depends on the guest flag and all four custom values, not on one key.
 export function mergeSettingsResponse(prev: SettingsResponse, res: SettingsResponse, key: SettingsFieldKey): SettingsResponse {
   const environment = { ...prev.environment };
   const pin = res.environment[key];
   if (pin) environment[key] = pin;
   else delete environment[key];
   if (isSecretField(key)) {
-    return { ...prev, environment, secrets: { ...prev.secrets, [key]: res.secrets[key] }, derived: res.derived };
+    return { ...prev, environment, secrets: { ...prev.secrets, [key]: res.secrets[key] }, derived: res.derived, webLogin: res.webLogin };
   }
   return {
     ...prev,
@@ -359,5 +360,21 @@ export function mergeSettingsResponse(prev: SettingsResponse, res: SettingsRespo
     sources: { ...prev.sources, [key]: res.sources[key] },
     environment,
     derived: res.derived,
+    webLogin: res.webLogin,
   };
+}
+
+// The Web login tab's line saying which source signs people in (#85). Fixed
+// text assembled from the server's status; the status carries no secret.
+export function webLoginSummary(status: WebLoginStatus): string {
+  if (status.source === 'custom') return 'Custom values are in effect: the settings below sign people in.';
+  if (status.source === 'managed') {
+    return `Managed by ${status.entry}: people sign in through that guest's OpenID client (${status.redirectUri}). Setting all four values below overrides it.`;
+  }
+  if (status.invalid) return `Not configured. ${status.invalid}.`;
+  const missing = status.missing.join(', ');
+  if (status.managedProblem) {
+    return `Not configured. Bellhop's own guest cannot be used: ${status.managedProblem}. Or set the missing custom values: ${missing}.`;
+  }
+  return `Not configured. Flag Bellhop's own guest, or set the missing custom values: ${missing}.`;
 }

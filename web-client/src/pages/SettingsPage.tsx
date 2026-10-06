@@ -9,6 +9,7 @@ import {
   proxyFieldView,
   SETTINGS_TABS,
   fieldsForTab,
+  webLoginSummary,
   fieldState,
   isSecretField,
   acmeDnsProviderOptions,
@@ -116,28 +117,27 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
   },
   webUiAuthMode: {
     label: 'Web UI sign-in',
-    help: "How the web UI decides who is signed in. oidc: require sign-in through Authentik using Bellhop's own client -- configure the client with bellhop configure-web-login <entry> --apply, sign in once at /auth/login, then switch to oidc here (saving is refused until the client is configured and you are signed in through it as an administrator). none: no authentication; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE=none in the service environment or run bellhop set-config webUiAuthMode none --apply on the server. Unset: none.",
+    help: "How the web UI decides who is signed in. oidc: require sign-in through Authentik using Bellhop's own client -- flag Bellhop's own guest as Bellhop (guest Advanced settings, Access tab) or fill in the Web login tab, sign in once at /auth/login, then switch to oidc here (saving is refused until web login is configured and you are signed in through it as an administrator). none: no authentication; every request is the local administrator. If a wrong value locks you out, set WEB_UI_AUTH_MODE=none in the service environment or run bellhop set-config webUiAuthMode none --apply on the server. Unset: none.",
   },
-  // #69: the four settings behind Bellhop's own OIDC sign-in. Set by
-  // `bellhop configure-web-login` (the four values come from the entry's
-  // Authentik client).
+  // #69/#85: the four custom settings behind Bellhop's own OIDC sign-in, on
+  // the Web login tab, for installs Bellhop does not manage in Proxmox.
   webUiOidcIssuer: {
     label: 'OIDC issuer URL',
     placeholder: 'https://authentik.example.com/application/o/bellhop/',
-    help: "The OIDC provider's issuer URL for Bellhop's own sign-in. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+    help: "The OIDC provider's issuer URL for Bellhop's own sign-in. Copy it from the client in your identity provider. Unset: the flagged Bellhop guest's client is used if there is one; otherwise web UI sign-in cannot be switched to oidc.",
   },
   webUiOidcClientId: {
     label: 'OIDC client ID',
-    help: "The client ID Bellhop signs in with. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+    help: "The client ID Bellhop signs in with. Copy it from the client in your identity provider. Unset: the flagged Bellhop guest's client is used if there is one; otherwise web UI sign-in cannot be switched to oidc.",
   },
   webUiOidcRedirectUri: {
     label: 'OIDC redirect URI',
     placeholder: 'https://bellhop.example.com/auth/callback',
-    help: "Where the provider sends the browser after sign-in; its path must be /auth/callback. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+    help: "Where the provider sends the browser after sign-in; its path must be /auth/callback. Unset: the flagged Bellhop guest's client is used if there is one; otherwise web UI sign-in cannot be switched to oidc.",
   },
   webUiOidcClientSecret: {
     label: 'OIDC client secret',
-    help: "The client secret Bellhop signs in with. Write-only: never shown. Filled in by bellhop configure-web-login <entry> --apply, which reads it from Authentik. Unset: web UI sign-in cannot be switched to oidc.",
+    help: "The client secret Bellhop signs in with. Write-only: never shown. Copy it from the client in your identity provider. Unset: the flagged Bellhop guest's client is used if there is one; otherwise web UI sign-in cannot be switched to oidc.",
   },
   mcpApiKey: {
     label: 'MCP API key',
@@ -616,6 +616,19 @@ export function SettingsPage() {
           </button>
         ))}
       </div>
+      {tab === 'weblogin' && data && (
+        <>
+          <PageDescription>
+            For installs <strong>not</strong> managed by Bellhop in Proxmox, such as Bellhop running on a
+            workstation or outside the inventory. When Bellhop runs as a guest it manages, flag that
+            guest as Bellhop (guest Advanced settings, Access tab) and its own OpenID client signs
+            people in with no values here. Setting all four values below overrides that.
+          </PageDescription>
+          <p className="field-note" data-testid="web-login-summary">
+            {webLoginSummary(data.webLogin)}
+          </p>
+        </>
+      )}
       <div className="settings-fields" role="tabpanel">
         {visibleFields.map(renderField)}
       </div>

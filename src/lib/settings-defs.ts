@@ -121,7 +121,7 @@ export type ConfigKey = MovedSettingKey | SecretSettingKey;
 export const MOVED_SETTINGS_KEYS = Object.keys(MovedSettingsSchema.shape) as MovedSettingKey[];
 export const SECRET_SETTINGS_KEYS = Object.keys(SecretSettingsSchema.shape) as SecretSettingKey[];
 
-export type SettingGroup = 'general' | 'proxy' | 'authentik' | 'cloudflare' | 'github' | 'mcp';
+export type SettingGroup = 'general' | 'proxy' | 'authentik' | 'weblogin' | 'cloudflare' | 'github' | 'mcp';
 
 export interface SettingDef {
   // The environment variable that overrides the stored value when set and
@@ -157,12 +157,14 @@ export const SETTING_DEFS: Record<ConfigKey, SettingDef> = {
   npmApiEmail: { envVar: 'NPM_API_EMAIL', group: 'proxy', secret: false, envFile: 'nginx-proxy-manager.env' },
   npmApiPassword: { envVar: 'NPM_API_PASSWORD', group: 'proxy', secret: true, envFile: 'nginx-proxy-manager.env' },
   githubApiToken: { envVar: 'GITHUB_API_TOKEN', group: 'github', secret: true },
-  // #69: Bellhop's own OIDC web login, shown on the General tab beside the
-  // auth mode. Same authentik.env as WEB_UI_AUTH_MODE for the env-pinned note.
-  webUiOidcIssuer: { envVar: 'WEB_UI_OIDC_ISSUER', group: 'general', secret: false, envFile: 'authentik.env' },
-  webUiOidcClientId: { envVar: 'WEB_UI_OIDC_CLIENT_ID', group: 'general', secret: false, envFile: 'authentik.env' },
-  webUiOidcRedirectUri: { envVar: 'WEB_UI_OIDC_REDIRECT_URI', group: 'general', secret: false, envFile: 'authentik.env' },
-  webUiOidcClientSecret: { envVar: 'WEB_UI_OIDC_CLIENT_SECRET', group: 'general', secret: true, envFile: 'authentik.env' },
+  // #69: Bellhop's own OIDC web login, custom values. #85: on their own
+  // Web login tab, for installs not managed by Bellhop in Proxmox (a flagged
+  // guest supplies the client otherwise). Same authentik.env as
+  // WEB_UI_AUTH_MODE for the env-pinned note.
+  webUiOidcIssuer: { envVar: 'WEB_UI_OIDC_ISSUER', group: 'weblogin', secret: false, envFile: 'authentik.env' },
+  webUiOidcClientId: { envVar: 'WEB_UI_OIDC_CLIENT_ID', group: 'weblogin', secret: false, envFile: 'authentik.env' },
+  webUiOidcRedirectUri: { envVar: 'WEB_UI_OIDC_REDIRECT_URI', group: 'weblogin', secret: false, envFile: 'authentik.env' },
+  webUiOidcClientSecret: { envVar: 'WEB_UI_OIDC_CLIENT_SECRET', group: 'weblogin', secret: true, envFile: 'authentik.env' },
   // #65/#66: the key /mcp accepts besides a signed-in token. New, so no
   // data/ file ever held it.
   mcpApiKey: { envVar: 'MCP_API_KEY', group: 'mcp', secret: true },

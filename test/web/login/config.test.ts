@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { webLoginConfig } from '../../../src/web/login/config.ts';
+import { webLoginConfig, webLoginStatus } from '../../../src/web/login/config.ts';
 import { resetConfigStore, tempConfigStore } from '../../support/config-store.ts';
 import { resetManagedWebLogin } from '../../../src/web/login/managed.ts';
 import { resolveManagedLogin, bellhopInventory, MANAGED_CLIENT_ID, MANAGED_ISSUER, MANAGED_REDIRECT_URI, MANAGED_SECRET } from '../../support/managed-login.ts';
@@ -136,4 +136,46 @@ test('an invalid environment value still throws when a managed guest could take 
   resetConfigStore();
   await resolveManagedLogin();
   assert.throws(() => webLoginConfig({ ...ENV, WEB_UI_OIDC_REDIRECT_URI: 'not a url' }), /WEB_UI_OIDC_REDIRECT_URI/);
+});
+
+// issue #85: which source is in effect, for the Settings page. Carries no secret.
+test('webLoginStatus is custom when all four custom values are set, even with a managed guest resolved', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  assert.deepEqual(webLoginStatus(ENV), { source: 'custom' });
+});
+
+test('webLoginStatus is managed, naming the guest and callback, when the custom set is incomplete', async () => {
+  resetConfigStore();
+  await resolveManagedLogin();
+  const status = webLoginStatus({});
+  assert.deepEqual(status, { source: 'managed', entry: 'bellhop-lxc', redirectUri: MANAGED_REDIRECT_URI });
+  assert.ok(!JSON.stringify(status).includes(MANAGED_SECRET), 'no secret in the status');
+});
+
+test('webLoginStatus is none with the missing custom keys and the flagged guest\'s fixed-text problem', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ authMode: 'forward' }));
+  assert.deepEqual(webLoginStatus({}), {
+    source: 'none',
+    missing: ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'],
+    managedProblem: 'bellhop-lxc is not OIDC-gated (set an auth group and OIDC mode)',
+  });
+});
+
+test('webLoginStatus is none without a managedProblem when no guest is flagged', async () => {
+  resetConfigStore();
+  await resolveManagedLogin(bellhopInventory({ bellhop: undefined }));
+  const status = webLoginStatus({});
+  assert.equal(status.source, 'none');
+  assert.ok(!('managedProblem' in status), 'an unmanaged install is not told about the managed option as a problem');
+});
+
+test('webLoginStatus reports an invalid environment value by key and variable, never the value', () => {
+  resetConfigStore();
+  const status = webLoginStatus({ ...ENV, WEB_UI_OIDC_ISSUER: 'not-a-url-example-value' });
+  assert.equal(status.source, 'none');
+  const invalid = (status as { invalid?: string }).invalid ?? '';
+  assert.ok(invalid.includes('webUiOidcIssuer') && invalid.includes('WEB_UI_OIDC_ISSUER'), invalid);
+  assert.ok(!invalid.includes('not-a-url-example-value'));
 });
