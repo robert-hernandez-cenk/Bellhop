@@ -16,7 +16,7 @@ import { managesProxy } from '../../lib/proxy/driver.ts';
 import { ACME_DNS_PROVIDERS, DEFAULT_ACME_DNS_PROVIDER } from '../../lib/proxy/ids.ts';
 import { clearSecret, configValueAt, storedSecretKeys, writeSecret, type ConfigSource } from '../../lib/config.ts';
 import { WEB_LOGIN_KEYS, webLoginStatus } from '../login/config.ts';
-import { refreshManagedWebLogin } from '../login/managed.ts';
+import { managedWebLogin, refreshManagedWebLogin } from '../login/managed.ts';
 import { adminGroupsWith } from '../../lib/authentik-config.ts';
 import {
   SECRET_SETTINGS_KEYS,
@@ -329,10 +329,15 @@ export function settingsRoutes(inventory: Inventory, inventoryPath: string): Rou
         if (key in updates) return updates[key as keyof Settings] === undefined;
         return switchingToOidc && configValueAt(inventoryPath, key).value === undefined;
       });
-      if (missing.length > 0) {
+      // A usable flagged guest (#85) signs people in whenever the custom set
+      // is not complete, so it counts as configured: nobody is locked out by
+      // a gap in the custom values. Read fresh, so this judges Authentik's
+      // current state, and only when there is a gap to excuse.
+      if (missing.length > 0) await refreshManagedWebLogin();
+      if (missing.length > 0 && managedWebLogin() === undefined) {
         res.status(409).json({
           error: switchingToOidc
-            ? `Web login is not configured: set ${missing.join(', ')} first (bellhop configure-web-login <entry> --apply)`
+            ? `Web login is not configured: flag Bellhop's own guest in its Advanced settings, or set ${missing.join(', ')} on the Web login tab first`
             : `Refusing to clear ${missing.join(', ')} while webUiAuthMode is oidc: nobody could sign in. Set webUiAuthMode to none first`,
         });
         return;

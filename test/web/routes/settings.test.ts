@@ -83,6 +83,10 @@ function loginConfiguredApp(extra: Partial<Inventory> = {}) {
   return made;
 }
 
+// The refusal when neither a complete custom set nor a usable flagged guest exists (#85).
+const NOT_CONFIGURED = (keys: string): string =>
+  `Web login is not configured: flag Bellhop's own guest in its Advanced settings, or set ${keys} on the Web login tab first`;
+
 const SIGN_IN_FIRST = 'Sign in through /auth/login first, so Bellhop can confirm you can still sign in after this change';
 
 test('GET /api/settings returns 403 for a non-admin', async () => {
@@ -841,7 +845,7 @@ test('PATCH webUiAuthMode: oidc is refused first for incomplete login settings, 
     assert.equal(res.status, 409);
     assert.equal(
       res.body.error,
-      'Web login is not configured: set webUiOidcIssuer, webUiOidcClientId, webUiOidcRedirectUri, webUiOidcClientSecret first (bellhop configure-web-login <entry> --apply)'
+      NOT_CONFIGURED('webUiOidcIssuer, webUiOidcClientId, webUiOidcRedirectUri, webUiOidcClientSecret')
     );
     assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
   } finally {
@@ -856,7 +860,7 @@ test('PATCH webUiAuthMode: oidc counts login values set in the same request, sec
     // Only the secret is missing from the store...
     const refused = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
     assert.equal(refused.status, 409);
-    assert.match(refused.body.error, /set webUiOidcClientSecret first/);
+    assert.match(refused.body.error, /set webUiOidcClientSecret on the Web login tab first/);
     // ...and supplying it in the same request completes the set.
     const ok = await asAdmin(request(app).patch('/api/settings')).send({
       webUiAuthMode: 'oidc',
@@ -877,13 +881,13 @@ test('PATCH webUiAuthMode: oidc is refused when the same request clears a login 
       webUiOidcClientId: null,
     });
     assert.equal(clearedSetting.status, 409);
-    assert.match(clearedSetting.body.error, /set webUiOidcClientId first/);
+    assert.match(clearedSetting.body.error, /set webUiOidcClientId on the Web login tab first/);
     const clearedSecret = await asAdmin(request(app).patch('/api/settings')).send({
       webUiAuthMode: 'oidc',
       webUiOidcClientSecret: null,
     });
     assert.equal(clearedSecret.status, 409);
-    assert.match(clearedSecret.body.error, /set webUiOidcClientSecret first/);
+    assert.match(clearedSecret.body.error, /set webUiOidcClientSecret on the Web login tab first/);
     assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
   } finally {
     useConfigStore(null);
@@ -1287,6 +1291,85 @@ test('PATCH /api/settings returns the web login source too', async () => {
     const res = await asAdmin(request(app).patch('/api/settings')).send({ nfsServer: '192.0.2.5' });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.webLogin.source, 'managed');
+  } finally {
+    cleanup();
+  }
+});
+
+// --- the oidc guards with a managed login (#85, US3) -------------------------
+
+test('PATCH webUiAuthMode: oidc counts a usable flagged guest as configured, then runs the session and admin checks', async () => {
+  const { app, inventoryPath } = managedApp();
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, 'oidc');
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH webUiAuthMode: oidc with a usable flagged guest still needs the requester to have signed in first', async () => {
+  const { app, inventoryPath } = managedApp();
+  const originalGroups = process.env.WEB_UI_DEV_GROUPS;
+  process.env.WEB_UI_DEV_GROUPS = 'bellhop-admins';
+  try {
+    const res = await request(app).patch('/api/settings').send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, SIGN_IN_FIRST);
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    cleanup();
+    if (originalGroups === undefined) delete process.env.WEB_UI_DEV_GROUPS;
+    else process.env.WEB_UI_DEV_GROUPS = originalGroups;
+  }
+});
+
+test('PATCH webUiAuthMode: oidc is refused when the flagged guest cannot be used and no custom set exists, naming both fixes', async () => {
+  const { app, inventoryPath } = managedApp({ authGroup: undefined, authMode: undefined });
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiAuthMode: 'oidc' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, NOT_CONFIGURED(NO_LOGIN_KEYS.join(', ')));
+    assert.ok(!res.body.error.includes('configure-web-login'));
+    assert.equal(loadInventory(inventoryPath).webUiAuthMode, undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH while oidc is in force: with a usable flagged guest taking over, a custom value may be cleared', async () => {
+  const { app, inventoryPath } = managedApp();
+  saveInventory(inventoryPath, { ...loadInventory(inventoryPath), ...LOGIN_SETTINGS, webUiAuthMode: 'oidc' });
+  writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: null });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.webLogin.source, 'managed', 'the flagged guest is now what signs people in');
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH while oidc is in force: with a complete custom set and no usable flagged guest, clearing one value is still refused', async () => {
+  const { app, inventoryPath } = managedApp({ bellhop: undefined });
+  saveInventory(inventoryPath, { ...loadInventory(inventoryPath), ...LOGIN_SETTINGS, webUiAuthMode: 'oidc' });
+  writeSecret(inventoryPath, 'webUiOidcClientSecret', 'example-client-secret');
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ webUiOidcClientId: null });
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /Refusing to clear webUiOidcClientId while webUiAuthMode is oidc/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH while oidc is in force with only the flagged guest in effect never refuses an unrelated save', async () => {
+  const { app, inventoryPath } = managedApp();
+  saveInventory(inventoryPath, { ...loadInventory(inventoryPath), webUiAuthMode: 'oidc' });
+  try {
+    const res = await asAdmin(request(app).patch('/api/settings')).send({ dnsServer: '10.0.0.53' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
   } finally {
     cleanup();
   }
