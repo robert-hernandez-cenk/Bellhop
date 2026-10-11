@@ -52,8 +52,8 @@ None.
 
 ## Phase 5: Polish & Verification
 
-- [ ] T014 Quickstart step 3, live and read-only: real-network `checkAppUrl` for a dev-only slug and `fetchCatalog` resolve against `community-scripts/DevScripts`
-- [ ] T015 Quickstart step 4: in the demo, the Install App suggestion list shows the DevScripts group at desktop width and at ≤640px
+- [x] T014 Quickstart step 3, live and read-only: real-network `checkAppUrl` for a dev-only slug and `fetchCatalog` resolve against `community-scripts/DevScripts`
+- [x] T015 Quickstart step 4: in the demo, the Install App suggestion list shows the DevScripts group at desktop width and at ≤640px
 
 ## Dependencies
 
