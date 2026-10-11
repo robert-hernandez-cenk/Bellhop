@@ -15,7 +15,7 @@ export function bellhopInventory(overrides: Partial<Inventory['guests'][number]>
         host: 'pve1',
         ip: '192.0.2.30',
         subdomains: ['bellhop'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://bellhop.example.com/auth/callback'],
         bellhop: true,

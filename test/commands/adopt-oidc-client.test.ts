@@ -7,7 +7,7 @@ import { authentikConfig } from '../../src/lib/authentik-config.ts';
 import { FakeAuthentikClient, SCOPE_MAPPINGS_WITH_CUSTOM_EMAIL } from '../support/fake-authentik-client.ts';
 
 const LADDER = authentikConfig().groupLadder; // low -> high
-const [, , USERS_RUNG, ADMIN_RUNG] = LADDER;
+const [USERS_RUNG, ADMIN_RUNG] = LADDER.slice(-2);
 const OIDC_URIS = ['https://media.example.com/oauth/callback'];
 
 // Mirrors sync-authentik.test.ts's/oidc-credentials.test.ts's own OIDC
@@ -299,7 +299,7 @@ test('formatAdoptOidcClient lists meta_publisher, each drifted setting, and each
     slug: 'media',
     settingsChanges: ['redirect_uris', 'grant_types'],
     bindingChanges: [
-      { slug: 'media', group: 'bellhop-users', action: 'add' },
+      { slug: 'media', group: 'bellhop-admin-family', action: 'add' },
       { slug: 'media', group: 'authentik Admins', action: 'add' },
     ],
     applied: false,
@@ -307,6 +307,6 @@ test('formatAdoptOidcClient lists meta_publisher, each drifted setting, and each
   assert.match(text, /meta_publisher -> bellhop/);
   assert.match(text, /~ redirect_uris/);
   assert.match(text, /~ grant_types/);
-  assert.match(text, /\+ media -> bellhop-users/);
+  assert.match(text, /\+ media -> bellhop-admin-family/);
   assert.match(text, /\+ media -> authentik Admins/);
 });

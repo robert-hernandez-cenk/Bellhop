@@ -33,7 +33,7 @@ function oidcInventory(): Inventory {
         host: 'pve1',
         ip: '192.0.2.30',
         subdomains: ['media'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://media.example.com/oauth/callback'],
       },

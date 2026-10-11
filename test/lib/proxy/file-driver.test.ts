@@ -428,7 +428,7 @@ test('fileDriver.snapshot: uses configFiles(configPath), defaulting to [configPa
         host: 'pve1',
         ip: '192.0.2.20',
         subdomains: ['app'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
       },
     ],
   };

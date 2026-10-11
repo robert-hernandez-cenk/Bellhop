@@ -238,7 +238,7 @@ Manager is the selected driver.
 | `authentikApiToken` (secret) | Authentik | the Authentik integration is off |
 | `authentikAdminGroup` | Authentik | `bellhop-admins` |
 | `authentikBuiltinAdminGroup` | Authentik | `authentik Admins` |
-| `authentikGroupLadder` | Authentik | `bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins` |
+| `authentikGroupLadder` | Authentik | `bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins` |
 | `authentikOutpostName` | Authentik | `authentik Embedded Outpost` |
 | `authentikOutpostPort` | Authentik | `9000` |
 | `authentikAuthorizationFlowSlug` | Authentik | `default-provider-authorization-implicit-consent` |

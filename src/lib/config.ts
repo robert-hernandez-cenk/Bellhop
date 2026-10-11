@@ -74,7 +74,7 @@ export function invalidateConfigSnapshot(): void {
   snapshots.clear();
 }
 
-// The precedence rule itself, pure. Shared with the #158 migration inside
+// The precedence rule itself, pure. Shared with the #158 and #97 migrations inside
 // openInventoryDb, which reads the stored ladder from the database handle it
 // already holds and so cannot go through the snapshot. A stored value is
 // re-validated before it is used (an env value is the consumer's to check,
