@@ -23,7 +23,7 @@ function inventoryWith(overrides: Partial<Inventory['guests'][number]> = {}): In
         host: 'pve1',
         ip: '192.0.2.30',
         subdomains: ['bellhop'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         oidcRedirectUris: ['https://bellhop.example.com/auth/callback'],
         ...overrides,

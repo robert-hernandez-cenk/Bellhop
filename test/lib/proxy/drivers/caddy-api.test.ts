@@ -124,7 +124,7 @@ test('snapshot pretty-prints the live configuration without the service check (F
   // throw; snapshot must never need routes.
   const broken: Inventory = {
     ...inventory,
-    guests: [{ name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-users' }],
+    guests: [{ name: 'app-lxc', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.0.2.20', subdomains: ['app'], authGroup: 'bellhop-admin-family' }],
   };
   const text = await caddyApiDriver.snapshot(driverDeps(ssh, broken));
   assert.deepEqual(JSON.parse(text), handAuthored);

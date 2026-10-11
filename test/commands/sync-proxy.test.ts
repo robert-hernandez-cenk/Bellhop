@@ -191,7 +191,7 @@ test('sync-proxy (caddy driver) adds a forward_auth directive and outpost passth
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   const block = await buildBlock(inv);
@@ -214,7 +214,7 @@ test('sync-proxy (caddy driver) wraps forward_auth in a not-path matcher when un
         host: 'pve1',
         ip: '192.168.1.21',
         subdomains: ['whisparr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         unauthenticatedPaths: ['/api/*'],
       },
     ],
@@ -239,7 +239,7 @@ test('sync-proxy (caddy driver) joins multiple unauthenticatedPaths into one spa
         host: 'pve1',
         ip: '192.168.1.21',
         subdomains: ['whisparr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         unauthenticatedPaths: ['/api/*', '/system/*'],
       },
     ],
@@ -254,7 +254,7 @@ test('sync-proxy (caddy driver) leaves forward_auth unmatched when unauthenticat
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
       { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   const block = await buildBlock(inv);
@@ -289,7 +289,7 @@ test('sync-proxy (caddy driver) skips an entry with proxyManual set, even though
         ip: '192.168.1.2',
         subdomains: ['caddy'],
         proxyManual: true,
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         unauthenticatedPaths: ['/api/*'],
       },
     ],
@@ -305,7 +305,7 @@ test('sync-proxy (caddy driver) throws when an authGroup entry exists but no aut
     domain: 'example.com',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
     guests: [
-      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+      { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
     ],
   };
   await assert.rejects(
@@ -326,7 +326,7 @@ test('sync-proxy (caddy driver) emits a plain reverse proxy for an OIDC-mode ent
         host: 'pve1',
         ip: '192.168.1.21',
         subdomains: ['whisparr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
         unauthenticatedPaths: ['/api/*'],
       },
@@ -354,7 +354,7 @@ test('sync-proxy (caddy driver) does not require an authentik: true entry when t
         host: 'pve1',
         ip: '192.168.1.20',
         subdomains: ['sonarr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         authMode: 'oidc',
       },
     ],
@@ -372,7 +372,7 @@ test('runSyncProxy refuses (dry run) with the capability message, and makes zero
       hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
       guests: [
         { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
@@ -396,7 +396,7 @@ test('runSyncProxy refuses (apply) the same way, before writing anything, with z
       hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
       guests: [
         { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
@@ -420,8 +420,8 @@ test('runSyncProxy joins every offending entry\'s message into one thrown Error'
       hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
       guests: [
         { name: 'auth', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
-        { name: 'radarr', type: 'lxc', vmid: 121, host: 'pve1', ip: '192.168.1.21', subdomains: ['radarr'], authGroup: 'bellhop-users' },
+        { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
+        { name: 'radarr', type: 'lxc', vmid: 121, host: 'pve1', ip: '192.168.1.21', subdomains: ['radarr'], authGroup: 'bellhop-admin-family' },
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
@@ -486,7 +486,7 @@ const haproxyInventory: Inventory = {
   ],
   guests: [{ name: 'web-lxc', type: 'lxc', vmid: 100, host: 'pve1', ip: '192.0.2.10', port: 8080, subdomains: ['web', 'www'] }],
   externalSites: [
-    { name: 'nas', ip: '192.0.2.20', port: 443, subdomains: ['nas'], authGroup: 'bellhop-users', authMode: 'oidc' },
+    { name: 'nas', ip: '192.0.2.20', port: 443, subdomains: ['nas'], authGroup: 'bellhop-admin-family', authMode: 'oidc' },
   ],
 };
 
@@ -566,7 +566,7 @@ const haproxyForwardGatedInventory: Inventory = {
   hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
   guests: [
     { name: 'auth-lxc', type: 'lxc', vmid: 130, host: 'pve1', ip: '192.168.1.5', authentik: true },
-    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
   ],
 };
 
@@ -626,7 +626,7 @@ test('sync-proxy (haproxy driver) does not refuse a forward-gated proxyManual en
         host: 'pve1',
         ip: '192.168.1.2',
         subdomains: ['sonarr'],
-        authGroup: 'bellhop-users',
+        authGroup: 'bellhop-admin-family',
         proxyManual: true,
       },
     ],
@@ -643,7 +643,7 @@ test('sync-proxy (haproxy driver) does not refuse a forward-gated entry with no 
     domain: 'example.com',
     proxyDriver: 'haproxy',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root', proxy: true }],
-    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', authGroup: 'bellhop-users' }],
+    guests: [{ name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', authGroup: 'bellhop-admin-family' }],
   };
   const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));
   const result = await runSyncProxy({}, { ssh, inventory: inv });
@@ -712,7 +712,7 @@ const noProxyInventory: Inventory = {
   proxyDriver: 'none',
   hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
   guests: [
-    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-users' },
+    { name: 'sonarr', type: 'lxc', vmid: 120, host: 'pve1', ip: '192.168.1.20', subdomains: ['sonarr'], authGroup: 'bellhop-admin-family' },
   ],
 };
 
@@ -814,7 +814,7 @@ test('sync-proxy emits the configured Authentik outpost port', async () => {
         { name: 'auth-lxc-host', ssh_target: 'pve2.local', ssh_user: 'root', authentik: true, ip: '192.168.1.9' },
       ],
       guests: [
-        { name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', port: 32400, subdomains: ['plex'], authGroup: 'bellhop-users' },
+        { name: 'plex-lxc', type: 'lxc', vmid: 4003, host: 'pve1', ip: '192.168.1.3', port: 32400, subdomains: ['plex'], authGroup: 'bellhop-admin-family' },
       ],
     };
     const ssh = new FakeSSHClient(() => ({ stdout: '', stderr: '', code: 0 }));

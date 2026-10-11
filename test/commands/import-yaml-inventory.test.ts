@@ -75,7 +75,7 @@ test('runImportYamlInventory accepts the tracked example file, including its OID
   const reloaded = loadInventory(dbPath);
   const oidcGuest = reloaded.guests.find((g) => g.name === 'bookstack');
   assert.ok(oidcGuest, 'expected hosts.yaml.example to contain a "bookstack" OIDC-gated guest');
-  assert.equal(oidcGuest!.authGroup, 'bellhop-app-users');
+  assert.equal(oidcGuest!.authGroup, 'bellhop-friends-family');
   assert.equal(oidcGuest!.authMode, 'oidc');
   assert.deepEqual(oidcGuest!.oidcRedirectUris, ['https://bookstack.example.com/oidc/callback']);
   // T008 (issue #22): the example file's bookstack guest also carries an

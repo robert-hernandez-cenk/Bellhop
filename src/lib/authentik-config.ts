@@ -48,8 +48,27 @@ const DEFAULT_OIDC_SIGNING_KEY_NAME = 'authentik Self-signed Certificate';
 // old "admins always get in" special case is just a rung like any other.
 // The default rungs are product-named groups an operator creates in
 // Authentik; the top rung is Authentik's own built-in admin group.
-// AUTHENTIK_GROUP_LADDER overrides the whole list.
-const DEFAULT_GROUP_LADDER = 'bellhop-app-users-open,bellhop-app-users,bellhop-users,authentik Admins';
+// AUTHENTIK_GROUP_LADDER overrides the whole list. Each rung is named for
+// who belongs in it (#97):
+//   bellhop-public-readonly  the most constrained tier
+//   bellhop-public           public users of an external, public-facing
+//                            site; self-created accounts are acceptable
+//   bellhop-friends-family   friends and family to share more with, such
+//                            as external websites
+//   bellhop-admin-family     household members such as a spouse: more
+//                            than friends, close to an administrator
+const DEFAULT_GROUP_LADDER =
+  'bellhop-public-readonly,bellhop-public,bellhop-friends-family,bellhop-admin-family,authentik Admins';
+
+// The previous default rungs and their successors, [old, new]. The #97
+// migration in inventory.ts renames stored auth_group values pair by pair
+// when the effective ladder no longer lists the old name but does list
+// the new one.
+export const PREVIOUS_DEFAULT_RUNG_RENAMES: ReadonlyArray<readonly [string, string]> = [
+  ['bellhop-users', 'bellhop-admin-family'],
+  ['bellhop-app-users', 'bellhop-friends-family'],
+  ['bellhop-app-users-open', 'bellhop-public'],
+];
 
 // An empty environment variable counts as unset (the accessor's rule) -- a
 // KEY= line in data/authentik.env is a far likelier way to express "I did
@@ -67,7 +86,7 @@ function groupLadder(env: NodeJS.ProcessEnv): string[] {
 }
 
 // The ladder parsing rules on a raw comma-separated string, with unset or
-// empty meaning the default ladder. Exported for the #158 migration in
+// empty meaning the default ladder. Exported for the #158 and #97 migrations in
 // inventory.ts, which resolves the raw value itself (stored setting or env
 // var, issue #64) from the database it is opening, so the parsing and
 // dedup rules stay defined only here.

@@ -66,11 +66,23 @@ test('authentikConfigured treats an empty string as unset', () => {
   assert.equal(authentikConfigured({ AUTHENTIK_API_URL: '', AUTHENTIK_API_TOKEN: 'secret' }), false);
 });
 
-test('authentikConfig defaults groupLadder to the four-rung bellhop ladder', () => {
-  assert.deepEqual(authentikConfig({}).groupLadder, [
-    'bellhop-app-users-open',
-    'bellhop-app-users',
-    'bellhop-users',
+const AUDIENCE_LADDER = [
+  'bellhop-public-readonly',
+  'bellhop-public',
+  'bellhop-friends-family',
+  'bellhop-admin-family',
+  'authentik Admins',
+];
+
+test('authentikConfig defaults groupLadder to the five-rung audience ladder (#97)', () => {
+  assert.deepEqual(authentikConfig({}).groupLadder, AUDIENCE_LADDER);
+});
+
+test('the default ladder keeps bellhop-public-readonly below bellhop-public (#97)', () => {
+  assert.deepEqual(rungsAtOrAbove(authentikConfig({}).groupLadder, 'bellhop-public'), [
+    'bellhop-public',
+    'bellhop-friends-family',
+    'bellhop-admin-family',
     'authentik Admins',
   ]);
 });
@@ -149,7 +161,7 @@ test('authentikConfig keeps its defaults with a registered store holding nothing
   const config = authentikConfig({});
   assert.equal(config.adminGroup, 'bellhop-admins');
   assert.equal(config.outpostPort, 9000);
-  assert.deepEqual(config.groupLadder, ['bellhop-app-users-open', 'bellhop-app-users', 'bellhop-users', 'authentik Admins']);
+  assert.deepEqual(config.groupLadder, AUDIENCE_LADDER);
 });
 
 test('authentikConfig: a malformed stored outpost port throws naming the setting, never the value', () => {

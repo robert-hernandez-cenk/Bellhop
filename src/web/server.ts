@@ -40,10 +40,10 @@ dotenv.config({ path: path.join(dataDir(), 'nginx-proxy-manager.env'), quiet: tr
 
 const invPath = inventoryPath();
 
-// Import, then register the store, both before loadInventory(): the one-time
-// requires_auth -> auth_group migration (src/lib/inventory.ts) reads the
-// group ladder at DB-open time, and must see this operator's configured
-// ladder rather than the built-in default. A failed import only warns: the
+// Import, then register the store, both before loadInventory(): the
+// requires_auth -> auth_group (#158) and rung-rename (#97) migrations
+// (src/lib/inventory.ts) read the group ladder at DB-open time, and must
+// see this operator's configured ladder rather than the built-in default. A failed import only warns: the
 // files' values are already in the environment above.
 importEnvFilesAndUseStore(invPath, dataDir());
 const inventory = loadInventory(invPath);

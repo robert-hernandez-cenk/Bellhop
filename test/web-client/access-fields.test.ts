@@ -14,7 +14,7 @@ test("accessFieldsFor on an ungated 'forward' guest returns the forward-auth fie
 });
 
 test("accessFieldsFor on an 'oidc' guest returns the OIDC field set", () => {
-  assert.deepEqual(accessFieldsFor({ authMode: 'oidc', authGroup: 'bellhop-users' }), OIDC);
+  assert.deepEqual(accessFieldsFor({ authMode: 'oidc', authGroup: 'bellhop-admin-family' }), OIDC);
   assert.deepEqual(accessFieldsFor({ authMode: 'oidc' }), OIDC);
 });
 
@@ -22,25 +22,25 @@ test("accessFieldsFor on an 'oidc' guest returns the OIDC field set", () => {
 // has a web callback URL, so forward mode must still offer that field then.
 test('accessFieldsFor on a gated forward guest with no callback URL adds callback urls', () => {
   const expected = ['authGroup', 'authMode', 'unauthenticatedPaths', 'callbackUrls'];
-  assert.deepEqual(accessFieldsFor({ authGroup: 'bellhop-users' }), expected);
-  assert.deepEqual(accessFieldsFor({ authGroup: 'bellhop-users', authMode: 'forward', oidcRedirectUris: [] }), expected);
+  assert.deepEqual(accessFieldsFor({ authGroup: 'bellhop-admin-family' }), expected);
+  assert.deepEqual(accessFieldsFor({ authGroup: 'bellhop-admin-family', authMode: 'forward', oidcRedirectUris: [] }), expected);
 });
 
 test('accessFieldsFor on a gated forward guest that already has a callback URL hides it again', () => {
   assert.deepEqual(
-    accessFieldsFor({ authGroup: 'bellhop-users', authMode: 'forward', oidcRedirectUris: ['https://app.example.com/cb'] }),
+    accessFieldsFor({ authGroup: 'bellhop-admin-family', authMode: 'forward', oidcRedirectUris: ['https://app.example.com/cb'] }),
     FORWARD
   );
 });
 
 test('needsCallbackUrlsBeforeOidc is true only for a gated, non-OIDC guest with no callback URL', () => {
-  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users' }), true);
-  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', authMode: 'forward' }), true);
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-admin-family' }), true);
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-admin-family', authMode: 'forward' }), true);
   assert.equal(needsCallbackUrlsBeforeOidc({}), false);
   assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: null }), false);
-  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', authMode: 'oidc' }), false);
+  assert.equal(needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-admin-family', authMode: 'oidc' }), false);
   assert.equal(
-    needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-users', oidcRedirectUris: ['https://app.example.com/cb'] }),
+    needsCallbackUrlsBeforeOidc({ authGroup: 'bellhop-admin-family', oidcRedirectUris: ['https://app.example.com/cb'] }),
     false
   );
 });
