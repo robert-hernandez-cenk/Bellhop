@@ -17,6 +17,7 @@ import {
   secretStatusText,
   storedCopyText,
   mergeSettingsResponse,
+  webLoginSummary,
 } from '../../web-client/src/lib/settings-display.ts';
 import { SETTINGS_KEYS } from '../../src/lib/inventory.ts';
 import type { SettingsResponse } from '../../web-client/src/api/types.ts';
@@ -403,10 +404,10 @@ test('proxyFieldView gives no warning for a supported or unset source, or for an
 
 // Issue #64: the Settings page groups every setting by integration. Issue
 // #73 drops the Nginx Proxy Manager tab -- its three fields move to Proxy.
-test('SETTINGS_TABS lists the six tabs in order, with no Nginx Proxy Manager tab', () => {
+test('SETTINGS_TABS lists the seven tabs in order, with no Nginx Proxy Manager tab and Web login after Authentik (#85)', () => {
   assert.deepEqual(
     SETTINGS_TABS.map((t) => t.label),
-    ['General', 'Proxy', 'Authentik', 'Cloudflare', 'GitHub', 'MCP'],
+    ['General', 'Proxy', 'Authentik', 'Web login', 'Cloudflare', 'GitHub', 'MCP'],
   );
 });
 
@@ -453,9 +454,14 @@ test('fieldsForTab keeps every proxy-driver-dependent field in the Proxy tab, en
     'npmApiEmail',
     'npmApiPassword',
   ]);
-  for (const key of ['webUiAuthMode', 'webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'] as const) {
-    assert.ok(fieldsForTab('general').includes(key), `General tab lists ${key}`);
-  }
+  assert.ok(fieldsForTab('general').includes('webUiAuthMode'), 'General keeps the auth mode');
+});
+
+// Issue #85: the four custom web login values moved off General onto their own tab.
+test('fieldsForTab puts the four custom web login values on the Web login tab, not General', () => {
+  const keys = ['webUiOidcIssuer', 'webUiOidcClientId', 'webUiOidcRedirectUri', 'webUiOidcClientSecret'];
+  assert.deepEqual([...fieldsForTab('weblogin')], keys);
+  for (const key of keys) assert.ok(!(fieldsForTab('general') as readonly string[]).includes(key), `General no longer lists ${key}`);
 });
 
 test('fieldState reports a key the environment pins as env-pinned with its variable and stored copy', () => {
@@ -566,6 +572,7 @@ function settingsResponse(overrides: Partial<SettingsResponse> = {}): SettingsRe
       webUiOidcClientSecret: { set: false, source: 'none' },
       mcpApiKey: { set: false, source: 'none' },
     },
+    webLogin: { source: 'none', missing: [] },
     ...overrides,
   };
 }
@@ -613,4 +620,44 @@ test('mergeSettingsResponse updates or drops the saved key\'s environment pin', 
   assert.deepEqual(dropped.environment, { npmApiEmail: { variable: 'NPM_API_EMAIL', value: 'admin@example.com', stored: false } });
   const kept = mergeSettingsResponse(settingsResponse(), settingsResponse({ environment: { npmApiUrl: pin } }), 'npmApiUrl');
   assert.deepEqual(kept.environment, { npmApiUrl: pin });
+});
+
+// Issue #85: what the Web login tab says about the source in effect.
+test('webLoginSummary says which source signs people in, and what is missing when none does', () => {
+  assert.equal(
+    webLoginSummary({ source: 'custom' }),
+    'Custom values are in effect: the settings below sign people in.',
+  );
+  assert.equal(
+    webLoginSummary({ source: 'managed', entry: 'bellhop-lxc', redirectUri: 'https://bellhop.example.com/auth/callback' }),
+    "Managed by bellhop-lxc: people sign in through that guest's OpenID client (https://bellhop.example.com/auth/callback). Setting all four values below overrides it.",
+  );
+  assert.equal(
+    webLoginSummary({ source: 'none', missing: ['webUiOidcIssuer', 'webUiOidcClientSecret'] }),
+    'Not configured. Flag Bellhop\'s own guest, or set the missing custom values: webUiOidcIssuer, webUiOidcClientSecret.',
+  );
+  assert.equal(
+    webLoginSummary({ source: 'none', missing: ['webUiOidcIssuer'], managedProblem: 'bellhop-lxc has no callback URL ending in /auth/callback' }),
+    "Not configured. Bellhop's own guest cannot be used: bellhop-lxc has no callback URL ending in /auth/callback. Or set the missing custom values: webUiOidcIssuer.",
+  );
+});
+
+// #85: the web login status depends on the guest flag and all four custom
+// values, so it comes from every response, whichever key was saved.
+test('mergeSettingsResponse takes webLogin from the response for a non-secret and a secret save', () => {
+  const prev = settingsResponse();
+  const res = settingsResponse({ webLogin: { source: 'custom' } });
+  assert.deepEqual(mergeSettingsResponse(prev, res, 'webUiOidcIssuer').webLogin, { source: 'custom' });
+  assert.deepEqual(mergeSettingsResponse(prev, res, 'webUiOidcClientSecret').webLogin, { source: 'custom' });
+});
+
+test('webLoginSummary reports an invalid environment value by the server\'s key-and-variable message', () => {
+  assert.equal(
+    webLoginSummary({
+      source: 'none',
+      missing: [],
+      invalid: "Setting 'webUiOidcIssuer' from environment variable WEB_UI_OIDC_ISSUER is invalid (must be an http(s) URL) -- fix or unset WEB_UI_OIDC_ISSUER",
+    }),
+    "Not configured. Setting 'webUiOidcIssuer' from environment variable WEB_UI_OIDC_ISSUER is invalid (must be an http(s) URL) -- fix or unset WEB_UI_OIDC_ISSUER.",
+  );
 });

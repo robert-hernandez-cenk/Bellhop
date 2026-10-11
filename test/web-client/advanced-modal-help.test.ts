@@ -44,7 +44,7 @@ test('the Access tab renders the fields for the guest auth mode', () => {
   );
   assert.deepEqual(
     renderedAdvancedFields('access', OIDC_GUEST),
-    new Set(['auth group', 'auth mode', 'callback urls', 'mobile app redirect urls', 'oidc client'])
+    new Set(['auth group', 'auth mode', 'callback urls', 'mobile app redirect urls', 'oidc client', 'this is bellhop'])
   );
   // OIDC mode without a tier is not effective, so no oidc client row.
   assert.equal(renderedAdvancedFields('access', { authMode: 'oidc' }).has('oidc client'), false);
@@ -63,4 +63,6 @@ test('liveHelp keeps a state for a rendered field and closes one for an unrender
   assert.equal(liveHelp({ field: 'mobile app redirect urls', pinned: true }, access), null);
   // The oidc client row once the guest leaves effective OIDC.
   assert.equal(liveHelp({ field: 'oidc client', pinned: true }, access), null);
+  // The Bellhop row on a forward guest that is not flagged (#85).
+  assert.equal(liveHelp({ field: 'this is bellhop', pinned: true }, access), null);
 });

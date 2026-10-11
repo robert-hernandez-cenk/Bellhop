@@ -29,10 +29,10 @@ const EXPECTED: Record<string, [string, string, boolean]> = {
   npmApiPassword: ['NPM_API_PASSWORD', 'proxy', true],
   githubApiToken: ['GITHUB_API_TOKEN', 'github', true],
   // #69: Bellhop's own OIDC web login.
-  webUiOidcIssuer: ['WEB_UI_OIDC_ISSUER', 'general', false],
-  webUiOidcClientId: ['WEB_UI_OIDC_CLIENT_ID', 'general', false],
-  webUiOidcRedirectUri: ['WEB_UI_OIDC_REDIRECT_URI', 'general', false],
-  webUiOidcClientSecret: ['WEB_UI_OIDC_CLIENT_SECRET', 'general', true],
+  webUiOidcIssuer: ['WEB_UI_OIDC_ISSUER', 'weblogin', false],
+  webUiOidcClientId: ['WEB_UI_OIDC_CLIENT_ID', 'weblogin', false],
+  webUiOidcRedirectUri: ['WEB_UI_OIDC_REDIRECT_URI', 'weblogin', false],
+  webUiOidcClientSecret: ['WEB_UI_OIDC_CLIENT_SECRET', 'weblogin', true],
   // #65/#66: the HTTP MCP endpoint's API key, on its own MCP tab.
   mcpApiKey: ['MCP_API_KEY', 'mcp', true],
 };

@@ -19,8 +19,7 @@ import {
 } from '../../lib/settings-defs.ts';
 
 // The warning for a key this shell's environment pins (see the comment at
-// the call site in runSetConfig). Shared with configure-web-login so both
-// commands say exactly the same thing.
+// the call site in runSetConfig).
 export function warnIfEnvPinned(key: string): void {
   if (!Object.hasOwn(SETTING_DEFS, key)) return;
   const configKey = key as ConfigKey; // safe: the hasOwn check proves key is a SETTING_DEFS key

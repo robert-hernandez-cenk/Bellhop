@@ -222,6 +222,14 @@ export function dashboardRoutes(
         }
       }
 
+      // Which guest is Bellhop itself (#85) decides whose OpenID client the
+      // web login trusts, so it is admin-only in both directions. Compared
+      // on the parsed value so re-sending the current one is not a change.
+      if ('bellhop' in req.body && !current.bellhop !== !updated.bellhop && !isAdminUser(req.user?.groups ?? [])) {
+        res.status(403).json({ error: 'Only an admin may change which guest is Bellhop itself' });
+        return;
+      }
+
       if ('authGroup' in req.body) {
         const problem = authGroupChangeError(
           current.authGroup,

@@ -37,6 +37,7 @@ const ACCESS_FIELD_LABELS: Record<AccessField, AdvancedFieldLabel> = {
   callbackUrls: 'callback urls',
   mobileRedirectUrls: 'mobile app redirect urls',
   oidcClient: 'oidc client',
+  bellhop: 'this is bellhop',
 };
 
 // Who created this guest from Bellhop, mirroring the server's GuestEntry

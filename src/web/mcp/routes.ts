@@ -15,7 +15,7 @@ import type { McpHttpHost } from './http-host.ts';
 // then the host, which binds the session to the caller.
 
 export const MCP_NOT_ENABLED_MESSAGE =
-  'MCP over HTTP is not enabled: configure web sign-in with an https:// redirect URI (bellhop configure-web-login <entry> --apply) ' +
+  "MCP over HTTP is not enabled: configure web sign-in with an https:// redirect URI (flag Bellhop's own guest as Bellhop, or set the Settings > Web login values) " +
   'or set an API key (Settings > MCP, or bellhop set-config mcpApiKey --stdin --apply)';
 
 const AUTH_SERVER_PATHS = ['/.well-known', '/authorize', '/token', '/register', '/revoke'];

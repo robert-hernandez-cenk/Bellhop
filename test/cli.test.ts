@@ -243,3 +243,14 @@ test('the CLI reads stored settings through the registered store', async () => {
   assert.match(output, /fetch failed/);
   assert.ok(!output.includes('example-authentik-token'));
 });
+
+// issue #85: Bellhop's own web login now comes from the guest flagged as
+// Bellhop, so the separate step that copied the client into settings is gone.
+test('configure-web-login is no longer a command', () => {
+  const help = execFileSync(process.execPath, ['--import', 'tsx', cliPath, '--help'], { encoding: 'utf8', env: isolatedEnv() });
+  assert.ok(!help.includes('configure-web-login'), 'it must not be listed');
+  assert.throws(
+    () => execFileSync(process.execPath, ['--import', 'tsx', cliPath, 'configure-web-login', 'bellhop'], { encoding: 'utf8', env: isolatedEnv(), stdio: 'pipe' }),
+    (err: unknown) => /unknown command 'configure-web-login'/.test(String((err as { stderr?: unknown }).stderr)),
+  );
+});

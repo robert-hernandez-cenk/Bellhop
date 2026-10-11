@@ -71,8 +71,8 @@ server's. Every request must carry a credential: a token from signing in
 (below), or the API key. A browser session cookie does not count.
 
 **Prerequisites.** Bellhop is reached over HTTPS through your reverse proxy,
-on its own subdomain, with web sign-in configured (`configure-web-login`;
-see [Web login](authentik.md#web-login)). Bellhop's route is not
+on its own subdomain, with web sign-in configured (a guest flagged as Bellhop, or the Web login
+settings; see [Web login](authentik.md#web-login)). Bellhop's route is not
 forward-auth gated (it signs people in itself), so `/mcp` and the sign-in
 paths below pass through as they are. With neither sign-in nor an API key
 configured, `/mcp` answers `503` naming both.
@@ -109,7 +109,8 @@ Bellhop is the sign-in server for its own MCP endpoint, so these paths
 belong to it on Bellhop's address: `/authorize`, `/token`, `/register`,
 `/revoke`, `/.well-known/oauth-authorization-server` and
 `/.well-known/oauth-protected-resource/mcp`. Its issuer is the origin of
-`webUiOidcRedirectUri`, which must be `https://` (or `http://localhost`
+the web login's callback URL (the flagged Bellhop guest's, or
+`webUiOidcRedirectUri` when the custom values are set), which must be `https://` (or `http://localhost`
 / `http://127.0.0.1` for local testing; a `http://[::1]` address leaves
 sign-in off, API key only).
 

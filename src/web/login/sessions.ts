@@ -1,6 +1,6 @@
 import { logInfo, logWarn } from '../../lib/log.ts';
 import type { AuthUser } from '../auth.ts';
-import { webLoginConfig, type WebLoginConfig } from './config.ts';
+import { refreshManagedWebLoginIfUsed, webLoginConfig, type WebLoginConfig } from './config.ts';
 import type { LoginIdentity, RecheckResult, WebLoginClient } from './oidc-client.ts';
 import { hashId, type SessionRecord, type SessionStore } from './session-store.ts';
 
@@ -91,6 +91,11 @@ export class SessionService {
   }
 
   private async recheck(key: string, session: SessionRecord): Promise<AuthUser | undefined> {
+    // The flagged guest's client (#85) is read again first, so a rotated secret
+    // or an unflagged guest is seen before this check relies on it. Never
+    // throws; a re-check is due at most every CHECK_INTERVAL_MS, so this is
+    // one lookup per interval, not per request.
+    await refreshManagedWebLoginIfUsed();
     let cfg: WebLoginConfig;
     try {
       cfg = this.config();
