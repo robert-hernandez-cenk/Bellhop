@@ -58,7 +58,7 @@ names are never shown). The
 Install App form's App field suggests community-scripts apps as you type,
 grouped by repository:
 
-![The Install App form with "ar" typed into the App field and a suggestion list open below it, showing matching apps under "ProxmoxVE (stable)" and "ProxmoxVED (development)"](images/install-app-catalog.png)
+![The Install App form with "ar" typed into the App field and a suggestion list open below it, showing matching apps under "ProxmoxVE (stable)" and "DevScripts (development)"](images/install-app-catalog.png)
 
 Every action streams its live log via WebSocket on a Job page, and every job
 also lands in Job History afterward:

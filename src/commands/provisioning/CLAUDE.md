@@ -90,7 +90,7 @@ Neither CLI path touches `inventory/bellhop.db` (`sync-inventory` picks up new g
 
 ## Script catalog (#131)
 
-The web App field suggests slugs from a cached catalog of every `ct/<slug>.sh` (`src/lib/script-catalog.ts`, `GET /api/provisioning/install-app/apps`, `web-client/src/components/AppCheckInput.tsx`), grouped `ProxmoxVE (stable)` above `ProxmoxVED (development)`.
+The web App field suggests slugs from a cached catalog of every `ct/<slug>.sh` (`src/lib/script-catalog.ts`, `GET /api/provisioning/install-app/apps`, `web-client/src/components/AppCheckInput.tsx`), grouped `ProxmoxVE (stable)` above `DevScripts (development)`.
 
 - Free text stays valid (pasted URL: `resolveAppUrl`'s `includes('://')`); any failure degrades to a plain input.
 - Slugs only (no upstream metadata exists).
@@ -109,15 +109,15 @@ With `customScriptsRepo`/`customScriptsBranch` set, `getScriptCatalog` adds a fi
 A bare `--app` slug resolves via `resolveAppSource(app, inventory, fetchImpl)` (`src/lib/app-source.ts`). Without custom settings: plain upstream, no extra call. The settings' both-or-neither rule is enforced here (`customScriptSource()`), not in the schema. With both:
 
 1. `resolveHeadSha` pins the branch head (`Accept: application/vnd.github.sha`: no JSON, handles `/` in branch names).
-2. `compareBranch`: `GET /repos/community-scripts/ProxmoxVED/compare/main...<owner>:<repo>:<sha>`, head = *pinned commit*, since a branch-name head for a nonexistent repo is answered from another fork (`status: identical`); a commit outside the network 404s.
+2. `compareBranch`: `GET /repos/community-scripts/DevScripts/compare/main...<owner>:<repo>:<sha>`, head = *pinned commit*, since a branch-name head for a nonexistent repo is answered from another fork (`status: identical`); a commit outside the network 404s.
 3. `changedSlugsFromFiles`: `ct/<slug>.sh` or `install/<slug>-install.sh`, any status but `removed`; a rename counts its new name only.
 4. Order: changed slug -> `kind: 'custom'` at the pinned commit (`changed: true`); else probe both upstream `ct/` scripts (`probeUpstream`: present/absent/error) — hit *or error* -> `kind: 'upstream'` ("can't tell" prefers upstream over a stale inherited fork copy); else fork `ct/<slug>.sh` at the commit: 200 -> `kind: 'custom'` (`changed: false`), 404 -> upstream.
 5. Conflicts, only for a changed slug with `behindBy > 0`: `detectConflict` reads the app's two scripts from upstream raw content at the merge base and `main`; any difference (a 404 on one side counts) sets `conflict: true`. Not a reverse compare (lists stop at 300 files; raw reads cost no quota). A failed read is logged as no conflict.
 6. A compare list of 300+ files is a named error (a truncated set would send changed apps upstream).
 
-Every thrown failure (unknown/private repo or branch, not a ProxmoxVED fork, GitHub error/rate limit, network) names both settings, points at `set-config` and the Settings page, and **never falls back to upstream**.
+Every thrown failure (unknown/private repo or branch, not a DevScripts fork, GitHub error/rate limit, network) names both settings, points at `set-config` and the Settings page, and **never falls back to upstream**.
 
-Single-operator assumption: upstream base fixed to `community-scripts/ProxmoxVED@main` (a VED-shaped fork).
+Single-operator assumption: upstream base fixed to `community-scripts/DevScripts@main` (a DevScripts-shaped fork).
 
 ### Generated script for a custom source
 

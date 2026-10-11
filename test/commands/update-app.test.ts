@@ -221,16 +221,16 @@ test('runUpdateApp logs the rebase warning first for a conflicting app and still
   const slug = 'demo-wiki';
   const divergedBody = readFileSync(path.join(fixtureDir, 'compare-diverged-conflict.json'), 'utf8');
   const mergeBase = (JSON.parse(divergedBody) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
-  const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
+  const devRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
   const fetchImpl = (async (url: unknown) => {
     const href = String(url);
     if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
     if (href === COMPARE_URL) return new Response(divergedBody, { status: 200 });
     if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response(null, { status: 404 });
-    if (href === vedRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw(mergeBase, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
-    if (href === vedRaw(mergeBase, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
+    if (href === devRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw(mergeBase, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
+    if (href === devRaw(mergeBase, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
     throw new Error(`unexpected fetch: ${href}`);
   }) as unknown as typeof fetch;
   const guests: Inventory['guests'] = [{ name: slug, type: 'lxc', vmid: 105, host: 'pve1' }];

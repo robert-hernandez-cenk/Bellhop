@@ -284,7 +284,7 @@ test('previewAndEnqueue pins a resolvesApp operation\'s custom-repository resolu
 
 // issue #15 US1: with the custom repository configured, an app the branch
 // doesn't change (and upstream has) resolves to upstream, so its prompts come
-// from checkAppUrl's VE->VED path rather than from the fork.
+// from checkAppUrl's ProxmoxVE->DevScripts path rather than from the fork.
 test('previewAndEnqueue resolves an unchanged upstream app to upstream with the feature on and reads its prompts from upstream', async () => {
   const { store, runner, deps } = setup();
   const customInventory: Inventory = {

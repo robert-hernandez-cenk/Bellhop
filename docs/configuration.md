@@ -84,7 +84,7 @@ value — see
 | `proxyTlsKey` | `tlsSource: files` (same as `proxyTlsCertificate`) | certbot's own default key path for the inventory domain; ignored under every other source, and shown on the Settings page only while the shown TLS source is `files` |
 | `proxyCertResolver` | the Traefik driver, under `tlsSource` `acme-dns`/`acme-http` | `cloudflare`, the default ACME certificate resolver name every rendered router's `tls.certResolver` is set to — any resolver name is allowed (`none` is no longer reserved: `tlsSource: external` replaced it); ignored by every other driver and under `files`/`external`, and shown on the Settings page only while Traefik is selected with one of those two sources |
 | `proxyApiUrl` | the Traefik driver | no post-apply check at all — the file is written and trusted to load; set to Traefik's API address as reachable from the proxy host to have every apply confirm it loaded before succeeding; ignored by every other driver, and shown on the Settings page only while Traefik is selected |
-| `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/ProxmoxVED only, same as today |
+| `customScriptsRepo` | `install-app`, `update-app`, the app catalog | apps resolve from ProxmoxVE/DevScripts only, same as today |
 | `customScriptsBranch` | same as `customScriptsRepo` | same as `customScriptsRepo` |
 | `pveUserRealm` | `create-vm`'s web-UI creator grant | the creator grant is off entirely |
 | `pveCreatorRole` | same as `pveUserRealm` | `PVEVMAdmin` |
@@ -105,18 +105,18 @@ status page instead of failing the rest of the job.
 
 `customScriptsRepo` (`owner/repo`) and `customScriptsBranch` name a
 **public** GitHub repository laid out exactly like
-[ProxmoxVED](https://github.com/community-scripts/ProxmoxVED) — `ct/<slug>.sh`
+[DevScripts](https://github.com/community-scripts/DevScripts) — `ct/<slug>.sh`
 and `install/<slug>-install.sh` at its root — plus the branch on it to
 install from. The repository must be a fork of
-`community-scripts/ProxmoxVED`: Bellhop compares your branch against
-upstream ProxmoxVED's `main` to learn which apps the branch actually
+`community-scripts/DevScripts`: Bellhop compares your branch against
+upstream DevScripts' `main` to learn which apps the branch actually
 changes, and only those apps come from your branch. A personal fork branch
 where you develop a few apps before upstreaming them is the intended use
 case — the hundreds of upstream scripts the branch merely carries along
 keep installing from upstream.
 
 ```bash
-bellhop set-config customScriptsRepo example-user/ProxmoxVED --apply
+bellhop set-config customScriptsRepo example-user/DevScripts --apply
 bellhop set-config customScriptsBranch my-apps --apply
 bellhop set-config customScriptsRepo --unset --apply   # (and the branch) turns it back off
 ```
@@ -130,7 +130,7 @@ command that resolves an `--app` slug with a named error pointing back at
   `install/<slug>-install.sh` was added, modified or renamed since the
   branch left upstream `main`): installs from your branch. If upstream also
   has the app, one informational line says your copy replaces it.
-- **The branch doesn't change the app** and ProxmoxVE or ProxmoxVED has it:
+- **The branch doesn't change the app** and ProxmoxVE or DevScripts has it:
   installs from upstream exactly as if the feature were off, with no
   notice.
 - **Only your fork has the app** (e.g. inherited from an older upstream
@@ -151,7 +151,7 @@ requests per hour (or of a token's much larger allowance — see [GitHub
 token](#github-token)). The web UI resolves separately for the App check, a
 Preview and an Apply, and each refresh of the custom catalog group (at most
 every 5 minutes) spends the same two, so one web install uses roughly 6 to 8. If the comparison can't be made — the repository isn't a
-ProxmoxVED fork, GitHub rate-limits or is unreachable, or the branch
+DevScripts fork, GitHub rate-limits or is unreachable, or the branch
 changes 300 or more files (GitHub stops listing files there) — the command
 fails with an error naming the settings, rather than guessing.
 

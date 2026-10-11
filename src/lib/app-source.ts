@@ -156,7 +156,7 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
 
 // The upstream repository a custom branch is compared against (issue #15,
 // research R1): a fork of DevScripts, compared to its `main`. Fixed rather
-// than configurable -- #11 already assumed a VED-shaped fork, and a fork of
+// than configurable -- #11 already assumed a DevScripts-shaped fork, and a fork of
 // ProxmoxVE (stable) is out of scope (spec Assumptions).
 const COMPARE_UPSTREAM = 'community-scripts/DevScripts';
 
@@ -375,7 +375,7 @@ function shadowsFrom([stable, dev]: [UpstreamPresence, UpstreamPresence]): Shado
 // Issue #15 (research R6): with a custom repository configured, only the
 // apps the branch actually changes come from the fork --
 //   1. changed on the branch -> the fork at the pinned commit;
-//   2. otherwise, upstream VE/VED has it (or a probe can't tell) -> upstream,
+//   2. otherwise, upstream ProxmoxVE/DevScripts has it (or a probe can't tell) -> upstream,
 //      identical to the feature being off;
 //   3. otherwise, the fork has it at the pinned commit -> the fork
 //      (fork-only, nowhere else to get it);

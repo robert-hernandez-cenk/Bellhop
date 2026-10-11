@@ -765,7 +765,7 @@ test('runInstallApp logs the R7 override notice as the first console line when t
 const COMPARE_DIVERGED_BODY = readFileSync(path.join(fixtureDir, 'compare-diverged-conflict.json'), 'utf8');
 const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } })
   .merge_base_commit.sha;
-const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
+const devRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
 
 function conflictingFetch(slug: string): typeof fetch {
   return (async (url: unknown) => {
@@ -775,11 +775,11 @@ function conflictingFetch(slug: string): typeof fetch {
     if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response(null, { status: 404 });
     // Upstream DevScripts main: both scripts present (the ct/ one doubles as
     // the DevScripts shadow probe).
-    if (href === vedRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     // At the merge base: neither.
-    if (href === vedRaw(DIVERGED_MERGE_BASE, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
-    if (href === vedRaw(DIVERGED_MERGE_BASE, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
+    if (href === devRaw(DIVERGED_MERGE_BASE, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
+    if (href === devRaw(DIVERGED_MERGE_BASE, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
     throw new Error(`unexpected fetch: ${href}`);
   }) as unknown as typeof fetch;
 }

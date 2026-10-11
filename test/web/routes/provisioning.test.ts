@@ -548,15 +548,15 @@ test('GET /api/provisioning/install-app/check-app reports conflict: true for an 
   const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
   const divergedBody = readFileSync(path.join(customFixtureDir, 'compare-diverged-conflict.json'), 'utf8');
   const mergeBase = (JSON.parse(divergedBody) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
-  const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
+  const devRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
   const fetchImpl = (async (url: unknown) => {
     const href = String(url);
     if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
     if (href === CUSTOM_COMPARE_URL) return new Response(divergedBody, { status: 200 });
     if (href === customCtUrl('demo-wiki')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', 'ct/demo-wiki.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', 'install/demo-wiki-install.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href.startsWith(vedRaw(mergeBase, ''))) return new Response(null, { status: 404 });
+    if (href === devRaw('main', 'ct/demo-wiki.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw('main', 'install/demo-wiki-install.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href.startsWith(devRaw(mergeBase, ''))) return new Response(null, { status: 404 });
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
   const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl });

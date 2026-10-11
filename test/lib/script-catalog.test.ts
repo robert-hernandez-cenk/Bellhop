@@ -388,7 +388,7 @@ const COMPARE_DIVERGED_BODY = fixtureText('compare-diverged-conflict.json');
 const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
 const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit
   .sha;
-const VED_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
+const DEV_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
 
 // Example values only (constitution Principle I) -- same example the
 // spec/plan/data-model/app-source tests use.
@@ -470,10 +470,10 @@ function buildFetch(
 // research R5: demo-wiki is absent upstream at the merge base and present
 // on upstream main -- upstream also changed it since the branch point.
 const DIVERGED_CONFLICT_RAW: Record<string, 200 | 404> = {
-  [VED_RAW(DIVERGED_MERGE_BASE, 'ct/demo-wiki.sh')]: 404,
-  [VED_RAW(DIVERGED_MERGE_BASE, 'install/demo-wiki-install.sh')]: 404,
-  [VED_RAW('main', 'ct/demo-wiki.sh')]: 200,
-  [VED_RAW('main', 'install/demo-wiki-install.sh')]: 200,
+  [DEV_RAW(DIVERGED_MERGE_BASE, 'ct/demo-wiki.sh')]: 404,
+  [DEV_RAW(DIVERGED_MERGE_BASE, 'install/demo-wiki-install.sh')]: 404,
+  [DEV_RAW('main', 'ct/demo-wiki.sh')]: 200,
+  [DEV_RAW('main', 'install/demo-wiki-install.sh')]: 200,
 };
 
 // logWarn (src/lib/log.ts) writes through console.error, not console.warn.

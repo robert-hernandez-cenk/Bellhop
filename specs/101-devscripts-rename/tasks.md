@@ -41,12 +41,12 @@ None.
 
 **Independent Test**: `git grep -n ProxmoxVED -- ':!specs/003-*' ':!specs/004-*' ':!specs/101-*'` prints nothing, and the demo's Install App suggestion list shows "DevScripts (development)".
 
-- [ ] T008 [P] [US2] `web-client/src/components/AppCheckInput.tsx`: group header `DevScripts (development)`, the conflict notice ("Upstream DevScripts also changed…"), the dev-only notice ("community-scripts' DevScripts repo"), and the comments
-- [ ] T009 [P] [US2] `web-client/src/pages/SettingsPage.tsx` help ("laid out like DevScripts") and `web-client/src/api/types.ts` comments
-- [ ] T010 [P] [US2] `src/mcp/build-server.ts` catalog tool description. Update the comments in `src/lib/inventory.ts` and `src/commands/provisioning/install-app.ts`
-- [ ] T011 [P] [US2] Docs: `docs/commands.md`, `docs/configuration.md` (the repository link becomes `https://github.com/community-scripts/DevScripts`, the example `example-user/DevScripts`), `docs/web-ui.md` (image alt text), and `src/commands/provisioning/CLAUDE.md`
-- [ ] T012 [US2] `npm run docs:screenshots` regenerates `docs/images/` (only `install-app-catalog.png` should change). Check by eye: the label reads "DevScripts (development)" and every value is example-only
-- [ ] T013 [US2] `npm run typecheck`, `npm test` and the quickstart grep pass
+- [x] T008 [P] [US2] `web-client/src/components/AppCheckInput.tsx`: group header `DevScripts (development)`, the conflict notice ("Upstream DevScripts also changed…"), the dev-only notice ("community-scripts' DevScripts repo"), and the comments
+- [x] T009 [P] [US2] `web-client/src/pages/SettingsPage.tsx` help ("laid out like DevScripts") and `web-client/src/api/types.ts` comments
+- [x] T010 [P] [US2] `src/mcp/build-server.ts` catalog tool description. Update the comments in `src/lib/inventory.ts` and `src/commands/provisioning/install-app.ts`
+- [x] T011 [P] [US2] Docs: `docs/commands.md`, `docs/configuration.md` (the repository link becomes `https://github.com/community-scripts/DevScripts`, the example `example-user/DevScripts`), `docs/web-ui.md` (image alt text), and `src/commands/provisioning/CLAUDE.md`
+- [x] T012 [US2] `npm run docs:screenshots` regenerates `docs/images/` (only `install-app-catalog.png` should change). Check by eye: the label reads "DevScripts (development)" and every value is example-only
+- [x] T013 [US2] `npm run typecheck`, `npm test` and the quickstart grep pass
 
 **Checkpoint**: commit `Name the dev repo DevScripts on every surface (#101, US2)`.
 

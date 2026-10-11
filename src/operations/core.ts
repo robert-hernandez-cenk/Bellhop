@@ -121,7 +121,7 @@ export async function previewAndEnqueue(
   // before this feature existed. This matters even with the custom-
   // repository feature off entirely: a pasted ct-shaped URL
   // (kind 'url', no slug) has no scriptsBaseUrl for promptsForSource to
-  // read prompts from -- checkAppUrl's own VE->VED-agnostic pasted-URL
+  // read prompts from -- checkAppUrl's own ProxmoxVE->DevScripts-agnostic pasted-URL
   // handling (resolveInstallScriptUrl on the URL itself) is what finds
   // its prompts, so it must stay the one this always calls for that case.
   const expectedPrompts = op.watchForPrompts

@@ -40,7 +40,7 @@ const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_c
   .sha;
 // research R5: the conflict check reads upstream DevScripts's two scripts
 // for an app at the merge base and on main, through raw content.
-const VED_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
+const DEV_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
 const CT_FILE = (slug: string) => `ct/${slug}.sh`;
 const INSTALL_FILE = (slug: string) => `install/${slug}-install.sh`;
 
@@ -431,10 +431,10 @@ function conflictFetch(
 ): { fetchImpl: typeof fetch; seen: string[] } {
   const seen: string[] = [];
   const routes: Record<string, Handler> = {
-    [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE(slug))]: () => rawResponse(sides.baseCt),
-    [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE(slug))]: () => rawResponse(sides.baseInstall),
-    [VED_RAW('main', CT_FILE(slug))]: () => rawResponse(sides.mainCt),
-    [VED_RAW('main', INSTALL_FILE(slug))]: () => rawResponse(sides.mainInstall),
+    [DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE(slug))]: () => rawResponse(sides.baseCt),
+    [DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE(slug))]: () => rawResponse(sides.baseInstall),
+    [DEV_RAW('main', CT_FILE(slug))]: () => rawResponse(sides.mainCt),
+    [DEV_RAW('main', INSTALL_FILE(slug))]: () => rawResponse(sides.mainInstall),
   };
   const inner = fakeFetch(routes);
   const fetchImpl = (async (url: unknown, init?: RequestInit) => {
@@ -458,10 +458,10 @@ test('detectConflict reads both scripts at the merge base and on main, and flags
   });
   assert.equal(await detectConflict('demo-wiki', DIVERGED, fetchImpl), true);
   assert.deepEqual(seen.sort(), [
-    VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki')),
-    VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki')),
-    VED_RAW('main', CT_FILE('demo-wiki')),
-    VED_RAW('main', INSTALL_FILE('demo-wiki')),
+    DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki')),
+    DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki')),
+    DEV_RAW('main', CT_FILE('demo-wiki')),
+    DEV_RAW('main', INSTALL_FILE('demo-wiki')),
   ].sort());
 });
 
@@ -678,9 +678,9 @@ test('resolveAppSource flags a conflict for a changed slug upstream also changed
       compareBody: COMPARE_DIVERGED_BODY,
       dev: 200,
       extra: {
-        [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
-        [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
-        [VED_RAW('main', INSTALL_FILE('demo-wiki'))]: () => new Response('#!/usr/bin/env bash\n', { status: 200 }),
+        [DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
+        [DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
+        [DEV_RAW('main', INSTALL_FILE('demo-wiki'))]: () => new Response('#!/usr/bin/env bash\n', { status: 200 }),
       },
     })
   );
@@ -700,9 +700,9 @@ test('resolveAppSource reports no conflict when upstream left a changed slug alo
       compareBody: COMPARE_DIVERGED_BODY,
       dev: 200,
       extra: {
-        [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: same,
-        [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: same,
-        [VED_RAW('main', INSTALL_FILE('demo-wiki'))]: same,
+        [DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: same,
+        [DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: same,
+        [DEV_RAW('main', INSTALL_FILE('demo-wiki'))]: same,
       },
     })
   );

@@ -98,7 +98,7 @@ async function fetchInstallPrompts(ctUrl: string, fetchImpl: typeof fetch): Prom
 // checkAppUrl(app, ...) a second time (which would re-resolve where the
 // script actually lives, potentially pinning a different commit). An
 // 'upstream' or 'url' source has no custom install-script location to read,
-// so callers use checkAppUrl's own VE->VED (or pasted-URL) logic for those
+// so callers use checkAppUrl's own ProxmoxVE->DevScripts (or pasted-URL) logic for those
 // instead of calling this at all -- see previewAndEnqueue's guard. Never
 // throws -- every fetch here is swallowed the same way fetchScriptBody
 // already swallows one.
@@ -124,9 +124,9 @@ export async function promptsForSource(source: AppSource, fetchImpl: typeof fetc
 // given (and no already-resolved source is handed in via `preResolved`),
 // `app` is first run through resolveAppSource. A 'custom' resolution takes
 // its own branch below (fetching ctUrl directly and the install script from
-// scriptsBaseUrl, never touching the VE/VED fallback at all); an 'upstream'
+// scriptsBaseUrl, never touching the ProxmoxVE/DevScripts fallback at all); an 'upstream'
 // or 'url' resolution -- and the no-inventory-given case, unchanged from
-// before this feature existed -- falls through to today's VE->VED logic. A
+// before this feature existed -- falls through to today's ProxmoxVE->DevScripts logic. A
 // thrown resolution (bad customScriptsRepo/Branch, GitHub unreachable, see
 // FR-008) becomes `{ exists: false, url: '', error: <message> }` rather than
 // propagating, since this is a read-only status check, not a mutation.

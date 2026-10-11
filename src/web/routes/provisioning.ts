@@ -41,7 +41,7 @@ export function provisioningRoutes(
     }
     // issue #11: resolves through the configured custom script repository
     // (see resolveAppSource in src/lib/app-source.ts) when one is set,
-    // falling back to today's plain VE->VED check when it isn't.
+    // falling back to today's plain ProxmoxVE->DevScripts check when it isn't.
     res.json(await checkAppUrl(app, testDeps.fetchImpl, inventory));
   });
 
