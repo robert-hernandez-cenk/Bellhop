@@ -210,11 +210,11 @@ const customFixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url
 const HEAD_SHA_RAW = readFileSync(path.join(customFixtureDir, 'branch-head-sha.txt'), 'utf8');
 const SHA = HEAD_SHA_RAW.trim();
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_REPO = 'DevScripts';
 const CUSTOM_BRANCH = 'my-apps';
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 const COMPARE_AHEAD_BODY = readFileSync(path.join(customFixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
-const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
 
 test('a custom source fetches ctUrl directly, with no upstream fallback', async () => {

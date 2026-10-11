@@ -145,7 +145,7 @@ test('configure-guest operation preview rejects with UnknownPackageManagerError 
 // `source: i.appSource` plumbing (src/operations/provisioning.ts). This runs
 // previewAndEnqueue against the real operation, a real FakeSSHClient, and a
 // real JobRunner, the same way the web/MCP front ends do.
-// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// Example values only (constitution Principle I) -- example-user/DevScripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/lib/app-source.test.ts use.
 
@@ -153,16 +153,16 @@ const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
 const SHA = HEAD_SHA_RAW.trim();
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_REPO = 'DevScripts';
 const CUSTOM_BRANCH = 'my-apps';
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
 const customScriptsBaseUrl = `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}`;
 const customInstallUrl = (slug: string) => `${customScriptsBaseUrl}/install/${slug}-install.sh`;
 // issue #15: every custom-configured resolution also compares the pinned
-// commit against upstream ProxmoxVED main; the captured ahead fixture
+// commit against upstream DevScripts main; the captured ahead fixture
 // changes demo-shop (among others), so demo-shop resolves to the fork.
-const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
 const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
 const MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
 
@@ -202,7 +202,7 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
     if (href === customInstallUrl('demo-shop')) return new Response('no prompts here\n', { status: 200 });
     // T016 (US2): the ProxmoxVE shadow probe hits, so the resolved source
     // shadows an upstream copy and the R7 override notice is emitted --
-    // the ProxmoxVED shadow probe still "not present" (falls through below).
+    // the DevScripts shadow probe still "not present" (falls through below).
     if (href === `${UPSTREAM_STABLE_BASE}/ct/demo-shop.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
@@ -232,7 +232,7 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   // into the job log under its own "----- dry-run preview -----" header.
   assert.match(
     preview,
-    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/DevScripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
   );
 
   await waitForJobFinished(jobStore, jobId);

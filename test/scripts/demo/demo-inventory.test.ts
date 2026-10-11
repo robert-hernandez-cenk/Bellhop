@@ -228,7 +228,7 @@ async function allDemoCatalogText(): Promise<string[]> {
     texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/${slug}.sh`)).text());
   }
   for (const slug of DEMO_CATALOG_SLUGS.dev) {
-    texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/${slug}.sh`)).text());
+    texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/${slug}.sh`)).text());
   }
   assert.ok(slugs.length > 0);
   return texts;

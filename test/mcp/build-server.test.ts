@@ -386,7 +386,7 @@ test('edit_guest rejects leaving OIDC gating without confirmOidcClientDeletion, 
 });
 
 // --- check_install_app / custom script repository (issue #11) ---
-// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// Example values only (constitution Principle I) -- example-user/DevScripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/lib/app-source.test.ts use.
 
@@ -394,13 +394,13 @@ const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
 const SHA = HEAD_SHA_RAW.trim();
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_REPO = 'DevScripts';
 const CUSTOM_BRANCH = 'my-apps';
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 // issue #15: every custom-configured resolution also compares the pinned
-// commit against upstream ProxmoxVED main; the captured ahead fixture
+// commit against upstream DevScripts main; the captured ahead fixture
 // changes demo-shop (among others), so demo-shop resolves to the fork.
-const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
 const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
 

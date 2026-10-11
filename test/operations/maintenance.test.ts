@@ -325,7 +325,7 @@ test('update-app apply skips the re-check, logging one info line, when the app d
 test('update-app apply re-checks against the pinned appSource without resolving it again', async () => {
   const inv: Inventory = {
     ...appUpdateInventory(),
-    customScriptsRepo: 'example-owner/ProxmoxVED',
+    customScriptsRepo: 'example-owner/DevScripts',
     customScriptsBranch: 'my-branch',
   };
   const inventoryPath = tempAppUpdateDbPath();
@@ -333,7 +333,7 @@ test('update-app apply re-checks against the pinned appSource without resolving 
     if (command.includes('HOME:-/root')) return { stdout: '1.0.0\n', stderr: '', code: 0 };
     return { stdout: '', stderr: '', code: 0 };
   });
-  const pinnedCtUrl = 'https://raw.githubusercontent.com/example-owner/ProxmoxVED/0123456789abcdef0123456789abcdef01234567/ct/homepage.sh';
+  const pinnedCtUrl = 'https://raw.githubusercontent.com/example-owner/DevScripts/0123456789abcdef0123456789abcdef01234567/ct/homepage.sh';
   const calls: string[] = [];
   const routes = routedFetch({
     [pinnedCtUrl]: ok(HOMEPAGE_SCRIPT),
@@ -349,7 +349,7 @@ test('update-app apply re-checks against the pinned appSource without resolving 
     kind: 'custom',
     slug: 'homepage',
     ctUrl: pinnedCtUrl,
-    scriptsBaseUrl: 'https://raw.githubusercontent.com/example-owner/ProxmoxVED/0123456789abcdef0123456789abcdef01234567',
+    scriptsBaseUrl: 'https://raw.githubusercontent.com/example-owner/DevScripts/0123456789abcdef0123456789abcdef01234567',
     shadows: [],
     changed: true,
   };

@@ -25,13 +25,13 @@ None.
 
 **Independent Test**: `npm test` with fetch stubs keyed only by `DevScripts` URLs passes. Before the code change, the same tests fail.
 
-- [ ] T001 [US1] Replace `ProxmoxVED` with `DevScripts` across `test/**/*.ts` (URLs, `CUSTOM_REPO`, example forks, expected messages, `shadows` assertions, fake-fetch repo keys), and fix the one regex alternation `community-scripts\/ProxmoxVED?\/ct` in `test/lib/script-catalog.test.ts` to `community-scripts\/(ProxmoxVE|DevScripts)\/ct`
-- [ ] T002 [US1] Replace `ProxmoxVED` with `DevScripts` in the URL fields of `test/fixtures/github/compare-ahead-3-apps.json` and `test/fixtures/github/compare-diverged-conflict.json` (research R4)
-- [ ] T003 [US1] Run `npm test` and confirm the retargeted tests fail against the unchanged code (the RED step)
-- [ ] T004 [US1] In `src/lib/app-source.ts`: set `UPSTREAM_DEV_BASE` to `https://raw.githubusercontent.com/community-scripts/DevScripts/main` and `COMPARE_UPSTREAM` to `community-scripts/DevScripts`, change `ShadowedRepo` to `'ProxmoxVE' | 'DevScripts'`, and rename the probe/shadow name, the conflict message and the fork-network error ("a fork of DevScripts?") and all comments, per contracts/interfaces.md
-- [ ] T005 [P] [US1] In `src/lib/script-catalog.ts`: `DEV_REPO = 'DevScripts'`, the `shadowedBy` name, and the comments
-- [ ] T006 [P] [US1] In `scripts/demo/demo-fetch.ts`: `DEV_REPO = 'DevScripts'`
-- [ ] T007 [US1] `npm run typecheck` and `npm test` pass (GREEN)
+- [x] T001 [US1] Replace `ProxmoxVED` with `DevScripts` across `test/**/*.ts` (URLs, `CUSTOM_REPO`, example forks, expected messages, `shadows` assertions, fake-fetch repo keys), and fix the one regex alternation `community-scripts\/ProxmoxVED?\/ct` in `test/lib/script-catalog.test.ts` to `community-scripts\/(ProxmoxVE|DevScripts)\/ct`
+- [x] T002 [US1] Replace `ProxmoxVED` with `DevScripts` in the URL fields of `test/fixtures/github/compare-ahead-3-apps.json` and `test/fixtures/github/compare-diverged-conflict.json` (research R4)
+- [x] T003 [US1] Run `npm test` and confirm the retargeted tests fail against the unchanged code (the RED step)
+- [x] T004 [US1] In `src/lib/app-source.ts`: set `UPSTREAM_DEV_BASE` to `https://raw.githubusercontent.com/community-scripts/DevScripts/main` and `COMPARE_UPSTREAM` to `community-scripts/DevScripts`, change `ShadowedRepo` to `'ProxmoxVE' | 'DevScripts'`, and rename the probe/shadow name, the conflict message and the fork-network error ("a fork of DevScripts?") and all comments, per contracts/interfaces.md
+- [x] T005 [P] [US1] In `src/lib/script-catalog.ts`: `DEV_REPO = 'DevScripts'`, the `shadowedBy` name, and the comments
+- [x] T006 [P] [US1] In `scripts/demo/demo-fetch.ts`: `DEV_REPO = 'DevScripts'`
+- [x] T007 [US1] `npm run typecheck` and `npm test` pass (GREEN)
 
 **Checkpoint**: US1 is complete. Commit `Point upstream dev-repo requests at DevScripts (#101, US1)`.
 

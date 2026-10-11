@@ -5,7 +5,7 @@
 // See specs/014-web-ui-screenshots/research.md R3.
 const GITHUB_OWNER = 'community-scripts';
 const STABLE_REPO = 'ProxmoxVE';
-const DEV_REPO = 'ProxmoxVED';
+const DEV_REPO = 'DevScripts';
 
 // Every `app` slug set on a demo guest (scripts/demo/demo-inventory.ts) MUST
 // appear here, or the Update page and the install-app app check for that

@@ -67,8 +67,8 @@ test('runSetConfig requires a value when not unsetting', () => {
 
 test('runSetConfig round-trips customScriptsRepo through --apply and --unset', () => {
   const inventoryPath = tempInventoryPath();
-  runSetConfig({ key: 'customScriptsRepo', value: 'example-user/ProxmoxVED', apply: true }, { inventoryPath });
-  assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/ProxmoxVED');
+  runSetConfig({ key: 'customScriptsRepo', value: 'example-user/DevScripts', apply: true }, { inventoryPath });
+  assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/DevScripts');
   runSetConfig({ key: 'customScriptsRepo', unset: true, apply: true }, { inventoryPath });
   assert.equal(loadInventory(inventoryPath).customScriptsRepo, undefined);
 });
@@ -103,11 +103,11 @@ test('runSetConfig allows setting only customScriptsRepo without customScriptsBr
   // key at a time, so this must succeed on its own.
   const inventoryPath = tempInventoryPath();
   const result = runSetConfig(
-    { key: 'customScriptsRepo', value: 'example-user/ProxmoxVED', apply: true },
+    { key: 'customScriptsRepo', value: 'example-user/DevScripts', apply: true },
     { inventoryPath }
   );
   assert.equal(result.applied, true);
-  assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/ProxmoxVED');
+  assert.equal(loadInventory(inventoryPath).customScriptsRepo, 'example-user/DevScripts');
   assert.equal(loadInventory(inventoryPath).customScriptsBranch, undefined);
 });
 

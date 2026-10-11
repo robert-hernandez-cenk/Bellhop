@@ -12,14 +12,14 @@ import { settingFix } from './settings-hint.ts';
 // resolveDevAppUrl actually build URLs from) from these, so the two files
 // share one definition instead of two copies drifting apart.
 export const UPSTREAM_STABLE_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main';
-export const UPSTREAM_DEV_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main';
+export const UPSTREAM_DEV_BASE = 'https://raw.githubusercontent.com/community-scripts/DevScripts/main';
 
 const GITHUB_FETCH_TIMEOUT_MS = 5000;
 
 // Appended to every error this module throws, naming the fix --
 // resolveHeadSha, compareBranch and resolveAppSource's own fork ct/<slug>.sh
 // fetch all throw through this same suffix, so any resolution failure (bad
-// settings, GitHub down, a typo'd branch, a repo that isn't a ProxmoxVED
+// settings, GitHub down, a typo'd branch, a repo that isn't a DevScripts
 // fork) points the operator at the same command.
 const ERROR_SUFFIX =
   ' -- check customScriptsRepo/customScriptsBranch with "bellhop set-config" or on the web UI\'s Settings page';
@@ -34,7 +34,7 @@ export interface CustomScriptSource {
   label: string;
 }
 
-export type ShadowedRepo = 'ProxmoxVE' | 'ProxmoxVED';
+export type ShadowedRepo = 'ProxmoxVE' | 'DevScripts';
 
 // The outcome of resolving a single --app value to somewhere Bellhop can
 // curl from. `slug` is absent only for kind 'url' (a pasted full script URL
@@ -44,7 +44,7 @@ export type ShadowedRepo = 'ProxmoxVE' | 'ProxmoxVED';
 // set only for kind 'custom' (issue #15): `changed` is true when the branch
 // changes this app, false for a fork-only resolution; `conflict` is true
 // only when upstream also changed a changed app since the branch point.
-// `custom.mergeBase` is where the branch left upstream ProxmoxVED main.
+// `custom.mergeBase` is where the branch left upstream DevScripts main.
 export interface AppSource {
   kind: 'url' | 'upstream' | 'custom';
   slug?: string;
@@ -155,10 +155,10 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
 }
 
 // The upstream repository a custom branch is compared against (issue #15,
-// research R1): a fork of ProxmoxVED, compared to its `main`. Fixed rather
+// research R1): a fork of DevScripts, compared to its `main`. Fixed rather
 // than configurable -- #11 already assumed a VED-shaped fork, and a fork of
 // ProxmoxVE (stable) is out of scope (spec Assumptions).
-const COMPARE_UPSTREAM = 'community-scripts/ProxmoxVED';
+const COMPARE_UPSTREAM = 'community-scripts/DevScripts';
 
 // GitHub's compare endpoint stops listing files at 300 (research R4); the
 // file list isn't pageable, so a list that long can't be trusted to be
@@ -166,7 +166,7 @@ const COMPARE_UPSTREAM = 'community-scripts/ProxmoxVED';
 const COMPARE_FILE_CAP = 300;
 
 // The parsed result of comparing a pinned custom-branch commit against
-// upstream ProxmoxVED main (data-model.md BranchComparison).
+// upstream DevScripts main (data-model.md BranchComparison).
 export interface BranchComparison {
   sha: string;
   mergeBase: string;
@@ -213,7 +213,7 @@ export function changedSlugsFromFiles(files: { filename: string; status: string 
   return slugs;
 }
 
-// One rate-limited request (research R1/R2): upstream ProxmoxVED main
+// One rate-limited request (research R1/R2): upstream DevScripts main
 // compared, three-dot, against the branch's pinned head commit. The head is
 // addressed as <owner>:<repo>:<sha> rather than a branch name because a
 // branch-name head can be silently answered from a different fork in the
@@ -244,7 +244,7 @@ export async function compareBranch(
     if (response.status === 401) throw githubUnauthorizedError(prefix.slice(0, -1));
     if (response.status === 404)
       throw new Error(
-        `${prefix} commit ${sha.slice(0, 7)} not found in ${COMPARE_UPSTREAM}'s fork network (is ${source.owner}/${source.repo} a fork of ProxmoxVED?)${ERROR_SUFFIX}`
+        `${prefix} commit ${sha.slice(0, 7)} not found in ${COMPARE_UPSTREAM}'s fork network (is ${source.owner}/${source.repo} a fork of DevScripts?)${ERROR_SUFFIX}`
       );
     if (response.status === 403 || response.status === 429)
       throw new Error(`${prefix} GitHub rate limit reached (try again later)${ERROR_SUFFIX}`);
@@ -271,7 +271,7 @@ export async function compareBranch(
   };
 }
 
-// A raw-content read of one upstream ProxmoxVED script at one ref, for the
+// A raw-content read of one upstream DevScripts script at one ref, for the
 // conflict check: its body, 'absent' (404), or undefined when the read
 // failed any other way (thrown fetch, non-404 non-OK status).
 async function readUpstreamScript(ref: string, file: string, fetchImpl: typeof fetch): Promise<string | 'absent' | undefined> {
@@ -292,7 +292,7 @@ async function readUpstreamScript(ref: string, file: string, fetchImpl: typeof f
   }
 }
 
-// research R5: did upstream ProxmoxVED also change this (branch-changed)
+// research R5: did upstream DevScripts also change this (branch-changed)
 // app since the branch point? Compares the app's ct/ and install/ scripts
 // at the merge base against upstream main through raw content -- no API
 // quota and no 300-file cap, unlike a reverse compare, whose file list a
@@ -353,7 +353,7 @@ async function probeUpstream(
 async function probeBothUpstreams(slug: string, fetchImpl: typeof fetch): Promise<[UpstreamPresence, UpstreamPresence]> {
   return Promise.all([
     probeUpstream('ProxmoxVE', UPSTREAM_STABLE_BASE, slug, fetchImpl),
-    probeUpstream('ProxmoxVED', UPSTREAM_DEV_BASE, slug, fetchImpl),
+    probeUpstream('DevScripts', UPSTREAM_DEV_BASE, slug, fetchImpl),
   ]);
 }
 
@@ -361,7 +361,7 @@ async function probeBothUpstreams(slug: string, fetchImpl: typeof fetch): Promis
 function shadowsFrom([stable, dev]: [UpstreamPresence, UpstreamPresence]): ShadowedRepo[] {
   const shadows: ShadowedRepo[] = [];
   if (stable === 'present') shadows.push('ProxmoxVE');
-  if (dev === 'present') shadows.push('ProxmoxVED');
+  if (dev === 'present') shadows.push('DevScripts');
   return shadows;
 }
 
@@ -509,7 +509,7 @@ export function formatSourceNotice(source: AppSource): SourceNotice | undefined 
   if (source.conflict) {
     return {
       level: 'warn',
-      message: `"${source.slug}" changed upstream in ProxmoxVED since ${source.custom.label} branched (merge base ${source.custom.mergeBase.slice(0, 7)}); installing the custom copy at commit ${shortSha}. Rebase ${source.custom.branch} onto upstream main to pick up the upstream changes.`,
+      message: `"${source.slug}" changed upstream in DevScripts since ${source.custom.label} branched (merge base ${source.custom.mergeBase.slice(0, 7)}); installing the custom copy at commit ${shortSha}. Rebase ${source.custom.branch} onto upstream main to pick up the upstream changes.`,
     };
   }
   if (source.shadows.length === 0) return undefined;

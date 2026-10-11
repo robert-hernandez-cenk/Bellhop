@@ -33,7 +33,7 @@ const CATALOG_FETCH_TIMEOUT_MS = 5000;
 // ProxmoxVE-Frontend-Archive). The ct/ directory listing is therefore the
 // only catalog source, and slugs are all it can yield.
 const STABLE_REPO = 'ProxmoxVE';
-const DEV_REPO = 'ProxmoxVED';
+const DEV_REPO = 'DevScripts';
 
 export interface CatalogSlugs {
   stable: string[];
@@ -192,7 +192,7 @@ export interface ScriptCatalog extends CatalogSlugs {
   // there would be no action for one to offer.
   stale: boolean;
   // The apps the operator's configured custom script repository branch
-  // changes relative to upstream ProxmoxVED (issue #15, data-model.md
+  // changes relative to upstream DevScripts (issue #15, data-model.md
   // "Catalog response") -- not the fork's whole ct/ listing. Absent when the
   // feature is off (no inventory passed, or both settings unset), when the
   // settings are half-configured, or when the head-SHA pin or compare call
@@ -202,7 +202,7 @@ export interface ScriptCatalog extends CatalogSlugs {
   // response only -- the persisted script_catalog table is untouched).
   // `shadows` is keyed by slug, present only for a slug that also exists in
   // `stable`/`dev` before removal. `conflicts` is the subset of `slugs`
-  // upstream ProxmoxVED also changed since the branch point
+  // upstream DevScripts also changed since the branch point
   // (detectConflict) -- always empty for a branch that isn't behind.
   custom?: {
     label: string;
@@ -317,7 +317,7 @@ async function getUpstreamCatalog(dbPath: string, fetchImpl: typeof fetch, now: 
 // Computes the custom group -- the slugs the configured branch changes, and
 // which of those upstream also changed (issue #15, research R8) -- memoized
 // by getScriptCatalog's own cache/cooldown below. Pins the branch head
-// (resolveHeadSha) and compares it against upstream ProxmoxVED
+// (resolveHeadSha) and compares it against upstream DevScripts
 // (compareBranch), the same two rate-limited requests resolveAppSource
 // makes; the conflict check costs no API quota (detectConflict reads raw
 // content, and only when the branch is behind). Returns undefined for every
@@ -382,7 +382,7 @@ function withCustomGroup(base: ScriptCatalog, custom: CustomGroup): ScriptCatalo
   for (const slug of custom.slugs) {
     const shadowedBy: ShadowedRepo[] = [];
     if (stableSet.has(slug)) shadowedBy.push('ProxmoxVE');
-    if (devSet.has(slug)) shadowedBy.push('ProxmoxVED');
+    if (devSet.has(slug)) shadowedBy.push('DevScripts');
     if (shadowedBy.length > 0) shadows[slug] = shadowedBy;
   }
   return {
