@@ -14,7 +14,7 @@ export { pickStorage } from '../../lib/storage.ts';
 // module's own custom-repository resolution) rather than hardcoded here a
 // second time.
 const COMMUNITY_SCRIPTS_BASE = `${UPSTREAM_STABLE_BASE}/ct`;
-// Apps still under active development (e.g. budget-board) live in a
+// Apps still under active development (e.g. 4gaboards) live in a
 // separate repo -- same owner, same ct/<slug>.sh layout, "DevScripts"
 // (dev) instead of "ProxmoxVE" -- until they graduate to the main one.
 // Never assumed up front: resolveAppUrl always targets the main repo, and
@@ -193,9 +193,9 @@ export function buildInstallAppScript(
     `printf 'var_template_storage=%s\\nvar_container_storage=%s\\n' ${shellQuote(storage.template)} ${shellQuote(storage.container)} >> /usr/local/community-scripts/default.vars`,
     // research R1: community-scripts' shared core/build.func resolves every
     // non-engine path (ct/..., install/...) against COMMUNITY_SCRIPTS_URL
-    // when it's set, falling back to upstream DevScripts otherwise --
-    // without this export, a fork-installed app's own install/<slug>-
-    // install.sh would still be pulled from upstream (or 404 if upstream
+    // when it's set, falling back to the script's own default upstream
+    // otherwise -- without this export, a fork-installed app's own
+    // install/<slug>-install.sh would still be pulled from upstream (or 404 if upstream
     // has no such app at all). Exported at the pinned commit, never the
     // branch name, and only for a custom-repository resolution.
     ...(isCustom ? [`export COMMUNITY_SCRIPTS_URL=${shellQuote(source!.scriptsBaseUrl!)}`] : []),

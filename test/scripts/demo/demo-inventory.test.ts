@@ -221,14 +221,23 @@ async function allDemoSshOutputs(): Promise<string[]> {
   return outputs;
 }
 
+// A 404 body would pass the example-data scan vacuously, so each read must
+// actually hit a demo route.
+async function demoText(url: string): Promise<string> {
+  const res = await demoFetch(url);
+  assert.equal(res.status, 200, `demoFetch ${url}`);
+  return res.text();
+}
+
 async function allDemoCatalogText(): Promise<string[]> {
   const slugs = [...DEMO_CATALOG_SLUGS.stable, ...DEMO_CATALOG_SLUGS.dev];
   const texts: string[] = [JSON.stringify(DEMO_CATALOG_SLUGS)];
   for (const slug of DEMO_CATALOG_SLUGS.stable) {
-    texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/${slug}.sh`)).text());
+    texts.push(await demoText(`https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/${slug}.sh`));
   }
   for (const slug of DEMO_CATALOG_SLUGS.dev) {
-    texts.push(await (await demoFetch(`https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/${slug}.sh`)).text());
+    texts.push(await demoText(`https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/${slug}.sh`));
+    texts.push(await demoText(`https://raw.githubusercontent.com/community-scripts/DevScripts/main/install/${slug}-install.sh`));
   }
   assert.ok(slugs.length > 0);
   return texts;

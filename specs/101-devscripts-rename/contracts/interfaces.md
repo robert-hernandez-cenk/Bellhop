@@ -1,9 +1,9 @@
 # Interface changes: ProxmoxVED → DevScripts
 
-Example values only: fork `example-user/DevScripts`, branch `my-apps`.
+Example values only: fork `example-user/my-scripts`, branch `my-apps`.
 
-- **App check result** (`/api/provisioning/check-app`, MCP `check_app`): each `shadows` entry is `"ProxmoxVE"` or `"DevScripts"`.
-- **Catalog** (`/api/provisioning/catalog`, MCP catalog tool): each `custom.shadows[slug]` entry uses the same two names.
+- **App check result** (`/api/provisioning/install-app/check-app`, MCP `check_install_app`): each `shadows` entry is `"ProxmoxVE"` or `"DevScripts"`.
+- **Catalog** (`/api/provisioning/install-app/apps`, MCP `list_install_apps`): each `custom.shadows[slug]` entry uses the same two names.
 - **Generated install/update command** for a bare upstream slug:
   `bash -c "$(curl -fsSL '.../community-scripts/ProxmoxVE/main/ct/<slug>.sh' 2>/dev/null || curl -fsSL '.../community-scripts/DevScripts/main/ct/<slug>.sh')"`
 - **Messages**:

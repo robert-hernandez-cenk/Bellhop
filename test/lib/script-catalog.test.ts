@@ -393,7 +393,7 @@ const DEV_RAW = (ref: string, file: string) => `https://raw.githubusercontent.co
 // Example values only (constitution Principle I) -- same example the
 // spec/plan/data-model/app-source tests use.
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'DevScripts';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
 

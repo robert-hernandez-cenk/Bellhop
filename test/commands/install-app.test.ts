@@ -572,7 +572,7 @@ test('runInstallApp warns when the host has no authorized_keys to provision', as
 });
 
 // --- custom script repository (issue #11) ---
-// Example values only (constitution Principle I) -- example-user/DevScripts
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/lib/app-source.test.ts use.
 
@@ -584,7 +584,7 @@ const HEAD_SHA_RAW = fixtureText('branch-head-sha.txt');
 const SHA = HEAD_SHA_RAW.trim();
 
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'DevScripts';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
@@ -717,7 +717,7 @@ test('runInstallApp throws a resolution failure before any pct/install exec is r
         { host: 'pve1', mid: 4, app: 'demo-shop', hostname: 'demo-shop', fetchImpl: failingFetch },
         { ssh, inventory: inventoryWithCustomSource }
       ),
-    /Custom script repository example-user\/DevScripts@my-apps: GitHub rate limit reached \(try again later\)/
+    /Custom script repository example-user\/my-scripts@my-apps: GitHub rate limit reached \(try again later\)/
   );
   assert.equal(ssh.history.length, 0, 'no pct/install exec should have been recorded');
 });
@@ -754,7 +754,7 @@ test('runInstallApp logs the R7 override notice as the first console line when t
   assert.ok(lines.length > 0, 'expected the override notice to be logged');
   assert.match(
     lines[0],
-    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/DevScripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/my-scripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
   );
 });
 
@@ -803,7 +803,7 @@ test('runInstallApp logs the rebase warning first for a conflicting app and stil
   }
   assert.match(
     lines[0],
-    /^\[WARN\s+\S+ \S+\] "demo-wiki" changed upstream in DevScripts since example-user\/DevScripts@my-apps branched \(merge base [0-9a-f]{7}\); installing the custom copy at commit [0-9a-f]{7}\. Rebase my-apps onto upstream main to pick up the upstream changes\.$/
+    /^\[WARN\s+\S+ \S+\] "demo-wiki" changed upstream in DevScripts since example-user\/my-scripts@my-apps branched \(merge base [0-9a-f]{7}\); installing the custom copy at commit [0-9a-f]{7}\. Rebase my-apps onto upstream main to pick up the upstream changes\.$/
   );
   assert.equal(result.source.conflict, true);
   assert.ok(result.script.endsWith(`bash -c "$(curl -fsSL ${shellQuote(customCtUrl(slug))})"`), result.script);

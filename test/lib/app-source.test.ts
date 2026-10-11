@@ -38,7 +38,7 @@ const AHEAD_MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit:
 const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
 const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit
   .sha;
-// research R5: the conflict check reads upstream DevScripts's two scripts
+// research R5: the conflict check reads upstream DevScripts' two scripts
 // for an app at the merge base and on main, through raw content.
 const DEV_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
 const CT_FILE = (slug: string) => `ct/${slug}.sh`;
@@ -50,16 +50,16 @@ const BASE_INVENTORY: Inventory = {
   guests: [],
 };
 
-// Example values only (constitution Principle I) -- example-user/DevScripts
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model use.
 const SOURCE: CustomScriptSource = {
   owner: 'example-user',
-  repo: 'DevScripts',
+  repo: 'my-scripts',
   branch: 'my-apps',
-  label: 'example-user/DevScripts@my-apps',
+  label: 'example-user/my-scripts@my-apps',
 };
 
-function withCustomSource(repo = 'example-user/DevScripts', branch = 'my-apps'): Inventory {
+function withCustomSource(repo = 'example-user/my-scripts', branch = 'my-apps'): Inventory {
   return { ...BASE_INVENTORY, customScriptsRepo: repo, customScriptsBranch: branch };
 }
 
@@ -145,7 +145,7 @@ test('customScriptSource returns the split/derived source when both settings are
 });
 
 test('customScriptSource throws naming the missing setting when only customScriptsRepo is set', () => {
-  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/DevScripts' };
+  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/my-scripts' };
   assert.throws(
     () => customScriptSource(inv),
     /customScriptsBranch is not set \(customScriptsRepo is\) -- run: bellhop set-config customScriptsBranch <value> --apply, or set it on the web UI's Settings page, or unset customScriptsRepo$/
@@ -170,9 +170,9 @@ test('resolveHeadSha returns the trimmed head SHA on success', async () => {
 test('resolveHeadSha sends User-Agent/Accept headers and URL-encodes a branch containing "/"', async () => {
   const branchSource: CustomScriptSource = {
     owner: 'example-user',
-    repo: 'DevScripts',
+    repo: 'my-scripts',
     branch: 'feature/my-apps',
-    label: 'example-user/DevScripts@feature/my-apps',
+    label: 'example-user/my-scripts@feature/my-apps',
   };
   let seenUrl = '';
   let seenHeaders: Record<string, string> = {};
@@ -184,7 +184,7 @@ test('resolveHeadSha sends User-Agent/Accept headers and URL-encodes a branch co
 
   await resolveHeadSha(branchSource, fetchImpl);
 
-  assert.equal(seenUrl, 'https://api.github.com/repos/example-user/DevScripts/commits/feature%2Fmy-apps');
+  assert.equal(seenUrl, 'https://api.github.com/repos/example-user/my-scripts/commits/feature%2Fmy-apps');
   assert.equal(seenHeaders['User-Agent'], 'bellhop');
   assert.equal(seenHeaders.Accept, 'application/vnd.github.sha');
 });
@@ -192,7 +192,7 @@ test('resolveHeadSha sends User-Agent/Accept headers and URL-encodes a branch co
 test('resolveHeadSha throws a "branch not found" error on 422', async () => {
   await assert.rejects(
     () => resolveHeadSha(SOURCE, fakeFetch({ [HEAD_SHA_URL]: () => new Response(MISSING_BRANCH_BODY, { status: 422 }) })),
-    /Custom script repository example-user\/DevScripts@my-apps: branch not found -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+    /Custom script repository example-user\/my-scripts@my-apps: branch not found -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
@@ -513,7 +513,7 @@ test('resolveAppSource makes no fetch calls when the feature is off', async () =
 });
 
 test('resolveAppSource throws the both-or-neither message on half-config, with no fetch call', async () => {
-  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/DevScripts' };
+  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/my-scripts' };
   await assert.rejects(() => resolveAppSource('plex', inv, throwingFetch), /customScriptsBranch is not set \(customScriptsRepo is\)/);
 });
 
@@ -639,7 +639,7 @@ test('resolveAppSource resolves a slug absent everywhere to upstream', async () 
 test('resolveAppSource throws when the fork ct probe returns a non-404 non-OK status', async () => {
   await assert.rejects(
     () => resolveAppSource('demo-legacy', withCustomSource(), customFetch('demo-legacy', { fork: 500 })),
-    /Custom script repository example-user\/DevScripts@my-apps: GitHub returned 500 -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+    /Custom script repository example-user\/my-scripts@my-apps: GitHub returned 500 -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
@@ -662,7 +662,7 @@ test('resolveAppSource throws a named error when the compare call fails, never f
           [COMPARE_URL]: () => new Response('{"message":"Not Found"}', { status: 404 }),
         })
       ),
-    /Custom script repository example-user\/DevScripts@my-apps: commit [0-9a-f]{7} not found in community-scripts\/DevScripts's fork network.* -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+    /Custom script repository example-user\/my-scripts@my-apps: commit [0-9a-f]{7} not found in community-scripts\/DevScripts's fork network.* -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
@@ -862,14 +862,14 @@ function customSource(overrides: Partial<AppSource> = {}): AppSource {
 test('formatSourceNotice warns to rebase when a changed app conflicts with upstream', () => {
   assert.deepEqual(formatSourceNotice(customSource({ conflict: true, shadows: ['DevScripts'] })), {
     level: 'warn',
-    message: `"demo-wiki" changed upstream in DevScripts since example-user/DevScripts@my-apps branched (merge base ${DIVERGED_MERGE_BASE.slice(0, 7)}); installing the custom copy at commit ${SHA.slice(0, 7)}. Rebase my-apps onto upstream main to pick up the upstream changes.`,
+    message: `"demo-wiki" changed upstream in DevScripts since example-user/my-scripts@my-apps branched (merge base ${DIVERGED_MERGE_BASE.slice(0, 7)}); installing the custom copy at commit ${SHA.slice(0, 7)}. Rebase my-apps onto upstream main to pick up the upstream changes.`,
   });
 });
 
 test('formatSourceNotice gives one info line when a changed app replaces an upstream copy without conflicting', () => {
   assert.deepEqual(formatSourceNotice(customSource({ shadows: ['ProxmoxVE', 'DevScripts'] })), {
     level: 'info',
-    message: `"demo-wiki" comes from the custom script repository example-user/DevScripts@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, DevScripts.`,
+    message: `"demo-wiki" comes from the custom script repository example-user/my-scripts@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, DevScripts.`,
   });
 });
 
@@ -928,7 +928,7 @@ test('resolveHeadSha throws the named 401 error, never the token, and never fall
         assert.ok(err instanceof Error);
         assert.equal(
           err.message,
-          'Custom script repository example-user/DevScripts@my-apps: GitHub rejected the configured GitHub API token (401) -- replace or clear githubApiToken: ' +
+          'Custom script repository example-user/my-scripts@my-apps: GitHub rejected the configured GitHub API token (401) -- replace or clear githubApiToken: ' +
             "run: bellhop set-config githubApiToken --stdin --apply, or set it on the web UI's Settings page"
         );
         assert.ok(!err.message.includes('github_pat_example0000'));
@@ -969,7 +969,7 @@ test('compareBranch throws the named 401 error, never the token', async () => {
       () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('{}', { status: 401 }))),
       (err: unknown) => {
         assert.ok(err instanceof Error);
-        assert.match(err.message, /^Custom script repository example-user\/DevScripts@my-apps: GitHub rejected the configured GitHub API token \(401\)/);
+        assert.match(err.message, /^Custom script repository example-user\/my-scripts@my-apps: GitHub rejected the configured GitHub API token \(401\)/);
         assert.ok(!err.message.includes('github_pat_example0000'));
         return true;
       }

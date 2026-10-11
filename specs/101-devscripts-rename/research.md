@@ -19,7 +19,7 @@
 ## R4. Captured fixtures
 
 - **Decision**: rewrite `ProxmoxVED` → `DevScripts` in the URL fields of `test/fixtures/github/compare-*.json`.
-- **Rationale**: these are redacted live compare responses. Bellhop reads only `status`, `merge_base_commit.sha` and `files[].filename/status` from them, and those fields are unchanged. The URL fields (`html_url`, `blob_url`, ...) name the repository, and a fresh capture would now show `DevScripts` there. The response shape is unchanged, so rewriting the names keeps the fixtures faithful.
+- **Rationale**: these are redacted live compare responses. Bellhop reads only `merge_base_commit.sha`, `ahead_by`, `behind_by` and `files[].filename/status` from them, and those fields are unchanged. The URL fields (`html_url`, `blob_url`, ...) name the repository, and a fresh capture would now show `DevScripts` there. The response shape is unchanged, so rewriting the names keeps the fixtures faithful.
 
 ## R5. Screenshot
 

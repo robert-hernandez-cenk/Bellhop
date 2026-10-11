@@ -10,9 +10,15 @@ import { settingFix } from './settings-hint.ts';
 // to ct/. install-app.ts derives its own COMMUNITY_SCRIPTS_BASE/
 // COMMUNITY_SCRIPTS_DEV_BASE (the /ct-scoped bases resolveAppUrl/
 // resolveDevAppUrl actually build URLs from) from these, so the two files
-// share one definition instead of two copies drifting apart.
-export const UPSTREAM_STABLE_BASE = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main';
-export const UPSTREAM_DEV_BASE = 'https://raw.githubusercontent.com/community-scripts/DevScripts/main';
+// share one definition instead of two copies drifting apart. The owner and
+// repo names are the single source for every upstream URL, message and
+// catalog listing (script-catalog.ts imports them too), so a community-scripts
+// rename (such as the dev repo's, issue #101) is a one-line change here.
+export const UPSTREAM_OWNER = 'community-scripts';
+export const UPSTREAM_STABLE_REPO = 'ProxmoxVE';
+export const UPSTREAM_DEV_REPO = 'DevScripts';
+export const UPSTREAM_STABLE_BASE = `https://raw.githubusercontent.com/${UPSTREAM_OWNER}/${UPSTREAM_STABLE_REPO}/main`;
+export const UPSTREAM_DEV_BASE = `https://raw.githubusercontent.com/${UPSTREAM_OWNER}/${UPSTREAM_DEV_REPO}/main`;
 
 const GITHUB_FETCH_TIMEOUT_MS = 5000;
 
@@ -34,7 +40,7 @@ export interface CustomScriptSource {
   label: string;
 }
 
-export type ShadowedRepo = 'ProxmoxVE' | 'DevScripts';
+export type ShadowedRepo = typeof UPSTREAM_STABLE_REPO | typeof UPSTREAM_DEV_REPO;
 
 // The outcome of resolving a single --app value to somewhere Bellhop can
 // curl from. `slug` is absent only for kind 'url' (a pasted full script URL
@@ -155,10 +161,10 @@ export async function resolveHeadSha(source: CustomScriptSource, fetchImpl: type
 }
 
 // The upstream repository a custom branch is compared against (issue #15,
-// research R1): a fork of DevScripts, compared to its `main`. Fixed rather
-// than configurable -- #11 already assumed a DevScripts-shaped fork, and a fork of
-// ProxmoxVE (stable) is out of scope (spec Assumptions).
-const COMPARE_UPSTREAM = 'community-scripts/DevScripts';
+// research R1): a fork of the dev repo, compared to its `main`. Fixed rather
+// than configurable -- #11 already assumed a fork of the dev repo, and a fork
+// of ProxmoxVE (stable) is out of scope (spec Assumptions).
+const COMPARE_UPSTREAM = `${UPSTREAM_OWNER}/${UPSTREAM_DEV_REPO}`;
 
 // GitHub's compare endpoint stops listing files at 300 (research R4); the
 // file list isn't pageable, so a list that long can't be trusted to be
@@ -244,7 +250,7 @@ export async function compareBranch(
     if (response.status === 401) throw githubUnauthorizedError(prefix.slice(0, -1));
     if (response.status === 404)
       throw new Error(
-        `${prefix} commit ${sha.slice(0, 7)} not found in ${COMPARE_UPSTREAM}'s fork network (is ${source.owner}/${source.repo} a fork of DevScripts?)${ERROR_SUFFIX}`
+        `${prefix} commit ${sha.slice(0, 7)} not found in ${COMPARE_UPSTREAM}'s fork network (is ${source.owner}/${source.repo} a fork of ${UPSTREAM_DEV_REPO}?)${ERROR_SUFFIX}`
       );
     if (response.status === 403 || response.status === 429)
       throw new Error(`${prefix} GitHub rate limit reached (try again later)${ERROR_SUFFIX}`);
@@ -352,16 +358,16 @@ async function probeUpstream(
 
 async function probeBothUpstreams(slug: string, fetchImpl: typeof fetch): Promise<[UpstreamPresence, UpstreamPresence]> {
   return Promise.all([
-    probeUpstream('ProxmoxVE', UPSTREAM_STABLE_BASE, slug, fetchImpl),
-    probeUpstream('DevScripts', UPSTREAM_DEV_BASE, slug, fetchImpl),
+    probeUpstream(UPSTREAM_STABLE_REPO, UPSTREAM_STABLE_BASE, slug, fetchImpl),
+    probeUpstream(UPSTREAM_DEV_REPO, UPSTREAM_DEV_BASE, slug, fetchImpl),
   ]);
 }
 
 // The upstream repos a changed slug overrides, for the override notice.
 function shadowsFrom([stable, dev]: [UpstreamPresence, UpstreamPresence]): ShadowedRepo[] {
   const shadows: ShadowedRepo[] = [];
-  if (stable === 'present') shadows.push('ProxmoxVE');
-  if (dev === 'present') shadows.push('DevScripts');
+  if (stable === 'present') shadows.push(UPSTREAM_STABLE_REPO);
+  if (dev === 'present') shadows.push(UPSTREAM_DEV_REPO);
   return shadows;
 }
 
@@ -509,7 +515,7 @@ export function formatSourceNotice(source: AppSource): SourceNotice | undefined 
   if (source.conflict) {
     return {
       level: 'warn',
-      message: `"${source.slug}" changed upstream in DevScripts since ${source.custom.label} branched (merge base ${source.custom.mergeBase.slice(0, 7)}); installing the custom copy at commit ${shortSha}. Rebase ${source.custom.branch} onto upstream main to pick up the upstream changes.`,
+      message: `"${source.slug}" changed upstream in ${UPSTREAM_DEV_REPO} since ${source.custom.label} branched (merge base ${source.custom.mergeBase.slice(0, 7)}); installing the custom copy at commit ${shortSha}. Rebase ${source.custom.branch} onto upstream main to pick up the upstream changes.`,
     };
   }
   if (source.shadows.length === 0) return undefined;

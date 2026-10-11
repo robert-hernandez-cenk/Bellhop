@@ -70,7 +70,7 @@ test('runUpdateApp surfaces a non-zero exit code from the remote script', async 
 });
 
 // --- custom script repository (issue #11), update-app mirrors install-app ---
-// Example values only (constitution Principle I) -- example-user/DevScripts
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/commands/install-app.test.ts use.
 
@@ -79,7 +79,7 @@ const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 
 const SHA = HEAD_SHA_RAW.trim();
 
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'DevScripts';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
@@ -176,7 +176,7 @@ test('runUpdateApp throws a resolution failure before any exec is recorded', asy
   const failingFetch = (async () => new Response('rate limited', { status: 403 })) as unknown as typeof fetch;
   await assert.rejects(
     () => runUpdateApp({ guest: 'demo-shop', app: 'demo-shop', apply: true, fetchImpl: failingFetch }, { ssh, inventory: inventoryWithDemoShop }),
-    /Custom script repository example-user\/DevScripts@my-apps: GitHub rate limit reached \(try again later\)/
+    /Custom script repository example-user\/my-scripts@my-apps: GitHub rate limit reached \(try again later\)/
   );
   assert.equal(ssh.history.length, 0, 'no remote exec should have been recorded');
 });
@@ -210,7 +210,7 @@ test('runUpdateApp logs the R7 override notice when the custom source shadows an
   assert.ok(lines.length > 0, 'expected the override notice to be logged');
   assert.match(
     lines[0],
-    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/DevScripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/my-scripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
   );
 });
 

@@ -31,6 +31,11 @@ function branchOf(label: string): string | undefined {
 // to keep typing instead.
 const MAX_ROWS_PER_GROUP = 50;
 
+// community-scripts' development repository (issue #101 followed its
+// rename). The server sends overridden-repo names itself, so this is the
+// only place the client names it.
+const DEV_REPO = 'DevScripts';
+
 // Ranks matches for one group (stable/dev rank independently, each called
 // separately) so an exact match always sorts first, then prefix matches,
 // then any remaining substring match -- alphabetical within each tier.
@@ -316,7 +321,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
           )}
           {shownDev.length > 0 && (
             <li className="app-suggestions-group app-suggestions-group-dev" role="presentation">
-              DevScripts (development)
+              {DEV_REPO} (development)
             </li>
           )}
           {shownDev.map((slug, i) => renderOption(slug, shownCustom.length + shownStable.length + i))}
@@ -335,7 +340,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       )}
       {conflict && custom && (
         <div className="custom-override-warning">
-          Upstream DevScripts also changed this app since your branch point — rebase{' '}
+          Upstream {DEV_REPO} also changed this app since your branch point — rebase{' '}
           {branchOf(custom.label) ?? 'your branch'} onto upstream main. Installing your custom copy.
         </div>
       )}
@@ -346,7 +351,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       )}
       {devWarning && (
         <div className="dev-app-warning">
-          This app is still in development (community-scripts' DevScripts repo) — it hasn't graduated to the stable
+          This app is still in development (community-scripts' {DEV_REPO} repo) — it hasn't graduated to the stable
           catalog yet.
         </div>
       )}

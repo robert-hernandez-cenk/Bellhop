@@ -46,10 +46,10 @@ Wherever Bellhop names community-scripts' development repository to the operator
 ### Functional Requirements
 
 - **FR-001**: Every request Bellhop makes to community-scripts' development repository (raw script content, the `ct/` catalog listing, branch comparison) MUST address `community-scripts/DevScripts`.
-- **FR-002**: The bare-slug resolution order MUST stay custom repository, then ProxmoxVE, then DevScripts.
+- **FR-002**: Bare-slug resolution MUST be unchanged apart from the name: an app comes from the custom repository only when the configured branch changes it relative to upstream (or only the fork has it); otherwise ProxmoxVE, then DevScripts.
 - **FR-003**: The upstream repository name reported in an app check's overridden-repository list, and in override/conflict warnings, MUST be `DevScripts` for the development repository.
 - **FR-004**: Every operator-facing label, help text, notice and tool description naming the development repository MUST call it DevScripts.
-- **FR-005**: The user documentation, demo instance and install-app catalog screenshot MUST use the new name. Example custom-fork values become `example-user/DevScripts` (example data only).
+- **FR-005**: The user documentation, demo instance and install-app catalog screenshot MUST use the new name. Example custom-fork values in docs become `example-user/DevScripts`. Tests use a neutral fork name (`example-user/my-scripts`) so the fork can never be confused with upstream `DevScripts` (example data only).
 - **FR-006**: Bellhop MUST NOT keep `ProxmoxVED` as an alias anywhere in code (pre-release; breaking renames are acceptable).
 
 ### Key Entities

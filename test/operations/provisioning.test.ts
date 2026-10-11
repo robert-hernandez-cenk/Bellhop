@@ -145,7 +145,7 @@ test('configure-guest operation preview rejects with UnknownPackageManagerError 
 // `source: i.appSource` plumbing (src/operations/provisioning.ts). This runs
 // previewAndEnqueue against the real operation, a real FakeSSHClient, and a
 // real JobRunner, the same way the web/MCP front ends do.
-// Example values only (constitution Principle I) -- example-user/DevScripts
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/lib/app-source.test.ts use.
 
@@ -153,7 +153,7 @@ const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
 const SHA = HEAD_SHA_RAW.trim();
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'DevScripts';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
@@ -232,7 +232,7 @@ test("previewAndEnqueue on the real install-app operation pins one custom-reposi
   // into the job log under its own "----- dry-run preview -----" header.
   assert.match(
     preview,
-    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/DevScripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/my-scripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\./
   );
 
   await waitForJobFinished(jobStore, jobId);

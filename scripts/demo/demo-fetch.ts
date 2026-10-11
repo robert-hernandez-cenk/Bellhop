@@ -3,9 +3,7 @@
 // fetchRepoSlugs, src/operations/app-check.ts's checkAppUrl), so the demo
 // web UI's App field and its Update page never make a real network call.
 // See specs/014-web-ui-screenshots/research.md R3.
-const GITHUB_OWNER = 'community-scripts';
-const STABLE_REPO = 'ProxmoxVE';
-const DEV_REPO = 'DevScripts';
+import { UPSTREAM_DEV_REPO as DEV_REPO, UPSTREAM_OWNER as GITHUB_OWNER, UPSTREAM_STABLE_REPO as STABLE_REPO } from '../../src/lib/app-source.ts';
 
 // Every `app` slug set on a demo guest (scripts/demo/demo-inventory.ts) MUST
 // appear here, or the Update page and the install-app app check for that

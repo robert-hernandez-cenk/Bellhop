@@ -386,7 +386,7 @@ test('edit_guest rejects leaving OIDC gating without confirmOidcClientDeletion, 
 });
 
 // --- check_install_app / custom script repository (issue #11) ---
-// Example values only (constitution Principle I) -- example-user/DevScripts
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/lib/app-source.test.ts use.
 
@@ -394,7 +394,7 @@ const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
 const SHA = HEAD_SHA_RAW.trim();
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'DevScripts';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 // issue #15: every custom-configured resolution also compares the pinned

@@ -1,9 +1,9 @@
 {
-  "url": "https://api.github.com/repos/community-scripts/DevScripts/compare/main...example-user:DevScripts:0001000100010001000100010001000100010001",
-  "html_url": "https://github.com/community-scripts/DevScripts/compare/main...example-user:DevScripts:0001000100010001000100010001000100010001",
+  "url": "https://api.github.com/repos/community-scripts/DevScripts/compare/main...example-user:my-scripts:0001000100010001000100010001000100010001",
+  "html_url": "https://github.com/community-scripts/DevScripts/compare/main...example-user:my-scripts:0001000100010001000100010001000100010001",
   "permalink_url": "https://github.com/community-scripts/DevScripts/compare/community-scripts:0005000...example-user:0001000",
-  "diff_url": "https://github.com/community-scripts/DevScripts/compare/main...example-user:DevScripts:0001000100010001000100010001000100010001.diff",
-  "patch_url": "https://github.com/community-scripts/DevScripts/compare/main...example-user:DevScripts:0001000100010001000100010001000100010001.patch",
+  "diff_url": "https://github.com/community-scripts/DevScripts/compare/main...example-user:my-scripts:0001000100010001000100010001000100010001.diff",
+  "patch_url": "https://github.com/community-scripts/DevScripts/compare/main...example-user:my-scripts:0001000100010001000100010001000100010001.patch",
   "base_commit": {
     "sha": "0002000200020002000200020002000200020002",
     "node_id": "EXAMPLE_NODE_ID",

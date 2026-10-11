@@ -147,12 +147,12 @@ test('PATCH /api/settings rejects a relative statusPagePath', async () => {
 test('GET /api/settings includes customScriptsRepo/customScriptsBranch', async () => {
   const { app } = testApp({
     ...baseInventory(),
-    customScriptsRepo: 'example-user/DevScripts',
+    customScriptsRepo: 'example-user/my-scripts',
     customScriptsBranch: 'my-apps',
   });
   const res = await asAdmin(request(app).get('/api/settings'));
   assert.equal(res.status, 200);
-  assert.equal(res.body.settings.customScriptsRepo, 'example-user/DevScripts');
+  assert.equal(res.body.settings.customScriptsRepo, 'example-user/my-scripts');
   assert.equal(res.body.settings.customScriptsBranch, 'my-apps');
 });
 
@@ -164,7 +164,7 @@ test('PATCH /api/settings rejects a customScriptsRepo not shaped like owner/repo
 });
 
 test('PATCH /api/settings clears customScriptsRepo sent as an empty string', async () => {
-  const { app, inventoryPath } = testApp({ ...baseInventory(), customScriptsRepo: 'example-user/DevScripts' });
+  const { app, inventoryPath } = testApp({ ...baseInventory(), customScriptsRepo: 'example-user/my-scripts' });
   const res = await asAdmin(request(app).patch('/api/settings')).send({ customScriptsRepo: '' });
   assert.equal(res.status, 200);
   assert.equal(res.body.settings.customScriptsRepo, undefined);

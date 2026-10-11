@@ -189,7 +189,7 @@ test('T016: previewAndEnqueue for a second operation resolves right away while a
 });
 
 // --- resolvesApp / custom script repository pin-once (issue #11, research R5) ---
-// Example values only (constitution Principle I) -- example-user/DevScripts
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example used throughout this feature's
 // specs/tests. `resolvingOp` stands in for install-app: a real
 // PROVISIONING_OPERATIONS['install-app'] needs a live host/mid/storage setup
@@ -200,12 +200,12 @@ const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 'utf8');
 const PINNED_SHA = HEAD_SHA_RAW.trim();
 const OTHER_SHA = '0'.repeat(40);
-const HEAD_SHA_URL = 'https://api.github.com/repos/example-user/DevScripts/commits/my-apps';
+const HEAD_SHA_URL = 'https://api.github.com/repos/example-user/my-scripts/commits/my-apps';
 // issue #15: the captured ahead compare fixture changes demo-shop (among
 // others), so demo-shop resolves to the fork without a fork ct/ probe.
-const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...example-user:DevScripts:${PINNED_SHA}`;
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...example-user:my-scripts:${PINNED_SHA}`;
 const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
-const INSTALL_URL = `https://raw.githubusercontent.com/example-user/DevScripts/${PINNED_SHA}/install/demo-shop-install.sh`;
+const INSTALL_URL = `https://raw.githubusercontent.com/example-user/my-scripts/${PINNED_SHA}/install/demo-shop-install.sh`;
 
 const capturedApplySources: unknown[] = [];
 const resolvingOp: Operation = {
@@ -228,7 +228,7 @@ test('previewAndEnqueue pins a resolvesApp operation\'s custom-repository resolu
   const { store, runner, deps } = setup();
   const customInventory: Inventory = {
     ...deps.inventory,
-    customScriptsRepo: 'example-user/DevScripts',
+    customScriptsRepo: 'example-user/my-scripts',
     customScriptsBranch: 'my-apps',
   };
   deps.inventory = customInventory;
@@ -289,7 +289,7 @@ test('previewAndEnqueue resolves an unchanged upstream app to upstream with the 
   const { store, runner, deps } = setup();
   const customInventory: Inventory = {
     ...deps.inventory,
-    customScriptsRepo: 'example-user/DevScripts',
+    customScriptsRepo: 'example-user/my-scripts',
     customScriptsBranch: 'my-apps',
   };
   deps.inventory = customInventory;

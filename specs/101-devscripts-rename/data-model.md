@@ -9,4 +9,4 @@ No stored data changes (research R3).
 | Compare upstream | `community-scripts/ProxmoxVED` | `community-scripts/DevScripts` |
 | Catalog dev listing | `api.github.com/repos/community-scripts/ProxmoxVED/contents/ct` | `.../community-scripts/DevScripts/contents/ct` |
 
-Resolution order: custom → ProxmoxVE → DevScripts (unchanged).
+Resolution (unchanged apart from the name): the custom fork only for apps its branch changes or only it has; otherwise ProxmoxVE, then DevScripts.
