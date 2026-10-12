@@ -1,0 +1,116 @@
+name: Project readiness
+
+# Keeps the "Readiness" field of the Bellhop GitHub Project in step with issue
+# dependencies. When an issue closes, every issue it blocks whose blockers are
+# now all closed moves from Blocked to Ready; when an issue reopens, the issues
+# it blocks move from Ready back to Blocked. Other values (Epic, External,
+# Done on epic branch) are never touched.
+#
+# Needs a repository secret PROJECT_TOKEN: a classic personal access token with
+# the `project` scope. The default GITHUB_TOKEN cannot edit a user-owned
+# project. Without the secret the job fails with a clear message.
+
+on:
+  issues:
+    types: [closed, reopened]
+
+concurrency:
+  group: project-readiness
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: read
+
+env:
+  PROJECT_NUMBER: 1
+  FIELD_NAME: Readiness
+
+jobs:
+  readiness:
+    name: update dependents of #${{ github.event.issue.number }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.event.repository.name }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - name: Require PROJECT_TOKEN
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Repository secret PROJECT_TOKEN is not set (classic PAT with the 'project' scope)."
+            exit 1
+          fi
+
+      - name: Update dependents
+        run: |
+          set -eu
+
+          meta=$(gh api graphql -f owner="$OWNER" -F number="$PROJECT_NUMBER" -f field="$FIELD_NAME" -f query='
+            query($owner: String!, $number: Int!, $field: String!) {
+              user(login: $owner) {
+                projectV2(number: $number) {
+                  id
+                  field(name: $field) {
+                    ... on ProjectV2SingleSelectField { id options { id name } }
+                  }
+                }
+              }
+            }')
+          project_id=$(echo "$meta" | jq -r '.data.user.projectV2.id')
+          field_id=$(echo "$meta" | jq -r '.data.user.projectV2.field.id')
+          option_id() {
+            echo "$meta" | jq -r --arg n "$1" '.data.user.projectV2.field.options[] | select(.name == $n) | .id'
+          }
+          ready_id=$(option_id Ready)
+          blocked_id=$(option_id Blocked)
+
+          for dep in $(gh api "repos/$OWNER/$REPO/issues/$ISSUE/dependencies/blocking" --jq '.[].number'); do
+            open=$(gh api "repos/$OWNER/$REPO/issues/$dep/dependencies/blocked_by" \
+              --jq '[.[] | select(.state == "open")] | length')
+
+            item=$(gh api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$dep" -f field="$FIELD_NAME" -f query='
+              query($owner: String!, $repo: String!, $number: Int!, $field: String!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    projectItems(first: 20) {
+                      nodes {
+                        id
+                        project { id }
+                        fieldValueByName(name: $field) {
+                          ... on ProjectV2ItemFieldSingleSelectValue { name }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' | jq -c --arg p "$project_id" \
+                '.data.repository.issue.projectItems.nodes[] | select(.project.id == $p)') || item=""
+
+            if [ -z "$item" ]; then
+              echo "#$dep is not in the project; skipping"
+              continue
+            fi
+            item_id=$(echo "$item" | jq -r '.id')
+            current=$(echo "$item" | jq -r '.fieldValueByName.name // ""')
+
+            if [ "$open" -eq 0 ] && [ "$current" = "Blocked" ]; then
+              target=$ready_id; label=Ready
+            elif [ "$open" -gt 0 ] && [ "$current" = "Ready" ]; then
+              target=$blocked_id; label=Blocked
+            else
+              echo "#$dep: $open open blocker(s), currently '${current:-unset}'; no change"
+              continue
+            fi
+
+            gh api graphql -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$target" -f query='
+              mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $project, itemId: $item, fieldId: $field,
+                  value: { singleSelectOptionId: $option }
+                }) { projectV2Item { id } }
+              }' > /dev/null
+            echo "#$dep: $current -> $label"
+          done
