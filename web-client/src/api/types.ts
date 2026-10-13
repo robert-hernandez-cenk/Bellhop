@@ -42,7 +42,7 @@ export interface AppCheckResponse {
   custom?: { label: string; sha: string };
   shadows?: string[];
   // issue #15: true only on a custom resolution of an app upstream
-  // ProxmoxVED also changed since the branch point (absent otherwise).
+  // DevScripts also changed since the branch point (absent otherwise).
   conflict?: boolean;
   error?: string;
 }
@@ -148,7 +148,7 @@ export interface GuestEntry {
   app?: string;
   // 'custom' when this guest's `app` slug was actually installed from the
   // operator-configured custom script repository (see CustomScripts below),
-  // not upstream ProxmoxVE/ProxmoxVED -- mirrors the server's appSource
+  // not upstream ProxmoxVE/DevScripts -- mirrors the server's appSource
   // (src/lib/inventory.ts). Drives communityScriptsUrl's GitHub-blob link
   // instead of the plain community-scripts.org one.
   appSource?: 'custom';

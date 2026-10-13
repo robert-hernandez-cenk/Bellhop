@@ -38,9 +38,9 @@ const AHEAD_MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit:
 const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
 const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit
   .sha;
-// research R5: the conflict check reads upstream ProxmoxVED's two scripts
+// research R5: the conflict check reads upstream DevScripts' two scripts
 // for an app at the merge base and on main, through raw content.
-const VED_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+const DEV_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
 const CT_FILE = (slug: string) => `ct/${slug}.sh`;
 const INSTALL_FILE = (slug: string) => `install/${slug}-install.sh`;
 
@@ -50,16 +50,16 @@ const BASE_INVENTORY: Inventory = {
   guests: [],
 };
 
-// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model use.
 const SOURCE: CustomScriptSource = {
   owner: 'example-user',
-  repo: 'ProxmoxVED',
+  repo: 'my-scripts',
   branch: 'my-apps',
-  label: 'example-user/ProxmoxVED@my-apps',
+  label: 'example-user/my-scripts@my-apps',
 };
 
-function withCustomSource(repo = 'example-user/ProxmoxVED', branch = 'my-apps'): Inventory {
+function withCustomSource(repo = 'example-user/my-scripts', branch = 'my-apps'): Inventory {
   return { ...BASE_INVENTORY, customScriptsRepo: repo, customScriptsBranch: branch };
 }
 
@@ -89,7 +89,7 @@ const throwingFetch: typeof fetch = (async () => {
   throw new Error('resolveAppSource should not have called fetch here');
 }) as unknown as typeof fetch;
 
-const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${SOURCE.owner}:${SOURCE.repo}:${SHA}`;
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${SOURCE.owner}:${SOURCE.repo}:${SHA}`;
 
 type Probe = 200 | 404 | 500 | 'throw';
 
@@ -145,7 +145,7 @@ test('customScriptSource returns the split/derived source when both settings are
 });
 
 test('customScriptSource throws naming the missing setting when only customScriptsRepo is set', () => {
-  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/ProxmoxVED' };
+  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/my-scripts' };
   assert.throws(
     () => customScriptSource(inv),
     /customScriptsBranch is not set \(customScriptsRepo is\) -- run: bellhop set-config customScriptsBranch <value> --apply, or set it on the web UI's Settings page, or unset customScriptsRepo$/
@@ -170,9 +170,9 @@ test('resolveHeadSha returns the trimmed head SHA on success', async () => {
 test('resolveHeadSha sends User-Agent/Accept headers and URL-encodes a branch containing "/"', async () => {
   const branchSource: CustomScriptSource = {
     owner: 'example-user',
-    repo: 'ProxmoxVED',
+    repo: 'my-scripts',
     branch: 'feature/my-apps',
-    label: 'example-user/ProxmoxVED@feature/my-apps',
+    label: 'example-user/my-scripts@feature/my-apps',
   };
   let seenUrl = '';
   let seenHeaders: Record<string, string> = {};
@@ -184,7 +184,7 @@ test('resolveHeadSha sends User-Agent/Accept headers and URL-encodes a branch co
 
   await resolveHeadSha(branchSource, fetchImpl);
 
-  assert.equal(seenUrl, 'https://api.github.com/repos/example-user/ProxmoxVED/commits/feature%2Fmy-apps');
+  assert.equal(seenUrl, 'https://api.github.com/repos/example-user/my-scripts/commits/feature%2Fmy-apps');
   assert.equal(seenHeaders['User-Agent'], 'bellhop');
   assert.equal(seenHeaders.Accept, 'application/vnd.github.sha');
 });
@@ -192,7 +192,7 @@ test('resolveHeadSha sends User-Agent/Accept headers and URL-encodes a branch co
 test('resolveHeadSha throws a "branch not found" error on 422', async () => {
   await assert.rejects(
     () => resolveHeadSha(SOURCE, fakeFetch({ [HEAD_SHA_URL]: () => new Response(MISSING_BRANCH_BODY, { status: 422 }) })),
-    /Custom script repository example-user\/ProxmoxVED@my-apps: branch not found -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+    /Custom script repository example-user\/my-scripts@my-apps: branch not found -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
@@ -340,7 +340,7 @@ function assertCompareError(pattern: string) {
 test('compareBranch names the fork network on 404', async () => {
   await assert.rejects(
     () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('{"message":"Not Found"}', { status: 404 }))),
-    assertCompareError(`commit ${SHA.slice(0, 7)} not found in community-scripts/ProxmoxVED's fork network`)
+    assertCompareError(`commit ${SHA.slice(0, 7)} not found in community-scripts/DevScripts's fork network`)
   );
 });
 
@@ -431,10 +431,10 @@ function conflictFetch(
 ): { fetchImpl: typeof fetch; seen: string[] } {
   const seen: string[] = [];
   const routes: Record<string, Handler> = {
-    [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE(slug))]: () => rawResponse(sides.baseCt),
-    [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE(slug))]: () => rawResponse(sides.baseInstall),
-    [VED_RAW('main', CT_FILE(slug))]: () => rawResponse(sides.mainCt),
-    [VED_RAW('main', INSTALL_FILE(slug))]: () => rawResponse(sides.mainInstall),
+    [DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE(slug))]: () => rawResponse(sides.baseCt),
+    [DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE(slug))]: () => rawResponse(sides.baseInstall),
+    [DEV_RAW('main', CT_FILE(slug))]: () => rawResponse(sides.mainCt),
+    [DEV_RAW('main', INSTALL_FILE(slug))]: () => rawResponse(sides.mainInstall),
   };
   const inner = fakeFetch(routes);
   const fetchImpl = (async (url: unknown, init?: RequestInit) => {
@@ -458,10 +458,10 @@ test('detectConflict reads both scripts at the merge base and on main, and flags
   });
   assert.equal(await detectConflict('demo-wiki', DIVERGED, fetchImpl), true);
   assert.deepEqual(seen.sort(), [
-    VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki')),
-    VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki')),
-    VED_RAW('main', CT_FILE('demo-wiki')),
-    VED_RAW('main', INSTALL_FILE('demo-wiki')),
+    DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki')),
+    DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki')),
+    DEV_RAW('main', CT_FILE('demo-wiki')),
+    DEV_RAW('main', INSTALL_FILE('demo-wiki')),
   ].sort());
 });
 
@@ -513,7 +513,7 @@ test('resolveAppSource makes no fetch calls when the feature is off', async () =
 });
 
 test('resolveAppSource throws the both-or-neither message on half-config, with no fetch call', async () => {
-  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/ProxmoxVED' };
+  const inv: Inventory = { ...BASE_INVENTORY, customScriptsRepo: 'example-user/my-scripts' };
   await assert.rejects(() => resolveAppSource('plex', inv, throwingFetch), /customScriptsBranch is not set \(customScriptsRepo is\)/);
 });
 
@@ -556,10 +556,10 @@ test('resolveAppSource reports a changed slug shadowing ProxmoxVE only', async (
   assert.deepEqual(result.shadows, ['ProxmoxVE']);
 });
 
-test('resolveAppSource reports a changed slug shadowing ProxmoxVED only', async () => {
+test('resolveAppSource reports a changed slug shadowing DevScripts only', async () => {
   const result = await resolveAppSource('demo-shop', withCustomSource(), customFetch('demo-shop', { dev: 200 }));
   assert.equal(result.kind, 'custom');
-  assert.deepEqual(result.shadows, ['ProxmoxVED']);
+  assert.deepEqual(result.shadows, ['DevScripts']);
 });
 
 test('resolveAppSource reports a changed slug shadowing both upstream repos', async () => {
@@ -569,7 +569,7 @@ test('resolveAppSource reports a changed slug shadowing both upstream repos', as
     customFetch('demo-shop', { stable: 200, dev: 200 })
   );
   assert.equal(result.kind, 'custom');
-  assert.deepEqual(result.shadows, ['ProxmoxVE', 'ProxmoxVED']);
+  assert.deepEqual(result.shadows, ['ProxmoxVE', 'DevScripts']);
 });
 
 test('resolveAppSource treats a thrown shadow probe for a changed slug as absent and logs a warning', async () => {
@@ -588,7 +588,7 @@ test('resolveAppSource treats a thrown shadow probe for a changed slug as absent
 // off, and the fork is never probed (no fork route: fakeFetch would throw).
 const UPSTREAM_PRESENCE: [string, { stable?: Probe; dev?: Probe }][] = [
   ['ProxmoxVE', { stable: 200 }],
-  ['ProxmoxVED', { dev: 200 }],
+  ['DevScripts', { dev: 200 }],
   ['both upstream repos', { stable: 200, dev: 200 }],
 ];
 for (const [label, opts] of UPSTREAM_PRESENCE) {
@@ -639,7 +639,7 @@ test('resolveAppSource resolves a slug absent everywhere to upstream', async () 
 test('resolveAppSource throws when the fork ct probe returns a non-404 non-OK status', async () => {
   await assert.rejects(
     () => resolveAppSource('demo-legacy', withCustomSource(), customFetch('demo-legacy', { fork: 500 })),
-    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub returned 500 -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+    /Custom script repository example-user\/my-scripts@my-apps: GitHub returned 500 -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
@@ -662,13 +662,13 @@ test('resolveAppSource throws a named error when the compare call fails, never f
           [COMPARE_URL]: () => new Response('{"message":"Not Found"}', { status: 404 }),
         })
       ),
-    /Custom script repository example-user\/ProxmoxVED@my-apps: commit [0-9a-f]{7} not found in community-scripts\/ProxmoxVED's fork network.* -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
+    /Custom script repository example-user\/my-scripts@my-apps: commit [0-9a-f]{7} not found in community-scripts\/DevScripts's fork network.* -- check customScriptsRepo\/customScriptsBranch with "bellhop set-config"/
   );
 });
 
 // T011 (US2): the diverged fixture's demo-wiki was absent upstream at the
 // merge base and is present on upstream main -- upstream added the same app
-// after the branch point, which is a conflict. The upstream ProxmoxVED ct/
+// after the branch point, which is a conflict. The upstream DevScripts ct/
 // probe and the conflict check's main-side ct/ read are the same URL.
 test('resolveAppSource flags a conflict for a changed slug upstream also changed since the branch point', async () => {
   const result = await resolveAppSource(
@@ -678,9 +678,9 @@ test('resolveAppSource flags a conflict for a changed slug upstream also changed
       compareBody: COMPARE_DIVERGED_BODY,
       dev: 200,
       extra: {
-        [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
-        [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
-        [VED_RAW('main', INSTALL_FILE('demo-wiki'))]: () => new Response('#!/usr/bin/env bash\n', { status: 200 }),
+        [DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
+        [DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: () => new Response(null, { status: 404 }),
+        [DEV_RAW('main', INSTALL_FILE('demo-wiki'))]: () => new Response('#!/usr/bin/env bash\n', { status: 200 }),
       },
     })
   );
@@ -688,7 +688,7 @@ test('resolveAppSource flags a conflict for a changed slug upstream also changed
   assert.equal(result.changed, true);
   assert.equal(result.conflict, true);
   assert.equal(result.custom?.mergeBase, DIVERGED_MERGE_BASE);
-  assert.deepEqual(result.shadows, ['ProxmoxVED']);
+  assert.deepEqual(result.shadows, ['DevScripts']);
 });
 
 test('resolveAppSource reports no conflict when upstream left a changed slug alone since the branch point', async () => {
@@ -700,9 +700,9 @@ test('resolveAppSource reports no conflict when upstream left a changed slug alo
       compareBody: COMPARE_DIVERGED_BODY,
       dev: 200,
       extra: {
-        [VED_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: same,
-        [VED_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: same,
-        [VED_RAW('main', INSTALL_FILE('demo-wiki'))]: same,
+        [DEV_RAW(DIVERGED_MERGE_BASE, CT_FILE('demo-wiki'))]: same,
+        [DEV_RAW(DIVERGED_MERGE_BASE, INSTALL_FILE('demo-wiki'))]: same,
+        [DEV_RAW('main', INSTALL_FILE('demo-wiki'))]: same,
       },
     })
   );
@@ -860,16 +860,16 @@ function customSource(overrides: Partial<AppSource> = {}): AppSource {
 }
 
 test('formatSourceNotice warns to rebase when a changed app conflicts with upstream', () => {
-  assert.deepEqual(formatSourceNotice(customSource({ conflict: true, shadows: ['ProxmoxVED'] })), {
+  assert.deepEqual(formatSourceNotice(customSource({ conflict: true, shadows: ['DevScripts'] })), {
     level: 'warn',
-    message: `"demo-wiki" changed upstream in ProxmoxVED since example-user/ProxmoxVED@my-apps branched (merge base ${DIVERGED_MERGE_BASE.slice(0, 7)}); installing the custom copy at commit ${SHA.slice(0, 7)}. Rebase my-apps onto upstream main to pick up the upstream changes.`,
+    message: `"demo-wiki" changed upstream in DevScripts since example-user/my-scripts@my-apps branched (merge base ${DIVERGED_MERGE_BASE.slice(0, 7)}); installing the custom copy at commit ${SHA.slice(0, 7)}. Rebase my-apps onto upstream main to pick up the upstream changes.`,
   });
 });
 
 test('formatSourceNotice gives one info line when a changed app replaces an upstream copy without conflicting', () => {
-  assert.deepEqual(formatSourceNotice(customSource({ shadows: ['ProxmoxVE', 'ProxmoxVED'] })), {
+  assert.deepEqual(formatSourceNotice(customSource({ shadows: ['ProxmoxVE', 'DevScripts'] })), {
     level: 'info',
-    message: `"demo-wiki" comes from the custom script repository example-user/ProxmoxVED@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, ProxmoxVED.`,
+    message: `"demo-wiki" comes from the custom script repository example-user/my-scripts@my-apps (commit ${SHA.slice(0, 7)}) in place of the upstream copy in ProxmoxVE, DevScripts.`,
   });
 });
 
@@ -928,7 +928,7 @@ test('resolveHeadSha throws the named 401 error, never the token, and never fall
         assert.ok(err instanceof Error);
         assert.equal(
           err.message,
-          'Custom script repository example-user/ProxmoxVED@my-apps: GitHub rejected the configured GitHub API token (401) -- replace or clear githubApiToken: ' +
+          'Custom script repository example-user/my-scripts@my-apps: GitHub rejected the configured GitHub API token (401) -- replace or clear githubApiToken: ' +
             "run: bellhop set-config githubApiToken --stdin --apply, or set it on the web UI's Settings page"
         );
         assert.ok(!err.message.includes('github_pat_example0000'));
@@ -969,7 +969,7 @@ test('compareBranch throws the named 401 error, never the token', async () => {
       () => compareBranch(SOURCE, SHA, compareFetch(() => new Response('{}', { status: 401 }))),
       (err: unknown) => {
         assert.ok(err instanceof Error);
-        assert.match(err.message, /^Custom script repository example-user\/ProxmoxVED@my-apps: GitHub rejected the configured GitHub API token \(401\)/);
+        assert.match(err.message, /^Custom script repository example-user\/my-scripts@my-apps: GitHub rejected the configured GitHub API token \(401\)/);
         assert.ok(!err.message.includes('github_pat_example0000'));
         return true;
       }

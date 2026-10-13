@@ -68,7 +68,7 @@ test('GET /api/inventory returns hosts, guests, and domain from the loaded inven
 test('GET /api/inventory returns customScripts when both settings are set', async () => {
   const inventory: Inventory = {
     domain: 'example.com',
-    customScriptsRepo: 'example-user/ProxmoxVED',
+    customScriptsRepo: 'example-user/my-scripts',
     customScriptsBranch: 'my-apps',
     hosts: [{ name: 'pve1', ssh_target: 'pve1.local', ssh_user: 'root' }],
     guests: [],
@@ -76,7 +76,7 @@ test('GET /api/inventory returns customScripts when both settings are set', asyn
   const app = testApp(inventory);
   const res = await request(app).get('/api/inventory');
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body.customScripts, { repo: 'example-user/ProxmoxVED', branch: 'my-apps' });
+  assert.deepEqual(res.body.customScripts, { repo: 'example-user/my-scripts', branch: 'my-apps' });
 });
 
 test('PATCH /api/inventory/guests/:name updates subdomains, persists them, and syncs the proxy', async () => {

@@ -228,7 +228,7 @@ export const PROVISIONING_OPERATIONS: Record<string, Operation> = {
     id: 'install-app',
     category: 'provisioning',
     description:
-      'Create a new LXC container by running a community-scripts (ProxmoxVE) install script unattended, or, when an operator-configured custom script repository is set (see set-config customScriptsRepo/customScriptsBranch), from that fork branch instead. The job watches for interactive prompts; answer them with answer_job_prompt.',
+      'Create a new LXC container by running a community-scripts (ProxmoxVE) install script unattended, or, when an operator-configured custom script repository is set (see set-config customScriptsRepo/customScriptsBranch), from that fork branch for apps the branch changes relative to upstream (or that only the fork has); every other app still installs from upstream. The job watches for interactive prompts; answer them with answer_job_prompt.',
     shape: {
       app: reqStr('community-scripts app slug or full script URL'),
       host: reqStr('Proxmox host name'),

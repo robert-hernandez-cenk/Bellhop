@@ -19,7 +19,7 @@ test('demoFetch answers the stable ct/ listing URL with the slug JSON shape fetc
 });
 
 test('demoFetch answers the dev ct/ listing URL too', async () => {
-  const res = await demoFetch('https://api.github.com/repos/community-scripts/ProxmoxVED/contents/ct');
+  const res = await demoFetch('https://api.github.com/repos/community-scripts/DevScripts/contents/ct');
   assert.equal(res.status, 200);
   const body = (await res.json()) as Array<{ name: string; type: string }>;
   const names = body.map((e) => e.name.slice(0, -'.sh'.length)).sort();

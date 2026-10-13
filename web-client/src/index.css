@@ -206,7 +206,7 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg-prima
 /* A custom-group row that also exists upstream (research R6) -- small and
    muted so it reads as metadata next to the slug, not a second warning. */
 .app-suggestion-override-tag { margin-left: 8px; padding: 1px 6px; font-size: 11px; border-radius: 4px; display: inline-block; white-space: nowrap; background: var(--bg-tertiary); color: var(--text-secondary); }
-/* issue #15 (research R8): a custom-group row upstream ProxmoxVED also
+/* issue #15 (research R8): a custom-group row upstream DevScripts also
    changed since the branch point -- same pill as the override tag, but
    tinted with --warning so it reads as something to act on (rebase). The
    dark-brown text only has contrast on the light tint, so dark mode swaps

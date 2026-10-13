@@ -267,7 +267,7 @@ export function buildMcpServer(deps: McpDeps, options: McpServerOptions = {}): M
     'list_install_apps',
     {
       description:
-        'The cached community-scripts app catalog usable with install_app. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), the response also carries a custom group listing only the apps that fork branch changes relative to upstream ProxmoxVED -- already removed from stable/dev -- plus which upstream repo(s) each overrides and, in conflicts, which ones upstream also changed since the branch point.',
+        'The cached community-scripts app catalog usable with install_app. When a custom script repository is configured (see set_config customScriptsRepo/customScriptsBranch), the response also carries a custom group listing only the apps that fork branch changes relative to upstream DevScripts -- already removed from stable/dev -- plus which upstream repo(s) each overrides and, in conflicts, which ones upstream also changed since the branch point.',
       inputSchema: {},
     },
     async () => {

@@ -25,7 +25,7 @@ function tempDbPath(): string {
 function fakeContentsFetch(byRepo: Record<string, string[]>): typeof fetch {
   return (async (url: unknown) => {
     const href = String(url);
-    const repo = href.includes('ProxmoxVED') ? 'ProxmoxVED' : 'ProxmoxVE';
+    const repo = href.includes('DevScripts') ? 'DevScripts' : 'ProxmoxVE';
     const names = byRepo[repo];
     if (names === undefined) return new Response(null, { status: 404 });
     return new Response(JSON.stringify(names.map((name) => ({ name, type: 'file' }))), {
@@ -41,7 +41,7 @@ test('CATALOG_MAX_AGE_MS is 24 hours', () => {
 
 test('fetchCatalog returns slugs from both repos with the .sh extension stripped', async () => {
   const result = await fetchCatalog(
-    fakeContentsFetch({ ProxmoxVE: ['plex.sh', 'jellyfin.sh'], ProxmoxVED: ['budget-board.sh'] })
+    fakeContentsFetch({ ProxmoxVE: ['plex.sh', 'jellyfin.sh'], DevScripts: ['budget-board.sh'] })
   );
   assert.deepEqual(result.stable, ['jellyfin', 'plex']);
   assert.deepEqual(result.dev, ['budget-board']);
@@ -49,20 +49,20 @@ test('fetchCatalog returns slugs from both repos with the .sh extension stripped
 
 test('fetchCatalog ignores entries that are not .sh files', async () => {
   const result = await fetchCatalog(
-    fakeContentsFetch({ ProxmoxVE: ['plex.sh', 'README.md', 'headers'], ProxmoxVED: [] })
+    fakeContentsFetch({ ProxmoxVE: ['plex.sh', 'README.md', 'headers'], DevScripts: [] })
   );
   assert.deepEqual(result.stable, ['plex']);
   assert.deepEqual(result.dev, []);
 });
 
 test('fetchCatalog lowercases slugs', async () => {
-  const result = await fetchCatalog(fakeContentsFetch({ ProxmoxVE: ['Plex.sh'], ProxmoxVED: [] }));
+  const result = await fetchCatalog(fakeContentsFetch({ ProxmoxVE: ['Plex.sh'], DevScripts: [] }));
   assert.deepEqual(result.stable, ['plex']);
 });
 
 test('fetchCatalog drops a dev slug that already exists in the stable repo', async () => {
   const result = await fetchCatalog(
-    fakeContentsFetch({ ProxmoxVE: ['plex.sh'], ProxmoxVED: ['plex.sh', 'budget-board.sh'] })
+    fakeContentsFetch({ ProxmoxVE: ['plex.sh'], DevScripts: ['plex.sh', 'budget-board.sh'] })
   );
   assert.deepEqual(result.stable, ['plex']);
   assert.deepEqual(result.dev, ['budget-board']);
@@ -97,8 +97,8 @@ test('fetchCatalog rejects when the network call throws', async () => {
 test('fetchCatalog excludes a directory named like a .sh file', async () => {
   const fakeFetch = (async (url: unknown) => {
     const href = String(url);
-    const repo = href.includes('ProxmoxVED') ? 'ProxmoxVED' : 'ProxmoxVE';
-    if (repo === 'ProxmoxVED') {
+    const repo = href.includes('DevScripts') ? 'DevScripts' : 'ProxmoxVE';
+    if (repo === 'DevScripts') {
       return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     return new Response(
@@ -116,8 +116,8 @@ test('fetchCatalog excludes a directory named like a .sh file', async () => {
 test('fetchCatalog includes an entry with no type field at all', async () => {
   const fakeFetch = (async (url: unknown) => {
     const href = String(url);
-    const repo = href.includes('ProxmoxVED') ? 'ProxmoxVED' : 'ProxmoxVE';
-    if (repo === 'ProxmoxVED') {
+    const repo = href.includes('DevScripts') ? 'DevScripts' : 'ProxmoxVE';
+    if (repo === 'DevScripts') {
       return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     return new Response(JSON.stringify([{ name: 'plex.sh' }]), {
@@ -140,8 +140,8 @@ test('fetchCatalog warns when a repo listing comes back at GitHub\'s 1000-entry 
     const bigListing = Array.from({ length: 1000 }, (_, i) => ({ name: `app-${i}.sh`, type: 'file' }));
     const fakeFetch = (async (url: unknown) => {
       const href = String(url);
-      const repo = href.includes('ProxmoxVED') ? 'ProxmoxVED' : 'ProxmoxVE';
-      if (repo === 'ProxmoxVED') {
+      const repo = href.includes('DevScripts') ? 'DevScripts' : 'ProxmoxVE';
+      if (repo === 'DevScripts') {
         return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify(bigListing), {
@@ -229,7 +229,7 @@ test('getScriptCatalog refetches and rewrites once the stored copy exceeds CATAL
   const later = new Date(storedAt.getTime() + CATALOG_MAX_AGE_MS + 1000);
   const result = await getScriptCatalog(
     dbPath,
-    fakeContentsFetch({ ProxmoxVE: ['plex.sh'], ProxmoxVED: ['budget-board.sh'] }),
+    fakeContentsFetch({ ProxmoxVE: ['plex.sh'], DevScripts: ['budget-board.sh'] }),
     later
   );
   assert.deepEqual(result.stable, ['plex']);
@@ -243,7 +243,7 @@ test('getScriptCatalog fetches and stores when nothing is cached yet', async () 
   resetCatalogFetchState();
   const dbPath = tempDbPath();
   const now = new Date('2026-08-15T00:00:00.000Z');
-  const result = await getScriptCatalog(dbPath, fakeContentsFetch({ ProxmoxVE: ['plex.sh'], ProxmoxVED: [] }), now);
+  const result = await getScriptCatalog(dbPath, fakeContentsFetch({ ProxmoxVE: ['plex.sh'], DevScripts: [] }), now);
   assert.deepEqual(result.stable, ['plex']);
   assert.equal(result.stale, false);
   assert.deepEqual(loadCatalog(dbPath)?.stable, ['plex']);
@@ -278,7 +278,7 @@ test('getScriptCatalog treats an empty stable listing as a failure rather than c
   saveCatalog(dbPath, { stable: ['plex'], dev: [] }, storedAt);
 
   const later = new Date(storedAt.getTime() + CATALOG_MAX_AGE_MS + 1000);
-  const result = await getScriptCatalog(dbPath, fakeContentsFetch({ ProxmoxVE: [], ProxmoxVED: [] }), later);
+  const result = await getScriptCatalog(dbPath, fakeContentsFetch({ ProxmoxVE: [], DevScripts: [] }), later);
 
   // Serves the previous good copy, marked stale, instead of the empty one.
   assert.deepEqual(result.stable, ['plex']);
@@ -297,7 +297,7 @@ test('getScriptCatalog treats an empty stable listing as a failure with nothing 
   const dbPath = tempDbPath();
   const result = await getScriptCatalog(
     dbPath,
-    fakeContentsFetch({ ProxmoxVE: [], ProxmoxVED: ['budget-board.sh'] }),
+    fakeContentsFetch({ ProxmoxVE: [], DevScripts: ['budget-board.sh'] }),
     new Date('2026-08-15T00:00:00.000Z')
   );
   assert.deepEqual(result.stable, []);
@@ -311,7 +311,7 @@ test('getScriptCatalog does not treat an empty dev listing as a failure', async 
   resetCatalogFetchState();
   const dbPath = tempDbPath();
   const now = new Date('2026-08-15T00:00:00.000Z');
-  const result = await getScriptCatalog(dbPath, fakeContentsFetch({ ProxmoxVE: ['plex.sh'], ProxmoxVED: [] }), now);
+  const result = await getScriptCatalog(dbPath, fakeContentsFetch({ ProxmoxVE: ['plex.sh'], DevScripts: [] }), now);
   assert.deepEqual(result.stable, ['plex']);
   assert.deepEqual(result.dev, []);
   assert.equal(result.stale, false);
@@ -323,7 +323,7 @@ test('getScriptCatalog shares one in-flight fetch across concurrent calls', asyn
   const dbPathA = tempDbPath();
   const dbPathB = tempDbPath();
   let fetchCalls = 0;
-  const countingFetch = fakeContentsFetch({ ProxmoxVE: ['plex.sh'], ProxmoxVED: [] });
+  const countingFetch = fakeContentsFetch({ ProxmoxVE: ['plex.sh'], DevScripts: [] });
   const wrappedFetch = (async (...args: Parameters<typeof fetch>) => {
     fetchCalls += 1;
     return countingFetch(...args);
@@ -388,12 +388,12 @@ const COMPARE_DIVERGED_BODY = fixtureText('compare-diverged-conflict.json');
 const AHEAD_CHANGED = ['demo-books', 'demo-shop', 'demo-shop-storefront'];
 const DIVERGED_MERGE_BASE = (JSON.parse(COMPARE_DIVERGED_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit
   .sha;
-const VED_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+const DEV_RAW = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
 
 // Example values only (constitution Principle I) -- same example the
 // spec/plan/data-model/app-source tests use.
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
 
@@ -412,7 +412,7 @@ function withCustomSource(inv: Inventory, branch: string = CUSTOM_BRANCH): Inven
 // A combined fetch stub covering the upstream community-scripts listings
 // (fetchCatalog's own two calls) and the custom group's resolution (issue
 // #15, research R8): the fork branch's head-SHA pin, the compare call
-// against upstream ProxmoxVED, and -- only for a diverged branch -- the raw
+// against upstream DevScripts, and -- only for a diverged branch -- the raw
 // upstream reads detectConflict makes. The head-SHA route matches any
 // branch, so a test that changes the configured branch needs no second
 // stub. Every fetched URL is recorded in `calls` so a test can assert the
@@ -432,7 +432,7 @@ function buildFetch(
   const stable = opts.stable ?? ['plex'];
   const dev = opts.dev ?? [];
   const headShaPrefix = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/`;
-  const compareUrl = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+  const compareUrl = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
   return (async (url: unknown) => {
     const href = String(url);
     opts.calls?.push(href);
@@ -451,7 +451,7 @@ function buildFetch(
     if (raw !== undefined) {
       return raw === 200 ? new Response('#!/usr/bin/env bash\n', { status: 200 }) : new Response(null, { status: 404 });
     }
-    if (href.startsWith('https://api.github.com/repos/community-scripts/ProxmoxVED/contents/ct')) {
+    if (href.startsWith('https://api.github.com/repos/community-scripts/DevScripts/contents/ct')) {
       return new Response(JSON.stringify(dev.map((name) => ({ name: `${name}.sh`, type: 'file' }))), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -470,10 +470,10 @@ function buildFetch(
 // research R5: demo-wiki is absent upstream at the merge base and present
 // on upstream main -- upstream also changed it since the branch point.
 const DIVERGED_CONFLICT_RAW: Record<string, 200 | 404> = {
-  [VED_RAW(DIVERGED_MERGE_BASE, 'ct/demo-wiki.sh')]: 404,
-  [VED_RAW(DIVERGED_MERGE_BASE, 'install/demo-wiki-install.sh')]: 404,
-  [VED_RAW('main', 'ct/demo-wiki.sh')]: 200,
-  [VED_RAW('main', 'install/demo-wiki-install.sh')]: 200,
+  [DEV_RAW(DIVERGED_MERGE_BASE, 'ct/demo-wiki.sh')]: 404,
+  [DEV_RAW(DIVERGED_MERGE_BASE, 'install/demo-wiki-install.sh')]: 404,
+  [DEV_RAW('main', 'ct/demo-wiki.sh')]: 200,
+  [DEV_RAW('main', 'install/demo-wiki-install.sh')]: 200,
 };
 
 // logWarn (src/lib/log.ts) writes through console.error, not console.warn.
@@ -531,7 +531,7 @@ test('getScriptCatalog removes a changed slug from stable/dev and records the sh
   );
   assert.deepEqual(result.stable, ['plex']);
   assert.deepEqual(result.dev, ['other-dev']);
-  assert.deepEqual(result.custom?.shadows, { 'demo-shop': ['ProxmoxVE'], 'demo-books': ['ProxmoxVED'] });
+  assert.deepEqual(result.custom?.shadows, { 'demo-shop': ['ProxmoxVE'], 'demo-books': ['DevScripts'] });
 });
 
 test('getScriptCatalog does not refetch the custom group again within 5 minutes', async () => {
@@ -721,7 +721,7 @@ test('fetchCatalog throws the named 401 error, never the token, rather than a ba
     const fakeFetch = (async () => new Response(null, { status: 401 })) as unknown as typeof fetch;
     await assert.rejects(() => fetchCatalog(fakeFetch), (err: unknown) => {
       assert.ok(err instanceof Error);
-      assert.match(err.message, /^Listing community-scripts\/ProxmoxVED?\/ct: GitHub rejected the configured GitHub API token \(401\)/);
+      assert.match(err.message, /^Listing community-scripts\/(ProxmoxVE|DevScripts)\/ct: GitHub rejected the configured GitHub API token \(401\)/);
       assert.ok(!err.message.includes('github_pat_example0000'));
       return true;
     });

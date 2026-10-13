@@ -64,7 +64,7 @@ far more code for no screenshot benefit.
 answers:
 
 - `https://api.github.com/repos/community-scripts/ProxmoxVE/contents/ct` and
-  `.../ProxmoxVED/contents/ct` with a fixed JSON array of `{ name: '<slug>.sh', type: 'file' }`
+  `.../DevScripts/contents/ct` with a fixed JSON array of `{ name: '<slug>.sh', type: 'file' }`
   entries (about 25 well-known public app slugs in stable, a handful in dev). This is the exact
   shape `fetchRepoSlugs` (`src/lib/script-catalog.ts`) parses.
 - raw `ct/<slug>.sh` and `install/<slug>-install.sh` URLs for a slug in the list → 200 with a

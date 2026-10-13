@@ -10,6 +10,9 @@ import {
   resolveHeadSha,
   type CustomScriptSource,
   type ShadowedRepo,
+  UPSTREAM_DEV_REPO,
+  UPSTREAM_OWNER,
+  UPSTREAM_STABLE_REPO,
 } from './app-source.ts';
 
 // How stale a stored catalog may get before getScriptCatalog refetches it.
@@ -24,7 +27,6 @@ export const CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // not up to a day later.
 export const CUSTOM_CATALOG_MAX_AGE_MS = 5 * 60 * 1000;
 
-const GITHUB_OWNER = 'community-scripts';
 const CATALOG_FETCH_TIMEOUT_MS = 5000;
 
 // The community-scripts org publishes no machine-readable catalog metadata
@@ -32,8 +34,6 @@ const CATALOG_FETCH_TIMEOUT_MS = 5000;
 // per-script JSON that once backed their website lives in the archived
 // ProxmoxVE-Frontend-Archive). The ct/ directory listing is therefore the
 // only catalog source, and slugs are all it can yield.
-const STABLE_REPO = 'ProxmoxVE';
-const DEV_REPO = 'ProxmoxVED';
 
 export interface CatalogSlugs {
   stable: string[];
@@ -111,8 +111,8 @@ async function fetchRepoSlugs(
 // it would misrepresent what actually gets installed.
 export async function fetchCatalog(fetchImpl: typeof fetch = fetch): Promise<CatalogSlugs> {
   const [stable, dev] = await Promise.all([
-    fetchRepoSlugs({ owner: GITHUB_OWNER, repo: STABLE_REPO }, fetchImpl),
-    fetchRepoSlugs({ owner: GITHUB_OWNER, repo: DEV_REPO }, fetchImpl),
+    fetchRepoSlugs({ owner: UPSTREAM_OWNER, repo: UPSTREAM_STABLE_REPO }, fetchImpl),
+    fetchRepoSlugs({ owner: UPSTREAM_OWNER, repo: UPSTREAM_DEV_REPO }, fetchImpl),
   ]);
   const stableSlugs = new Set(stable);
   return { stable, dev: dev.filter((slug) => !stableSlugs.has(slug)) };
@@ -192,7 +192,7 @@ export interface ScriptCatalog extends CatalogSlugs {
   // there would be no action for one to offer.
   stale: boolean;
   // The apps the operator's configured custom script repository branch
-  // changes relative to upstream ProxmoxVED (issue #15, data-model.md
+  // changes relative to upstream DevScripts (issue #15, data-model.md
   // "Catalog response") -- not the fork's whole ct/ listing. Absent when the
   // feature is off (no inventory passed, or both settings unset), when the
   // settings are half-configured, or when the head-SHA pin or compare call
@@ -202,7 +202,7 @@ export interface ScriptCatalog extends CatalogSlugs {
   // response only -- the persisted script_catalog table is untouched).
   // `shadows` is keyed by slug, present only for a slug that also exists in
   // `stable`/`dev` before removal. `conflicts` is the subset of `slugs`
-  // upstream ProxmoxVED also changed since the branch point
+  // upstream DevScripts also changed since the branch point
   // (detectConflict) -- always empty for a branch that isn't behind.
   custom?: {
     label: string;
@@ -317,7 +317,7 @@ async function getUpstreamCatalog(dbPath: string, fetchImpl: typeof fetch, now: 
 // Computes the custom group -- the slugs the configured branch changes, and
 // which of those upstream also changed (issue #15, research R8) -- memoized
 // by getScriptCatalog's own cache/cooldown below. Pins the branch head
-// (resolveHeadSha) and compares it against upstream ProxmoxVED
+// (resolveHeadSha) and compares it against upstream DevScripts
 // (compareBranch), the same two rate-limited requests resolveAppSource
 // makes; the conflict check costs no API quota (detectConflict reads raw
 // content, and only when the branch is behind). Returns undefined for every
@@ -381,8 +381,8 @@ function withCustomGroup(base: ScriptCatalog, custom: CustomGroup): ScriptCatalo
   const shadows: Record<string, ShadowedRepo[]> = {};
   for (const slug of custom.slugs) {
     const shadowedBy: ShadowedRepo[] = [];
-    if (stableSet.has(slug)) shadowedBy.push('ProxmoxVE');
-    if (devSet.has(slug)) shadowedBy.push('ProxmoxVED');
+    if (stableSet.has(slug)) shadowedBy.push(UPSTREAM_STABLE_REPO);
+    if (devSet.has(slug)) shadowedBy.push(UPSTREAM_DEV_REPO);
     if (shadowedBy.length > 0) shadows[slug] = shadowedBy;
   }
   return {

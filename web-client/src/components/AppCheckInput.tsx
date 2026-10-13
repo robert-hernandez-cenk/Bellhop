@@ -8,7 +8,7 @@ export type CheckStatus = 'idle' | 'checking' | 'ok' | 'missing';
 // branch changes, already stripped out of `stable`/`dev` server-side (see
 // getScriptCatalog/withCustomGroup in src/lib/script-catalog.ts). `shadows`
 // is keyed by slug, present only for a slug that also exists upstream --
-// used to render the "overrides ProxmoxVE"/"ProxmoxVED" tag below.
+// used to render the "overrides ProxmoxVE"/"DevScripts" tag below.
 // `conflicts` lists the slugs upstream also changed since the branch point
 // (the "conflicts upstream" tag); optional so an older server's response
 // without it still renders.
@@ -30,6 +30,11 @@ function branchOf(label: string): string | undefined {
 // especially unwelcome on a phone -- cap each group and tell the operator
 // to keep typing instead.
 const MAX_ROWS_PER_GROUP = 50;
+
+// community-scripts' development repository (issue #101 followed its
+// rename). The server sends overridden-repo names itself, so this is the
+// only place the client names it.
+const DEV_REPO = 'DevScripts';
 
 // Ranks matches for one group (stable/dev rank independently, each called
 // separately) so an exact match always sorts first, then prefix matches,
@@ -85,10 +90,10 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
   // Apply will install from.
   const [custom, setCustom] = useState<{ label: string; sha: string } | undefined>(undefined);
   // Non-empty only for a custom resolution that also shadows an upstream
-  // copy of the same slug (research R6) -- the ProxmoxVE/ProxmoxVED names
+  // copy of the same slug (research R6) -- the ProxmoxVE/DevScripts names
   // whose install this overrides.
   const [shadows, setShadows] = useState<string[]>([]);
-  // Set for a custom resolution of an app upstream ProxmoxVED also changed
+  // Set for a custom resolution of an app upstream DevScripts also changed
   // since the branch point (issue #15, research R5) -- replaces the plain
   // overrides line with a rebase warning. The install still proceeds from
   // the custom copy; this never blocks Apply.
@@ -316,7 +321,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
           )}
           {shownDev.length > 0 && (
             <li className="app-suggestions-group app-suggestions-group-dev" role="presentation">
-              ProxmoxVED (development)
+              {DEV_REPO} (development)
             </li>
           )}
           {shownDev.map((slug, i) => renderOption(slug, shownCustom.length + shownStable.length + i))}
@@ -335,7 +340,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       )}
       {conflict && custom && (
         <div className="custom-override-warning">
-          Upstream ProxmoxVED also changed this app since your branch point — rebase{' '}
+          Upstream {DEV_REPO} also changed this app since your branch point — rebase{' '}
           {branchOf(custom.label) ?? 'your branch'} onto upstream main. Installing your custom copy.
         </div>
       )}
@@ -346,7 +351,7 @@ export function AppCheckInput({ value, onChange, checkEndpoint, onStatusChange, 
       )}
       {devWarning && (
         <div className="dev-app-warning">
-          This app is still in development (community-scripts' ProxmoxVED repo) — it hasn't graduated to the stable
+          This app is still in development (community-scripts' {DEV_REPO} repo) — it hasn't graduated to the stable
           catalog yet.
         </div>
       )}

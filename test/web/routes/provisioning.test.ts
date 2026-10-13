@@ -472,7 +472,7 @@ test('GET /api/provisioning/install-app/check-app uses the injected fetch, not t
 });
 
 // --- custom script repository (issue #11) ---
-// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/lib/app-source.test.ts use.
 
@@ -480,13 +480,13 @@ const customFixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url
 const CUSTOM_HEAD_SHA_RAW = readFileSync(path.join(customFixtureDir, 'branch-head-sha.txt'), 'utf8');
 const CUSTOM_SHA = CUSTOM_HEAD_SHA_RAW.trim();
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 // issue #15: every custom-configured resolution also compares the pinned
-// commit against upstream ProxmoxVED main; the captured ahead fixture
+// commit against upstream DevScripts main; the captured ahead fixture
 // changes demo-shop (among others), so demo-shop resolves to the fork.
-const CUSTOM_COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${CUSTOM_SHA}`;
+const CUSTOM_COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${CUSTOM_SHA}`;
 const CUSTOM_COMPARE_AHEAD_BODY = readFileSync(path.join(customFixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${CUSTOM_SHA}/ct/${slug}.sh`;
 
@@ -524,7 +524,7 @@ function customScriptFetchWithStableShadow(slug: string): typeof fetch {
     if (href === CUSTOM_COMPARE_URL) return new Response(CUSTOM_COMPARE_AHEAD_BODY, { status: 200 });
     if (href === customCtUrl(slug)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
     if (href === `${UPSTREAM_STABLE_BASE}/ct/${slug}.sh`) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    // The ProxmoxVED shadow probe -- "not present" for this test.
+    // The DevScripts shadow probe -- "not present" for this test.
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
 }
@@ -542,21 +542,21 @@ test('GET /api/provisioning/install-app/check-app reports shadows for a slug pre
 
 // issue #15 US2: the captured diverged fixture's demo-wiki was added upstream
 // after the branch point too (absent at the merge base, present on
-// ProxmoxVED main), so check-app reports conflict: true -- and still
+// DevScripts main), so check-app reports conflict: true -- and still
 // resolves to the fork.
 test('GET /api/provisioning/install-app/check-app reports conflict: true for an app upstream also changed', async () => {
   const customInventory: Inventory = { ...inventory, customScriptsRepo: `${CUSTOM_OWNER}/${CUSTOM_REPO}`, customScriptsBranch: CUSTOM_BRANCH };
   const divergedBody = readFileSync(path.join(customFixtureDir, 'compare-diverged-conflict.json'), 'utf8');
   const mergeBase = (JSON.parse(divergedBody) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
-  const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+  const devRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
   const fetchImpl = (async (url: unknown) => {
     const href = String(url);
     if (href === CUSTOM_HEAD_SHA_URL) return new Response(CUSTOM_HEAD_SHA_RAW, { status: 200 });
     if (href === CUSTOM_COMPARE_URL) return new Response(divergedBody, { status: 200 });
     if (href === customCtUrl('demo-wiki')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', 'ct/demo-wiki.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', 'install/demo-wiki-install.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href.startsWith(vedRaw(mergeBase, ''))) return new Response(null, { status: 404 });
+    if (href === devRaw('main', 'ct/demo-wiki.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw('main', 'install/demo-wiki-install.sh')) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href.startsWith(devRaw(mergeBase, ''))) return new Response(null, { status: 404 });
     return new Response(null, { status: 404 });
   }) as unknown as typeof fetch;
   const { app } = isolatedApp(customInventory, () => ({ stdout: '', stderr: '', code: 0 }), { fetchImpl });
@@ -565,7 +565,7 @@ test('GET /api/provisioning/install-app/check-app reports conflict: true for an 
   assert.equal(res.body.exists, true);
   assert.equal(res.body.url, customCtUrl('demo-wiki'));
   assert.equal(res.body.conflict, true);
-  assert.deepEqual(res.body.shadows, ['ProxmoxVED']);
+  assert.deepEqual(res.body.shadows, ['DevScripts']);
 });
 
 // issue #15 US1: an app the branch doesn't change resolves to upstream even
@@ -601,7 +601,7 @@ test('GET /api/provisioning/install-app/check-app reports error and exists=false
 
 test('GET /api/provisioning/install-app/apps returns the two catalog groups', async () => {
   const catalogFetch = (async (url: unknown) => {
-    const names = String(url).includes('ProxmoxVED') ? ['budget-board.sh'] : ['jellyfin.sh', 'plex.sh'];
+    const names = String(url).includes('DevScripts') ? ['budget-board.sh'] : ['jellyfin.sh', 'plex.sh'];
     return new Response(JSON.stringify(names.map((name) => ({ name, type: 'file' }))), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -647,23 +647,23 @@ test('checkAppUrl reports exists=false on a non-ok response, without rewriting a
   assert.equal(result.url, 'https://example.com/nope.sh');
 });
 
-test('checkAppUrl falls back to the dev-repo (ProxmoxVED) URL when the main repo 404s', async () => {
+test('checkAppUrl falls back to the dev-repo (DevScripts) URL when the main repo 404s', async () => {
   const requestedUrls: string[] = [];
   const fakeFetch = (async (url: unknown) => {
     requestedUrls.push(String(url));
-    const isDev = String(url).includes('ProxmoxVED');
+    const isDev = String(url).includes('DevScripts');
     return new Response(null, { status: isDev ? 200 : 404 });
   }) as unknown as typeof fetch;
   const result = await checkAppUrl('budget-board', fakeFetch);
   assert.equal(result.exists, true);
-  assert.equal(result.url, 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/budget-board.sh');
+  assert.equal(result.url, 'https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/budget-board.sh');
   // A third request follows the successful dev ct fetch: checkAppUrl now
   // also pre-scans the dev repo's install/<slug>-install.sh for prompts
   // (issue #160), derived from whichever repo the ct script resolved in.
   assert.deepEqual(requestedUrls, [
     'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/budget-board.sh',
-    'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/budget-board.sh',
-    'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/install/budget-board-install.sh',
+    'https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/budget-board.sh',
+    'https://raw.githubusercontent.com/community-scripts/DevScripts/main/install/budget-board-install.sh',
   ]);
 });
 
@@ -1593,8 +1593,8 @@ test('resolveInstallScriptUrl derives the install script from a ct script URL', 
     'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/install/cloudflare-ddns-install.sh'
   );
   assert.equal(
-    resolveInstallScriptUrl('https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/budget-board.sh'),
-    'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/install/budget-board-install.sh'
+    resolveInstallScriptUrl('https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/budget-board.sh'),
+    'https://raw.githubusercontent.com/community-scripts/DevScripts/main/install/budget-board-install.sh'
   );
 });
 
@@ -1642,8 +1642,8 @@ test('checkAppUrl fetches the install script from the dev repo when the ct scrip
   const requested: string[] = [];
   const fetchImpl = (async (url: string) => {
     requested.push(url);
-    if (url.includes('/ProxmoxVED/') && url.endsWith('/ct/budget-board.sh')) return new Response('var_cpu="${var_cpu:-2}"\n');
-    if (url.includes('/ProxmoxVED/') && url.endsWith('/install/budget-board-install.sh')) {
+    if (url.includes('/DevScripts/') && url.endsWith('/ct/budget-board.sh')) return new Response('var_cpu="${var_cpu:-2}"\n');
+    if (url.includes('/DevScripts/') && url.endsWith('/install/budget-board-install.sh')) {
       return new Response('read -rp "Enter the budget API key: " key\n');
     }
     return new Response('not found', { status: 404 });
@@ -1654,7 +1654,7 @@ test('checkAppUrl fetches the install script from the dev repo when the ct scrip
   assert.equal(result.dev, true);
   assert.deepEqual(result.prompts, ['Enter the budget API key: ']);
   assert.ok(
-    requested.some((url) => url === 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/install/budget-board-install.sh'),
+    requested.some((url) => url === 'https://raw.githubusercontent.com/community-scripts/DevScripts/main/install/budget-board-install.sh'),
     'install script must be fetched from the same repo the ct script resolved in'
   );
 });

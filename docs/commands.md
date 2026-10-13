@@ -216,7 +216,7 @@ scripts' own update path is triggered (re-running the installer, not a
 separate update command). If you've configured `customScriptsRepo`/
 `customScriptsBranch` (see [Inventory-wide settings](configuration.md#inventory-wide-settings)), both commands
 install the apps your fork branch actually changes from that branch, and
-every other app from ProxmoxVE/ProxmoxVED exactly as before.
+every other app from ProxmoxVE/DevScripts exactly as before.
 
 > **Caveat:** the unattended `install-app` mechanism (the `var_*` env
 > vars) is verified against community-scripts' actual `misc/build.func`

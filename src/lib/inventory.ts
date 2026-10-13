@@ -267,7 +267,7 @@ export const GuestEntrySchema = z.object({
   // resolved AppSource.kind was 'custom' (src/lib/app-source.ts) -- i.e. this
   // guest's `app` slug was actually installed from the operator-configured
   // customScriptsRepo/customScriptsBranch, not from upstream
-  // ProxmoxVE/ProxmoxVED. Preserved across a repeat apply for the same
+  // ProxmoxVE/DevScripts. Preserved across a repeat apply for the same
   // host+vmid the same way `app` is (upsertGuestEntry in
   // src/operations/provisioning.ts), and never touched by sync-inventory's
   // merge. Drives the Dashboard/Update page's "open on GitHub" link instead
@@ -334,7 +334,7 @@ export const ExternalSiteSchema = z.object({
 // network, since a wrong IP is worse than a missing one for any other
 // operator. Persisted as rows in the `meta` table alongside `domain`.
 // `customScriptsRepo`/`customScriptsBranch` (issue #11) are a related pair
-// naming a public GitHub repository laid out like ProxmoxVED (a fork
+// naming a public GitHub repository laid out like DevScripts (a fork
 // branch) that install-app/update-app resolve apps from before falling
 // back to the upstream community-scripts repos -- see src/lib/app-source.ts.
 // Both unset means the feature is off. Unlike every other setting here,

@@ -169,7 +169,7 @@ test('demo server never reaches the network through global fetch, even with a cu
         body: body === undefined ? undefined : JSON.stringify(body),
       });
 
-    const saved = await send('/api/settings', 'PATCH', { customScriptsRepo: 'example/ProxmoxVED', customScriptsBranch: 'demo' });
+    const saved = await send('/api/settings', 'PATCH', { customScriptsRepo: 'example/my-scripts', customScriptsBranch: 'demo' });
     assert.equal(saved.status, 200, await saved.clone().text());
 
     const preview = await send('/api/maintenance/update-app/preview', 'POST', { guest: 'jellyfin', app: 'jellyfin' });
@@ -177,7 +177,7 @@ test('demo server never reaches the network through global fetch, even with a cu
     assert.equal(preview.status, 400, JSON.stringify(previewBody));
     // demoFetch answers GitHub with a 404, so resolution fails naming the
     // configured repository -- not with the test stub's "refused" error.
-    assert.match(previewBody.error, /example\/ProxmoxVED/);
+    assert.match(previewBody.error, /example\/my-scripts/);
     assert.doesNotMatch(previewBody.error, /outbound request refused/);
 
     // Networking routes proxy to http://<gateway-ip>:8080; mark one demo

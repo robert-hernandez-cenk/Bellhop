@@ -98,7 +98,7 @@ const FIELDS: Record<SettingsFieldKey, { label: string; placeholder?: string; he
   customScriptsRepo: {
     label: 'Custom script repository',
     placeholder: 'owner/repo',
-    help: 'Public GitHub repository laid out like ProxmoxVED (e.g. a fork branch) that Install App/Update App resolve apps from before falling back to the upstream community-scripts repos. Apps found there override any upstream copy of the same slug. Must be set together with Custom script branch below -- unset either one and the feature is off.',
+    help: 'Public GitHub fork of community-scripts/DevScripts. Install App/Update App take an app from the branch below when that branch changes it relative to upstream DevScripts main, or when only the fork has it; every other app still comes from the upstream community-scripts repos. Must be set together with Custom script branch below -- unset either one and the feature is off.',
   },
   customScriptsBranch: {
     label: 'Custom script branch',

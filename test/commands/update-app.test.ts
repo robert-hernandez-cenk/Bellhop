@@ -70,7 +70,7 @@ test('runUpdateApp surfaces a non-zero exit code from the remote script', async 
 });
 
 // --- custom script repository (issue #11), update-app mirrors install-app ---
-// Example values only (constitution Principle I) -- example-user/ProxmoxVED
+// Example values only (constitution Principle I) -- example-user/my-scripts
 // on branch my-apps is the same example the spec/plan/data-model/
 // test/commands/install-app.test.ts use.
 
@@ -79,14 +79,14 @@ const HEAD_SHA_RAW = readFileSync(path.join(fixtureDir, 'branch-head-sha.txt'), 
 const SHA = HEAD_SHA_RAW.trim();
 
 const CUSTOM_OWNER = 'example-user';
-const CUSTOM_REPO = 'ProxmoxVED';
+const CUSTOM_REPO = 'my-scripts';
 const CUSTOM_BRANCH = 'my-apps';
 const CUSTOM_LABEL = `${CUSTOM_OWNER}/${CUSTOM_REPO}@${CUSTOM_BRANCH}`;
 const HEAD_SHA_URL = `https://api.github.com/repos/${CUSTOM_OWNER}/${CUSTOM_REPO}/commits/${CUSTOM_BRANCH}`;
 // issue #15: every custom-configured resolution also compares the pinned
-// commit against upstream ProxmoxVED main -- the captured ahead fixture
+// commit against upstream DevScripts main -- the captured ahead fixture
 // (8 ahead / 0 behind) changes demo-shop, demo-shop-storefront, demo-books.
-const COMPARE_URL = `https://api.github.com/repos/community-scripts/ProxmoxVED/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
+const COMPARE_URL = `https://api.github.com/repos/community-scripts/DevScripts/compare/main...${CUSTOM_OWNER}:${CUSTOM_REPO}:${SHA}`;
 const COMPARE_AHEAD_BODY = readFileSync(path.join(fixtureDir, 'compare-ahead-3-apps.json'), 'utf8');
 const MERGE_BASE = (JSON.parse(COMPARE_AHEAD_BODY) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
 const customCtUrl = (slug: string) => `https://raw.githubusercontent.com/${CUSTOM_OWNER}/${CUSTOM_REPO}/${SHA}/ct/${slug}.sh`;
@@ -120,7 +120,7 @@ test('buildUpdateAppScript with an upstream (or omitted) source produces byte-id
     'export PHS_SILENT=1',
     'DEBIAN_FRONTEND=noninteractive apt-get update',
     'DEBIAN_FRONTEND=noninteractive apt-get install -y curl',
-    `bash -c "$(curl -fsSL 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh' 2>/dev/null || curl -fsSL 'https://raw.githubusercontent.com/community-scripts/ProxmoxVED/main/ct/plex.sh')"`,
+    `bash -c "$(curl -fsSL 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh' 2>/dev/null || curl -fsSL 'https://raw.githubusercontent.com/community-scripts/DevScripts/main/ct/plex.sh')"`,
   ].join('\n');
 
   assert.equal(buildUpdateAppScript('plex'), expected);
@@ -176,7 +176,7 @@ test('runUpdateApp throws a resolution failure before any exec is recorded', asy
   const failingFetch = (async () => new Response('rate limited', { status: 403 })) as unknown as typeof fetch;
   await assert.rejects(
     () => runUpdateApp({ guest: 'demo-shop', app: 'demo-shop', apply: true, fetchImpl: failingFetch }, { ssh, inventory: inventoryWithDemoShop }),
-    /Custom script repository example-user\/ProxmoxVED@my-apps: GitHub rate limit reached \(try again later\)/
+    /Custom script repository example-user\/my-scripts@my-apps: GitHub rate limit reached \(try again later\)/
   );
   assert.equal(ssh.history.length, 0, 'no remote exec should have been recorded');
 });
@@ -210,27 +210,27 @@ test('runUpdateApp logs the R7 override notice when the custom source shadows an
   assert.ok(lines.length > 0, 'expected the override notice to be logged');
   assert.match(
     lines[0],
-    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/ProxmoxVED@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
+    /^\[INFO\s+\S+ \S+\] "demo-shop" comes from the custom script repository example-user\/my-scripts@my-apps \(commit [0-9a-f]{7}\) in place of the upstream copy in ProxmoxVE\.$/
   );
 });
 
 // issue #15 US2: the captured diverged fixture's demo-wiki conflicts with
-// upstream (absent at the merge base, present on ProxmoxVED main); the
+// upstream (absent at the merge base, present on DevScripts main); the
 // update warns first and still curls the fork.
 test('runUpdateApp logs the rebase warning first for a conflicting app and still updates from the fork', async () => {
   const slug = 'demo-wiki';
   const divergedBody = readFileSync(path.join(fixtureDir, 'compare-diverged-conflict.json'), 'utf8');
   const mergeBase = (JSON.parse(divergedBody) as { merge_base_commit: { sha: string } }).merge_base_commit.sha;
-  const vedRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/ProxmoxVED/${ref}/${file}`;
+  const devRaw = (ref: string, file: string) => `https://raw.githubusercontent.com/community-scripts/DevScripts/${ref}/${file}`;
   const fetchImpl = (async (url: unknown) => {
     const href = String(url);
     if (href === HEAD_SHA_URL) return new Response(HEAD_SHA_RAW, { status: 200 });
     if (href === COMPARE_URL) return new Response(divergedBody, { status: 200 });
     if (href === shadowUrl(UPSTREAM_STABLE_BASE, slug)) return new Response(null, { status: 404 });
-    if (href === vedRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
-    if (href === vedRaw(mergeBase, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
-    if (href === vedRaw(mergeBase, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
+    if (href === devRaw('main', `ct/${slug}.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw('main', `install/${slug}-install.sh`)) return new Response('#!/usr/bin/env bash\n', { status: 200 });
+    if (href === devRaw(mergeBase, `ct/${slug}.sh`)) return new Response(null, { status: 404 });
+    if (href === devRaw(mergeBase, `install/${slug}-install.sh`)) return new Response(null, { status: 404 });
     throw new Error(`unexpected fetch: ${href}`);
   }) as unknown as typeof fetch;
   const guests: Inventory['guests'] = [{ name: slug, type: 'lxc', vmid: 105, host: 'pve1' }];
@@ -250,7 +250,7 @@ test('runUpdateApp logs the rebase warning first for a conflicting app and still
     console.log = originalLog;
     console.error = originalError;
   }
-  assert.match(lines[0], /^\[WARN\s+\S+ \S+\] "demo-wiki" changed upstream in ProxmoxVED since .* Rebase my-apps onto upstream main/);
+  assert.match(lines[0], /^\[WARN\s+\S+ \S+\] "demo-wiki" changed upstream in DevScripts since .* Rebase my-apps onto upstream main/);
   assert.equal(result.source.conflict, true);
   assert.ok(result.script.includes(`bash -c "$(curl -fsSL ${shellQuote(customCtUrl(slug))})"`), result.script);
 });
